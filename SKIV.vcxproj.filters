@@ -1,0 +1,281 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
+      <Extensions>cpp;c;cc;cxx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
+    </Filter>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
+      <Extensions>h;hh;hpp;hxx;hm;inl;inc;ipp;xsd</Extensions>
+    </Filter>
+    <Filter Include="Resource Files">
+      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
+      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
+    </Filter>
+    <Filter Include="Source Files\ImGui">
+      <UniqueIdentifier>{63076e31-4f80-4ca1-b4af-bfe9a9c359b2}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\ImGui">
+      <UniqueIdentifier>{7e60a39e-3f7a-46ab-abac-6d25a90a2549}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\Utility">
+      <UniqueIdentifier>{e5817b47-00d5-484e-9bc2-e710e2866fb8}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\Utility">
+      <UniqueIdentifier>{63669b58-6f63-49e1-97b9-07d46eb4581e}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\UI Tabs">
+      <UniqueIdentifier>{ea818bb6-75af-4e0b-905a-f046d248f0b8}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\UI Tabs">
+      <UniqueIdentifier>{e58a2ba6-a4c1-493c-b8f1-cfd30cdb9f2d}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Resource Files\Fonts">
+      <UniqueIdentifier>{ebbbc957-0064-40d1-88be-76ca0836bf29}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Resource Files\Images">
+      <UniqueIdentifier>{8ae3f723-6ec2-4bcb-91ab-681181b66898}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Resource Files\Icons">
+      <UniqueIdentifier>{d6c1bda6-6c07-43e6-ae0d-9d96d6a0d929}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Resource Files\Shaders">
+      <UniqueIdentifier>{dc6051dc-908f-4e24-9877-e78debb9fce7}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\Packages_Misc">
+      <UniqueIdentifier>{9fb4cf13-f304-4e2c-a64a-0fb28fa175f2}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\Packages_Misc\GSL">
+      <UniqueIdentifier>{995078a9-45f5-4bd8-8760-dec8aed20f6d}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="include\imgui\imconfig.h">
+      <Filter>Header Files\ImGui</Filter>
+    </ClInclude>
+    <ClInclude Include="include\imgui\imgui.h">
+      <Filter>Header Files\ImGui</Filter>
+    </ClInclude>
+    <ClInclude Include="include\imgui\imgui_impl_win32.h">
+      <Filter>Header Files\ImGui</Filter>
+    </ClInclude>
+    <ClInclude Include="include\imgui\imgui_internal.h">
+      <Filter>Header Files\ImGui</Filter>
+    </ClInclude>
+    <ClInclude Include="include\imgui\imstb_rectpack.h">
+      <Filter>Header Files\ImGui</Filter>
+    </ClInclude>
+    <ClInclude Include="include\imgui\imstb_textedit.h">
+      <Filter>Header Files\ImGui</Filter>
+    </ClInclude>
+    <ClInclude Include="include\imgui\imstb_truetype.h">
+      <Filter>Header Files\ImGui</Filter>
+    </ClInclude>
+    <ClInclude Include="include\utility\sk_utility.h">
+      <Filter>Header Files\Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="include\tabs\viewer.h">
+      <Filter>Header Files\UI Tabs</Filter>
+    </ClInclude>
+    <ClInclude Include="include\utility\fsutil.h">
+      <Filter>Header Files\Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="include\SKIV.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="resource.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="targetver.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="version.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="include\utility\utility.h">
+      <Filter>Header Files\Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="include\tabs\settings.h">
+      <Filter>Header Files\UI Tabs</Filter>
+    </ClInclude>
+    <ClInclude Include="include\utility\vfs.h">
+      <Filter>Header Files\Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="include\utility\skif_imgui.h">
+      <Filter>Header Files\Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="include\utility\registry.h">
+      <Filter>Header Files\Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="include\utility\games.h">
+      <Filter>Header Files\Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="include\utility\updater.h">
+      <Filter>Header Files\Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="include\tabs\common_ui.h">
+      <Filter>Header Files\UI Tabs</Filter>
+    </ClInclude>
+    <ClInclude Include="resources\fonts\fa_621.h">
+      <Filter>Resource Files\Fonts</Filter>
+    </ClInclude>
+    <ClInclude Include="resources\fonts\fa_621b.h">
+      <Filter>Resource Files\Fonts</Filter>
+    </ClInclude>
+    <ClInclude Include="resources\fonts\fa_brands_400.ttf.h">
+      <Filter>Resource Files\Fonts</Filter>
+    </ClInclude>
+    <ClInclude Include="resources\fonts\fa_solid_900.ttf.h">
+      <Filter>Resource Files\Fonts</Filter>
+    </ClInclude>
+    <ClInclude Include="resources\images\patreon.png.h">
+      <Filter>Resource Files\Images</Filter>
+    </ClInclude>
+    <ClInclude Include="resources\images\sk_boxart.jpg.h">
+      <Filter>Resource Files\Images</Filter>
+    </ClInclude>
+    <ClInclude Include="resources\images\sk_icon.jpg.h">
+      <Filter>Resource Files\Images</Filter>
+    </ClInclude>
+    <ClInclude Include="packages_misc\picosha2.h">
+      <Filter>Header Files\Packages_Misc</Filter>
+    </ClInclude>
+    <ClInclude Include="packages_misc\TextFlow.hpp">
+      <Filter>Header Files\Packages_Misc</Filter>
+    </ClInclude>
+    <ClInclude Include="resources\images\sk_boxart2.jpg.h">
+      <Filter>Resource Files\Images</Filter>
+    </ClInclude>
+    <ClInclude Include="resources\images\sk_boxart.png.h">
+      <Filter>Resource Files\Images</Filter>
+    </ClInclude>
+    <ClInclude Include="packages_misc\vdf_parser.hpp">
+      <Filter>Header Files\Packages_Misc</Filter>
+    </ClInclude>
+    <ClInclude Include="packages_misc\HybridDetect.h">
+      <Filter>Header Files\Packages_Misc</Filter>
+    </ClInclude>
+    <ClInclude Include="include\utility\droptarget.hpp">
+      <Filter>Header Files\Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="include\utility\plog_formatter.h">
+      <Filter>Header Files\Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="include\utility\gamepad.h">
+      <Filter>Header Files\Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="include\imgui\imgui_impl_dx11.h">
+      <Filter>Header Files\ImGui</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\imgui\imgui.cpp">
+      <Filter>Source Files\ImGui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\imgui\imgui_draw.cpp">
+      <Filter>Source Files\ImGui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\imgui\imgui_widgets.cpp">
+      <Filter>Source Files\ImGui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\SKIV.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\tabs\viewer.cpp">
+      <Filter>Source Files\UI Tabs</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utility\fsutil.cpp">
+      <Filter>Source Files\Utility</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utility\sk_utility.cpp">
+      <Filter>Source Files\Utility</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utility\vfs.cpp">
+      <Filter>Source Files\Utility</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utility\utility.cpp">
+      <Filter>Source Files\Utility</Filter>
+    </ClCompile>
+    <ClCompile Include="src\tabs\settings.cpp">
+      <Filter>Source Files\UI Tabs</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utility\skif_imgui.cpp">
+      <Filter>Source Files\Utility</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utility\registry.cpp">
+      <Filter>Source Files\Utility</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utility\updater.cpp">
+      <Filter>Source Files\Utility</Filter>
+    </ClCompile>
+    <ClCompile Include="src\tabs\common_ui.cpp">
+      <Filter>Source Files\UI Tabs</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utility\gamepad.cpp">
+      <Filter>Source Files\Utility</Filter>
+    </ClCompile>
+    <ClCompile Include="src\imgui\imgui_tables.cpp">
+      <Filter>Source Files\ImGui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\imgui\imgui_impl_dx11.cpp">
+      <Filter>Source Files\ImGui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\imgui\imgui_impl_win32.cpp">
+      <Filter>Source Files\ImGui</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="SKIV.rc">
+      <Filter>Resource Files</Filter>
+    </ResourceCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="resources\icons\SKIV.ico">
+      <Filter>Resource Files\Icons</Filter>
+    </Image>
+  </ItemGroup>
+  <ItemGroup>
+    <FxCompile Include="resources\shaders\imgui_pix_shader.hlsl">
+      <Filter>Resource Files\Shaders</Filter>
+    </FxCompile>
+    <FxCompile Include="resources\shaders\imgui_vtx_shader.hlsl">
+      <Filter>Resource Files\Shaders</Filter>
+    </FxCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <Manifest Include="resources\appcompat.manifest">
+      <Filter>Resource Files</Filter>
+    </Manifest>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="packages.config" />
+    <None Include="packages_misc\gsl\gsl">
+      <Filter>Header Files\Packages_Misc\GSL</Filter>
+    </None>
+    <None Include="packages_misc\gsl\gsl_algorithm">
+      <Filter>Header Files\Packages_Misc\GSL</Filter>
+    </None>
+    <None Include="packages_misc\gsl\gsl_assert">
+      <Filter>Header Files\Packages_Misc\GSL</Filter>
+    </None>
+    <None Include="packages_misc\gsl\gsl_byte">
+      <Filter>Header Files\Packages_Misc\GSL</Filter>
+    </None>
+    <None Include="packages_misc\gsl\gsl_util">
+      <Filter>Header Files\Packages_Misc\GSL</Filter>
+    </None>
+    <None Include="packages_misc\gsl\multi_span">
+      <Filter>Header Files\Packages_Misc\GSL</Filter>
+    </None>
+    <None Include="packages_misc\gsl\pointers">
+      <Filter>Header Files\Packages_Misc\GSL</Filter>
+    </None>
+    <None Include="packages_misc\gsl\span">
+      <Filter>Header Files\Packages_Misc\GSL</Filter>
+    </None>
+    <None Include="packages_misc\gsl\string_span">
+      <Filter>Header Files\Packages_Misc\GSL</Filter>
+    </None>
+  </ItemGroup>
+</Project>
