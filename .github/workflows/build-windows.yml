@@ -1,0 +1,48 @@
+name: Builds
+
+on: [push, pull_request]
+
+jobs:
+  Build:
+    runs-on: windows-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        config: [Release]
+        platform: [Win32, x64]
+    
+    steps:
+    - uses: actions/checkout@v3
+
+    - uses: SpecialKO/GA-setup-cpp@master
+
+    - uses: microsoft/setup-msbuild@v1.1.3
+      with:
+        vs-version: '[17.0,18.0)'
+
+    - name: Build the source code
+      run: |
+        nuget restore SKIV.sln
+        msbuild SKIV.sln -p:Configuration="${{ matrix.config }}" -p:Platform="${{ matrix.platform }}" -m
+
+    - name: Prepare environment variables for the artifact name
+      run: |
+        $Version = (Get-Item ".\Builds\SKIV*.exe").VersionInfo.ProductVersion
+        If ($null -eq $Version) { $Version = "unknown" }
+        "SKIV_VERSION=$Version" | Out-File -FilePath $env:GITHUB_ENV -Encoding UTF8 -Append
+        "SHORT_SHA=$("${{ github.sha }}".SubString(0, 8))" | Out-File -FilePath $env:GITHUB_ENV -Encoding UTF8 -Append
+
+    - uses: actions/upload-artifact@v3
+      with:
+        name: SKIV_${{ env.SKIV_VERSION }}_${{ env.SHORT_SHA }}
+        path: |
+          Builds/SKIV*.exe
+        if-no-files-found: error
+
+    - uses: actions/upload-artifact@v3
+      with:
+        name: SKIV_${{ env.SKIV_VERSION }}_${{ env.SHORT_SHA }}_debug_symbols
+        path: |
+          Builds/SKIV*.pdb
+        if-no-files-found: warn
