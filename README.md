@@ -1,4 +1,4 @@
-# <img src="https://sk-data.special-k.info/artwork/blahblah/SKIV_eclipse_sticker.png" width="24" alt="Animated eclipse icon for Special K Image Viewer (SKIV)"> Special K Image Viewer (SKIV)
+# <img src="https://sk-data.special-k.info/artwork/blahblah/skif_eclipse_sticker.png" width="24" alt="Animated eclipse icon for Special K Image Viewer (SKIV)"> Special K Image Viewer (SKIV)
 ![Screenshot of the app](https://sk-data.special-k.info/artwork/screens/skiv_initial.png)
 
 A companion image viewer for the [Special K Injection Frontend](https://github.com/SpecialKO/SKIF) (SKIF). Can also be used separately.
