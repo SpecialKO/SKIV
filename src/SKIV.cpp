@@ -956,7 +956,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
   (void)io; // WTF does this do?!
 
-  io.IniFilename = "SKIF.ini";                                // nullptr to disable imgui.ini
+  io.IniFilename = "SKIV.ini";                                // nullptr to disable imgui.ini
   io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;       // Enable Keyboard Controls
   io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;        // Enable Gamepad Controls
 //io.ConfigFlags |= ImGuiConfigFlags_NavEnableSetMousePos;
@@ -1018,7 +1018,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
   ImVec2  windowPos;
   ImRect  windowRect       = ImRect(0.0f, 0.0f, 0.0f, 0.0f);
   ImRect  monitor_extent   = ImRect(0.0f, 0.0f, 0.0f, 0.0f);
-  RepositionSKIF   = (! PathFileExistsW(L"SKIF.ini") || _registry.bOpenAtCursorPosition);
+  RepositionSKIF   = (! PathFileExistsW (L"SKIV.ini") || _registry.bOpenAtCursorPosition);
 
   // Add the status bar if it is not disabled
   SKIF_ImGui_AdjustAppModeSize (NULL);
@@ -1382,8 +1382,12 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
       static const ImVec2 wnd_minimum_size = ImVec2 (200.0f, 200.0f) * SKIF_ImGui_GlobalDPIScale;
 
+      // The first time SKIF is being launched, or repositioned on launch, use a higher minimum size
+      if (ImGui::GetFrameCount() == 1 && RepositionSKIF)
+        ImGui::SetNextWindowSizeConstraints (wnd_minimum_size * 2.0f, ImVec2 (FLT_MAX, FLT_MAX));
+
       // On the second frame, limit the initial window size to only 80% of the monitor size
-      if (ImGui::GetFrameCount() == 2)
+      else if (ImGui::GetFrameCount() == 2)
       {
         ImVec2 size_current = windowRect.GetSize();
         ImVec2 size_maximum = monitor_extent.GetSize() * 0.8f;
@@ -1396,6 +1400,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
           repositionToCenter = true;
       }
 
+      // The rest of the frames are uncapped
       else
         ImGui::SetNextWindowSizeConstraints (wnd_minimum_size, ImVec2 (FLT_MAX, FLT_MAX));
       
