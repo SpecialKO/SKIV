@@ -52,9 +52,22 @@
 #include <utility/updater.h>
 #include <utility/sk_utility.h>
 
-bool                   loadCover         = false;
-bool                   tryingToLoadCover = false;
-std::atomic<bool>      gameCoverLoading  = false;
+#define STB_IMAGE_IMPLEMENTATION
+#define STBI_ONLY_JPEG
+#define STBI_ONLY_PNG
+#define STBI_ONLY_TGA
+#define STBI_ONLY_BMP
+#define STBI_ONLY_PSD
+#define STBI_ONLY_GIF
+#define STBI_ONLY_HDR
+//#define STBI_ONLY_PIC
+//#define STBI_ONLY_PNM
+
+#include <stb_image.h>
+
+bool                   loadImage         = false;
+bool                   tryingToLoadImage = false;
+std::atomic<bool>      imageLoading      = false;
 
 bool                   coverRefresh      = false; // This just triggers a refresh of the cover
 std::wstring           coverRefreshPath  = L"";
@@ -145,6 +158,11 @@ AdjustAlpha (float a)
 
 extern CComPtr <ID3D11Device> SKIF_D3D11_GetDevice (bool bWait = true);
 
+enum ImageDecoder {
+  ImageDecoder_WIC,
+  ImageDecoder_stbi
+};
+
 void
 LoadLibraryTexture (image_s& image)
 {
@@ -158,14 +176,71 @@ LoadLibraryTexture (image_s& image)
 
   bool succeeded    = false;
 
-  if (! image.path.empty())
-  {
-    PLOG_VERBOSE << "Texture to load: " << image.path;
+  DWORD pre = SKIF_Util_timeGetTime1();
 
-    if (SUCCEEDED(
+  if (image.path.empty())
+    return;
+
+  const std::filesystem::path imagePath (image.path.data());
+  std::wstring ext = SKIF_Util_ToLowerW (imagePath.extension().wstring());
+  std::string szPath = SK_WideCharToUTF8(image.path);
+
+  ImageDecoder decoder = 
+    (ext == L".jpeg") ? ImageDecoder_stbi :
+    (ext == L".jpg" ) ? ImageDecoder_stbi :
+    (ext == L".png" ) ? ImageDecoder_stbi :
+    (ext == L".tga" ) ? ImageDecoder_stbi :
+    (ext == L".bmp" ) ? ImageDecoder_stbi :
+    (ext == L".psd" ) ? ImageDecoder_stbi :
+    (ext == L".gif" ) ? ImageDecoder_stbi :
+    (ext == L".hdr" ) ? ImageDecoder_stbi :
+                        ImageDecoder_WIC; // Use WIC as a generic fallback for all other files (.jxr, .webp, .tif)
+
+  PLOG_DEBUG_IF(decoder == ImageDecoder_stbi) << "Using stbi decoder...";
+  PLOG_DEBUG_IF(decoder == ImageDecoder_WIC ) << "Using WIC decoder...";
+
+  if (decoder == ImageDecoder_stbi)
+  {
+    // If desired_channels is non-zero, *channels_in_file has the number of components that _would_ have been
+    // output otherwise. E.g. if you set desired_channels to 4, you will always get RGBA output, but you can
+    // check *channels_in_file to see if it's trivially opaque because e.g. there were only 3 channels in the source image.
+
+    int width            = 0,
+        height           = 0,
+        channels_in_file = 0,
+        desired_channels = STBI_rgb_alpha;
+
+    unsigned char *pixels = stbi_load (szPath.c_str(), &width, &height, &channels_in_file, desired_channels);
+
+    if (pixels != NULL)
+    {
+      meta.width     = width;
+      meta.height    = height;
+      meta.depth     = 1;
+      meta.arraySize = 1;
+      meta.mipLevels = 1;
+      meta.format    = DXGI_FORMAT_R8G8B8A8_UNORM; // STBI_rgb_alpha
+      meta.dimension = DirectX::TEX_DIMENSION_TEXTURE2D;
+
+      if (SUCCEEDED (img.Initialize2D (meta.format, width, height, 1, 1)))
+      {
+        size_t   imageSize = width * height * desired_channels * sizeof(uint8_t);
+        uint8_t* pDest     = img.GetImage(0, 0, 0)->pixels;
+        memcpy(pDest, pixels, imageSize);
+
+        succeeded = true;
+      }
+    }
+
+    stbi_image_free (pixels);
+  }
+
+  else if (decoder == ImageDecoder_WIC)
+  {
+    if (SUCCEEDED (
         DirectX::LoadFromWICFile (
           image.path.c_str (),
-           DirectX::WIC_FLAGS_FILTER_POINT | DirectX::WIC_FLAGS_IGNORE_SRGB, // WIC_FLAGS_IGNORE_SRGB solves some PNGs appearing too dark
+            DirectX::WIC_FLAGS_FILTER_POINT | DirectX::WIC_FLAGS_IGNORE_SRGB, // WIC_FLAGS_IGNORE_SRGB solves some PNGs appearing too dark
               &meta, img)))
     {
       succeeded = true;
@@ -173,6 +248,7 @@ LoadLibraryTexture (image_s& image)
   }
 
   // Push the existing texture to a stack to be released after the frame
+  //   Do this regardless of whether we could actually load the new cover or not
   if (image.pTexSRV.p != nullptr)
   {
     extern concurrency::concurrent_queue <IUnknown *> SKIF_ResourcesToFree;
@@ -181,103 +257,75 @@ LoadLibraryTexture (image_s& image)
     image.pTexSRV.p = nullptr;
   }
 
-  if (succeeded)
+  if (! succeeded)
+    return;
+
+  DirectX::ScratchImage* pImg  =   &img;
+  DirectX::ScratchImage   converted_img;
+
+  // We don't want single-channel icons, so convert to RGBA
+  if (meta.format == DXGI_FORMAT_R8_UNORM)
   {
-    DirectX::ScratchImage* pImg  =   &img;
-    DirectX::ScratchImage   converted_img;
-
-    image.width  = static_cast<float>(meta.width);
-    image.height = static_cast<float>(meta.height);
-
-    // We don't want single-channel icons, so convert to RGBA
-    if (meta.format == DXGI_FORMAT_R8_UNORM)
+    if (SUCCEEDED (DirectX::Convert (pImg->GetImages(), pImg->GetImageCount(), pImg->GetMetadata (), DXGI_FORMAT_R8G8B8A8_UNORM, DirectX::TEX_FILTER_DEFAULT, DirectX::TEX_THRESHOLD_DEFAULT, converted_img)))
     {
-      if (
-        SUCCEEDED (
-          DirectX::Convert (
-            pImg->GetImages   (), pImg->GetImageCount (),
-            pImg->GetMetadata (), DXGI_FORMAT_R8G8B8A8_UNORM,
-              DirectX::TEX_FILTER_DEFAULT,
-              DirectX::TEX_THRESHOLD_DEFAULT,
-                converted_img
-          )
-        )
-      )
-      {
-        meta =  converted_img.GetMetadata ();
-        pImg = &converted_img;
-      }
+      meta =  converted_img.GetMetadata ();
+      pImg = &converted_img;
     }
+  }
 
-    // Downscale covers to 220x330, which will then be shown in horizon mode
-    if (false)
-    {
-      size_t width  = 220;
-      size_t height = 330;
-
-      if (
-        SUCCEEDED (
-          DirectX::Resize (
-            pImg->GetImages   (), pImg->GetImageCount (),
-            pImg->GetMetadata (), width, height,
-            DirectX::TEX_FILTER_FANT,
-                converted_img
-          )
-        )
-      )
-      {
-        meta =  converted_img.GetMetadata ();
-        pImg = &converted_img;
-      }
-    }
-
-    auto pDevice =
-      SKIF_D3D11_GetDevice ();
-
-    if (! pDevice)
-      return;
-
-    pTex2D = nullptr;
+#if 0
+  // Downscale covers to 220x330, which will then be shown in horizon mode
+  if (false)
+  {
+    size_t width  = 220;
+    size_t height = 330;
 
     if (
       SUCCEEDED (
-        DirectX::CreateTexture (
-          pDevice,
-            pImg->GetImages (), pImg->GetImageCount (),
-              meta, (ID3D11Resource **)&pTex2D.p
+        DirectX::Resize (
+          pImg->GetImages   (), pImg->GetImageCount (),
+          pImg->GetMetadata (), width, height,
+          DirectX::TEX_FILTER_FANT,
+              converted_img
         )
       )
     )
     {
-      D3D11_SHADER_RESOURCE_VIEW_DESC
-        srv_desc                           = { };
-        srv_desc.Format                    = DXGI_FORMAT_UNKNOWN;
-        srv_desc.ViewDimension             = D3D11_SRV_DIMENSION_TEXTURE2D;
-        srv_desc.Texture2D.MipLevels       = UINT_MAX;
-        srv_desc.Texture2D.MostDetailedMip =  0;
-
-        //CComPtr <ID3D11ShaderResourceView>
-        //    pOrigTexSRV (pLibTexSRV.p);
-                         //pLibTexSRV = nullptr; // Crashes on Intel
-
-        //if (libTexToLoad == LibraryTexture::Cover)
-        //  OutputDebugString((L"[App#" + std::to_wstring(appid) + L"] Game cover loaded\n").c_str());
-
-      if (    pTex2D.p == nullptr ||
-        FAILED (
-          pDevice->CreateShaderResourceView (
-              pTex2D.p, &srv_desc,
-            &image.pTexSRV.p
-          )
-        )
-      )
-      {
-        //pLibTexSRV = pOrigTexSRV;
-      }
-
-      // SRV is holding a reference, this is not needed anymore.
-      pTex2D = nullptr;
+      meta =  converted_img.GetMetadata ();
+      pImg = &converted_img;
     }
+  }
+#endif
+
+  auto pDevice =
+    SKIF_D3D11_GetDevice ();
+
+  if (! pDevice)
+    return;
+
+  pTex2D = nullptr;
+
+  if (SUCCEEDED (DirectX::CreateTexture (pDevice, pImg->GetImages(), pImg->GetImageCount(), meta, (ID3D11Resource **)&pTex2D.p)))
+  {
+    D3D11_SHADER_RESOURCE_VIEW_DESC
+    srv_desc                           = { };
+    srv_desc.Format                    = DXGI_FORMAT_UNKNOWN;
+    srv_desc.ViewDimension             = D3D11_SRV_DIMENSION_TEXTURE2D;
+    srv_desc.Texture2D.MipLevels       = UINT_MAX;
+    srv_desc.Texture2D.MostDetailedMip =  0;
+
+    if (pTex2D.p != nullptr && SUCCEEDED (pDevice->CreateShaderResourceView (pTex2D.p, &srv_desc, &image.pTexSRV.p)))
+    {
+      DWORD post = SKIF_Util_timeGetTime1 ( );
+      PLOG_INFO << "[Image Processing] Processed image in " << (post - pre) << " ms.";
+
+      // Update the image width/height
+      image.width  = static_cast<float>(meta.width);
+      image.height = static_cast<float>(meta.height);
+    }
+
+    // SRV is holding a reference, this is not needed anymore.
+    pTex2D = nullptr;
   }
 };
 
@@ -399,7 +447,7 @@ SKIF_UI_Tab_DrawLibrary (void)
   if (! new_path.empty() &&
         new_path != cover.path)
   {
-    loadCover       = true;
+    loadImage = true;
 
     // Hide the current cover and set it up to be unloaded
     if (cover.pTexSRV.p != nullptr)
@@ -436,7 +484,7 @@ SKIF_UI_Tab_DrawLibrary (void)
   }
 
   // Apply changes when the image changes
-  if (loadCover)
+  if (loadImage)
     fTint = (_registry.iDarkenImages == 0) ? 1.0f : fTintMin;
   // Apply changes when the _registry.iDarkenImages var has been changed in the Settings tab
   else if (tmp_iDarkenImages != _registry.iDarkenImages)
@@ -463,12 +511,12 @@ SKIF_UI_Tab_DrawLibrary (void)
   ImVec2 vecPosCoverImage    = ImGui::GetCursorPos ( );
          vecPosCoverImage.x -= 1.0f * SKIF_ImGui_GlobalDPIScale;
 
-  if (loadCover)
+  if (loadImage)
   {
     // A new cover is meant to be loaded, so don't do anything for now...
   }
 
-  else if (tryingToLoadCover)
+  else if (tryingToLoadImage)
   {
     ImGui::SetCursorPos (ImVec2 (
       vecPosCoverImage.x + (sizeCover.x / 2) * SKIF_ImGui_GlobalDPIScale - ImGui::CalcTextSize (cstrLabelLoading).x / 2,
@@ -537,13 +585,13 @@ SKIF_UI_Tab_DrawLibrary (void)
 
 #pragma region SKIF_LibCoverWorker
 
-  if (loadCover)
+  if (loadImage)
   {
-    loadCover = false;
+    loadImage = false;
 
     // Reset variables used to track whether we're still loading a game cover, or if we're missing one
-    gameCoverLoading.store (true);
-    tryingToLoadCover = true;
+    imageLoading.store (true);
+    tryingToLoadImage = true;
     queuePosGameCover = textureLoadQueueLength.load() + 1;
 
     struct thread_s {
@@ -581,14 +629,14 @@ SKIF_UI_Tab_DrawLibrary (void)
       if (currentQueueLength == queuePos)
       {
         PLOG_DEBUG << "Texture is live! Swapping it in.";
-        cover.width       = _data->image.width;
-        cover.height      = _data->image.height;
-        cover.uv0 = _data->image.uv0;
-        cover.uv1 = _data->image.uv1;
-        cover.pTexSRV     = _data->image.pTexSRV;
+        cover.width   = _data->image.width;
+        cover.height  = _data->image.height;
+        cover.uv0     = _data->image.uv0;
+        cover.uv1     = _data->image.uv1;
+        cover.pTexSRV = _data->image.pTexSRV;
 
         // Indicate that we have stopped loading the cover
-        gameCoverLoading.store (false);
+        imageLoading.store (false);
 
         // Force a refresh when the cover has been swapped in
         PostMessage (SKIF_Notify_hWnd, WM_SKIF_COVER, 0x0, 0x0);
@@ -630,33 +678,28 @@ SKIF_UI_Tab_DrawLibrary (void)
 
     std::error_code ec;
     const std::filesystem::path fsPath (dragDroppedFilePath.data());
-    std::wstring targetPath  = L"";
-    std::wstring extOriginal = fsPath.extension().wstring();
-    bool         isURL       = PathIsURL (dragDroppedFilePath.data());
+    std::wstring targetPath = L"";
+    std::wstring ext        = SKIF_Util_ToLowerW  (fsPath.extension().wstring());
+    bool         isURL      = PathIsURL (dragDroppedFilePath.data());
+    PLOG_VERBOSE << "    File extension: " << ext;
 
-    extOriginal = SKIF_Util_ToLowerW  (extOriginal);
-    int extType = 0;
-
-    if (extOriginal == L".jpg"  ||
-        extOriginal == L".jpeg" ||
-        extOriginal == L".jxr"  ||
-        extOriginal == L".png"  ||
-        extOriginal == L".webp" ||
-        extOriginal == L".gif"  ||
-        extOriginal == L".bmp"  )
-      extType = 1;
-
-    // Images
-    if (extType == 1 && ! isURL)
-    {
-      // Prep the new one
-      new_path = dragDroppedFilePath;
-
-      // A child thread will set refreshCover once done
-    }
+    bool isImage =
+      (ext == L".jpg"  ||
+       ext == L".jpeg" ||
+       ext == L".jxr"  ||
+       ext == L".png"  ||
+       ext == L".webp" ||
+       ext == L".tga"  ||
+       ext == L".bmp"  ||
+       ext == L".psd"  ||
+       ext == L".gif"  ||
+       ext == L".tif"  ||
+       ext == L".tiff" ||
+       ext == L".hdr"  ); // Radiance RGBE (.hdr)
 
     // URLs + non-images
-    else {
+    if (isURL || ! isImage)
+    {
       constexpr char* error_title =
         "Unsupported file format";
       constexpr char* error_label =
@@ -665,13 +708,19 @@ SKIF_UI_Tab_DrawLibrary (void)
         "   *.jxr\n"
         "   *.png\n"
         "   *.webp\n"
-        "   *.gif\n"
+        "   *.tga\n"
         "   *.bmp\n"
+        "   *.psd\n"
+        "   *.gif\n"
+        "   *.tif\n"
         "\n"
         "Note that the app has no support for animated images.";
 
       SKIF_ImGui_InfoMessage (error_title, error_label);
     }
+
+    else
+      new_path = dragDroppedFilePath;
 
     dragDroppedFilePath.clear();
   }
@@ -762,7 +811,7 @@ SKIF_UI_Tab_DrawLibrary (void)
     }
 
     // Trigger a refresh of the cover
-    loadCover = true;
+    loadImage = true;
   }
   
 }

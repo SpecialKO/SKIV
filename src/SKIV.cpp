@@ -217,8 +217,10 @@ SKIF_EfficiencyModeTimerProc (HWND hWnd, UINT Msg, UINT wParamIDEvent, DWORD dwT
   static SKIF_RegistrySettings& _registry   = SKIF_RegistrySettings::GetInstance ( );
 
   KillTimer (hWnd, cIDT_TIMER_EFFICIENCY);
-  
-  if (_registry.bEfficiencyMode && ! _registry._EfficiencyMode && ! SKIF_ImGui_IsFocused ( ))
+
+  extern bool tryingToLoadImage;
+
+  if (_registry.bEfficiencyMode && ! _registry._EfficiencyMode && ! SKIF_ImGui_IsFocused ( ) && ! tryingToLoadImage)
   {
     _registry._EfficiencyMode = true;
     msgDontRedraw = true;
@@ -1737,6 +1739,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
            24.0f * SKIF_ImGui_GlobalDPIScale
         );
 
+
         ImGui::SetCursorPos (ImVec2 (
             10.0f * SKIF_ImGui_GlobalDPIScale,
              5.0f * SKIF_ImGui_GlobalDPIScale
@@ -1812,6 +1815,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
       }
 
       ImGui::SetCursorPos (prevCursorPos);
+
+      ImGui::Dummy (ImVec2 (0, 0)); // Dummy required here to solve ImGui::ErrorCheckUsingSetCursorPosToExtendParentBoundaries()
 
       // End of top right window buttons
 
@@ -3132,12 +3137,12 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
       addAdditionalFrames += 3;
 
       // Update tryingToLoadCover
-      extern bool tryingToLoadCover;
-      extern std::atomic<bool> gameCoverLoading;
-      tryingToLoadCover = gameCoverLoading.load();
+      extern bool tryingToLoadImage;
+      extern std::atomic<bool> imageLoading;
+      tryingToLoadImage = imageLoading.load();
       
       // Empty working set after the cover has finished loading
-      if (! tryingToLoadCover)
+      if (! tryingToLoadImage)
         SKIF_Util_CompactWorkingSet ( );
       break;
 
