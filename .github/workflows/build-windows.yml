@@ -24,9 +24,9 @@ jobs:
     - name: Build the source code
       run: |
         nuget restore SKIV.sln
-        #msbuild SKIV.sln -p:Configuration="${{ matrix.config }}" -p:Platform="${{ matrix.platform }}" -m
-        msbuild SKIV.sln -p:Configuration="Release" -p:Platform="Win32 -m
+        msbuild SKIV.sln -p:Configuration="Release" -p:Platform="Win32" -m
         msbuild SKIV.sln -p:Configuration="Release" -p:Platform="x64" -m
+        # msbuild SKIV.sln -p:Configuration="${{ matrix.config }}" -p:Platform="${{ matrix.platform }}" -m
 
     - name: Prepare environment variables for the artifact name
       run: |
