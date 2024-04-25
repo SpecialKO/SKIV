@@ -88,16 +88,20 @@ struct image_s {
   float        height      = 0.0f;
   ImVec2       uv0 = ImVec2 (0, 0);
   ImVec2       uv1 = ImVec2 (1, 1);
+  ImVec2       avail_size;        // Holds the frame size used (affected by the scaling method)
+  ImVec2       avail_size_cache;  // Holds a cached value used to determine if avail_size needs recalculating
   CComPtr <ID3D11ShaderResourceView> pTexSRV;
 
   void reset ()
   {
-    path        = L"";
-    uv0 = ImVec2 (0, 0);
-    uv1 = ImVec2 (1, 1);
-    width       = 0.0f;
-    height      = 0.0f;
-    pTexSRV.p   = nullptr;
+    path             = L"";
+    width            = 0.0f;
+    height           = 0.0f;
+    uv0              = ImVec2 (0, 0);
+    uv1              = ImVec2 (1, 1);
+    avail_size       = { };
+    avail_size_cache = { };
+    pTexSRV.p        = nullptr;
   }
 };
 
@@ -317,25 +321,26 @@ ImVec2
 GetCurrentAspectRatio (image_s& image)
 {
   static SKIF_RegistrySettings& _registry   = SKIF_RegistrySettings::GetInstance ( );
-  static float avail_width, avail_height;
+  static int last_scaling = 0;
 
   ImVec2 avail_size = ImGui::GetContentRegionAvail();
 
   // Clear any cached data on image changes
-  if (image.pTexSRV.p == nullptr)
-  {
-    avail_width  = 0.0f;
-    avail_height = 0.0f;
+  if (image.pTexSRV.p == nullptr || image.height == 0 || image.width  == 0)
     return avail_size;
-  }
 
   // Do not recalculate when dealing with an unchanged situation
-  if (avail_width  == avail_size.x &&
-      avail_height == avail_size.y)
-    return avail_size;
+  if (avail_size   == image.avail_size_cache &&
+      last_scaling == _registry.iImageScaling)
+    return image.avail_size;
 
-  avail_width  = avail_size.x;
-  avail_height = avail_size.y;
+  last_scaling = _registry.iImageScaling;
+  image.avail_size_cache   = avail_size;
+
+  float avail_width        = avail_size.x;
+  float avail_height       = avail_size.y;
+  float contentAspectRatio = image.width / image.height;
+  float frameAspectRatio   = avail_width / avail_height;
 
   ImVec2 diff = ImVec2(0.0f, 0.0f);
 
@@ -346,16 +351,17 @@ GetCurrentAspectRatio (image_s& image)
   // None
   if (_registry.iImageScaling == 0)
   {
-
+    avail_width  = image.width;
+    avail_height = image.height;
   }
 
   // Fill
   else if (_registry.iImageScaling == 1)
   {
     // Crop wider aspect ratios by their width
-    if ((image.width / image.height) > (avail_width / avail_height))
+    if (contentAspectRatio > frameAspectRatio)
     {
-      float newWidth = image.width / image.height * avail_height;
+      float newWidth = avail_height * contentAspectRatio;
       diff.x = (avail_width / newWidth);
       diff.x -= 1.0f;
       diff.x /= 2;
@@ -365,9 +371,9 @@ GetCurrentAspectRatio (image_s& image)
     }
 
     // Crop thinner aspect ratios by their height
-    else if ((image.width / image.height) < (avail_width / avail_height))
+    else // if (contentAspectRatio < frameAspectRatio)
     {
-      float newHeight = image.height / image.width * avail_width;
+      float newHeight = avail_width / contentAspectRatio; // image.height / image.width * avail_width
       diff.y = (avail_height / newHeight);
       diff.y -= 1.0f;
       diff.y /= 2;
@@ -382,16 +388,30 @@ GetCurrentAspectRatio (image_s& image)
   {
     // Requires reducing the size of avail_size
     //   as the actual ImGui element has to be center-aligned
+    if (contentAspectRatio > frameAspectRatio)
+      avail_height = avail_width / contentAspectRatio;
+    else
+      avail_width  = avail_height * contentAspectRatio;
   }
 
-  PLOG_VERBOSE << "\n"
-               << "Content Region   : " << avail_width << "x" << avail_height << "\n"
-               << "Image details    :\n"
-               << "  > resolution   : " << image.width << "x" << image.height << "\n"
-               << "  >  top   left  : " << image.uv0.x << "," << image.uv0.y  << "\n"
-               << "  > bottom right : " << image.uv1.x << "," << image.uv1.y;
+  // Stretch
+  else if (_registry.iImageScaling == 3)
+  {
+    // Do nothing -- this cases the image to be stretched
+  }
 
-  return avail_size;
+  PLOG_VERBOSE_IF(! ImGui::IsAnyMouseDown()) // Suppress logging while the mouse is down (e.g. window is being resized)
+               << "\n"
+               << "Image scaling  : " << _registry.iImageScaling << "\n"
+               << "Content region : " << avail_width << "x" << avail_height << "\n"
+               << "Image details  :\n"
+               << " > resolution  : " << image.width << "x" << image.height << "\n"
+               << " > coord 0,0   : " << image.uv0.x << "," << image.uv0.y  << "\n"
+               << " > coord 1,1   : " << image.uv1.x << "," << image.uv1.y;
+
+  image.avail_size       = ImVec2(avail_width, avail_height);
+
+  return image.avail_size;
 }
 
 #pragma endregion
@@ -441,10 +461,14 @@ SKIF_UI_Tab_DrawLibrary (void)
       }
 
       // Set up the current one to be released
-      cover_old.pTexSRV.p = cover.pTexSRV.p;
-      cover_old.uv0       = cover.uv0;
-      cover_old.uv1       = cover.uv1;
-      cover_old.path      = cover.path;
+      cover_old.path             = cover.path;
+      cover_old.width            = cover.width;
+      cover_old.height           = cover.height;
+      cover_old.uv0              = cover.uv0;
+      cover_old.uv1              = cover.uv1;
+      cover_old.avail_size       = cover.avail_size;
+      cover_old.avail_size_cache = cover.avail_size_cache;
+      cover_old.pTexSRV.p        = cover.pTexSRV.p;
       cover.reset();
 
       fAlphaPrev          = (_registry.bFadeCovers) ? fAlpha   : 0.0f;
@@ -476,20 +500,21 @@ SKIF_UI_Tab_DrawLibrary (void)
 
 #pragma endregion
 
-  ImVec2 sizeCover = GetCurrentAspectRatio (cover);
+  ImVec2 sizeCover     = GetCurrentAspectRatio (cover);
+  ImVec2 sizeCover_old = GetCurrentAspectRatio (cover_old);
 
   // From now on ImGui UI calls starts being made...
 
 #pragma region GameCover
 
-  ImGui::BeginGroup    (                                                  );
+  ImGui::BeginChild("Child Frame", ImGui::GetContentRegionAvail(), ImGuiChildFlags_AutoResizeX | ImGuiChildFlags_AutoResizeY);
 
   static int    queuePosGameCover  = 0;
   static char   cstrLabelLoading[] = "...";
   static char   cstrLabelMissing[] = "Drop an image...";
 
-  ImVec2 vecPosCoverImage    = ImGui::GetCursorPos ( );
-         vecPosCoverImage.x -= 1.0f * SKIF_ImGui_GlobalDPIScale;
+  ImVec2 originalPos         = ImGui::GetCursorPos ( );
+         originalPos.x -= 1.0f * SKIF_ImGui_GlobalDPIScale;
 
   if (loadImage)
   {
@@ -499,16 +524,16 @@ SKIF_UI_Tab_DrawLibrary (void)
   else if (tryingToLoadImage)
   {
     ImGui::SetCursorPos (ImVec2 (
-      vecPosCoverImage.x + (sizeCover.x / 2) * SKIF_ImGui_GlobalDPIScale - ImGui::CalcTextSize (cstrLabelLoading).x / 2,
-      vecPosCoverImage.y + (sizeCover.y / 2) * SKIF_ImGui_GlobalDPIScale - ImGui::CalcTextSize (cstrLabelLoading).y / 2));
+      originalPos.x + (sizeCover.x / 2) * SKIF_ImGui_GlobalDPIScale - ImGui::CalcTextSize (cstrLabelLoading).x / 2,
+      originalPos.y + (sizeCover.y / 2) * SKIF_ImGui_GlobalDPIScale - ImGui::CalcTextSize (cstrLabelLoading).y / 2));
     ImGui::TextDisabled (  cstrLabelLoading);
   }
   
   else if (textureLoadQueueLength.load() == queuePosGameCover && cover.pTexSRV.p == nullptr)
   {
     ImGui::SetCursorPos (ImVec2 (
-      vecPosCoverImage.x + (sizeCover.x / 2) * SKIF_ImGui_GlobalDPIScale - ImGui::CalcTextSize (cstrLabelMissing).x / 2,
-      vecPosCoverImage.y + (sizeCover.y / 2) * SKIF_ImGui_GlobalDPIScale - ImGui::CalcTextSize (cstrLabelMissing).y / 2));
+      originalPos.x + (sizeCover.x / 2) * SKIF_ImGui_GlobalDPIScale - ImGui::CalcTextSize (cstrLabelMissing).x / 2,
+      originalPos.y + (sizeCover.y / 2) * SKIF_ImGui_GlobalDPIScale - ImGui::CalcTextSize (cstrLabelMissing).y / 2));
     ImGui::TextDisabled (  cstrLabelMissing);
   }
 
@@ -516,12 +541,12 @@ SKIF_UI_Tab_DrawLibrary (void)
            cover_old.pTexSRV.p == nullptr)
   {
     ImGui::SetCursorPos (ImVec2 (
-      vecPosCoverImage.x + (sizeCover.x / 2) * SKIF_ImGui_GlobalDPIScale - ImGui::CalcTextSize (cstrLabelMissing).x / 2,
-      vecPosCoverImage.y + (sizeCover.y / 2) * SKIF_ImGui_GlobalDPIScale - ImGui::CalcTextSize (cstrLabelMissing).y / 2));
+      originalPos.x + (sizeCover.x / 2) * SKIF_ImGui_GlobalDPIScale - ImGui::CalcTextSize (cstrLabelMissing).x / 2,
+      originalPos.y + (sizeCover.y / 2) * SKIF_ImGui_GlobalDPIScale - ImGui::CalcTextSize (cstrLabelMissing).y / 2));
     ImGui::TextDisabled (  cstrLabelMissing);
   }
 
-  ImGui::SetCursorPos (vecPosCoverImage);
+  ImGui::SetCursorPos (originalPos);
 
   float fGammaCorrectedTint = 
     ((! _registry._RendererHDREnabled && _registry.iSDRMode == 2) || 
@@ -532,17 +557,23 @@ SKIF_UI_Tab_DrawLibrary (void)
   // Display previous fading out cover
   if (cover_old.pTexSRV.p != nullptr && fAlphaPrev > 0.0f)
   {
+    ImGui::SetCursorPosX ((ImGui::GetContentRegionAvail().x - sizeCover_old.x * SKIF_ImGui_GlobalDPIScale) * 0.5f);
+    ImGui::SetCursorPosY ((ImGui::GetContentRegionAvail().y - sizeCover_old.y * SKIF_ImGui_GlobalDPIScale) * 0.5f);
+
     SKIF_ImGui_OptImage  (cover_old.pTexSRV.p,
-                                                      ImVec2 (sizeCover.x * SKIF_ImGui_GlobalDPIScale,
-                                                              sizeCover.y * SKIF_ImGui_GlobalDPIScale),
+                                                      ImVec2 (sizeCover_old.x * SKIF_ImGui_GlobalDPIScale,
+                                                              sizeCover_old.y * SKIF_ImGui_GlobalDPIScale),
                                                       cover_old.uv0, // Top Left coordinates
                                                       cover_old.uv1, // Bottom Right coordinates
                                     (_registry._StyleLightMode) ? ImVec4 (1.0f, 1.0f, 1.0f, fGammaCorrectedTint * AdjustAlpha (fAlphaPrev))  : ImVec4 (fTint, fTint, fTint, fAlphaPrev), // Alpha transparency
                                     (_registry.bUIBorders)  ? ImGui::GetStyleColorVec4 (ImGuiCol_Border) : ImVec4 (0.0f, 0.0f, 0.0f, 0.0f)       // Border
     );
 
-    ImGui::SetCursorPos (vecPosCoverImage);
+    ImGui::SetCursorPos (originalPos);
   }
+
+  ImGui::SetCursorPosX ((ImGui::GetContentRegionAvail().x - sizeCover.x * SKIF_ImGui_GlobalDPIScale) * 0.5f);
+  ImGui::SetCursorPosY ((ImGui::GetContentRegionAvail().y - sizeCover.y * SKIF_ImGui_GlobalDPIScale) * 0.5f);
 
   // Display game cover image
   SKIF_ImGui_OptImage  (cover.pTexSRV.p,
@@ -556,7 +587,7 @@ SKIF_UI_Tab_DrawLibrary (void)
 
   bool isCoverHovered = ImGui::IsItemHovered();
 
-  ImGui::EndGroup             ( );
+  ImGui::EndChild             ( );
 
 #pragma endregion
 
@@ -671,7 +702,7 @@ SKIF_UI_Tab_DrawLibrary (void)
 
         if (ImGui::MenuItem ("Stretch",  spaces, &bStretch))
         {
-          _registry.iImageScaling = 2;
+          _registry.iImageScaling = 3;
 
           bNone    = false;
           bFill    = false;
