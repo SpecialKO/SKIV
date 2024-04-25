@@ -92,7 +92,21 @@ struct image_s {
   ImVec2       avail_size_cache;  // Holds a cached value used to determine if avail_size needs recalculating
   CComPtr <ID3D11ShaderResourceView> pTexSRV;
 
-  void reset ()
+  // copy assignment
+  image_s& operator= (const image_s other) noexcept
+  {
+    path             = other.path;
+    width            = other.width;
+    height           = other.height;
+    uv0              = other.uv0;
+    uv1              = other.uv1;
+    avail_size       = other.avail_size;
+    avail_size_cache = other.avail_size_cache;
+    pTexSRV.p        = other.pTexSRV.p;
+    return *this;
+  }
+
+  void reset (void)
   {
     path             = L"";
     width            = 0.0f;
@@ -423,32 +437,18 @@ GetCurrentAspectRatio (image_s& image)
 void
 SKIF_UI_Tab_DrawLibrary (void)
 {
+  extern bool coverFadeActive;
+
   static SKIF_CommonPathsCache& _path_cache = SKIF_CommonPathsCache::GetInstance ( );
   static SKIF_RegistrySettings& _registry   = SKIF_RegistrySettings::GetInstance ( );
-
   static DirectX::TexMetadata     meta = { };
   static DirectX::ScratchImage    img  = { };
-
   static std::wstring new_path = L"";
-
-#pragma region Initialization
-
-  SK_RunOnce (fAlpha = (_registry.bFadeCovers) ? 0.0f : 1.0f);
-
-  DWORD       current_time = SKIF_Util_timeGetTime ( );
-
+  static int  tmp_iDarkenImages = _registry.iDarkenImages;
   static image_s cover, cover_old;
 
-  extern bool coverFadeActive;
-  static int  tmp_iDarkenImages = _registry.iDarkenImages;
-
-  // Load a new cover
-  // Ensure we aren't already loading this cover
-  if (! new_path.empty() &&
-        new_path != cover.path)
+  auto _SwapOutCover = [&](void) -> void
   {
-    loadImage = true;
-
     // Hide the current cover and set it up to be unloaded
     if (cover.pTexSRV.p != nullptr)
     {
@@ -461,19 +461,28 @@ SKIF_UI_Tab_DrawLibrary (void)
       }
 
       // Set up the current one to be released
-      cover_old.path             = cover.path;
-      cover_old.width            = cover.width;
-      cover_old.height           = cover.height;
-      cover_old.uv0              = cover.uv0;
-      cover_old.uv1              = cover.uv1;
-      cover_old.avail_size       = cover.avail_size;
-      cover_old.avail_size_cache = cover.avail_size_cache;
-      cover_old.pTexSRV.p        = cover.pTexSRV.p;
+      cover_old = cover;
       cover.reset();
 
       fAlphaPrev          = (_registry.bFadeCovers) ? fAlpha   : 0.0f;
       fAlpha              = (_registry.bFadeCovers) ?   0.0f   : 1.0f;
     }
+  };
+
+#pragma region Initialization
+
+  SK_RunOnce (fAlpha = (_registry.bFadeCovers) ? 0.0f : 1.0f);
+
+  DWORD       current_time = SKIF_Util_timeGetTime ( );
+
+  // Load a new cover
+  // Ensure we aren't already loading this cover
+  if (! new_path.empty() &&
+        new_path != cover.path)
+  {
+    loadImage = true;
+
+    _SwapOutCover ();
   }
 
   // Release old cover after it has faded away, or instantly if we don't fade covers
@@ -628,27 +637,7 @@ SKIF_UI_Tab_DrawLibrary (void)
     if (cover.pTexSRV.p != nullptr)
     {
       if (SKIF_ImGui_MenuItemEx2 ("Close", 0, ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info)))
-      {
-        // Hide the current cover and set it up to be unloaded
-        
-        // If there already is an old cover, we need to push it for release
-        if (cover_old.pTexSRV.p != nullptr)
-        {
-          PLOG_VERBOSE << "SKIF_ResourcesToFree: Pushing " << cover_old.pTexSRV.p << " to be released";;
-          SKIF_ResourcesToFree.push(cover_old.pTexSRV.p);
-          cover_old.pTexSRV.p = nullptr;
-        }
-
-        // Set up the current one to be released
-        cover_old.pTexSRV.p = cover.pTexSRV.p;
-        cover_old.uv0       = cover.uv0;
-        cover_old.uv1       = cover.uv1;
-        cover_old.path      = cover.path;
-        cover.reset();
-
-        fAlphaPrev          = (_registry.bFadeCovers) ? fAlpha   : 0.0f;
-        fAlpha              = (_registry.bFadeCovers) ?   0.0f   : 1.0f;
-      }
+        _SwapOutCover ();
 
 
       // Image scaling
