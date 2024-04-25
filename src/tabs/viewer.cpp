@@ -737,7 +737,7 @@ SKIF_UI_Tab_DrawLibrary (void)
 #pragma endregion
 
 
-#pragma region SKIF_LibCoverWorker
+#pragma region SKIF_ImageWorker
 
   if (loadImage)
   {
@@ -788,6 +788,10 @@ SKIF_UI_Tab_DrawLibrary (void)
         cover.uv0     = _data->image.uv0;
         cover.uv1     = _data->image.uv1;
         cover.pTexSRV = _data->image.pTexSRV;
+
+        extern ImVec2 SKIV_ResizeApp;
+        SKIV_ResizeApp.x = cover.width;
+        SKIV_ResizeApp.y = cover.height;
 
         // Indicate that we have stopped loading the cover
         imageLoading.store (false);

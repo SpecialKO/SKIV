@@ -254,6 +254,8 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
     bUICaptionButtons      =   regKVUICaptionButtons       .getData (&hKey);
   if (regKVTouchInput.hasData(&hKey))
     bTouchInput            =   regKVTouchInput             .getData (&hKey);
+  if (regKVAdjustWindow.hasData(&hKey))
+    bAdjustWindow          =   regKVAdjustWindow           .getData (&hKey);
 
   // Store libraries
 

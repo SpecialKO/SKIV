@@ -248,6 +248,10 @@ struct SKIF_RegistrySettings {
     SKIF_MakeRegKeyB ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(Ghost)" );
 
+  KeyValue <bool> regKVAdjustWindow =
+    SKIF_MakeRegKeyB ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(Resize window)" );
+
   // Integers (DWORDs)
 
   KeyValue <int> regKVImageScaling =
@@ -355,6 +359,7 @@ struct SKIF_RegistrySettings {
   int iDiagnostics             = 1;   // 0 = None,                        1 = Normal,                 2 = Enhanced (not actually used yet)
 
   // Default settings (booleans)
+  bool bAdjustWindow            = false; // Adjust window size based on the image size?
   bool bGhost                   = false; // Visibility of Shelly the Ghost
   bool bNotifications           =  true;
   bool bUIBorders               = false;

@@ -530,12 +530,16 @@ SKIF_UI_Tab_DrawSettings (void)
 
     SKIF_ImGui_Spacing      ( );
 
+    if (ImGui::Checkbox  ("Adjust window based on image size",
+                                           &_registry.bAdjustWindow))
+      _registry.regKVAdjustWindow.putData  (_registry.bAdjustWindow);
+
     if (! SKIF_Util_GetDragFromMaximized ( ))
       SKIF_ImGui_PushDisableState ( );
 
     if (ImGui::Checkbox  ("Maximize on double click",
-                                                      &_registry.bMaximizeOnDoubleClick))
-      _registry.regKVMaximizeOnDoubleClick.putData  (  _registry.bMaximizeOnDoubleClick);
+                                                    &_registry.bMaximizeOnDoubleClick))
+      _registry.regKVMaximizeOnDoubleClick.putData  (_registry.bMaximizeOnDoubleClick);
     
     if (! SKIF_Util_GetDragFromMaximized ( ))
     {
