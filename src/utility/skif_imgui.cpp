@@ -1249,18 +1249,14 @@ SKIF_ImGui_CanMouseDragMove (void)
   static SKIF_RegistrySettings& _registry = SKIF_RegistrySettings::GetInstance ( );
 
   extern bool SKIF_MouseDragMoveAllowed;
-  return    ! _registry._TouchDevice      &&          // Only if we are not on a touch input device
-              SKIF_MouseDragMoveAllowed   &&          // Manually disabled by a few UI elements
-            ! ImGui::IsAnyItemHovered ( ) &&          // Disabled if any item is hovered
-          ( ! SKIF_ImGui_IsAnyPopupOpen ( )        || // Disabled if any popup is opened..
-          (   AddGamePopup    == PopupState_Opened || // ..except for a few standard ones
-          PopupMessageInfo    == PopupState_Opened || //   which are actually aligned to
-           ModifyGamePopup    == PopupState_Opened || //   the center of the app window
-          PopupCategoryModify == PopupState_Opened ||
-           RemoveGamePopup    == PopupState_Opened ||
-         UpdatePromptPopup    == PopupState_Opened ||
-              HistoryPopup    == PopupState_Opened ||
-           AutoUpdatePopup    == PopupState_Opened ));
+  return    ! _registry._TouchDevice      &&        // Only if we are not on a touch input device
+              SKIF_MouseDragMoveAllowed   &&        // Manually disabled by a few UI elements
+            ! ImGui::IsAnyItemHovered ( ) &&        // Disabled if any item is hovered
+          ( ! SKIF_ImGui_IsAnyPopupOpen ( )      || // Disabled if any popup is opened..
+          (PopupMessageInfo == PopupState_Opened || //   which are actually aligned to
+         UpdatePromptPopup  == PopupState_Opened ||
+              HistoryPopup  == PopupState_Opened ||
+           AutoUpdatePopup  == PopupState_Opened ));
 }
 
 // Based on https://github.com/ocornut/imgui/issues/3379#issuecomment-1678718752

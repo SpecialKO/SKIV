@@ -80,27 +80,7 @@ const float fTintMin     = 0.75f;
       float fAlpha       = 0.0f;
       float fAlphaPrev   = 1.0f;
       
-PopupState GameMenu            = PopupState_Closed;
-PopupState EmptySpaceMenu      = PopupState_Closed;
-PopupState CoverMenu           = PopupState_Closed;
-PopupState IconMenu            = PopupState_Closed;
-PopupState ServiceMenu         = PopupState_Closed;
-PopupState CategoryMenu        = PopupState_Closed;
-
-PopupState AddGamePopup        = PopupState_Closed;
-PopupState RemoveGamePopup     = PopupState_Closed;
-PopupState ModifyGamePopup     = PopupState_Closed;
-PopupState PopupCategoryModify = PopupState_Closed;
-
-constexpr int maxCategoryNameLen = 50;
-struct change_category_s {
-  std::string  Name = "",    // Holds the old name
-            newName = "";    // Holds the new name
-  bool       change = false; // Rename + Remove
-  bool       remove = false; // Remove
-  bool       rename = false; // Rename (through collapsible header)
-  bool       exists = false; // If the new category already exists
-} static_category;
+PopupState ContextMenu     = PopupState_Closed;
 
 struct image_s {
   std::wstring path        = L"";
@@ -576,12 +556,12 @@ SKIF_UI_Tab_DrawLibrary (void)
 
   bool isCoverHovered = ImGui::IsItemHovered();
 
-  if (ImGui::IsItemClicked (ImGuiMouseButton_Right))
-    CoverMenu = PopupState_Open;
-
   ImGui::EndGroup             ( );
 
 #pragma endregion
+
+  if (ImGui::IsItemClicked (ImGuiMouseButton_Right))
+    ContextMenu = PopupState_Open;
 
 #pragma region SKIF_LibCoverWorker
 

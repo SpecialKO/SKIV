@@ -1486,7 +1486,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
           if (SKIF_Tab_Selected != UITab_Viewer)
               SKIF_Tab_ChangeTo  = UITab_Viewer;
 
-          AddGamePopup = PopupState_Open;
+          //AddGamePopup = PopupState_Open;
         }
       }
 
@@ -1494,17 +1494,9 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
       if (ImGui::IsKeyPressed (ImGuiKey_Escape))
       {
-        if (AddGamePopup        != PopupState_Closed ||
-            ModifyGamePopup     != PopupState_Closed ||
-            PopupCategoryModify != PopupState_Closed ||
-            RemoveGamePopup     != PopupState_Closed ||
-            UpdatePromptPopup   != PopupState_Closed ||
-            HistoryPopup        != PopupState_Closed  )
+        if (UpdatePromptPopup != PopupState_Closed ||
+            HistoryPopup      != PopupState_Closed  )
         {
-          AddGamePopup         = PopupState_Closed;
-          ModifyGamePopup      = PopupState_Closed;
-          PopupCategoryModify  = PopupState_Closed;
-          RemoveGamePopup      = PopupState_Closed;
           UpdatePromptPopup    = PopupState_Closed;
           HistoryPopup         = PopupState_Closed;
 
@@ -1644,7 +1636,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
           if (ImGui::Button   (ICON_FA_SQUARE_PLUS " Add Game"))
           {
-            AddGamePopup = PopupState_Open;
+            //AddGamePopup = PopupState_Open;
             if (SKIF_Tab_Selected != UITab_Viewer)
               SKIF_Tab_ChangeTo = UITab_Viewer;
           }
@@ -2347,14 +2339,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
     if (! SKIF_ImGui_IsFocused ( ) && ! ImGui::IsAnyItemHovered ( ) && SKIF_ImGui_IsAnyPopupOpen ( ))
     {
       // But don't close those of interest
-      if (     AddGamePopup != PopupState_Open   &&
-               AddGamePopup != PopupState_Opened &&
-           PopupMessageInfo != PopupState_Open   &&
+      if ( PopupMessageInfo != PopupState_Open   &&
            PopupMessageInfo != PopupState_Opened &&
-            ModifyGamePopup != PopupState_Open   &&
-            ModifyGamePopup != PopupState_Opened &&
-        PopupCategoryModify != PopupState_Open   &&
-        PopupCategoryModify != PopupState_Opened &&
           UpdatePromptPopup != PopupState_Open   &&
           UpdatePromptPopup != PopupState_Opened &&
                HistoryPopup != PopupState_Open   &&
