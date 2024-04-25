@@ -577,7 +577,7 @@ SKIF_UI_Tab_DrawLibrary (void)
 
     ImGui::PushStyleColor (ImGuiCol_NavHighlight, ImVec4(0,0,0,0));
 
-    if (SKIF_ImGui_MenuItemEx2 ("Open Image", ICON_FA_FOLDER_OPEN, ImColor(255, 207, 72)))
+    if (SKIF_ImGui_MenuItemEx2 ("Open", ICON_FA_FOLDER_OPEN, ImColor(255, 207, 72)))
     {
       LPWSTR pwszFilePath = NULL;
       HRESULT hr          =
@@ -596,8 +596,6 @@ SKIF_UI_Tab_DrawLibrary (void)
 
     if (cover.pTexSRV.p != nullptr)
     {
-      ImGui::Separator ( );
-
       if (SKIF_ImGui_MenuItemEx2 ("Close", 0, ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info)))
       {
         // Hide the current cover and set it up to be unloaded
@@ -620,7 +618,83 @@ SKIF_UI_Tab_DrawLibrary (void)
         fAlphaPrev          = (_registry.bFadeCovers) ? fAlpha   : 0.0f;
         fAlpha              = (_registry.bFadeCovers) ?   0.0f   : 1.0f;
       }
+
+
+      // Image scaling
+
+      ImGui::Separator ( );
+
+      ImGui::PushID ("#ImageScaling");
+
+      if (SKIF_ImGui_BeginMenuEx2 ("Scaling", ICON_FA_PANORAMA))
+      {
+        static bool bNone    = (_registry.iImageScaling == 0) ? true : false;
+        static bool bFill    = (_registry.iImageScaling == 1) ? true : false;
+        static bool bFit     = (_registry.iImageScaling == 2) ? true : false;
+        static bool bStretch = (_registry.iImageScaling == 3) ? true : false;
+
+        if (ImGui::MenuItem ("None", spaces,  &bNone))
+        {
+          _registry.iImageScaling = 0;
+
+        //bNone    = false;
+          bFill    = false;
+          bFit     = false;
+          bStretch = false;
+
+          _registry.regKVImageScaling.putData (_registry.iImageScaling);
+        }
+
+        if (ImGui::MenuItem ("Fill",  spaces, &bFill))
+        {
+          _registry.iImageScaling = 1;
+
+          bNone    = false;
+        //bFill    = false;
+          bFit     = false;
+          bStretch = false;
+
+          _registry.regKVImageScaling.putData (_registry.iImageScaling);
+        }
+
+        if (ImGui::MenuItem ("Fit",  spaces, &bFit))
+        {
+          _registry.iImageScaling = 2;
+
+          bNone    = false;
+          bFill    = false;
+        //bFit     = false;
+          bStretch = false;
+
+          _registry.regKVImageScaling.putData (_registry.iImageScaling);
+        }
+
+        if (ImGui::MenuItem ("Stretch",  spaces, &bStretch))
+        {
+          _registry.iImageScaling = 2;
+
+          bNone    = false;
+          bFill    = false;
+          bFit     = false;
+        //bStretch = false;
+
+          _registry.regKVImageScaling.putData (_registry.iImageScaling);
+        }
+
+        ImGui::EndMenu ( );
+      }
+
+      ImGui::PopID ( );
     }
+
+    ImGui::Separator ( );
+
+    if (SKIF_ImGui_MenuItemEx2 ("Exit", 0, ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Info)))
+    {
+      extern bool bKeepWindowAlive;
+      bKeepWindowAlive = false;
+    }
+
 
     ImGui::PopStyleColor  ( );
     ImGui::EndPopup       ( );
