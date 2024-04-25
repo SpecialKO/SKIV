@@ -1394,7 +1394,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
       // Resize app window based on the image resolution
       extern bool tryingToLoadImage;
-      bool resizeAppWindow = (_registry.bAdjustWindow) ? (! tryingToLoadImage && SKIV_ResizeApp.x != 0.0f) : false;
+      bool resizeAppWindow = (_registry.bAdjustWindow) ? (! tryingToLoadImage && SKIV_ResizeApp.x != 0.0f && ! (GetWindowLongPtr (SKIF_ImGui_hWnd, GWL_STYLE) & WS_MAXIMIZE)) : false;
 
       if (resizeAppWindow)
       {
@@ -1414,9 +1414,10 @@ wWinMain ( _In_     HINSTANCE hInstance,
         }
 
         ImGui::SetNextWindowSize (SKIV_ResizeApp);
-        SKIV_ResizeApp       = ImVec2 (0.0f, 0.0f);
         //RespectMonBoundaries = true;
       }
+
+      SKIV_ResizeApp       = ImVec2 (0.0f, 0.0f);
 
       static const ImVec2 wnd_minimum_size = ImVec2 (200.0f, 200.0f) * SKIF_ImGui_GlobalDPIScale;
 
