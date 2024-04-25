@@ -560,8 +560,77 @@ SKIF_UI_Tab_DrawLibrary (void)
 
 #pragma endregion
 
-  if (ImGui::IsItemClicked (ImGuiMouseButton_Right))
+  if (! SKIF_ImGui_IsAnyPopupOpen() &&
+    ImGui::IsItemClicked (ImGuiMouseButton_Right))
     ContextMenu = PopupState_Open;
+
+#pragma region ContextMenu
+
+  // Open the Empty Space Menu
+  if (ContextMenu == PopupState_Open)
+    ImGui::OpenPopup    ("ContextMenu");
+
+  if (ImGui::BeginPopup   ("ContextMenu", ImGuiWindowFlags_NoMove))
+  {
+    ContextMenu = PopupState_Opened;
+    constexpr char spaces[] = { "\u0020\u0020\u0020\u0020" };
+
+    ImGui::PushStyleColor (ImGuiCol_NavHighlight, ImVec4(0,0,0,0));
+
+    if (SKIF_ImGui_MenuItemEx2 ("Open Image", ICON_FA_FOLDER_OPEN, ImColor(255, 207, 72)))
+    {
+      LPWSTR pwszFilePath = NULL;
+      HRESULT hr          =
+        SK_FileOpenDialog (&pwszFilePath, COMDLG_FILTERSPEC{ L"Images", L"*.png;*.jpg;*.jpeg;*.webp;*.psd;*.bmp" }, 1, FOS_FILEMUSTEXIST, FOLDERID_Pictures);
+          
+      if (hr == HRESULT_FROM_WIN32(ERROR_CANCELLED))
+      {
+        // If cancelled, do nothing
+      }
+
+      else if (SUCCEEDED(hr))
+      {
+        dragDroppedFilePath = pwszFilePath;
+      }
+    }
+
+    if (cover.pTexSRV.p != nullptr)
+    {
+      ImGui::Separator ( );
+
+      if (SKIF_ImGui_MenuItemEx2 ("Close", 0, ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info)))
+      {
+        // Hide the current cover and set it up to be unloaded
+        
+        // If there already is an old cover, we need to push it for release
+        if (cover_old.pTexSRV.p != nullptr)
+        {
+          PLOG_VERBOSE << "SKIF_ResourcesToFree: Pushing " << cover_old.pTexSRV.p << " to be released";;
+          SKIF_ResourcesToFree.push(cover_old.pTexSRV.p);
+          cover_old.pTexSRV.p = nullptr;
+        }
+
+        // Set up the current one to be released
+        cover_old.pTexSRV.p = cover.pTexSRV.p;
+        cover_old.uv0       = cover.uv0;
+        cover_old.uv1       = cover.uv1;
+        cover_old.path      = cover.path;
+        cover.reset();
+
+        fAlphaPrev          = (_registry.bFadeCovers) ? fAlpha   : 0.0f;
+        fAlpha              = (_registry.bFadeCovers) ?   0.0f   : 1.0f;
+      }
+    }
+
+    ImGui::PopStyleColor  ( );
+    ImGui::EndPopup       ( );
+  }
+
+  else
+    ContextMenu = PopupState_Closed;
+
+#pragma endregion
+
 
 #pragma region SKIF_LibCoverWorker
 
