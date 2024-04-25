@@ -108,9 +108,6 @@ HANDLE SteamProcessHandle       = NULL;
 UINT SHELL_TASKBAR_RESTART        = 0; // TaskbarCreated
 UINT SHELL_TASKBAR_BUTTON_CREATED = 0; // TaskbarButtonCreated
 
-// A fixed size for the application window fixes the wobble that otherwise
-//   occurs when switching between tabs as the size isn't dynamically calculated.
-
 // --- App Mode (regular)
 ImVec2 SKIF_vecRegularMode          = ImVec2 (0.0f, 0.0f);
 ImVec2 SKIF_vecRegularModeDefault   = ImVec2 (1000.0f, 944.0f);   // Does not include the status bar
@@ -257,6 +254,32 @@ SKIF_Startup_ProcessCmdLineArgs (LPWSTR lpCmdLine)
     FindWindowExW (0, 0, SKIF_NotifyIcoClass, nullptr);
 }
 
+void
+SKIF_Startup_CopyDataRunningInstance (void)
+{
+  if (! _Signal._RunningInstance)
+    return;
+
+  if (_Signal._FilePath.empty())
+    return;
+
+  wchar_t                    wszFilePath [MAX_PATH] = { };
+  if (S_OK == StringCbCopyW (wszFilePath, MAX_PATH, _Signal._FilePath.data()))
+  {
+    COPYDATASTRUCT cds { };
+    cds.dwData = SKIV_CDS_STRING;
+    cds.lpData = &wszFilePath;
+    cds.cbData = sizeof(wszFilePath);
+
+    // If the running instance returns true on our WM_COPYDATA call,
+    //   that means this instance has done its job and can be closed.
+    if (SendMessage (_Signal._RunningInstance,
+                  WM_COPYDATA,
+                  NULL, //(WPARAM)(HWND) NULL
+                  (LPARAM) (LPVOID) &cds))
+      ExitProcess (0x0);
+  }
+}
 
 void
 SKIF_Startup_CloseRunningInstances (void)
@@ -820,7 +843,14 @@ wWinMain ( _In_     HINSTANCE hInstance,
     // If we have a file incoming, and we disallow multiple instances
     //   then we need to close any other running ones so we survive
     if (! _registry.bMultipleInstances)
+    {
+      // Try to send data over using WM_COPYDATA,
+      //   and terminate the instance if it succeeds
+      SKIF_Startup_CopyDataRunningInstance   ( );
+      
+      // The below calls only occurs if WM_COPYDATA failed
       SKIF_Startup_CloseRunningInstances   ( );
+    }
 
     // The below only execute when there are commands to proxy
     SKIF_Startup_ProxyCommandLineArguments ( );
@@ -3002,6 +3032,28 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
   switch (msg)
   {
+    case WM_COPYDATA:
+    {
+      PCOPYDATASTRUCT data = (PCOPYDATASTRUCT) lParam;
+
+      if (data->dwData == SKIV_CDS_STRING &&
+          data->lpData != nullptr)
+      {
+        wchar_t                    wszFilePath [MAX_PATH] = { };
+        if (S_OK == StringCbCopyW (wszFilePath, MAX_PATH, (LPCWSTR)data->lpData))
+        {
+          extern std::wstring dragDroppedFilePath;
+          dragDroppedFilePath = std::wstring(wszFilePath);
+
+          PLOG_VERBOSE << "WM_COPYDATA: " << dragDroppedFilePath;
+
+          return true; // Signal the other instance that we successfully handled the data
+        }
+      }
+
+      return false;
+    }
+
     case WM_DEVICECHANGE:
       switch (wParam)
       {

@@ -81,6 +81,8 @@ extern    UINT           SHELL_TASKBAR_BUTTON_CREATED;              // TaskbarBu
 constexpr  int           SKIF_HotKey_HDR        = 1337; // Win + Ctrl + Shift + H
 constexpr  int           SKIF_HotKey_SVC        = 1338; // Win + Shift + Insert
 
+constexpr DWORD          SKIV_CDS_STRING        = 13;
+
 //constexpr const  char*   SKIF_LOG_SEPARATOR     = "----------------------------";
 constexpr const wchar_t* SKIF_NotifyIcoClass    = L"SKIV_NotificationIcon";
 constexpr const wchar_t* SKIF_AppUserModelID    = L"SpecialK.Image.Viewer";
