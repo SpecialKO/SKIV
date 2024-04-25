@@ -245,22 +245,10 @@ SKIF_UI_Tab_DrawSettings (void)
 
     ImGui::BeginGroup ( );
 
-    bool* pActiveBool = (_registry._TouchDevice) ? &_registry._TouchDevice : &_registry.bUILargeIcons;
+    if (ImGui::Checkbox ("Caption buttons", &_registry.bUICaptionButtons))
+      _registry.regKVUICaptionButtons.putData (_registry.bUICaptionButtons);
 
-    if (_registry._TouchDevice)
-    {
-      SKIF_ImGui_PushDisableState ( );
-    }
-
-    if (ImGui::Checkbox ("Large icons", pActiveBool))
-      _registry.regKVUILargeIcons.putData (_registry.bUILargeIcons);
-
-    if (_registry._TouchDevice)
-    {
-      SKIF_ImGui_PopDisableState  ( );
-      SKIF_ImGui_SetHoverTip      ("Currently enforced by touch input mode.");
-    } else
-      SKIF_ImGui_SetHoverTip      ("Use larger game icons in the library tab.");
+    SKIF_ImGui_SetHoverTip ("Show the caption buttons of the window.");
 
     if (ImGui::Checkbox ("Fade covers", &_registry.bFadeCovers))
     {

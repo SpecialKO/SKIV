@@ -250,8 +250,8 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
     bDPIScaling            =   regKVDPIScaling             .getData (&hKey);
   if (regKVWin11Corners.hasData(&hKey))
     bWin11Corners          =   regKVWin11Corners           .getData (&hKey);
-  if (regKVUILargeIcons.hasData(&hKey))
-    bUILargeIcons          =   regKVUILargeIcons           .getData (&hKey);
+  if (regKVUICaptionButtons.hasData(&hKey))
+    bUICaptionButtons      =   regKVUICaptionButtons       .getData (&hKey);
   if (regKVTouchInput.hasData(&hKey))
     bTouchInput            =   regKVTouchInput             .getData (&hKey);
 

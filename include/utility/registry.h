@@ -188,9 +188,9 @@ struct SKIF_RegistrySettings {
     SKIF_MakeRegKeyB ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(Win11 Corners)" );
 
-  KeyValue <bool> regKVUILargeIcons =
+  KeyValue <bool> regKVUICaptionButtons =
     SKIF_MakeRegKeyB ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
-                         LR"(UI Large Icons)" );
+                         LR"(UI Caption Buttons)" );
 
   KeyValue <bool> regKVTouchInput =
     SKIF_MakeRegKeyB ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
@@ -342,10 +342,10 @@ struct SKIF_RegistrySettings {
                          LR"(AppsUseLightTheme)" );
 
   // Default settings (multiple options)
-  int iImageScaling            = 1;   // 0 = None,                        1 = Fill,                   2 = Fit,                         3 = Stretch
+  int iImageScaling            = 2;   // 0 = None,                        1 = Fill,                   2 = Fit,                         3 = Stretch
   int iStyle                   = 0;   // 0 = Dynamic,                     1 = SKIF Dark,              2 = SKIF Light,                  3 = ImGui Classic,                  4 = ImGui Dark
   int iStyleTemp               = 0;   // Used to temporary hold changes in the style during the current session
-  int iDarkenImages               = 0;   // 0 = Never,                       1 = Always,                 2 = On mouse hover
+  int iDarkenImages            = 0;   // 0 = Never,                       1 = Always,                 2 = On mouse hover
   int iCheckForUpdates         = 1;   // 0 = Never,                       1 = Weekly,                 2 = On each launch
   int iLogging                 = 4;   // 0 = None,                        1 = Fatal,                  2 = Error,                       3 = Warning,                        4 = Info,       5 = Debug,       6 = Verbose
   int iSDRMode                 = 0;   // 0 = 8 bpc,                       1 = 10 bpc,                 2 = 16 bpc
@@ -360,7 +360,7 @@ struct SKIF_RegistrySettings {
   bool bUIBorders               = false;
   bool bUITooltips              =  true;
   bool bUIStatusBar             =  true;
-  bool bUILargeIcons            = false; // 32x32 icons instead of 24x24
+  bool bUICaptionButtons        = false; // Minimize, Close
   bool bDPIScaling              =  true;
   bool bWin11Corners            =  true; // 2023-08-28: Enabled by default
   bool bTouchInput              =  true; // Automatically make the UI more optimized for touch input on capable devices
