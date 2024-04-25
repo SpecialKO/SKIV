@@ -707,6 +707,9 @@ SKIF_UI_Tab_DrawLibrary (void)
       ImGui::PopID ( );
     }
 
+    if (SKIF_ImGui_MenuItemEx2 ("Settings", ICON_FA_LIST_CHECK))
+      SKIF_Tab_ChangeTo = UITab_Settings;
+
     ImGui::Separator ( );
 
     if (SKIF_ImGui_MenuItemEx2 ("Exit", 0, ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Info)))
