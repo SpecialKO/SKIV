@@ -1191,6 +1191,15 @@ wWinMain ( _In_     HINSTANCE hInstance,
         : false;                                             // and false if OS prerequisites are disabled
     }
 
+    // Escape does situational stuff
+    if (hotkeyEsc)
+    {
+      if (SKIF_Tab_Selected == UITab_Viewer)
+        bKeepWindowAlive = false;
+      else if (SKIF_Tab_Selected == UITab_Settings)
+        SKIF_Tab_ChangeTo = UITab_Viewer;
+    }
+
     // F6 to toggle DPI scaling
     if (changedHiDPIScaling || hotkeyF6)
     {
@@ -1750,69 +1759,79 @@ wWinMain ( _In_     HINSTANCE hInstance,
 #pragma region Window buttons
 
       // Top right window buttons
-      ImVec2 window_btn_size = ImVec2 (
-        68.0f * SKIF_ImGui_GlobalDPIScale,
-        24.0f * SKIF_ImGui_GlobalDPIScale
-      );
 
-      ImVec2 prevCursorPos =
-        ImGui::GetCursorPos ();
-
-      ImGui::SetCursorPos (
-        ImVec2 ( (ImGui::GetWindowContentRegionMax().x - ImGui::GetStyle().FrameBorderSize * 2 - window_btn_size.x),
-                   ((6.0f * SKIF_ImGui_GlobalDPIScale) - ImGui::GetStyle().FrameBorderSize * 2) )
-      );
-
-      if (ImGui::BeginChild ("###SKIV_WINDOW_BUTTONS", window_btn_size, ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground))
+      if (_registry.bUICaptionButtons)
       {
-        ImGui::PushStyleVar (
-          ImGuiStyleVar_FrameRounding, 25.0f * SKIF_ImGui_GlobalDPIScale
+        ImVec2 window_btn_size = ImVec2 (
+          68.0f * SKIF_ImGui_GlobalDPIScale,
+          24.0f * SKIF_ImGui_GlobalDPIScale
         );
 
-        if (ImGui::Button (ICON_FA_WINDOW_MINIMIZE, ImVec2 ( 30.0f * SKIF_ImGui_GlobalDPIScale, 0.0f ))
-            || hotkeyCtrlN)
+        ImVec2 prevCursorPos =
+          ImGui::GetCursorPos ();
+
+        ImGui::SetCursorPos (
+          ImVec2 ( (ImGui::GetWindowContentRegionMax().x - ImGui::GetStyle().FrameBorderSize * 2 - window_btn_size.x),
+                     ((6.0f * SKIF_ImGui_GlobalDPIScale) - ImGui::GetStyle().FrameBorderSize * 2) )
+        );
+
+        if (ImGui::BeginChild ("###SKIV_WINDOW_BUTTONS", window_btn_size, ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground))
         {
-          ShowWindow (SKIF_ImGui_hWnd, SW_MINIMIZE);
-        }
+          ImGui::PushStyleVar (
+            ImGuiStyleVar_FrameRounding, 25.0f * SKIF_ImGui_GlobalDPIScale
+          );
 
-        ImGui::SameLine ();
+          if (ImGui::Button (ICON_FA_WINDOW_MINIMIZE, ImVec2 ( 30.0f * SKIF_ImGui_GlobalDPIScale, 0.0f )))
+            hotkeyCtrlN = true;
 
-        ImGui::PushStyleColor   (ImGuiCol_ButtonHovered, ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Failure));
-        ImGui::PushStyleColor   (ImGuiCol_ButtonActive,  ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Failure) * ImVec4(1.2f, 1.2f, 1.2f, 1.0f));
+          ImGui::SameLine ();
 
-        static bool closeButtonHoverActive = false;
+          ImGui::PushStyleColor   (ImGuiCol_ButtonHovered, ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Failure));
+          ImGui::PushStyleColor   (ImGuiCol_ButtonActive,  ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Failure) * ImVec4(1.2f, 1.2f, 1.2f, 1.0f));
 
-        if (_registry._StyleLightMode && closeButtonHoverActive)
-          ImGui::PushStyleColor (ImGuiCol_Text, ImGui::GetStyleColorVec4 (ImGuiCol_WindowBg)); //ImVec4 (0.9F, 0.9F, 0.9F, 1.0f));
+          static bool closeButtonHoverActive = false;
 
-        if (ImGui::Button (ICON_FA_XMARK, ImVec2 ( 30.0f * SKIF_ImGui_GlobalDPIScale, 0.0f ) )
-          || hotkeyEsc || hotkeyCtrlQ || hotkeyCtrlW || bKeepWindowAlive == false)
-        {
-          bKeepProcessAlive = false;
-        }
+          if (_registry._StyleLightMode && closeButtonHoverActive)
+            ImGui::PushStyleColor (ImGuiCol_Text, ImGui::GetStyleColorVec4 (ImGuiCol_WindowBg)); //ImVec4 (0.9F, 0.9F, 0.9F, 1.0f));
+
+          if (ImGui::Button (ICON_FA_XMARK, ImVec2 ( 30.0f * SKIF_ImGui_GlobalDPIScale, 0.0f ) )) // HotkeyEsc is situational
+            hotkeyCtrlQ = true;
       
-        if (_registry._StyleLightMode)
-        {
-          if (closeButtonHoverActive)
-            ImGui::PopStyleColor ( );
+          if (_registry._StyleLightMode)
+          {
+            if (closeButtonHoverActive)
+              ImGui::PopStyleColor ( );
           
-          closeButtonHoverActive = (ImGui::IsItemHovered () || ImGui::IsItemActivated ());
+            closeButtonHoverActive = (ImGui::IsItemHovered () || ImGui::IsItemActivated ());
+          }
+
+          ImGui::PopStyleColor (2);
+
+          ImGui::PopStyleVar ();
+
+          ImGui::EndChild ( );
         }
 
-        ImGui::PopStyleColor (2);
+        ImGui::SetCursorPos (prevCursorPos);
 
-        ImGui::PopStyleVar ();
-
-        ImGui::EndChild ( );
+        ImGui::Dummy (ImVec2 (0, 0)); // Dummy required here to solve ImGui::ErrorCheckUsingSetCursorPosToExtendParentBoundaries()
       }
-
-      ImGui::SetCursorPos (prevCursorPos);
-
-      ImGui::Dummy (ImVec2 (0, 0)); // Dummy required here to solve ImGui::ErrorCheckUsingSetCursorPosToExtendParentBoundaries()
 
       // End of top right window buttons
 
 #pragma endregion
+
+#pragma region CaptionActions
+
+      if (hotkeyCtrlN)
+        ShowWindow (SKIF_ImGui_hWnd, SW_MINIMIZE);
+
+      if (hotkeyCtrlQ || hotkeyCtrlW || bKeepWindowAlive == false) // HotkeyEsc is situational
+        bKeepProcessAlive = false;
+
+#pragma endregion
+
+
 
       // Font warning
       if (failedLoadFontsPrompt && ! HiddenFramesContinueRendering)
