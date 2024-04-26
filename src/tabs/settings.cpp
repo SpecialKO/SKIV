@@ -25,24 +25,6 @@ SKIF_UI_Tab_DrawSettings (void)
   static SKIF_CommonPathsCache& _path_cache = SKIF_CommonPathsCache::GetInstance ( );
   static SKIF_RegistrySettings& _registry   = SKIF_RegistrySettings::GetInstance ( );
   
-  static bool HDRSupported = false;
-
-  static DWORD dwTriggerNewRefresh = 0; // Set when to trigger a new refresh (0 = DISABLED)
-
-  // Refresh things when visiting from another tab or when forced
-  if (SKIF_Tab_Selected != UITab_Settings                         ||
-      RefreshSettingsTab                                          ||
-      dwTriggerNewRefresh != 0 && dwTriggerNewRefresh < SKIF_Util_timeGetTime ( )    )
-  {
-    SKIF_Util_IsMPOsDisabledInRegistry (true);
-    SKIF_Util_IsHDRActive (true);
-    RefreshSettingsTab  = false;
-    dwTriggerNewRefresh = 0;
-  }
-
-//SKIF_ImGui_Spacing      ( );
-  
-  
   ImGui::PushStyleColor   (
     ImGuiCol_SKIF_TextCaption, ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextCaption) * ImVec4(0.5f, 0.5f, 0.5f, 1.0f)
                             );
@@ -85,7 +67,7 @@ SKIF_UI_Tab_DrawSettings (void)
 
     ImGui::TextColored (
       ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextCaption),
-        "Scaling method: (**not implemented**)"
+        "Scaling method:"
     );
     ImGui::TreePush        ("ImageScaling");
 

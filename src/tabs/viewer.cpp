@@ -53,6 +53,7 @@
 #include <utility/sk_utility.h>
 
 #define STB_IMAGE_IMPLEMENTATION
+#define STBI_WINDOWS_UTF8
 #define STBI_ONLY_JPEG
 #define STBI_ONLY_PNG
 #define STBI_ONLY_TGA
@@ -68,6 +69,7 @@
 bool                   loadImage         = false;
 bool                   tryingToLoadImage = false;
 std::atomic<bool>      imageLoading      = false;
+bool                   resetScrollCenter = false;
 
 bool                   coverRefresh      = false; // This just triggers a refresh of the cover
 std::wstring           coverRefreshPath  = L"";
@@ -348,13 +350,12 @@ GetCurrentAspectRatio (image_s& image)
       last_scaling == _registry.iImageScaling)
     return image.avail_size;
 
-  last_scaling = _registry.iImageScaling;
   image.avail_size_cache   = avail_size;
 
   float avail_width        = avail_size.x;
   float avail_height       = avail_size.y;
-  float contentAspectRatio = image.width / image.height;
   float frameAspectRatio   = avail_width / avail_height;
+  float contentAspectRatio = image.width / image.height;
 
   ImVec2 diff = ImVec2(0.0f, 0.0f);
 
@@ -372,6 +373,22 @@ GetCurrentAspectRatio (image_s& image)
   // Fill
   else if (_registry.iImageScaling == 1)
   {
+    // Workaround to prevent content/frame fighting one another
+    if (ImGui::GetScrollMaxY() == 0.0f)
+      avail_width -= ImGui::GetStyle().ScrollbarSize;
+
+    if (ImGui::GetScrollMaxX() == 0.0f)
+      avail_height -= ImGui::GetStyle().ScrollbarSize;
+
+    // Fill the content area
+    if (contentAspectRatio > frameAspectRatio)
+      avail_width  = avail_height * contentAspectRatio;
+    else // if (contentAspectRatio < frameAspectRatio)
+      avail_height = avail_width / contentAspectRatio;
+
+    /* Original (SKIF) implementation that changes the coordinates
+     *  This results in a lack of scrollbars, preventing scrolling
+    
     // Crop wider aspect ratios by their width
     if (contentAspectRatio > frameAspectRatio)
     {
@@ -395,13 +412,12 @@ GetCurrentAspectRatio (image_s& image)
       image.uv0.y = 0.f - diff.y;
       image.uv1.y = 1.f + diff.y;
     }
+    */
   }
 
   // Fit
   else if (_registry.iImageScaling == 2)
   {
-    // Requires reducing the size of avail_size
-    //   as the actual ImGui element has to be center-aligned
     if (contentAspectRatio > frameAspectRatio)
       avail_height = avail_width / contentAspectRatio;
     else
@@ -412,6 +428,13 @@ GetCurrentAspectRatio (image_s& image)
   else if (_registry.iImageScaling == 3)
   {
     // Do nothing -- this cases the image to be stretched
+  }
+
+  // Cache the current image scaling _and_ reset the scroll center
+  if (last_scaling != _registry.iImageScaling)
+  {
+    last_scaling    = _registry.iImageScaling;
+    resetScrollCenter = true;
   }
 
   PLOG_VERBOSE_IF(! ImGui::IsAnyMouseDown()) // Suppress logging while the mouse is down (e.g. window is being resized)
@@ -437,7 +460,7 @@ GetCurrentAspectRatio (image_s& image)
 void
 SKIF_UI_Tab_DrawViewer (void)
 {
-  extern bool coverFadeActive;
+  extern bool imageFadeActive;
 
   static SKIF_CommonPathsCache& _path_cache = SKIF_CommonPathsCache::GetInstance ( );
   static SKIF_RegistrySettings& _registry   = SKIF_RegistrySettings::GetInstance ( );
@@ -519,89 +542,83 @@ SKIF_UI_Tab_DrawViewer (void)
   static int    queuePosGameCover  = 0;
   static char   cstrLabelLoading[] = "...";
   static char   cstrLabelMissing[] = "Drop an image...";
-  bool          isCoverHovered = false;
+  bool          isImageHovered = false;
 
-  ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2());
-  ImGui::PushStyleVar (ImGuiStyleVar_FramePadding, ImVec2());
-  bool isViewer = ImGui::BeginChild ("Child Frame", ImGui::GetContentRegionAvail(), ImGuiChildFlags_AutoResizeX | ImGuiChildFlags_AutoResizeY);
-  ImGui::PopStyleVar (2);
+  ImVec2 originalPos    = ImGui::GetCursorPos ( );
+         originalPos.x -= 1.0f * SKIF_ImGui_GlobalDPIScale;
 
-  if (isViewer)
+  if (loadImage)
   {
+    // A new cover is meant to be loaded, so don't do anything for now...
+  }
 
-    ImVec2 originalPos    = ImGui::GetCursorPos ( );
-           originalPos.x -= 1.0f * SKIF_ImGui_GlobalDPIScale;
-
-    if (loadImage)
-    {
-      // A new cover is meant to be loaded, so don't do anything for now...
-    }
-
-    else if (tryingToLoadImage)
-    {
-      ImGui::SetCursorPos (ImVec2 (
-        originalPos.x + (sizeCover.x / 2) * SKIF_ImGui_GlobalDPIScale - ImGui::CalcTextSize (cstrLabelLoading).x / 2,
-        originalPos.y + (sizeCover.y / 2) * SKIF_ImGui_GlobalDPIScale - ImGui::CalcTextSize (cstrLabelLoading).y / 2));
-      ImGui::TextDisabled (  cstrLabelLoading);
-    }
+  else if (tryingToLoadImage)
+  {
+    ImGui::SetCursorPos (ImVec2 (
+      originalPos.x + (sizeCover.x / 2) * SKIF_ImGui_GlobalDPIScale - ImGui::CalcTextSize (cstrLabelLoading).x / 2,
+      originalPos.y + (sizeCover.y / 2) * SKIF_ImGui_GlobalDPIScale - ImGui::CalcTextSize (cstrLabelLoading).y / 2));
+    ImGui::TextDisabled (  cstrLabelLoading);
+  }
   
-    else if (textureLoadQueueLength.load() == queuePosGameCover && cover.pTexSRV.p == nullptr)
-    {
-      ImGui::SetCursorPos (ImVec2 (
-        originalPos.x + (sizeCover.x / 2) * SKIF_ImGui_GlobalDPIScale - ImGui::CalcTextSize (cstrLabelMissing).x / 2,
-        originalPos.y + (sizeCover.y / 2) * SKIF_ImGui_GlobalDPIScale - ImGui::CalcTextSize (cstrLabelMissing).y / 2));
-      ImGui::TextDisabled (  cstrLabelMissing);
-    }
+  else if (textureLoadQueueLength.load() == queuePosGameCover && cover.pTexSRV.p == nullptr)
+  {
+    ImGui::SetCursorPos (ImVec2 (
+      originalPos.x + (sizeCover.x / 2) * SKIF_ImGui_GlobalDPIScale - ImGui::CalcTextSize (cstrLabelMissing).x / 2,
+      originalPos.y + (sizeCover.y / 2) * SKIF_ImGui_GlobalDPIScale - ImGui::CalcTextSize (cstrLabelMissing).y / 2));
+    ImGui::TextDisabled (  cstrLabelMissing);
+  }
 
-    else if (cover    .pTexSRV.p == nullptr &&
-             cover_old.pTexSRV.p == nullptr)
-    {
-      ImGui::SetCursorPos (ImVec2 (
-        originalPos.x + (sizeCover.x / 2) * SKIF_ImGui_GlobalDPIScale - ImGui::CalcTextSize (cstrLabelMissing).x / 2,
-        originalPos.y + (sizeCover.y / 2) * SKIF_ImGui_GlobalDPIScale - ImGui::CalcTextSize (cstrLabelMissing).y / 2));
-      ImGui::TextDisabled (  cstrLabelMissing);
-    }
+  else if (cover    .pTexSRV.p == nullptr &&
+           cover_old.pTexSRV.p == nullptr)
+  {
+    ImGui::SetCursorPos (ImVec2 (
+      originalPos.x + (sizeCover.x / 2) * SKIF_ImGui_GlobalDPIScale - ImGui::CalcTextSize (cstrLabelMissing).x / 2,
+      originalPos.y + (sizeCover.y / 2) * SKIF_ImGui_GlobalDPIScale - ImGui::CalcTextSize (cstrLabelMissing).y / 2));
+    ImGui::TextDisabled (  cstrLabelMissing);
+  }
 
-    ImGui::SetCursorPos (originalPos);
+  ImGui::SetCursorPos (originalPos);
 
-    float fGammaCorrectedTint = 
-      ((! _registry._RendererHDREnabled && _registry.iSDRMode == 2) || 
-       (  _registry._RendererHDREnabled && _registry.iHDRMode == 2))
-          ? AdjustAlpha (fTint)
-          : fTint;
+  float fGammaCorrectedTint = 
+    ((! _registry._RendererHDREnabled && _registry.iSDRMode == 2) || 
+      (  _registry._RendererHDREnabled && _registry.iHDRMode == 2))
+        ? AdjustAlpha (fTint)
+        : fTint;
 
-    // Display previous fading out cover
-    if (cover_old.pTexSRV.p != nullptr && fAlphaPrev > 0.0f)
-    {
+  // Display previous fading out cover
+  if (cover_old.pTexSRV.p != nullptr && fAlphaPrev > 0.0f)
+  {
+    if (sizeCover_old.x < ImGui::GetContentRegionAvail().x)
       ImGui::SetCursorPosX ((ImGui::GetContentRegionAvail().x - sizeCover_old.x * SKIF_ImGui_GlobalDPIScale) * 0.5f);
+    if (sizeCover_old.y < ImGui::GetContentRegionAvail().y)
       ImGui::SetCursorPosY ((ImGui::GetContentRegionAvail().y - sizeCover_old.y * SKIF_ImGui_GlobalDPIScale) * 0.5f);
 
-      SKIF_ImGui_OptImage  (cover_old.pTexSRV.p,
-                                                        ImVec2 (sizeCover_old.x * SKIF_ImGui_GlobalDPIScale,
-                                                                sizeCover_old.y * SKIF_ImGui_GlobalDPIScale),
-                                                        cover_old.uv0, // Top Left coordinates
-                                                        cover_old.uv1, // Bottom Right coordinates
-                                      (_registry._StyleLightMode) ? ImVec4 (1.0f, 1.0f, 1.0f, fGammaCorrectedTint * AdjustAlpha (fAlphaPrev))  : ImVec4 (fTint, fTint, fTint, fAlphaPrev) // Alpha transparency
-      );
-
-      ImGui::SetCursorPos (originalPos);
-    }
-
-    ImGui::SetCursorPosX ((ImGui::GetContentRegionAvail().x - sizeCover.x * SKIF_ImGui_GlobalDPIScale) * 0.5f);
-    ImGui::SetCursorPosY ((ImGui::GetContentRegionAvail().y - sizeCover.y * SKIF_ImGui_GlobalDPIScale) * 0.5f);
-
-    // Display game cover image
-    SKIF_ImGui_OptImage  (cover.pTexSRV.p,
-                                                      ImVec2 (sizeCover.x * SKIF_ImGui_GlobalDPIScale,
-                                                              sizeCover.y * SKIF_ImGui_GlobalDPIScale),
-                                                      cover.uv0, // Top Left coordinates
-                                                      cover.uv1, // Bottom Right coordinates
-                                    (_registry._StyleLightMode) ? ImVec4 (1.0f, 1.0f, 1.0f, fGammaCorrectedTint * AdjustAlpha (fAlpha))  : ImVec4 (fTint, fTint, fTint, fAlpha) // Alpha transparency (2024-01-01, removed fGammaCorrectedTint * fAlpha for the light style)
+    SKIF_ImGui_OptImage  (cover_old.pTexSRV.p,
+                                                      ImVec2 (sizeCover_old.x * SKIF_ImGui_GlobalDPIScale,
+                                                              sizeCover_old.y * SKIF_ImGui_GlobalDPIScale),
+                                                      cover_old.uv0, // Top Left coordinates
+                                                      cover_old.uv1, // Bottom Right coordinates
+                                    (_registry._StyleLightMode) ? ImVec4 (1.0f, 1.0f, 1.0f, fGammaCorrectedTint * AdjustAlpha (fAlphaPrev))  : ImVec4 (fTint, fTint, fTint, fAlphaPrev) // Alpha transparency
     );
 
-    isCoverHovered = ImGui::IsItemHovered();
+    ImGui::SetCursorPos (originalPos);
   }
-  ImGui::EndChild             ( );
+
+  if (sizeCover.x < ImGui::GetContentRegionAvail().x)
+    ImGui::SetCursorPosX ((ImGui::GetContentRegionAvail().x - sizeCover.x * SKIF_ImGui_GlobalDPIScale) * 0.5f);
+  if (sizeCover.y < ImGui::GetContentRegionAvail().y)
+    ImGui::SetCursorPosY ((ImGui::GetContentRegionAvail().y - sizeCover.y * SKIF_ImGui_GlobalDPIScale) * 0.5f);
+
+  // Display game cover image
+  SKIF_ImGui_OptImage  (cover.pTexSRV.p,
+                                                    ImVec2 (sizeCover.x * SKIF_ImGui_GlobalDPIScale,
+                                                            sizeCover.y * SKIF_ImGui_GlobalDPIScale),
+                                                    cover.uv0, // Top Left coordinates
+                                                    cover.uv1, // Bottom Right coordinates
+                                  (_registry._StyleLightMode) ? ImVec4 (1.0f, 1.0f, 1.0f, fGammaCorrectedTint * AdjustAlpha (fAlpha))  : ImVec4 (fTint, fTint, fTint, fAlpha) // Alpha transparency (2024-01-01, removed fGammaCorrectedTint * fAlpha for the light style)
+  );
+
+  isImageHovered = ImGui::IsItemHovered();
 
 #pragma endregion
 
@@ -780,6 +797,7 @@ SKIF_UI_Tab_DrawViewer (void)
       if (currentQueueLength == queuePos)
       {
         PLOG_DEBUG << "Texture is live! Swapping it in.";
+
         cover.width   = _data->image.width;
         cover.height  = _data->image.height;
         cover.uv0     = _data->image.uv0;
@@ -900,7 +918,7 @@ SKIF_UI_Tab_DrawViewer (void)
         incTick = true;
       }
 
-      coverFadeActive = true;
+      imageFadeActive = true;
     }
 
     // Fade out the old one
@@ -912,7 +930,7 @@ SKIF_UI_Tab_DrawViewer (void)
         incTick     = true;
       }
 
-      coverFadeActive = true;
+      imageFadeActive = true;
     }
   }
 
@@ -920,7 +938,7 @@ SKIF_UI_Tab_DrawViewer (void)
 
   if (_registry.iDarkenImages == 2)
   {
-    if (isCoverHovered && fTint < 1.0f)
+    if (isImageHovered && fTint < 1.0f)
     {
       if (current_time - timeLastTick > 15)
       {
@@ -928,10 +946,10 @@ SKIF_UI_Tab_DrawViewer (void)
         incTick = true;
       }
 
-      coverFadeActive = true;
+      imageFadeActive = true;
     }
 
-    else if (! isCoverHovered && fTint > fTintMin)
+    else if (! isImageHovered && fTint > fTintMin)
     {
       if (current_time - timeLastTick > 15)
       {
@@ -939,7 +957,7 @@ SKIF_UI_Tab_DrawViewer (void)
         incTick = true;
       }
 
-      coverFadeActive = true;
+      imageFadeActive = true;
     }
   }
 
@@ -948,6 +966,15 @@ SKIF_UI_Tab_DrawViewer (void)
     timeLastTick = current_time;
 
   // END FADE/DIM LOGIC
+
+  // Reset scroll (center-align the scroll)
+  if (resetScrollCenter)
+  {
+    resetScrollCenter = false;
+
+    ImGui::SetScrollHereX ( );
+    ImGui::SetScrollHereY ( );
+  }
 
   // In case of a device reset, unload all currently loaded textures
   if (invalidatedDevice == 1)

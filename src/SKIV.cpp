@@ -89,7 +89,7 @@ DWORD invalidatedFonts          = 0;
 DWORD invalidatedDevice         = 0;
 bool  startedMinimized          = false;
 bool  msgDontRedraw             = false;
-bool  coverFadeActive           = false;
+bool  imageFadeActive           = false;
 std::atomic<bool> SKIF_Shutdown = false;
 bool  SKIF_NoInternet           = false;
 int   SKIF_ExitCode             = 0;
@@ -185,10 +185,6 @@ void                CleanupDeviceD3D                          (void);
 LRESULT WINAPI      SKIF_WndProc                              (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 LRESULT WINAPI      SKIF_Notify_WndProc                       (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 void                SKIF_Initialize                           (LPWSTR lpCmdLine);
-
-CHandle hInjectAck       (0); // Signalled when injection service should be stopped
-CHandle hInjectAckEx     (0); // Signalled when a successful injection occurs (minimizes SKIF)
-CHandle hInjectExitAckEx (0); // Signalled when an injected game exits (restores SKIF)
 
 // Holds current global DPI scaling, 1.0f == 100%, 1.5f == 150%.
 float SKIF_ImGui_GlobalDPIScale      = 1.0f;
@@ -1075,7 +1071,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
     SKIF_Util_RegisterHotKeyHDRToggle ( );
 
     // Register service (auto-stop) hotkey
-    SKIF_Util_RegisterHotKeySVCTemp   ( );
+    //SKIF_Util_RegisterHotKeySVCTemp   ( );
   }
 
   PLOG_INFO << "Initializing updater...";
@@ -1091,7 +1087,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
   {
     // Reset on each frame
     SKIF_MouseDragMoveAllowed = true;
-    coverFadeActive           = false; // Assume there's no cover fade effect active
+    imageFadeActive           = false; // Assume there's no cover fade effect active
     msg                       = { };
     static UINT uiLastMsg     = 0x0;
 
@@ -1347,6 +1343,9 @@ wWinMain ( _In_     HINSTANCE hInstance,
     bool _WantUpdateMonitors =
       SKIF_ImGui_ImplWin32_WantUpdateMonitors (    );
 
+    // Reset the state of tracked scrollbars
+    //SKIF_ImGui_UpdateScrollbarState ( );
+
     // Start the Dear ImGui frame
     ImGui_ImplDX11_NewFrame  (); // (Re)create individual swapchain windows
     ImGui_ImplWin32_NewFrame (); // Handle input
@@ -1583,11 +1582,11 @@ wWinMain ( _In_     HINSTANCE hInstance,
       if (SKIF_Tab_Selected == UITab_Viewer ||
           SKIF_Tab_ChangeTo == UITab_Viewer)
       {
-        ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2());
         ImGui::PushStyleVar (ImGuiStyleVar_FramePadding, ImVec2());
-        SKIF_ImGui_BeginTabChildFrame ();
-        ImGui::PopStyleVar(2);
+        bool show = SKIF_ImGui_BeginMainChildFrame ( );
+        ImGui::PopStyleVar  ( );
 
+        /*
         if (! _registry.bFirstLaunch)
         {
           // Select the About tab on first launch
@@ -1597,6 +1596,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
           // Store in the registry so this only occur once.
           _registry.regKVFirstLaunch.putData(_registry.bFirstLaunch);
         }
+        */
 
         extern float fTint;
         if (SKIF_Tab_ChangeTo == UITab_Viewer)
@@ -1606,7 +1606,15 @@ wWinMain ( _In_     HINSTANCE hInstance,
             fTint = 0.75f;
         }
 
-        SKIF_UI_Tab_DrawViewer ( );
+        if (show)
+        {
+          SKIF_UI_Tab_DrawViewer ( );
+          
+          SKIF_ImGui_AutoScroll  (true, SKIF_ImGuiAxis_Both);
+          SKIF_ImGui_UpdateScrollbarState ( );
+
+          ImGui::EndChild        ( );
+        }
 
         if (SKIF_Tab_ChangeTo == UITab_Viewer)
         {
@@ -1614,8 +1622,6 @@ wWinMain ( _In_     HINSTANCE hInstance,
           SKIF_Tab_Selected = UITab_Viewer;
           SKIF_Tab_ChangeTo = UITab_None;
         }
-
-        ImGui::EndChild         ( );
       }
 
       // Change to Viewer tab on the next frame if a drop occurs on another tab
@@ -1627,30 +1633,34 @@ wWinMain ( _In_     HINSTANCE hInstance,
       // TAB: Settings
       if (SKIF_Tab_Selected == UITab_Settings ||
           SKIF_Tab_ChangeTo == UITab_Settings)
+
       {
-        ImGui::Indent   ( );
-        ImGui::ItemSize (
-          ImVec2 (ImGui::GetStyle().IndentSpacing,
-                  ImGui::GetStyle().IndentSpacing)
-        );
+        // Refresh things when visiting from another tab or when forced
+        if (SKIF_Tab_ChangeTo == UITab_Settings || RefreshSettingsTab)
+          SKIF_Util_IsHDRActive (true);
 
-        SKIF_ImGui_BeginTabChildFrame ();
+        ImGui::PushStyleVar (ImGuiStyleVar_FramePadding, ImVec2 (15.0f, 15.0f) * SKIF_ImGui_GlobalDPIScale);
+        bool show = SKIF_ImGui_BeginMainChildFrame ( );
+        ImGui::PopStyleVar  ( );
 
-        SKIF_UI_Tab_DrawSettings ( );
+        if (show)
+        {
+          SKIF_UI_Tab_DrawSettings ( );
 
-        // Engages auto-scroll mode (left click drag on touch + middle click drag on non-touch)
-        SKIF_ImGui_AutoScroll  (true);
+          SKIF_ImGui_AutoScroll  (true, SKIF_ImGuiAxis_Both);
+          SKIF_ImGui_UpdateScrollbarState ( );
+
+          ImGui::EndChild ( );
+        }
 
         if (SKIF_Tab_ChangeTo == UITab_Settings)
         {
           PLOG_DEBUG << "Switched to tab: Settings";
-          SKIF_Tab_Selected = UITab_Settings;
-          SKIF_Tab_ChangeTo = UITab_None;
+          SKIF_Tab_Selected  = UITab_Settings;
+          SKIF_Tab_ChangeTo  = UITab_None;
+          RefreshSettingsTab = false;
 
         }
-
-        ImGui::EndChild ( );
-        ImGui::Unindent ( );
       }
 
 
@@ -1659,7 +1669,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
       if (SKIF_Tab_Selected == UITab_About ||
           SKIF_Tab_ChangeTo == UITab_About)
       {
-        SKIF_ImGui_BeginTabChildFrame ();
+        SKIF_ImGui_BeginMainChildFrame ( );
 
         SKIF_UI_Tab_DrawAbout( );
 
@@ -1805,17 +1815,21 @@ wWinMain ( _In_     HINSTANCE hInstance,
       if (_registry.bGhost)
       {
         static ImVec2 shelly_movable_area = ImVec2 (
-           wnd_minimum_size.x - 68.0f * SKIF_ImGui_GlobalDPIScale, // Minimum allowed size for the whole window minus the top right window buttons
-           24.0f * SKIF_ImGui_GlobalDPIScale
+           wnd_minimum_size.x,
+           ImGui::CalcTextSize (ICON_FA_GHOST).y + 4.0f * SKIF_ImGui_GlobalDPIScale
         );
 
-
         ImGui::SetCursorPos (ImVec2 (
-            10.0f * SKIF_ImGui_GlobalDPIScale,
-             5.0f * SKIF_ImGui_GlobalDPIScale
+            (ImGui::GetWindowContentRegionMax().x - shelly_movable_area.x) / 2.0f,
+             10.0f * SKIF_ImGui_GlobalDPIScale
         ));
+        
+        ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2());
+        ImGui::PushStyleVar (ImGuiStyleVar_FramePadding,  ImVec2());
+        bool shelly_show = ImGui::BeginChild ("###SKIV_SHELLY", shelly_movable_area, ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar);
+        ImGui::PopStyleVar  (2);
 
-        if (ImGui::BeginChild("###SKIV_SHELLY", shelly_movable_area, ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground))
+        if (shelly_show)
         {
           SKIF_UI_DrawShellyTheGhost ( );
 
@@ -1839,9 +1853,12 @@ wWinMain ( _In_     HINSTANCE hInstance,
         ImVec2 prevCursorPos =
           ImGui::GetCursorPos ();
 
+        constexpr float distanceFromEdge = 6.0f;
+        float distanceFromScrollbar = (SKIF_ImGui_IsScrollbarY()) ? ImGui::GetStyle().ScrollbarSize : 0.0f;
+
         ImGui::SetCursorPos (
-          ImVec2 ( (ImGui::GetWindowContentRegionMax().x - ImGui::GetStyle().FrameBorderSize * 2 - window_btn_size.x),
-                     ((6.0f * SKIF_ImGui_GlobalDPIScale) - ImGui::GetStyle().FrameBorderSize * 2) )
+          ImVec2 ( (ImGui::GetWindowContentRegionMax().x - ImGui::GetStyle().FrameBorderSize * 2 - window_btn_size.x - ((distanceFromEdge + distanceFromScrollbar) * SKIF_ImGui_GlobalDPIScale)),
+                     ((distanceFromEdge * SKIF_ImGui_GlobalDPIScale) - ImGui::GetStyle().FrameBorderSize * 2) )
         );
 
         if (ImGui::BeginChild ("###SKIV_WINDOW_BUTTONS", window_btn_size, ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground))
@@ -2110,8 +2127,6 @@ wWinMain ( _In_     HINSTANCE hInstance,
             std::wstring args = SK_FormatStringW (LR"(/VerySilent /NoRestart /Shortcuts=false /DIR="%ws")", _path_cache.skiv_install);
 
             SKIF_Util_OpenURI (updateRoot + _updater.GetResults().filename, SW_SHOWNORMAL, L"OPEN", args.c_str());
-
-            //bExitOnInjection = true; // Used to close SKIF once the service had been stopped
 
             //Sleep(50);
             //bKeepProcessAlive = false;
@@ -2552,7 +2567,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
       renderAdditionalFrames = ImGui::GetFrameCount ( ) + 3; // If we transitioned away from a pending service state
     else if (1.0f > ImGui::GetCurrentContext()->DimBgRatio && ImGui::GetCurrentContext()->DimBgRatio > 0.0f)
       renderAdditionalFrames = ImGui::GetFrameCount ( ) + 3; // If the background is currently currently undergoing a fade effect
-    else if (SKIF_Tab_Selected == UITab_Viewer && coverFadeActive)
+    else if (SKIF_Tab_Selected == UITab_Viewer && imageFadeActive)
       renderAdditionalFrames = ImGui::GetFrameCount ( ) + 3; // If the cover is currently undergoing a fade effect
     else if (addAdditionalFrames > 0)
       renderAdditionalFrames = ImGui::GetFrameCount ( ) + addAdditionalFrames; // Used when the cover is currently loading in, or the update check just completed
@@ -3199,28 +3214,6 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         ShowWindowAsync (SKIF_ImGui_hWnd, SW_MINIMIZE);
       break;
 
-    case WM_SKIF_START:
-      break;
-
-    case WM_SKIF_TEMPSTART:
-    case WM_SKIF_TEMPSTARTEXIT:
-      break;
-
-    case WM_SKIF_STOP:
-      break;
-
-    case WM_SKIF_REFRESHGAMES:
-      RepopulateGamesWasSet = SKIF_Util_timeGetTime();
-      RepopulateGames = true;
-      SelectNewSKIFGame = (uint32_t)wParam;
-
-      SetTimer (SKIF_Notify_hWnd,
-          IDT_REFRESH_GAMES,
-          50,
-          (TIMERPROC) NULL
-      );
-      break;
-
     case WM_SKIF_REFRESHFOCUS:
       // Ensure the gamepad input thread knows what state we are actually in
       if (SKIF_ImGui_IsFocused ( ))
@@ -3239,7 +3232,12 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
       
       // Empty working set after the cover has finished loading
       if (! tryingToLoadImage)
+      {
         SKIF_Util_CompactWorkingSet ( );
+
+        extern bool resetScrollCenter;
+        resetScrollCenter = true;
+      }
       break;
 
     case WM_SKIF_REFRESHCOVER:
@@ -3339,12 +3337,6 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
     // Custom refresh window messages
     case WM_SKIF_POWERMODE:
-      break;
-    case WM_SKIF_EVENT_SIGNAL:
-        addAdditionalFrames += 3;
-
-        if ((HWND)wParam != nullptr)
-          hWndForegroundFocusOnExit = (HWND)wParam;
       break;
 
     case WM_TIMER:
@@ -3496,16 +3488,6 @@ SKIF_Notify_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
     case WM_COMMAND:
       switch (LOWORD(wParam))
       {
-        case SKIF_NOTIFY_START:
-          //PostMessage (SKIF_hWnd, (_registry.bStopOnInjection) ? WM_SKIF_TEMPSTART : WM_SKIF_START, 0, 0);
-          PostMessage (SKIF_Notify_hWnd, WM_SKIF_START, 0, 0);
-          break;
-        case SKIF_NOTIFY_STARTWITHSTOP:
-          PostMessage (SKIF_Notify_hWnd, WM_SKIF_TEMPSTART, 0, 0);
-          break;
-        case SKIF_NOTIFY_STOP:
-          PostMessage (SKIF_Notify_hWnd, WM_SKIF_STOP, 0, 0);
-          break;
         case SKIF_NOTIFY_RUN_UPDATER:
           PostMessage (SKIF_Notify_hWnd, WM_SKIF_RUN_UPDATER, 0, 0);
           break;

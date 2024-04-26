@@ -498,7 +498,7 @@ void SKIF_UI_DrawShellyTheGhost (void)
   static SKIF_RegistrySettings& _registry = SKIF_RegistrySettings::GetInstance ( );
 
   // Required for subsequent GetCursorPosX() calls to get the right pos, as otherwise it resets to 0.0f
-  ImGui::SameLine ( );
+  //ImGui::SameLine ( );
 
   // Prepare Shelly color and Y position
   const  float fGhostTimeStep = 0.01f;
@@ -516,7 +516,7 @@ void SKIF_UI_DrawShellyTheGhost (void)
     vGhostColor = vGhostColor * ImVec4 (0.8f, 0.8f, 0.8f, 1.0f);
 
   // Non-static as it needs to be updated constantly due to mixed-DPI monitor configs
-  float fMaxPos = ImGui::GetContentRegionMax ( ).x - ImGui::GetCursorPosX ( ) - 4.0f * SKIF_ImGui_GlobalDPIScale;
+  float fMaxPos = ImGui::GetContentRegionAvail ( ).x - ImGui::GetCursorPosX ( ) - ImGui::CalcTextSize (ICON_FA_GHOST).x;
 
   static float direction = -0.33f; // Each frame takes a 0.33% step in either direction
   static float fMinPos   =  0.0f;
@@ -535,7 +535,7 @@ void SKIF_UI_DrawShellyTheGhost (void)
   ImGui::SameLine    (0.0f, fActPos);
   
   ImGui::SetCursorPosY (
-    ImGui::GetCursorPosY ( ) - (ImGui::GetStyle().FrameBorderSize) + fGhostYPos
+    ImGui::GetCursorPosY ( ) + fGhostYPos
                         );
 
   ImGui::TextColored (vGhostColor, ICON_FA_GHOST);

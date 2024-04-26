@@ -54,12 +54,6 @@ constexpr UINT           SKIF_NTOAST_SERVICE    =                1; // Appears c
 // Cmd line argument triggers
 constexpr UINT           WM_SKIF_MINIMIZE       = WM_USER +  0x512;
 constexpr UINT           WM_SKIF_RESTORE        = WM_USER +  0x513;
-constexpr UINT           WM_SKIF_START          = WM_USER + 0x1024;
-constexpr UINT           WM_SKIF_TEMPSTART      = WM_USER + 0x1025;
-constexpr UINT           WM_SKIF_TEMPSTARTEXIT  = WM_USER + 0x1026;
-constexpr UINT           WM_SKIF_STOP           = WM_USER + 0x2048;
-constexpr UINT           WM_SKIF_LAUNCHER       = WM_USER + 0x1027; // Another instance of SKIF is as a launcher -- signals the main instance to start the service
-constexpr UINT           WM_SKIF_REFRESHGAMES   = WM_USER + 0x1028; // AddGame="<path-to-game" cmd line argument
 constexpr UINT           WM_SKIF_RUN_UPDATER    = WM_USER + 0x1029; // Triggers a check for updates
 
 // Thread workers
@@ -72,14 +66,10 @@ constexpr UINT           WM_SKIF_REFRESHFOCUS   = WM_USER + 0x2054; // Trigger a
 
 // Callbacks / Event Signals
 constexpr UINT           WM_SKIF_POWERMODE      = WM_USER + 0x2101; // Used to signal that a new effective power mode has been applied
-constexpr UINT           WM_SKIF_EVENT_SIGNAL   = WM_USER + 0x3000; // Window message Special K posts when it has signaled one of the various acknowledgement events
 
 // Shell messages (registered window messages)
 extern    UINT           SHELL_TASKBAR_RESTART;                     // TaskbarCreated
 extern    UINT           SHELL_TASKBAR_BUTTON_CREATED;              // TaskbarButtonCreated
-
-constexpr  int           SKIF_HotKey_HDR        = 1337; // Win + Ctrl + Shift + H
-constexpr  int           SKIF_HotKey_SVC        = 1338; // Win + Shift + Insert
 
 constexpr DWORD          SKIV_CDS_STRING        = 13;
 
