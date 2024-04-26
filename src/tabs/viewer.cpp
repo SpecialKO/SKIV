@@ -910,7 +910,8 @@ SKIF_UI_Tab_DrawViewer (void)
   if (_registry.bFadeCovers)
   {
     // Fade in the new cover
-    if (fAlpha < 1.0f && cover.pTexSRV.p != nullptr)
+    if (fAlpha < 1.0f && cover.pTexSRV.p != nullptr
+        && cover_old.pTexSRV.p == nullptr) // But only when the old has faded out (fixes sudden image scroll pos reset)
     {
       if (current_time - timeLastTick > 15)
       {
@@ -968,7 +969,7 @@ SKIF_UI_Tab_DrawViewer (void)
   // END FADE/DIM LOGIC
 
   // Reset scroll (center-align the scroll)
-  if (resetScrollCenter)
+  if (resetScrollCenter && cover_old.pTexSRV.p == nullptr)
   {
     resetScrollCenter = false;
 
