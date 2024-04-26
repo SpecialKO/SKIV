@@ -339,7 +339,7 @@ GetCurrentAspectRatio (image_s& image)
   static SKIF_RegistrySettings& _registry   = SKIF_RegistrySettings::GetInstance ( );
   static int last_scaling = 0;
 
-  ImVec2 avail_size = ImGui::GetContentRegionAvail();
+  ImVec2 avail_size = ImGui::GetContentRegionAvail ( ) / SKIF_ImGui_GlobalDPIScale;
 
   // Clear any cached data on image changes
   if (image.pTexSRV.p == nullptr || image.height == 0 || image.width  == 0)
@@ -532,8 +532,8 @@ SKIF_UI_Tab_DrawViewer (void)
 
 #pragma endregion
 
-  ImVec2 sizeCover     = GetCurrentAspectRatio (cover);
-  ImVec2 sizeCover_old = GetCurrentAspectRatio (cover_old);
+  ImVec2 sizeCover     = GetCurrentAspectRatio (cover)     * SKIF_ImGui_GlobalDPIScale;
+  ImVec2 sizeCover_old = GetCurrentAspectRatio (cover_old) * SKIF_ImGui_GlobalDPIScale;
 
   // From now on ImGui UI calls starts being made...
 
@@ -555,16 +555,16 @@ SKIF_UI_Tab_DrawViewer (void)
   else if (tryingToLoadImage)
   {
     ImGui::SetCursorPos (ImVec2 (
-      originalPos.x + (sizeCover.x / 2) * SKIF_ImGui_GlobalDPIScale - ImGui::CalcTextSize (cstrLabelLoading).x / 2,
-      originalPos.y + (sizeCover.y / 2) * SKIF_ImGui_GlobalDPIScale - ImGui::CalcTextSize (cstrLabelLoading).y / 2));
+      originalPos.x + (sizeCover.x / 2) - ImGui::CalcTextSize (cstrLabelLoading).x / 2,
+      originalPos.y + (sizeCover.y / 2) - ImGui::CalcTextSize (cstrLabelLoading).y / 2));
     ImGui::TextDisabled (  cstrLabelLoading);
   }
   
   else if (textureLoadQueueLength.load() == queuePosGameCover && cover.pTexSRV.p == nullptr)
   {
     ImGui::SetCursorPos (ImVec2 (
-      originalPos.x + (sizeCover.x / 2) * SKIF_ImGui_GlobalDPIScale - ImGui::CalcTextSize (cstrLabelMissing).x / 2,
-      originalPos.y + (sizeCover.y / 2) * SKIF_ImGui_GlobalDPIScale - ImGui::CalcTextSize (cstrLabelMissing).y / 2));
+      originalPos.x + (sizeCover.x / 2) - ImGui::CalcTextSize (cstrLabelMissing).x / 2,
+      originalPos.y + (sizeCover.y / 2) - ImGui::CalcTextSize (cstrLabelMissing).y / 2));
     ImGui::TextDisabled (  cstrLabelMissing);
   }
 
@@ -572,8 +572,8 @@ SKIF_UI_Tab_DrawViewer (void)
            cover_old.pTexSRV.p == nullptr)
   {
     ImGui::SetCursorPos (ImVec2 (
-      originalPos.x + (sizeCover.x / 2) * SKIF_ImGui_GlobalDPIScale - ImGui::CalcTextSize (cstrLabelMissing).x / 2,
-      originalPos.y + (sizeCover.y / 2) * SKIF_ImGui_GlobalDPIScale - ImGui::CalcTextSize (cstrLabelMissing).y / 2));
+      originalPos.x + (sizeCover.x / 2) - ImGui::CalcTextSize (cstrLabelMissing).x / 2,
+      originalPos.y + (sizeCover.y / 2) - ImGui::CalcTextSize (cstrLabelMissing).y / 2));
     ImGui::TextDisabled (  cstrLabelMissing);
   }
 
@@ -581,7 +581,7 @@ SKIF_UI_Tab_DrawViewer (void)
 
   float fGammaCorrectedTint = 
     ((! _registry._RendererHDREnabled && _registry.iSDRMode == 2) || 
-      (  _registry._RendererHDREnabled && _registry.iHDRMode == 2))
+      ( _registry._RendererHDREnabled && _registry.iHDRMode == 2))
         ? AdjustAlpha (fTint)
         : fTint;
 
@@ -589,13 +589,13 @@ SKIF_UI_Tab_DrawViewer (void)
   if (cover_old.pTexSRV.p != nullptr && fAlphaPrev > 0.0f)
   {
     if (sizeCover_old.x < ImGui::GetContentRegionAvail().x)
-      ImGui::SetCursorPosX ((ImGui::GetContentRegionAvail().x - sizeCover_old.x * SKIF_ImGui_GlobalDPIScale) * 0.5f);
+      ImGui::SetCursorPosX ((ImGui::GetContentRegionAvail().x - sizeCover_old.x) * 0.5f);
     if (sizeCover_old.y < ImGui::GetContentRegionAvail().y)
-      ImGui::SetCursorPosY ((ImGui::GetContentRegionAvail().y - sizeCover_old.y * SKIF_ImGui_GlobalDPIScale) * 0.5f);
+      ImGui::SetCursorPosY ((ImGui::GetContentRegionAvail().y - sizeCover_old.y) * 0.5f);
 
     SKIF_ImGui_OptImage  (cover_old.pTexSRV.p,
-                                                      ImVec2 (sizeCover_old.x * SKIF_ImGui_GlobalDPIScale,
-                                                              sizeCover_old.y * SKIF_ImGui_GlobalDPIScale),
+                                                      ImVec2 (sizeCover_old.x,
+                                                              sizeCover_old.y),
                                                       cover_old.uv0, // Top Left coordinates
                                                       cover_old.uv1, // Bottom Right coordinates
                                     (_registry._StyleLightMode) ? ImVec4 (1.0f, 1.0f, 1.0f, fGammaCorrectedTint * AdjustAlpha (fAlphaPrev))  : ImVec4 (fTint, fTint, fTint, fAlphaPrev) // Alpha transparency
@@ -605,14 +605,14 @@ SKIF_UI_Tab_DrawViewer (void)
   }
 
   if (sizeCover.x < ImGui::GetContentRegionAvail().x)
-    ImGui::SetCursorPosX ((ImGui::GetContentRegionAvail().x - sizeCover.x * SKIF_ImGui_GlobalDPIScale) * 0.5f);
+    ImGui::SetCursorPosX ((ImGui::GetContentRegionAvail().x - sizeCover.x) * 0.5f);
   if (sizeCover.y < ImGui::GetContentRegionAvail().y)
-    ImGui::SetCursorPosY ((ImGui::GetContentRegionAvail().y - sizeCover.y * SKIF_ImGui_GlobalDPIScale) * 0.5f);
+    ImGui::SetCursorPosY ((ImGui::GetContentRegionAvail().y - sizeCover.y) * 0.5f);
 
   // Display game cover image
   SKIF_ImGui_OptImage  (cover.pTexSRV.p,
-                                                    ImVec2 (sizeCover.x * SKIF_ImGui_GlobalDPIScale,
-                                                            sizeCover.y * SKIF_ImGui_GlobalDPIScale),
+                                                    ImVec2 (sizeCover.x,
+                                                            sizeCover.y),
                                                     cover.uv0, // Top Left coordinates
                                                     cover.uv1, // Bottom Right coordinates
                                   (_registry._StyleLightMode) ? ImVec4 (1.0f, 1.0f, 1.0f, fGammaCorrectedTint * AdjustAlpha (fAlpha))  : ImVec4 (fTint, fTint, fTint, fAlpha) // Alpha transparency (2024-01-01, removed fGammaCorrectedTint * fAlpha for the light style)
