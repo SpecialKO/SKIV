@@ -703,7 +703,7 @@ void SKIF_ImGui_BeginTabChildFrame (void)
   SKIF_ImGui_BeginChildFrame (
     frame_content_area_id,
     ImVec2 (0.0f, 0.0f),
-    ImGuiChildFlags_AlwaysUseWindowPadding, // ImGuiChildFlags_FrameStyle
+    ImGuiChildFlags_None, // ImGuiChildFlags_AlwaysUseWindowPadding, // ImGuiChildFlags_FrameStyle
     ImGuiWindowFlags_NavFlattened | ImGuiWindowFlags_NoBackground
   );
 }
@@ -1145,7 +1145,9 @@ SKIF_ImGui_SetStyle (ImGuiStyle* dst)
 
   // Override the style with a few tweaks of our own
   dst->DisabledAlpha   = 1.0f; // Disable the default 60% alpha transparency for disabled items
-  dst->WindowRounding  = 4.0F; // style.ScrollbarRounding;
+//dst->WindowPadding   = { };
+//dst->FramePadding    = { };
+  dst->WindowRounding  = 4.0F; // 4.0F; // style.ScrollbarRounding;
   dst->ChildRounding   = dst->WindowRounding;
   dst->TabRounding     = dst->WindowRounding;
   dst->FrameRounding   = dst->WindowRounding;

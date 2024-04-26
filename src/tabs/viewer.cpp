@@ -435,7 +435,7 @@ GetCurrentAspectRatio (image_s& image)
 // Main UI function
 
 void
-SKIF_UI_Tab_DrawLibrary (void)
+SKIF_UI_Tab_DrawViewer (void)
 {
   extern bool coverFadeActive;
 
@@ -515,87 +515,92 @@ SKIF_UI_Tab_DrawLibrary (void)
   // From now on ImGui UI calls starts being made...
 
 #pragma region GameCover
-
-  ImGui::BeginChild("Child Frame", ImGui::GetContentRegionAvail(), ImGuiChildFlags_AutoResizeX | ImGuiChildFlags_AutoResizeY);
-
+  
   static int    queuePosGameCover  = 0;
   static char   cstrLabelLoading[] = "...";
   static char   cstrLabelMissing[] = "Drop an image...";
+  bool          isCoverHovered = false;
 
-  ImVec2 originalPos         = ImGui::GetCursorPos ( );
-         originalPos.x -= 1.0f * SKIF_ImGui_GlobalDPIScale;
+  ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2());
+  ImGui::PushStyleVar (ImGuiStyleVar_FramePadding, ImVec2());
+  bool isViewer = ImGui::BeginChild ("Child Frame", ImGui::GetContentRegionAvail(), ImGuiChildFlags_AutoResizeX | ImGuiChildFlags_AutoResizeY);
+  ImGui::PopStyleVar (2);
 
-  if (loadImage)
+  if (isViewer)
   {
-    // A new cover is meant to be loaded, so don't do anything for now...
-  }
 
-  else if (tryingToLoadImage)
-  {
-    ImGui::SetCursorPos (ImVec2 (
-      originalPos.x + (sizeCover.x / 2) * SKIF_ImGui_GlobalDPIScale - ImGui::CalcTextSize (cstrLabelLoading).x / 2,
-      originalPos.y + (sizeCover.y / 2) * SKIF_ImGui_GlobalDPIScale - ImGui::CalcTextSize (cstrLabelLoading).y / 2));
-    ImGui::TextDisabled (  cstrLabelLoading);
-  }
+    ImVec2 originalPos    = ImGui::GetCursorPos ( );
+           originalPos.x -= 1.0f * SKIF_ImGui_GlobalDPIScale;
+
+    if (loadImage)
+    {
+      // A new cover is meant to be loaded, so don't do anything for now...
+    }
+
+    else if (tryingToLoadImage)
+    {
+      ImGui::SetCursorPos (ImVec2 (
+        originalPos.x + (sizeCover.x / 2) * SKIF_ImGui_GlobalDPIScale - ImGui::CalcTextSize (cstrLabelLoading).x / 2,
+        originalPos.y + (sizeCover.y / 2) * SKIF_ImGui_GlobalDPIScale - ImGui::CalcTextSize (cstrLabelLoading).y / 2));
+      ImGui::TextDisabled (  cstrLabelLoading);
+    }
   
-  else if (textureLoadQueueLength.load() == queuePosGameCover && cover.pTexSRV.p == nullptr)
-  {
-    ImGui::SetCursorPos (ImVec2 (
-      originalPos.x + (sizeCover.x / 2) * SKIF_ImGui_GlobalDPIScale - ImGui::CalcTextSize (cstrLabelMissing).x / 2,
-      originalPos.y + (sizeCover.y / 2) * SKIF_ImGui_GlobalDPIScale - ImGui::CalcTextSize (cstrLabelMissing).y / 2));
-    ImGui::TextDisabled (  cstrLabelMissing);
-  }
+    else if (textureLoadQueueLength.load() == queuePosGameCover && cover.pTexSRV.p == nullptr)
+    {
+      ImGui::SetCursorPos (ImVec2 (
+        originalPos.x + (sizeCover.x / 2) * SKIF_ImGui_GlobalDPIScale - ImGui::CalcTextSize (cstrLabelMissing).x / 2,
+        originalPos.y + (sizeCover.y / 2) * SKIF_ImGui_GlobalDPIScale - ImGui::CalcTextSize (cstrLabelMissing).y / 2));
+      ImGui::TextDisabled (  cstrLabelMissing);
+    }
 
-  else if (cover    .pTexSRV.p == nullptr &&
-           cover_old.pTexSRV.p == nullptr)
-  {
-    ImGui::SetCursorPos (ImVec2 (
-      originalPos.x + (sizeCover.x / 2) * SKIF_ImGui_GlobalDPIScale - ImGui::CalcTextSize (cstrLabelMissing).x / 2,
-      originalPos.y + (sizeCover.y / 2) * SKIF_ImGui_GlobalDPIScale - ImGui::CalcTextSize (cstrLabelMissing).y / 2));
-    ImGui::TextDisabled (  cstrLabelMissing);
-  }
-
-  ImGui::SetCursorPos (originalPos);
-
-  float fGammaCorrectedTint = 
-    ((! _registry._RendererHDREnabled && _registry.iSDRMode == 2) || 
-     (  _registry._RendererHDREnabled && _registry.iHDRMode == 2))
-        ? AdjustAlpha (fTint)
-        : fTint;
-
-  // Display previous fading out cover
-  if (cover_old.pTexSRV.p != nullptr && fAlphaPrev > 0.0f)
-  {
-    ImGui::SetCursorPosX ((ImGui::GetContentRegionAvail().x - sizeCover_old.x * SKIF_ImGui_GlobalDPIScale) * 0.5f);
-    ImGui::SetCursorPosY ((ImGui::GetContentRegionAvail().y - sizeCover_old.y * SKIF_ImGui_GlobalDPIScale) * 0.5f);
-
-    SKIF_ImGui_OptImage  (cover_old.pTexSRV.p,
-                                                      ImVec2 (sizeCover_old.x * SKIF_ImGui_GlobalDPIScale,
-                                                              sizeCover_old.y * SKIF_ImGui_GlobalDPIScale),
-                                                      cover_old.uv0, // Top Left coordinates
-                                                      cover_old.uv1, // Bottom Right coordinates
-                                    (_registry._StyleLightMode) ? ImVec4 (1.0f, 1.0f, 1.0f, fGammaCorrectedTint * AdjustAlpha (fAlphaPrev))  : ImVec4 (fTint, fTint, fTint, fAlphaPrev), // Alpha transparency
-                                    (_registry.bUIBorders)  ? ImGui::GetStyleColorVec4 (ImGuiCol_Border) : ImVec4 (0.0f, 0.0f, 0.0f, 0.0f)       // Border
-    );
+    else if (cover    .pTexSRV.p == nullptr &&
+             cover_old.pTexSRV.p == nullptr)
+    {
+      ImGui::SetCursorPos (ImVec2 (
+        originalPos.x + (sizeCover.x / 2) * SKIF_ImGui_GlobalDPIScale - ImGui::CalcTextSize (cstrLabelMissing).x / 2,
+        originalPos.y + (sizeCover.y / 2) * SKIF_ImGui_GlobalDPIScale - ImGui::CalcTextSize (cstrLabelMissing).y / 2));
+      ImGui::TextDisabled (  cstrLabelMissing);
+    }
 
     ImGui::SetCursorPos (originalPos);
+
+    float fGammaCorrectedTint = 
+      ((! _registry._RendererHDREnabled && _registry.iSDRMode == 2) || 
+       (  _registry._RendererHDREnabled && _registry.iHDRMode == 2))
+          ? AdjustAlpha (fTint)
+          : fTint;
+
+    // Display previous fading out cover
+    if (cover_old.pTexSRV.p != nullptr && fAlphaPrev > 0.0f)
+    {
+      ImGui::SetCursorPosX ((ImGui::GetContentRegionAvail().x - sizeCover_old.x * SKIF_ImGui_GlobalDPIScale) * 0.5f);
+      ImGui::SetCursorPosY ((ImGui::GetContentRegionAvail().y - sizeCover_old.y * SKIF_ImGui_GlobalDPIScale) * 0.5f);
+
+      SKIF_ImGui_OptImage  (cover_old.pTexSRV.p,
+                                                        ImVec2 (sizeCover_old.x * SKIF_ImGui_GlobalDPIScale,
+                                                                sizeCover_old.y * SKIF_ImGui_GlobalDPIScale),
+                                                        cover_old.uv0, // Top Left coordinates
+                                                        cover_old.uv1, // Bottom Right coordinates
+                                      (_registry._StyleLightMode) ? ImVec4 (1.0f, 1.0f, 1.0f, fGammaCorrectedTint * AdjustAlpha (fAlphaPrev))  : ImVec4 (fTint, fTint, fTint, fAlphaPrev) // Alpha transparency
+      );
+
+      ImGui::SetCursorPos (originalPos);
+    }
+
+    ImGui::SetCursorPosX ((ImGui::GetContentRegionAvail().x - sizeCover.x * SKIF_ImGui_GlobalDPIScale) * 0.5f);
+    ImGui::SetCursorPosY ((ImGui::GetContentRegionAvail().y - sizeCover.y * SKIF_ImGui_GlobalDPIScale) * 0.5f);
+
+    // Display game cover image
+    SKIF_ImGui_OptImage  (cover.pTexSRV.p,
+                                                      ImVec2 (sizeCover.x * SKIF_ImGui_GlobalDPIScale,
+                                                              sizeCover.y * SKIF_ImGui_GlobalDPIScale),
+                                                      cover.uv0, // Top Left coordinates
+                                                      cover.uv1, // Bottom Right coordinates
+                                    (_registry._StyleLightMode) ? ImVec4 (1.0f, 1.0f, 1.0f, fGammaCorrectedTint * AdjustAlpha (fAlpha))  : ImVec4 (fTint, fTint, fTint, fAlpha) // Alpha transparency (2024-01-01, removed fGammaCorrectedTint * fAlpha for the light style)
+    );
+
+    isCoverHovered = ImGui::IsItemHovered();
   }
-
-  ImGui::SetCursorPosX ((ImGui::GetContentRegionAvail().x - sizeCover.x * SKIF_ImGui_GlobalDPIScale) * 0.5f);
-  ImGui::SetCursorPosY ((ImGui::GetContentRegionAvail().y - sizeCover.y * SKIF_ImGui_GlobalDPIScale) * 0.5f);
-
-  // Display game cover image
-  SKIF_ImGui_OptImage  (cover.pTexSRV.p,
-                                                    ImVec2 (sizeCover.x * SKIF_ImGui_GlobalDPIScale,
-                                                            sizeCover.y * SKIF_ImGui_GlobalDPIScale),
-                                                    cover.uv0, // Top Left coordinates
-                                                    cover.uv1, // Bottom Right coordinates
-                                  (_registry._StyleLightMode) ? ImVec4 (1.0f, 1.0f, 1.0f, fGammaCorrectedTint * AdjustAlpha (fAlpha))  : ImVec4 (fTint, fTint, fTint, fAlpha), // Alpha transparency (2024-01-01, removed fGammaCorrectedTint * fAlpha for the light style)
-                                  (_registry.bUIBorders)  ? ImGui::GetStyleColorVec4 (ImGuiCol_Border) : ImVec4 (0.0f, 0.0f, 0.0f, 0.0f)       // Border
-  );
-
-  bool isCoverHovered = ImGui::IsItemHovered();
-
   ImGui::EndChild             ( );
 
 #pragma endregion

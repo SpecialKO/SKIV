@@ -22,4 +22,4 @@
 
 #pragma once
 
-void SKIF_UI_Tab_DrawLibrary (void);
+void SKIF_UI_Tab_DrawViewer (void);

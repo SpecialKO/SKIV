@@ -57,6 +57,7 @@
 #include <d3d11.h>
 #define DIRECTINPUT_VERSION 0x0800
 
+#include <tabs/viewer.h>
 #include <tabs/settings.h>
 
 #include <utility/registry.h>
@@ -1473,6 +1474,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
       else
         ImGui::SetNextWindowSizeConstraints (wnd_minimum_size, ImVec2 (FLT_MAX, FLT_MAX));
 
+      ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2());
       ImGui::Begin ( SKIV_WINDOW_TITLE_SHORT_A SKIV_WINDOW_HASH,
                        nullptr,
                        //ImGuiWindowFlags_NoResize          |
@@ -1483,6 +1485,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
                       // ImGuiWindowFlags_NoMove              // This was added in #8bf06af, but I am unsure why.
                       // The only comment is that it was DPI related? This prevents Ctrl+Tab from moving the window so must not be used
       );
+      ImGui::PopStyleVar ( );
 
       SK_RunOnce (ImGui::GetCurrentWindow()->HiddenFramesCannotSkipItems += 2);
 
@@ -1580,7 +1583,10 @@ wWinMain ( _In_     HINSTANCE hInstance,
       if (SKIF_Tab_Selected == UITab_Viewer ||
           SKIF_Tab_ChangeTo == UITab_Viewer)
       {
+        ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2());
+        ImGui::PushStyleVar (ImGuiStyleVar_FramePadding, ImVec2());
         SKIF_ImGui_BeginTabChildFrame ();
+        ImGui::PopStyleVar(2);
 
         if (! _registry.bFirstLaunch)
         {
@@ -1600,9 +1606,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
             fTint = 0.75f;
         }
 
-        extern void
-          SKIF_UI_Tab_DrawLibrary (void);
-          SKIF_UI_Tab_DrawLibrary (     );
+        SKIF_UI_Tab_DrawViewer ( );
 
         if (SKIF_Tab_ChangeTo == UITab_Viewer)
         {
@@ -1624,9 +1628,15 @@ wWinMain ( _In_     HINSTANCE hInstance,
       if (SKIF_Tab_Selected == UITab_Settings ||
           SKIF_Tab_ChangeTo == UITab_Settings)
       {
+        ImGui::Indent   ( );
+        ImGui::ItemSize (
+          ImVec2 (ImGui::GetStyle().IndentSpacing,
+                  ImGui::GetStyle().IndentSpacing)
+        );
+
         SKIF_ImGui_BeginTabChildFrame ();
 
-        SKIF_UI_Tab_DrawSettings( );
+        SKIF_UI_Tab_DrawSettings ( );
 
         // Engages auto-scroll mode (left click drag on touch + middle click drag on non-touch)
         SKIF_ImGui_AutoScroll  (true);
@@ -1639,7 +1649,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
         }
 
-        ImGui::EndChild         ( );
+        ImGui::EndChild ( );
+        ImGui::Unindent ( );
       }
 
 

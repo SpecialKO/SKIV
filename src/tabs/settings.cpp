@@ -40,7 +40,7 @@ SKIF_UI_Tab_DrawSettings (void)
     dwTriggerNewRefresh = 0;
   }
 
-  SKIF_ImGui_Spacing      ( );
+//SKIF_ImGui_Spacing      ( );
   
   
   ImGui::PushStyleColor   (
