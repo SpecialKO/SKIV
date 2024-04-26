@@ -532,8 +532,8 @@ SKIF_UI_Tab_DrawViewer (void)
 
 #pragma endregion
 
-  ImVec2 sizeCover     = GetCurrentAspectRatio (cover)     * SKIF_ImGui_GlobalDPIScale;
-  ImVec2 sizeCover_old = GetCurrentAspectRatio (cover_old) * SKIF_ImGui_GlobalDPIScale;
+  ImVec2 sizeCover     = GetCurrentAspectRatio (cover)     * ((_registry.iImageScaling == 0) ? 1 : SKIF_ImGui_GlobalDPIScale);
+  ImVec2 sizeCover_old = GetCurrentAspectRatio (cover_old) * ((_registry.iImageScaling == 0) ? 1 : SKIF_ImGui_GlobalDPIScale);
 
   // From now on ImGui UI calls starts being made...
 
@@ -542,39 +542,33 @@ SKIF_UI_Tab_DrawViewer (void)
   static int    queuePosGameCover  = 0;
   static char   cstrLabelLoading[] = "...";
   static char   cstrLabelMissing[] = "Drop an image...";
+  char*         pcstrLabel     = nullptr;
   bool          isImageHovered = false;
 
   ImVec2 originalPos    = ImGui::GetCursorPos ( );
          originalPos.x -= 1.0f * SKIF_ImGui_GlobalDPIScale;
 
+  // A new cover is meant to be loaded, so don't do anything for now...
   if (loadImage)
-  {
-    // A new cover is meant to be loaded, so don't do anything for now...
-  }
+  { }
 
   else if (tryingToLoadImage)
-  {
-    ImGui::SetCursorPos (ImVec2 (
-      originalPos.x + (sizeCover.x / 2) - ImGui::CalcTextSize (cstrLabelLoading).x / 2,
-      originalPos.y + (sizeCover.y / 2) - ImGui::CalcTextSize (cstrLabelLoading).y / 2));
-    ImGui::TextDisabled (  cstrLabelLoading);
-  }
-  
+    pcstrLabel = cstrLabelLoading;
+
   else if (textureLoadQueueLength.load() == queuePosGameCover && cover.pTexSRV.p == nullptr)
-  {
-    ImGui::SetCursorPos (ImVec2 (
-      originalPos.x + (sizeCover.x / 2) - ImGui::CalcTextSize (cstrLabelMissing).x / 2,
-      originalPos.y + (sizeCover.y / 2) - ImGui::CalcTextSize (cstrLabelMissing).y / 2));
-    ImGui::TextDisabled (  cstrLabelMissing);
-  }
+    pcstrLabel = cstrLabelMissing;
 
   else if (cover    .pTexSRV.p == nullptr &&
            cover_old.pTexSRV.p == nullptr)
+    pcstrLabel = cstrLabelMissing;
+
+  if (pcstrLabel != nullptr)
   {
+    ImVec2 labelSize = ImGui::CalcTextSize (pcstrLabel);
     ImGui::SetCursorPos (ImVec2 (
-      originalPos.x + (sizeCover.x / 2) - ImGui::CalcTextSize (cstrLabelMissing).x / 2,
-      originalPos.y + (sizeCover.y / 2) - ImGui::CalcTextSize (cstrLabelMissing).y / 2));
-    ImGui::TextDisabled (  cstrLabelMissing);
+      ImGui::GetContentRegionAvail ( ).x / 2 - labelSize.x / 2,
+      ImGui::GetContentRegionAvail ( ).y / 2 - labelSize.y / 2));
+    ImGui::TextDisabled (pcstrLabel);
   }
 
   ImGui::SetCursorPos (originalPos);
