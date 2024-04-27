@@ -235,7 +235,7 @@ LoadLibraryTexture (image_s& image)
     stbi_image_free (pixels);
   }
 
-  else if (decoder == ImageDecoder_WIC)
+  if (!succeeded || decoder == ImageDecoder_WIC)
   {
     if (SUCCEEDED (
         DirectX::LoadFromWICFile (
