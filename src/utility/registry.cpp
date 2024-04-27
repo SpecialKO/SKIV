@@ -259,10 +259,14 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
 
   // Store libraries
 
-  iImageScaling            =   regKVImageScaling           .getData (&hKey);
-  bFirstLaunch             =   regKVFirstLaunch            .getData (&hKey);
-  bMultipleInstances       =   regKVMultipleInstances      .getData (&hKey);
-  bAutoUpdate              =   regKVAutoUpdate             .getData (&hKey);
+  if (regKVImageScaling.hasData(&hKey))
+    iImageScaling          =   regKVImageScaling           .getData (&hKey);
+  if (regKVFirstLaunch.hasData(&hKey))
+    bFirstLaunch           =   regKVFirstLaunch            .getData (&hKey);
+  if (regKVMultipleInstances.hasData(&hKey))
+    bMultipleInstances     =   regKVMultipleInstances      .getData (&hKey);
+  if (regKVAutoUpdate.hasData(&hKey))
+    bAutoUpdate            =   regKVAutoUpdate             .getData (&hKey);
   
   if (regKVSDRMode.hasData(&hKey))
     iSDRMode               =   regKVSDRMode                .getData (&hKey);
@@ -284,14 +288,13 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
   if (regKVDiagnostics.hasData(&hKey))
     iDiagnostics           =   regKVDiagnostics            .getData (&hKey);
 
-  bOpenAtCursorPosition    =   regKVOpenAtCursorPosition   .getData (&hKey);
+  if (regKVOpenAtCursorPosition.hasData(&hKey))
+    bOpenAtCursorPosition  =   regKVOpenAtCursorPosition   .getData (&hKey);
 
-  bMaximizeOnDoubleClick   = 
-    SKIF_Util_GetDragFromMaximized ( )         // IF the OS prerequisites are enabled
-    ? regKVMaximizeOnDoubleClick.hasData (&hKey)   // AND we have data in the registry
-      ? regKVMaximizeOnDoubleClick.getData (&hKey) // THEN use the data,
-      : false                                  // otherwise default to false,
-    : false;                                   // and false if OS prerequisites are disabled
+  if (!SKIF_Util_GetDragFromMaximized())
+    bMaximizeOnDoubleClick = false; // Force disabled IF the OS prerequisites are not enabled
+  else if (regKVMaximizeOnDoubleClick.hasData(&hKey))
+    bMaximizeOnDoubleClick = regKVMaximizeOnDoubleClick.getData(&hKey);
 
   if (regKVNotifications.hasData(&hKey))
     bNotifications         =   regKVNotifications          .getData (&hKey);
