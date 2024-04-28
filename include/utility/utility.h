@@ -40,8 +40,8 @@ enum UITab {
   UITab_ALL      // Total number of elements in enum (technically against Microsoft's enum design guidelines, but whatever)
 };
 
-constexpr  int           SKIF_HotKey_HDR        = 1337; // Win + Ctrl + Shift + H
-constexpr  int           SKIF_HotKey_SVC        = 1338; // Win + Shift + Insert
+constexpr  int     SKIF_HotKey_HDR        = 1337; // Win + Ctrl + Shift + H
+constexpr  int     SKIF_HotKey_SVC        = 1338; // Win + Shift + Insert
 
 extern UITab       SKIF_Tab_Selected; // Current selected tab
 extern UITab       SKIF_Tab_ChangeTo; // Tab we want to change to

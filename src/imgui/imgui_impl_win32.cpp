@@ -2102,6 +2102,7 @@ static void ImGui_ImplWin32_ShutdownPlatformInterface()
 //--------------------------------------------------------------------------------------------------------
 
 #include <imgui/imgui_internal.h>
+#include "../../version.h"
 
 void
 SKIF_ImGui_ImplWin32_SetDWMBorders (void* hWnd)
@@ -2229,4 +2230,84 @@ bool
 SKIF_ImGui_ImplWin32_WantUpdateMonitors (void)
 {
   return ImGui_ImplWin32_GetBackendData()->WantUpdateMonitors;
+}
+
+bool
+SKIF_ImGui_ImplWin32_SetFullscreen (int fullscreen)
+{
+  struct {
+      bool   Fullscreen; // Current fullscreen state
+
+      // Previous window state (before entering fullscreen)
+      bool   Maximized;
+      LONG   dwStyle;
+      LONG   dwExStyle;
+      RECT   rcWindow;
+  } static _cached;
+
+  // -1 is used to retrieve the current state
+  if (fullscreen == -1)
+    return _cached.Fullscreen;
+
+  if (ImGuiWindow* window = ImGui::FindWindowByName (SKIV_WINDOW_TITLE_HASH))
+  {
+    if (ImGuiViewport* viewport = window->Viewport)
+    {
+      HWND hwnd = (HWND)viewport->PlatformHandleRaw;
+
+      if (viewport->PlatformHandleRaw == NULL)
+        return false;
+
+      RECT rect = { };
+
+      // Cache the current state if we are about to enter fullscreen
+      if (! _cached.Fullscreen)
+      {
+        _cached.Maximized = !!::IsZoomed (hwnd);
+
+        if (_cached.Maximized) // Apparently we need to restore from a maximized state to get the taskbar to hide itself
+          ::SendMessage (hwnd, WM_SYSCOMMAND, SC_RESTORE, 0);
+
+        _cached.dwStyle   = GetWindowLong (hwnd, GWL_STYLE);
+        _cached.dwExStyle = GetWindowLong (hwnd, GWL_EXSTYLE);
+        GetWindowRect (hwnd, &_cached.rcWindow);
+      }
+
+      _cached.Fullscreen = static_cast<bool> (fullscreen);
+
+      // Entering fullscreen mode
+      if (_cached.Fullscreen)
+      {
+        SetWindowLong (hwnd, GWL_STYLE,   _cached.dwStyle   & ~(WS_CAPTION | WS_THICKFRAME));
+        SetWindowLong (hwnd, GWL_EXSTYLE, _cached.dwExStyle & ~(WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE | WS_EX_STATICEDGE));
+
+        MONITORINFO mi = { };
+        mi.cbSize = sizeof(mi);
+        GetMonitorInfo (MonitorFromWindow (hwnd, MONITOR_DEFAULTTONEAREST), &mi);
+        rect = mi.rcMonitor;
+      }
+
+      // Exiting fullscreen mode
+      else
+      {
+        SetWindowLong (hwnd, GWL_STYLE,   _cached.dwStyle);
+        SetWindowLong (hwnd, GWL_EXSTYLE, _cached.dwExStyle);
+
+        rect = _cached.rcWindow;
+
+        if (_cached.Maximized) // Restore maximized state (does not really work properly?)
+          ::SendMessage (hwnd, WM_SYSCOMMAND, SC_MAXIMIZE, 0);
+      }
+        
+      float top    = static_cast<float> (rect.top);
+      float left   = static_cast<float> (rect.left);
+      float width  = static_cast<float> (rect.right)  - left;
+      float height = static_cast<float> (rect.bottom) - top;
+
+      ImGui::SetWindowSize (window, ImVec2 (width, height));
+      ImGui::SetWindowPos  (window, ImVec2 (left,  top));
+    }
+  }
+
+  return _cached.Fullscreen;
 }

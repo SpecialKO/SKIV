@@ -1400,6 +1400,20 @@ SKIF_ImGui_IsScrollbarY (void)
   return bScrollbarY;
 }
 
+bool
+SKIF_ImGui_IsFullscreen (void)
+{
+  extern bool SKIF_ImGui_ImplWin32_SetFullscreen (int);
+  return SKIF_ImGui_ImplWin32_SetFullscreen      (-1);
+}
+
+void
+SKIF_ImGui_SetFullscreen (bool fullscreen)
+{
+  extern bool SKIF_ImGui_ImplWin32_SetFullscreen (int);
+  SKIF_ImGui_ImplWin32_SetFullscreen             (static_cast<bool> (fullscreen));
+}
+
 void
 SKIF_ImGui_InvalidateFonts (void)
 {

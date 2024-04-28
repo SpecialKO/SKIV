@@ -1222,10 +1222,26 @@ wWinMain ( _In_     HINSTANCE hInstance,
     // Escape does situational stuff
     if (hotkeyEsc)
     {
-      if (SKIF_Tab_Selected == UITab_Viewer)
-        bKeepWindowAlive = false;
-      else if (SKIF_Tab_Selected == UITab_Settings)
+      switch (SKIF_Tab_Selected)
+      {
+      case UITab_None:
+        break;
+      case UITab_Viewer:
+        if (SKIF_ImGui_IsFullscreen ( ))
+          SKIF_ImGui_SetFullscreen (false);
+        else
+          bKeepWindowAlive = false;
+        break;
+      case UITab_Settings:
         SKIF_Tab_ChangeTo = UITab_Viewer;
+        break;
+      case UITab_About:
+        break;
+      case UITab_ALL:
+        break;
+      default:
+        break;
+      }
     }
 
     // F6 to toggle DPI scaling
@@ -1424,7 +1440,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
       // Resize app window based on the image resolution
       extern bool tryingToLoadImage;
-      bool resizeAppWindow = (_registry.bAdjustWindow) ? (! tryingToLoadImage && SKIV_ResizeApp.x != 0.0f && ! (GetWindowLongPtr (SKIF_ImGui_hWnd, GWL_STYLE) & WS_MAXIMIZE)) : false;
+      bool resizeAppWindow = (_registry.bAdjustWindow && ! SKIF_ImGui_IsFullscreen ( ) ) ? (! tryingToLoadImage && SKIV_ResizeApp.x != 0.0f && ! (GetWindowLongPtr (SKIF_ImGui_hWnd, GWL_STYLE) & WS_MAXIMIZE)) : false;
 
       if (resizeAppWindow)
       {
@@ -1474,7 +1490,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
         ImGui::SetNextWindowSizeConstraints (wnd_minimum_size, ImVec2 (FLT_MAX, FLT_MAX));
 
       ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2());
-      ImGui::Begin ( SKIV_WINDOW_TITLE_SHORT_A SKIV_WINDOW_HASH,
+      ImGui::Begin (SKIV_WINDOW_TITLE_HASH,
                        nullptr,
                        //ImGuiWindowFlags_NoResize          |
                          ImGuiWindowFlags_NoCollapse        |

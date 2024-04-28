@@ -728,6 +728,13 @@ SKIF_UI_Tab_DrawViewer (void)
 
     ImGui::Separator ( );
 
+    if (SKIF_ImGui_MenuItemEx2 ("Fullscreen", SKIF_ImGui_IsFullscreen () ? ICON_FA_DOWN_LEFT_AND_UP_RIGHT_TO_CENTER : ICON_FA_UP_RIGHT_AND_DOWN_LEFT_FROM_CENTER))
+    {
+      SKIF_ImGui_SetFullscreen (! SKIF_ImGui_IsFullscreen( ));
+    }
+
+    ImGui::Separator ( );
+
     if (SKIF_ImGui_MenuItemEx2 ("Exit", 0, ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Info)))
     {
       extern bool bKeepWindowAlive;
