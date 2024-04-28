@@ -257,16 +257,8 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
   if (regKVAdjustWindow.hasData(&hKey))
     bAdjustWindow          =   regKVAdjustWindow           .getData (&hKey);
 
-  // Store libraries
-
   if (regKVImageScaling.hasData(&hKey))
     iImageScaling          =   regKVImageScaling           .getData (&hKey);
-  if (regKVFirstLaunch.hasData(&hKey))
-    bFirstLaunch           =   regKVFirstLaunch            .getData (&hKey);
-  if (regKVMultipleInstances.hasData(&hKey))
-    bMultipleInstances     =   regKVMultipleInstances      .getData (&hKey);
-  if (regKVAutoUpdate.hasData(&hKey))
-    bAutoUpdate            =   regKVAutoUpdate             .getData (&hKey);
   
   if (regKVSDRMode.hasData(&hKey))
     iSDRMode               =   regKVSDRMode                .getData (&hKey);
@@ -288,18 +280,14 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
   if (regKVDiagnostics.hasData(&hKey))
     iDiagnostics           =   regKVDiagnostics            .getData (&hKey);
 
-  if (regKVOpenAtCursorPosition.hasData(&hKey))
-    bOpenAtCursorPosition  =   regKVOpenAtCursorPosition   .getData (&hKey);
-
-  if (!SKIF_Util_GetDragFromMaximized())
+  if (! SKIF_Util_GetDragFromMaximized ( ))
     bMaximizeOnDoubleClick = false; // Force disabled IF the OS prerequisites are not enabled
+
   else if (regKVMaximizeOnDoubleClick.hasData(&hKey))
-    bMaximizeOnDoubleClick = regKVMaximizeOnDoubleClick.getData(&hKey);
+    bMaximizeOnDoubleClick = regKVMaximizeOnDoubleClick    .getData (&hKey);
 
   if (regKVNotifications.hasData(&hKey))
     bNotifications         =   regKVNotifications          .getData (&hKey);
-
-  bGhost                   =   regKVGhost                  .getData (&hKey);
 
   if (regKVStyle.hasData(&hKey))
     iStyle  =  iStyleTemp  =   regKVStyle                  .getData (&hKey);
@@ -338,6 +326,13 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
   if (regKVControllers.hasData(&hKey))
     bControllers           =   regKVControllers            .getData (&hKey);
 
+  // These defaults to false, so no need to check if the registry has another value
+  //   since getData ( ) defaults to false for non-existent registry values
+  bFirstLaunch             =   regKVFirstLaunch            .getData (&hKey);
+  bMultipleInstances       =   regKVMultipleInstances      .getData (&hKey);
+  bAutoUpdate              =   regKVAutoUpdate             .getData (&hKey);
+  bOpenAtCursorPosition    =   regKVOpenAtCursorPosition   .getData (&hKey);
+  bGhost                   =   regKVGhost                  .getData (&hKey);
   bLoggingDeveloper        =   regKVLoggingDeveloper       .getData (&hKey);
 
   if (hKey != nullptr)
