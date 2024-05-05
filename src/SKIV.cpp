@@ -1830,8 +1830,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
       if (_registry.bGhost)
       {
-        static ImVec2 shelly_movable_area = ImVec2 (
-           wnd_minimum_size.x,
+        ImVec2 shelly_movable_area = ImVec2 (
+           wnd_minimum_size.x * SKIF_ImGui_GlobalDPIScale,
            ImGui::CalcTextSize (ICON_FA_GHOST).y + 4.0f * SKIF_ImGui_GlobalDPIScale
         );
 
@@ -1855,7 +1855,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
 #pragma endregion
 
-#pragma region Window buttons
+#pragma region WindowButtons
 
       // Top right window buttons
 

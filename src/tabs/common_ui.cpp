@@ -504,7 +504,8 @@ void SKIF_UI_DrawShellyTheGhost (void)
   const  float fGhostTimeStep = 0.01f;
   static float fGhostTime     = 0.0f;
 
-  float fGhostYPos = (4.0f * (std::sin(6 * (fGhostTime / 2.5f)) + 0.5f)) * SKIF_ImGui_GlobalDPIScale;
+  // Move 0-4px along the Y axis
+  float fGhostYPos = (2.0f + 2.0f * (std::sin(6 * (fGhostTime / 2.5f)) + 0.5f)) * SKIF_ImGui_GlobalDPIScale;
 
   ImVec4 vGhostColor = ImColor::ImColor (
       0.5f * (std::sin(6 * (fGhostTime / 2.5f)) + 1),
