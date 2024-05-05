@@ -159,6 +159,7 @@ AdjustAlpha (float a)
 extern CComPtr <ID3D11Device> SKIF_D3D11_GetDevice (bool bWait = true);
 
 enum ImageDecoder {
+  ImageDecoder_None,
   ImageDecoder_WIC,
   ImageDecoder_stbi
 };
@@ -185,19 +186,86 @@ LoadLibraryTexture (image_s& image)
   std::wstring ext = SKIF_Util_ToLowerW (imagePath.extension().wstring());
   std::string szPath = SK_WideCharToUTF8(image.path);
 
-  ImageDecoder decoder = 
-    (ext == L".jpeg") ? ImageDecoder_stbi :
-    (ext == L".jpg" ) ? ImageDecoder_stbi :
-    (ext == L".png" ) ? ImageDecoder_stbi :
-    (ext == L".tga" ) ? ImageDecoder_stbi :
-    (ext == L".bmp" ) ? ImageDecoder_stbi :
-    (ext == L".psd" ) ? ImageDecoder_stbi :
-    (ext == L".gif" ) ? ImageDecoder_stbi :
-    (ext == L".hdr" ) ? ImageDecoder_stbi :
-                        ImageDecoder_WIC; // Use WIC as a generic fallback for all other files (.jxr, .webp, .tif)
+  ImageDecoder decoder = ImageDecoder_None;
 
+  // Identify file type by reading the file signature
+  static const auto types =
+  {
+    FileSignature { L"image/jpeg",                L".jpg",  { 0xFF, 0xD8, 0x00, 0x00 },   // JPEG (SOI; Start of Image)
+                                                            { 0xFF, 0xFF, 0x00, 0x00 } }, // JPEG App Markers are masked as they can be all over the place (e.g. 0xFF 0xD8 0xFF 0xED)
+    FileSignature { L"image/png",                 L".png",  { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A } },
+    FileSignature { L"image/webp",                L".webp", { 0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50 },     // 52 49 46 46 ?? ?? ?? ?? 57 45 42 50
+                                                            { 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF } }, // mask
+    FileSignature { L"image/bmp",                 L".bmp",  { 0x42, 0x4D } },
+    FileSignature { L"image/vnd.ms-photo",        L".jxr",  { 0x49, 0x49, 0xBC } },
+    FileSignature { L"image/vnd.adobe.photoshop", L".psd",  { 0x38, 0x42, 0x50, 0x53 } },
+    FileSignature { L"image/tiff",                L".tiff", { 0x49, 0x49, 0x2A, 0x00 } }, // TIFF: little-endian
+    FileSignature { L"image/tiff",                L".tiff", { 0x4D, 0x4D, 0x00, 0x2A } }, // TIFF: big-endian
+    FileSignature { L"image/vnd.radiance",        L".hdr",  { 0x23, 0x3F, 0x52, 0x41, 0x44, 0x49, 0x41, 0x4E, 0x43, 0x45, 0x0A } }, // Radiance High Dynamic Range image file
+    FileSignature { L"image/gif",                 L".gif",  { 0x47, 0x49, 0x46, 0x38, 0x37, 0x61 } }, // GIF87a
+    FileSignature { L"image/gif",                 L".gif",  { 0x47, 0x49, 0x46, 0x38, 0x39, 0x61 } }  // GIF89a
+  //FileSignature { L"image/x-targa",             L".tga",  { 0x00, } }, // TGA has no real unique header identifier, so just use the file extension on those
+  };
+
+  if (ext == L".tga")
+    decoder = ImageDecoder_stbi;
+
+  if (decoder == ImageDecoder_None)
+  {
+    static size_t
+        maxLength  = 0;
+    if (maxLength == 0)
+    {
+      for (auto& type : types)
+        if (type.signature.size() > maxLength)
+          maxLength = type.signature.size();
+    }
+
+    std::ifstream file(imagePath, std::ios::binary);
+
+    if (! file)
+    {
+      PLOG_ERROR << "Failed to open file!";
+      return;
+    }
+
+    if (file)
+    {
+      std::vector<char> buffer (maxLength);
+      file.read (buffer.data(), maxLength);
+      file.close();
+
+      for (auto& type : types)
+      {
+        if (SKIF_Util_HasFileSignature (buffer, type))
+        {
+          PLOG_INFO << "Detected an " << type.mime_type << " image";
+
+          decoder = 
+            (type.file_extension == L".jpg"  ) ? ImageDecoder_stbi : // covers both .jpeg and .jpg
+            (type.file_extension == L".png"  ) ? ImageDecoder_stbi :
+          //(type.file_extension == L".tga"  ) ? ImageDecoder_stbi : // TGA has no real unique header identifier, so just use the file extension on those
+            (type.file_extension == L".bmp"  ) ? ImageDecoder_stbi :
+            (type.file_extension == L".psd"  ) ? ImageDecoder_stbi :
+            (type.file_extension == L".gif"  ) ? ImageDecoder_stbi :
+            (type.file_extension == L".hdr"  ) ? ImageDecoder_stbi :
+            (type.file_extension == L".jxr"  ) ? ImageDecoder_WIC  :
+            (type.file_extension == L".webp" ) ? ImageDecoder_WIC  :
+            (type.file_extension == L".tiff" ) ? ImageDecoder_WIC  :
+                                                 ImageDecoder_WIC;   // Not actually being used
+
+          break;
+        }
+      }
+    }
+  }
+
+  PLOG_ERROR_IF(decoder == ImageDecoder_None) << "Failed to detect file type!";
   PLOG_DEBUG_IF(decoder == ImageDecoder_stbi) << "Using stbi decoder...";
   PLOG_DEBUG_IF(decoder == ImageDecoder_WIC ) << "Using WIC decoder...";
+
+  if (decoder == ImageDecoder_None)
+    return;
 
   if (decoder == ImageDecoder_stbi)
   {

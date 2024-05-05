@@ -11,6 +11,7 @@
 #include <processthreadsapi.h>
 #include <vector>
 #include <shellapi.h>
+#include <stdexcept>
 
 #pragma comment(lib, "wininet.lib")
 
