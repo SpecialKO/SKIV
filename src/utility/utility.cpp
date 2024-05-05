@@ -383,6 +383,56 @@ SKIF_Util_CompareVersionStrings (std::wstring string1, std::wstring string2)
 
 // Filenames
 
+std::string
+SKIF_Util_StripInvalidFilenameChars (std::string name)
+{
+  // Non-trivial name = custom path, remove the old-style <program.exe>
+  if (! name.empty())
+  {
+    name.erase ( std::remove_if ( name.begin (),
+                                  name.end   (),
+
+                                    [](char tval)
+                                    {
+                                      static
+                                      const std::unordered_set <char>
+                                        invalid_file_char =
+                                        {
+                                          '\\', '/', ':',
+                                          '*',  '?', '\"',
+                                          '<',  '>', '|',
+                                        //L'&',
+
+                                          //
+                                          // Obviously a period is not an invalid character,
+                                          //   but three of them in a row messes with
+                                          //     Windows Explorer and some Steam games use
+                                          //       ellipsis in their titles.
+                                          //
+                                          '.'
+                                        };
+
+                                      return
+                                        ( invalid_file_char.find (tval) !=
+                                          invalid_file_char.end  (    ) );
+                                    }
+                                ),
+
+                     name.end ()
+               );
+
+    // Strip trailing spaces from name, these are usually the result of
+    //   deleting one of the non-useable characters above.
+    for (auto it = name.rbegin (); it != name.rend (); ++it)
+    {
+      if (*it == ' ') *it = '\0';
+      else                   break;
+    }
+  }
+
+  return name;
+}
+
 std::wstring
 SKIF_Util_StripInvalidFilenameChars (std::wstring name)
 {
@@ -434,55 +484,43 @@ SKIF_Util_StripInvalidFilenameChars (std::wstring name)
 }
 
 std::string
-SKIF_Util_StripInvalidFilenameChars (std::string name)
+SKIF_Util_ReplaceInvalidFilenameChars (std::string name, char replacement)
 {
-  // Non-trivial name = custom path, remove the old-style <program.exe>
   if (! name.empty())
   {
-    name.erase ( std::remove_if ( name.begin (),
-                                  name.end   (),
+    std::replace_if ( name.begin (),
+                      name.end   (),
 
-                                    [](char tval)
-                                    {
-                                      static
-                                      const std::unordered_set <char>
-                                        invalid_file_char =
-                                        {
-                                          '\\', '/', ':',
-                                          '*',  '?', '\"',
-                                          '<',  '>', '|',
-                                        //L'&',
+                        [](char tval)
+                        {
+                          static
+                          const std::unordered_set <char>
+                            invalid_file_char =
+                            {
+                              '\\', '/', ':',
+                              '*',  '?', '\"',
+                              '<',  '>', '|',
+                            //L'&',
 
-                                          //
-                                          // Obviously a period is not an invalid character,
-                                          //   but three of them in a row messes with
-                                          //     Windows Explorer and some Steam games use
-                                          //       ellipsis in their titles.
-                                          //
-                                          '.'
-                                        };
+                              //
+                              // Obviously a period is not an invalid character,
+                              //   but three of them in a row messes with
+                              //     Windows Explorer and some Steam games use
+                              //       ellipsis in their titles.
+                              //
+                              '.'
+                            };
 
-                                      return
-                                        ( invalid_file_char.find (tval) !=
-                                          invalid_file_char.end  (    ) );
-                                    }
-                                ),
-
-                     name.end ()
-               );
-
-    // Strip trailing spaces from name, these are usually the result of
-    //   deleting one of the non-useable characters above.
-    for (auto it = name.rbegin (); it != name.rend (); ++it)
-    {
-      if (*it == ' ') *it = '\0';
-      else                   break;
-    }
+                          return
+                            ( invalid_file_char.find (tval) !=
+                              invalid_file_char.end  (    ) );
+                        }
+                    , replacement
+                   );
   }
 
   return name;
 }
-
 
 std::wstring
 SKIF_Util_ReplaceInvalidFilenameChars (std::wstring name, wchar_t replacement)
@@ -523,44 +561,22 @@ SKIF_Util_ReplaceInvalidFilenameChars (std::wstring name, wchar_t replacement)
   return name;
 }
 
-
 std::string
-SKIF_Util_ReplaceInvalidFilenameChars (std::string name, char replacement)
+SKIF_Util_NormalizeFullPath (std::string string)
 {
-  if (! name.empty())
-  {
-    std::replace_if ( name.begin (),
-                      name.end   (),
+  // Are we dealing with a network path? (\\server\share)
+  bool isUNCpath = PathIsNetworkPathA (string.c_str());
 
-                        [](char tval)
-                        {
-                          static
-                          const std::unordered_set <char>
-                            invalid_file_char =
-                            {
-                              '\\', '/', ':',
-                              '*',  '?', '\"',
-                              '<',  '>', '|',
-                            //L'&',
+  // "Clean" the path... But also removes one of the initial two backslashes
+  //   in an UNC path if the path begins with four backslashes (\\\\server\\share)
+  string = std::filesystem::path(string).lexically_normal().string();
 
-                              //
-                              // Obviously a period is not an invalid character,
-                              //   but three of them in a row messes with
-                              //     Windows Explorer and some Steam games use
-                              //       ellipsis in their titles.
-                              //
-                              '.'
-                            };
+  // If we are dealing with an UNC path that is no more,
+  //   we need to fix the initial missing backslash...
+  if (isUNCpath && ! PathIsNetworkPathA (string.c_str()))
+    string.insert(0, 1, '\\');
 
-                          return
-                            ( invalid_file_char.find (tval) !=
-                              invalid_file_char.end  (    ) );
-                        }
-                    , replacement
-                   );
-  }
-
-  return name;
+  return string;
 }
 
 std::wstring
@@ -576,24 +592,6 @@ SKIF_Util_NormalizeFullPath (std::wstring string)
   // If we are dealing with an UNC path that is no more,
   //   we need to fix the initial missing backslash...
   if (isUNCpath && ! PathIsNetworkPathW (string.c_str()))
-    string.insert(0, 1, '\\');
-
-  return string;
-}
-
-std::string
-SKIF_Util_NormalizeFullPath (std::string string)
-{
-  // Are we dealing with a network path? (\\server\share)
-  bool isUNCpath = PathIsNetworkPathA (string.c_str());
-
-  // "Clean" the path... But also removes one of the initial two backslashes
-  //   in an UNC path if the path begins with four backslashes (\\\\server\\share)
-  string = std::filesystem::path(string).lexically_normal().string();
-
-  // If we are dealing with an UNC path that is no more,
-  //   we need to fix the initial missing backslash...
-  if (isUNCpath && ! PathIsNetworkPathA (string.c_str()))
     string.insert(0, 1, '\\');
 
   return string;
