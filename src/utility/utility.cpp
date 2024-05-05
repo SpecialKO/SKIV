@@ -597,6 +597,29 @@ SKIF_Util_NormalizeFullPath (std::wstring string)
   return string;
 }
 
+bool
+SKIF_Util_HasFileSignature (const std::vector<char>& header, const FileSignature& signature)
+{
+  if (header.size() >= signature.signature.size())
+  {
+    for (size_t i = 0; i < signature.signature.size(); ++i)
+    {
+      if (signature.mask[i] == 0xFF)
+      {
+        // Need to perform a reinterpret to prevent C's integer promotion from screwing with the comparison
+        const unsigned char h = reinterpret_cast<const unsigned char&> (header[i]);
+
+        if (signature.signature[i] != h)
+          return false;
+      }
+    }
+
+    return true;
+  }
+
+  return false;
+}
+
 
 // Usernames / Machine Name
 
