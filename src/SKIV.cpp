@@ -3570,6 +3570,15 @@ SKIF_Notify_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         SKIF_Shell_DeleteNotifyIcon ( );
         SKIF_Shell_CreateNotifyIcon ( );
       }
+
+      // When the taskbar button has been created,
+      //   the icon overlay can be set accordingly
+      if (msg == SHELL_TASKBAR_BUTTON_CREATED)
+      {
+        // Recreate things if needed
+        SKIF_Shell_CreateUpdateNotifyMenu ( );
+        SKIF_Shell_UpdateNotifyIcon       ( );
+      }
       break;
   }
   return

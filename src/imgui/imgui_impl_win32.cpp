@@ -17,42 +17,8 @@
 // - Documentation        https://dearimgui.com/docs (same as your local docs/ folder).
 // - Introduction, links and more at the top of imgui.cpp
 
-#include "imgui/imgui.h"
-#ifndef IMGUI_DISABLE
-#include "imgui/imgui_impl_win32.h"
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <windows.h>
-#include <windowsx.h> // GET_X_LPARAM(), GET_Y_LPARAM()
-#include <tchar.h>
-#include <dwmapi.h>
-
-#define SKIF_Win32
-
-#include "imgui/imgui_internal.h"
-#include "../resource.h"
-#include <utility/utility.h>
-#include <utility/registry.h>
-#include <utility/gamepad.h>
-#include <utility/droptarget.hpp>
-#include <plog/Log.h>
-
-#ifdef SKIF_Win32
-constexpr const wchar_t* SKIF_ImGui_WindowClass = L"SKIF_ImGuiWindow";
-constexpr const wchar_t* SKIF_ImGui_WindowTitle = L"Special K Popup"; // Default
-
-#endif // !SKIF_Win32
-
-// Configuration flags to add in your imconfig.h file:
+// Configuration flags to add in your imconfig file:
 #define IMGUI_IMPL_WIN32_DISABLE_GAMEPAD              // Disable gamepad support. This was meaningful before <1.81 but we now load XInput dynamically so the option is now less relevant.
-
-// Using XInput for gamepad (will load DLL dynamically)
-#ifndef IMGUI_IMPL_WIN32_DISABLE_GAMEPAD
-#include <xinput.h>
-typedef DWORD (WINAPI *PFN_XInputGetCapabilities)(DWORD, DWORD, XINPUT_CAPABILITIES*);
-typedef DWORD (WINAPI *PFN_XInputGetState)(DWORD, XINPUT_STATE*);
-#endif
 
 // CHANGELOG
 // (minor and older changes stripped away, please see git history for details)
@@ -109,8 +75,53 @@ typedef DWORD (WINAPI *PFN_XInputGetState)(DWORD, XINPUT_STATE*);
 //  2017-10-23: Inputs: Using Win32 ::SetCapture/::GetCapture() to retrieve mouse positions outside the client area when dragging.
 //  2016-11-12: Inputs: Only call Win32 ::SetCursor(nullptr) when io.MouseDrawCursor is set.
 
+#include "imgui/imgui.h"
+#ifndef IMGUI_DISABLE
+#include "imgui/imgui_impl_win32.h"
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <windowsx.h> // GET_X_LPARAM(), GET_Y_LPARAM()
+#include <tchar.h>
+#include <dwmapi.h>
+
+#define SKIF_Win32
+
+#include "imgui/imgui_internal.h"
+#include "../resource.h"
+#include <utility/utility.h>
+#include <utility/registry.h>
+#include <utility/gamepad.h>
+#include <utility/droptarget.hpp>
+#include <plog/Log.h>
+
+#ifdef SKIF_Win32
+constexpr const wchar_t* SKIF_ImGui_WindowClass = L"SKIF_ImGuiWindow";
+constexpr const wchar_t* SKIF_ImGui_WindowTitle = L"Special K Popup"; // Default
+extern HWND SKIF_ImGui_hWnd;
+extern int  SKIF_nCmdShow;
+#endif // !SKIF_Win32
+
+// Using XInput for gamepad (will load DLL dynamically)
+#ifndef IMGUI_IMPL_WIN32_DISABLE_GAMEPAD
+#include <xinput.h>
+typedef DWORD(WINAPI* PFN_XInputGetCapabilities)(DWORD, DWORD, XINPUT_CAPABILITIES*);
+typedef DWORD(WINAPI* PFN_XInputGetState)(DWORD, XINPUT_STATE*);
+#endif
+
+// Clang/GCC warnings with -Weverything
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wcast-function-type"     // warning: cast between incompatible function types (for loader)
+#endif
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wcast-function-type"       // warning: cast between incompatible function types (for loader)
+#endif
+
 // Forward Declarations
-static void ImGui_ImplWin32_InitPlatformInterface(bool platformHasOwnDC);
+static void ImGui_ImplWin32_InitPlatformInterface(bool platform_has_own_dc);
 static void ImGui_ImplWin32_ShutdownPlatformInterface();
 static void ImGui_ImplWin32_UpdateMonitors();
 
@@ -326,7 +337,7 @@ static void ImGui_ImplWin32_UpdateMouseData()
 {
     ImGui_ImplWin32_Data* bd = ImGui_ImplWin32_GetBackendData();
     ImGuiIO& io = ImGui::GetIO();
-    if (bd->hWnd == 0) return;
+    if (bd->hWnd == 0) return; // SKIF CUSTOM
     IM_ASSERT(bd->hWnd != 0);
 
     POINT mouse_screen_pos;
@@ -445,6 +456,7 @@ static void ImGui_ImplWin32_UpdateGamepads()
     MAP_ANALOG(ImGuiKey_GamepadRStickDown,      gamepad.sThumbRY, -XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE, -32768);
     #undef MAP_BUTTON
     #undef MAP_ANALOG
+//#endif // #ifndef IMGUI_IMPL_WIN32_DISABLE_GAMEPAD
 }
 
 static BOOL CALLBACK ImGui_ImplWin32_UpdateMonitors_EnumFunc(HMONITOR monitor, HDC, LPRECT, LPARAM)
@@ -478,9 +490,9 @@ static void ImGui_ImplWin32_UpdateMonitors()
 
 void    ImGui_ImplWin32_NewFrame()
 {
-    ImGuiIO& io = ImGui::GetIO();
     ImGui_ImplWin32_Data* bd = ImGui_ImplWin32_GetBackendData();
-    IM_ASSERT(bd != nullptr && "Did you call ImGui_ImplWin32_Init()?");
+    IM_ASSERT(bd != nullptr && "Context or backend not initialized? Did you call ImGui_ImplWin32_Init()?");
+    ImGuiIO& io = ImGui::GetIO();
 
     // Setup display size (every frame to accommodate for window resizing)
     RECT rect = { 0, 0, 0, 0 };
@@ -685,11 +697,13 @@ static ImGuiMouseSource GetMouseSourceFromMessageExtraInfo()
 
 IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
+    // Most backends don't have silent checks like this one, but we need it because WndProc are called early in CreateWindow().
     if (ImGui::GetCurrentContext() == nullptr)
         return 0;
 
-    ImGuiIO& io = ImGui::GetIO();
     ImGui_ImplWin32_Data* bd = ImGui_ImplWin32_GetBackendData();
+    IM_ASSERT(bd != nullptr && "Context or backend not initialized! Did you call ImGui_ImplWin32_Init()?");
+    ImGuiIO& io = ImGui::GetIO();
 
     switch (msg)
     {
@@ -1134,6 +1148,9 @@ static void ImGui_ImplWin32_GetWin32StyleFromViewportFlags(ImGuiViewportFlags fl
   extern int SKIF_nCmdShow;
   if (owner == nullptr && SKIF_nCmdShow != -1)
   {
+    //if (SKIF_nCmdShow == SW_SHOWMAXIMIZED)
+    //  *out_style |= WS_MAXIMIZE;
+
     if (SKIF_nCmdShow == SW_SHOWMINIMIZED   ||
         SKIF_nCmdShow == SW_SHOWMINNOACTIVE ||
         SKIF_nCmdShow == SW_SHOWNOACTIVATE  ||
@@ -1177,7 +1194,6 @@ static void ImGui_ImplWin32_CreateWindow(ImGuiViewport* viewport)
 static void ImGui_ImplWin32_CreateWindow(ImGuiViewport *viewport)
 {
   static SKIF_RegistrySettings& _registry = SKIF_RegistrySettings::GetInstance ( );
-  extern HWND  SKIF_ImGui_hWnd;
   extern float SKIF_ImGui_GlobalDPIScale;
 
   ImGui_ImplWin32_ViewportData* vd = IM_NEW(ImGui_ImplWin32_ViewportData)();
@@ -1245,7 +1261,6 @@ static void ImGui_ImplWin32_DestroyWindow(ImGuiViewport* viewport)
 
 #ifdef SKIF_Win32
         // If this is the main platform window, reset the global handle for it
-        extern HWND SKIF_ImGui_hWnd;
         if (vd->Hwnd == SKIF_ImGui_hWnd)
         {
           SKIF_ImGui_hWnd = NULL;
@@ -1255,7 +1270,6 @@ static void ImGui_ImplWin32_DestroyWindow(ImGuiViewport* viewport)
 
         if (vd->Hwnd && vd->HwndOwned)
             ::DestroyWindow(vd->Hwnd);
-
         vd->Hwnd = nullptr;
         IM_DELETE(vd);
     }
@@ -1294,13 +1308,13 @@ static void ImGui_ImplWin32_ShowWindow(ImGuiViewport* viewport)
     if (vd->HwndParent != NULL)
         ::SetWindowLongPtr(vd->Hwnd, GWLP_HWNDPARENT, (LONG_PTR)nullptr);
 
-    static bool
-        runOnce = true;
-    if (runOnce)
-    {   runOnce = false;
-      // Main platform window must respect nCmdShow
-      //  in the first ShowWindow() call
-      extern int SKIF_nCmdShow;
+    PLOG_VERBOSE << "SKIF_nCmdShow is set to: " << SKIF_nCmdShow;
+
+    // Main platform window must respect nCmdShow
+    //  in the first ShowWindow() call
+    if (SKIF_nCmdShow   != -1   &&
+        SKIF_ImGui_hWnd == vd->Hwnd)
+    {
       ::ShowWindow (vd->Hwnd, SKIF_nCmdShow);
       SKIF_nCmdShow = -1; // SKIF_nCmdShow has served its purpose by now
     }
@@ -1319,7 +1333,7 @@ static void ImGui_ImplWin32_ShowWindow(ImGuiViewport* viewport)
 static void ImGui_ImplWin32_UpdateWindow(ImGuiViewport* viewport)
 {
     ImGui_ImplWin32_ViewportData* vd = (ImGui_ImplWin32_ViewportData*)viewport->PlatformUserData;
-    if (vd->Hwnd == 0) return;
+    if (vd->Hwnd == 0) return; // SKIF CUSTOM
     IM_ASSERT(vd->Hwnd != 0);
 
     // Update Win32 parent if it changed _after_ creation
@@ -1404,7 +1418,7 @@ static void ImGui_ImplWin32_UpdateWindow (ImGuiViewport *viewport)
     vd->DwStyle   = new_style;
     vd->DwExStyle = new_ex_style;
 
-    ::SetWindowLongPtrW ( vd->Hwnd, GWL_STYLE, vd->DwStyle  );
+    ::SetWindowLongPtrW ( vd->Hwnd, GWL_STYLE,   vd->DwStyle  );
     ::SetWindowLongPtrW ( vd->Hwnd, GWL_EXSTYLE, vd->DwExStyle);
 
     // Force recreating the window if the NoRedirectionBitmap flag has changed
@@ -1421,22 +1435,30 @@ static void ImGui_ImplWin32_UpdateWindow (ImGuiViewport *viewport)
       //RecreateWin32Windows = true;
     }
 
+    // If we are being launched maximized, don't resize ourselves
+    if ((vd->DwStyle & WS_MAXIMIZE) != WS_MAXIMIZE)
+      swp_flag |= SWP_NOSIZE | SWP_NOMOVE;
+
+    // Respect the visiblity state
+    swp_flag |= ((GetWindowLongPtrW (vd->Hwnd, GWL_STYLE) & WS_VISIBLE) == WS_VISIBLE) ? SWP_SHOWWINDOW : SWP_HIDEWINDOW;
+
     RECT rect =
     { (LONG)  viewport->Pos.x,                      (LONG)  viewport->Pos.y,
       (LONG)( viewport->Pos.x + viewport->Size.x ), (LONG)( viewport->Pos.y + viewport->Size.y )
     };
 
-    //::AdjustWindowRectEx ( &rect, data->DwStyle,
-    //                       FALSE, data->DwExStyle ); // Client to Screen
+    //::AdjustWindowRectEx ( &rect, vd->DwStyle,
+    //                       FALSE, vd->DwExStyle ); // Client to Screen
 
     ::SetWindowPos       ( vd->Hwnd, insert_after,
-                                          rect.left,               rect.top,
-                             rect.right - rect.left, rect.bottom - rect.top,
+                                           rect.left,               rect.top,
+                              rect.right - rect.left, rect.bottom - rect.top,
                     swp_flag | SWP_NOZORDER     | SWP_NOACTIVATE |
                                SWP_FRAMECHANGED | SWP_ASYNCWINDOWPOS );
 
     // A ShowWindow() call is necessary when we alter the style
-    ::ShowWindow ( vd->Hwnd, SW_SHOWNA );
+    // Note that this cannot be called for hidden windows, as it would end up revealing them
+    //::ShowWindow ( vd->Hwnd, SW_SHOWNA );
 
     viewport->PlatformRequestMove =
       viewport->PlatformRequestResize = true;
@@ -1467,7 +1489,7 @@ static void ImGui_ImplWin32_UpdateWindow (ImGuiViewport *viewport)
 static ImVec2 ImGui_ImplWin32_GetWindowPos(ImGuiViewport* viewport)
 {
     ImGui_ImplWin32_ViewportData* vd = (ImGui_ImplWin32_ViewportData*)viewport->PlatformUserData;
-    if (vd->Hwnd == 0) return ImVec2{ };
+    if (vd->Hwnd == 0) return ImVec2{ }; // SKIF CUSTOM
     IM_ASSERT(vd->Hwnd != 0);
     POINT pos = { 0, 0 };
     ::ClientToScreen(vd->Hwnd, &pos);
@@ -1477,7 +1499,7 @@ static ImVec2 ImGui_ImplWin32_GetWindowPos(ImGuiViewport* viewport)
 static void ImGui_ImplWin32_SetWindowPos(ImGuiViewport* viewport, ImVec2 pos)
 {
     ImGui_ImplWin32_ViewportData* vd = (ImGui_ImplWin32_ViewportData*)viewport->PlatformUserData;
-    if (vd->Hwnd == 0) return;
+    if (vd->Hwnd == 0) return; // SKIF CUSTOM
     IM_ASSERT(vd->Hwnd != 0);
     RECT rect = { (LONG)pos.x, (LONG)pos.y, (LONG)pos.x, (LONG)pos.y };
   //::AdjustWindowRectEx(&rect, vd->DwStyle, FALSE, vd->DwExStyle);
@@ -1487,7 +1509,7 @@ static void ImGui_ImplWin32_SetWindowPos(ImGuiViewport* viewport, ImVec2 pos)
 static ImVec2 ImGui_ImplWin32_GetWindowSize(ImGuiViewport* viewport)
 {
     ImGui_ImplWin32_ViewportData* vd = (ImGui_ImplWin32_ViewportData*)viewport->PlatformUserData;
-    if (vd->Hwnd == 0) return ImVec2{ };
+    if (vd->Hwnd == 0) return ImVec2{ }; // SKIF CUSTOM
     IM_ASSERT(vd->Hwnd != 0);
     RECT rect;
     ::GetClientRect(vd->Hwnd, &rect);
@@ -1497,21 +1519,23 @@ static ImVec2 ImGui_ImplWin32_GetWindowSize(ImGuiViewport* viewport)
 static void ImGui_ImplWin32_SetWindowSize(ImGuiViewport* viewport, ImVec2 size)
 {
     ImGui_ImplWin32_ViewportData* vd = (ImGui_ImplWin32_ViewportData*)viewport->PlatformUserData;
-    if (vd->Hwnd == 0) return;
+    if (vd->Hwnd == 0) return; // SKIF CUSTOM
     IM_ASSERT(vd->Hwnd != 0);
     RECT rect = { 0, 0, (LONG)size.x, (LONG)size.y };
   //::AdjustWindowRectEx(&rect, vd->DwStyle, FALSE, vd->DwExStyle); // Client to Screen
     ::SetWindowPos(vd->Hwnd, nullptr, 0, 0, rect.right - rect.left, rect.bottom - rect.top, SWP_NOZORDER | SWP_NOMOVE | SWP_NOACTIVATE);
+#ifdef SKIF_Win32
     ImGuiViewportP* viewportP = (ImGuiViewportP*)viewport;
     PLOG_VERBOSE << "[" << ImGui::GetFrameCount() << "] Resized window to " << size.x << "x" << size.y;
     if (viewportP->LastPlatformSize != ImVec2(FLT_MAX, FLT_MAX))
       PLOG_VERBOSE << "Last platform window size: " << std::to_string(viewportP->LastPlatformSize.x) << "x" << std::to_string(viewportP->LastPlatformSize.y);
+#endif
 }
 
 static void ImGui_ImplWin32_SetWindowFocus(ImGuiViewport* viewport)
 {
     ImGui_ImplWin32_ViewportData* vd = (ImGui_ImplWin32_ViewportData*)viewport->PlatformUserData;
-    if (vd->Hwnd == 0) return;
+    if (vd->Hwnd == 0) return; // SKIF CUSTOM
     IM_ASSERT(vd->Hwnd != 0);
     ::BringWindowToTop(vd->Hwnd);
     ::SetForegroundWindow(vd->Hwnd);
@@ -1521,7 +1545,7 @@ static void ImGui_ImplWin32_SetWindowFocus(ImGuiViewport* viewport)
 static bool ImGui_ImplWin32_GetWindowFocus(ImGuiViewport* viewport)
 {
     ImGui_ImplWin32_ViewportData* vd = (ImGui_ImplWin32_ViewportData*)viewport->PlatformUserData;
-    if (vd->Hwnd == 0) return false;
+    if (vd->Hwnd == 0) return false; // SKIF CUSTOM
     IM_ASSERT(vd->Hwnd != 0);
     return ::GetForegroundWindow() == vd->Hwnd;
 }
@@ -1529,7 +1553,7 @@ static bool ImGui_ImplWin32_GetWindowFocus(ImGuiViewport* viewport)
 static bool ImGui_ImplWin32_GetWindowMinimized(ImGuiViewport* viewport)
 {
     ImGui_ImplWin32_ViewportData* vd = (ImGui_ImplWin32_ViewportData*)viewport->PlatformUserData;
-    if (vd->Hwnd == 0) return false;
+    if (vd->Hwnd == 0) return false; // SKIF CUSTOM
     IM_ASSERT(vd->Hwnd != 0);
     return ::IsIconic(vd->Hwnd) != 0;
 }
@@ -1538,7 +1562,7 @@ static void ImGui_ImplWin32_SetWindowTitle(ImGuiViewport* viewport, const char* 
 {
     // ::SetWindowTextA() doesn't properly handle UTF-8 so we explicitely convert our string.
     ImGui_ImplWin32_ViewportData* vd = (ImGui_ImplWin32_ViewportData*)viewport->PlatformUserData;
-    if (vd->Hwnd == 0) return;
+    if (vd->Hwnd == 0) return; // SKIF CUSTOM
     IM_ASSERT(vd->Hwnd != 0);
     int n = ::MultiByteToWideChar(CP_UTF8, 0, title, -1, nullptr, 0);
     ImVector<wchar_t> title_w;
@@ -1600,10 +1624,11 @@ static LRESULT CALLBACK ImGui_ImplWin32_WndProcHandler_PlatformWindow(HWND hWnd,
     static SKIF_DropTargetObject&   _drag_drop = SKIF_DropTargetObject  ::GetInstance ( );
 
     extern float  SKIF_ImGui_GlobalDPIScale;
+    extern float  SKIF_ImGui_GlobalDPIScale_Last;
     extern ImVec2 SKIF_vecRegularModeDefault;  // Does not include the status bar
     extern ImVec2 SKIF_vecRegularModeAdjusted; // Adjusted for status bar and tooltips
-    extern ImVec2 SKIF_vecAlteredSize;
-    extern HWND   SKIF_ImGui_hWnd;
+    extern ImVec2 SKIF_vecCurrentMode;
+    extern ImVec2 SKIF_vecCurrentModeNext;
     extern HWND   SKIF_Notify_hWnd;
 
     extern bool msgDontRedraw;
@@ -1678,6 +1703,8 @@ static LRESULT CALLBACK ImGui_ImplWin32_WndProcHandler_PlatformWindow(HWND hWnd,
       switch (msg)
       {
 
+//#define SKIF_Win32_GetDPIScaledSize
+#ifdef SKIF_Win32_GetDPIScaledSize
       // Calculate the new suggested size of the viewport on DPI changes
       case WM_GETDPISCALEDSIZE:
       {
@@ -1696,6 +1723,7 @@ static LRESULT CALLBACK ImGui_ImplWin32_WndProcHandler_PlatformWindow(HWND hWnd,
         // Apply the default linear DPI scaling to the window
         return 0;
       }
+#endif
 
 //#define SKIF_Win32_Snapping
 #ifdef SKIF_Win32_Snapping
@@ -1742,16 +1770,21 @@ static LRESULT CALLBACK ImGui_ImplWin32_WndProcHandler_PlatformWindow(HWND hWnd,
               {
                 ImVec2 tmpExpectedSize = ImVec2 (0.0f, 0.0f);
                 ImVec2 tmpAlteredSize  = ImVec2 (0.0f, 0.0f);
-                ImVec2 tmpCurrentSize  = SKIF_vecRegularModeAdjusted ;
+                ImVec2 tmpCurrentSize  = (_registry.bMiniMode) ? SKIF_vecServiceModeDefault  :
+                                         (_registry.bHorizonMode) ? SKIF_vecHorizonModeAdjusted :
+                                                                    SKIF_vecRegularModeAdjusted ;
 
                 float targetDPI = (_registry.bDPIScaling) ? targetMonitor.DpiScale : 1.0f;
                 tmpExpectedSize = tmpCurrentSize * targetDPI;
 
-                // Needed to account for an altered size on the target display
-                if (tmpCurrentSize.y * targetDPI > targetWorkArea.Max.y)
-                  tmpAlteredSize.y = (tmpCurrentSize.y * targetDPI - targetWorkArea.Max.y); // Crop the regular mode(s)
+                if (! _registry.bMiniMode)
+                {
+                  // Needed to account for an altered size on the target display
+                  if (tmpCurrentSize.y * targetDPI > targetWorkArea.Max.y)
+                    tmpAlteredSize.y = (tmpCurrentSize.y * targetDPI - targetWorkArea.Max.y); // Crop the regular mode(s)
 
-                tmpExpectedSize.y -= tmpAlteredSize.y;
+                  tmpExpectedSize.y -= tmpAlteredSize.y;
+                }
 
                 // Change the intended position to the actual center of the display
                 wp->x = static_cast<int> (targetWorkArea.GetCenter().x - (tmpExpectedSize.x * 0.5f));
@@ -1771,14 +1804,19 @@ static LRESULT CALLBACK ImGui_ImplWin32_WndProcHandler_PlatformWindow(HWND hWnd,
 
 #endif
 
-//#define SKIF_Win32_CenterMaximize
-#ifdef SKIF_Win32_CenterMaximize
-
         // This is used to inform Windows of the min/max size of the viewport, so
         //   that features such as Aero Snap takes the enforced size into account
         case WM_GETMINMAXINFO:
         {
           MINMAXINFO* mmi = reinterpret_cast<MINMAXINFO*>(lParam);
+
+          // The minimum tracking size is the smallest window size that can be produced by using the borders to size the window.
+          // For SKIV that's 200x200 * SKIF_ImGui_GlobalDPIScale.
+          mmi->ptMinTrackSize.x = static_cast<long> (200.0f * SKIF_ImGui_GlobalDPIScale);
+          mmi->ptMinTrackSize.y = static_cast<long> (200.0f * SKIF_ImGui_GlobalDPIScale);
+
+//#define SKIF_Win32_CenterMaximize
+#ifdef SKIF_Win32_CenterMaximize
           static POINT sizeMin, sizeMax, pos;
 
           // For systems with multiple monitors, the ptMaxSize and ptMaxPosition members describe the maximized size and position of the window on the primary monitor,
@@ -1807,19 +1845,38 @@ static LRESULT CALLBACK ImGui_ImplWin32_WndProcHandler_PlatformWindow(HWND hWnd,
           mmi->ptMinTrackSize = sizeMax; // Minimum tracking size
           mmi->ptMaxTrackSize = sizeMax; // Maximum tracking size
 
-          return 0;
+#endif
+          //return 0; // We don't return 0 to allow DefWindowProc() the opportunity to also process the message
           break;
         }
 
-#endif
+        // Windows 10, version 1703+
+        // 
+        // The function returns a BOOL.
+        //   - Returning TRUE indicates that a new size has been computed.
+        //   - Returning FALSE indicates that the message will not be handled, and the default linear DPI scaling will apply to the window.
+        // 
+        // There is no specific default handling of this message in DefWindowProc.
+        //   - As for all messages it does not explicitly handle, DefWindowProc will return zero for this message.
+        //   - As noted above, this return tells the system to use the default linear behavior.
+        case WM_GETDPISCALEDSIZE:
+        {
+          // Return TRUE if HiDPI is disabled as this allows us to retain our window size
+          return (! _registry.bDPIScaling);
+          break;
+        }
 
         case WM_DPICHANGED:
         {
+          // Only process if we actually follow HiDPI
+          if (! _registry.bDPIScaling)
+            return 0;
+
           int g_dpi    = HIWORD (wParam);
           RECT* const prcNewWindow = (RECT*) lParam;
 
           // Update the style scaling
-          SKIF_ImGui_GlobalDPIScale = (_registry.bDPIScaling) ? (float) g_dpi / USER_DEFAULT_SCREEN_DPI : 1.0f;
+          SKIF_ImGui_GlobalDPIScale = (float) g_dpi / USER_DEFAULT_SCREEN_DPI;
 
           ImGuiStyle              newStyle;
           extern void
@@ -1829,9 +1886,6 @@ static LRESULT CALLBACK ImGui_ImplWin32_WndProcHandler_PlatformWindow(HWND hWnd,
           extern bool
             invalidateFonts;
             invalidateFonts = true;
-
-          // Reset reduced height
-          SKIF_vecAlteredSize.y = 0.0f;
 
           POINT ptLeftTop = {
             prcNewWindow->left,
@@ -1855,8 +1909,11 @@ static LRESULT CALLBACK ImGui_ImplWin32_WndProcHandler_PlatformWindow(HWND hWnd,
 
             ImVec2 tmpCurrentSize  = SKIF_vecRegularModeAdjusted ;
 
-            if (tmpCurrentSize.y * SKIF_ImGui_GlobalDPIScale > (WorkSize.y))
-              SKIF_vecAlteredSize.y = (tmpCurrentSize.y * SKIF_ImGui_GlobalDPIScale - (WorkSize.y)); // (WorkSize.y - 50.0f);
+            //if (tmpCurrentSize.y * SKIF_ImGui_GlobalDPIScale > (WorkSize.y))
+            //  SKIF_vecAlteredSize.y = (tmpCurrentSize.y * SKIF_ImGui_GlobalDPIScale - (WorkSize.y)); // (WorkSize.y - 50.0f);
+
+            // Divide the window size with its associated DPI scale to get the base size, then multiply with the new DPI scale
+            SKIF_vecCurrentModeNext = (SKIF_vecCurrentMode / SKIF_ImGui_GlobalDPIScale_Last) * SKIF_ImGui_GlobalDPIScale;
 
             if (ImGui::IsAnyMouseDown ( ))
               return 0;
@@ -1961,28 +2018,8 @@ static LRESULT CALLBACK ImGui_ImplWin32_WndProcHandler_PlatformWindow(HWND hWnd,
         {
           // Only convert "non-client" double clicks to single clicks
           //   if dragging windows from a maximized state is disabled
-          if (! _registry.bMaximizeOnDoubleClick || ! SKIF_Util_GetDragFromMaximized ( ))
+          //if (! _registry.bMaximizeOnDoubleClick || ! SKIF_Util_GetDragFromMaximized ( ))
             msg = WM_NCLBUTTONDOWN;
-          break;
-        }
-
-        default:
-        {
-          extern UINT SHELL_TASKBAR_BUTTON_CREATED;
-          // When the taskbar button has been created,
-          //   the icon overlay can be set accordingly
-          if (msg == SHELL_TASKBAR_BUTTON_CREATED)
-          {
-            //_inject._SetTaskbarOverlay (_inject.bCurrentState);
-
-            extern void SKIF_Shell_CreateUpdateNotifyMenu (void);
-            extern void SKIF_Shell_UpdateNotifyIcon       (void);
-
-            // Recreate things if needed
-            SKIF_Shell_CreateUpdateNotifyMenu             (    );
-            SKIF_Shell_UpdateNotifyIcon                   (    );
-          }
-
           break;
         }
       }
@@ -2034,9 +2071,9 @@ static void ImGui_ImplWin32_InitPlatformInterface(bool platform_has_own_dc)
     wcex.hInstance = ::GetModuleHandle(nullptr);
     wcex.hIcon = nullptr;
     wcex.hCursor = nullptr;
-    wcex.hbrBackground = (HBRUSH)(COLOR_BACKGROUND + 1);
-    wcex.lpszMenuName = nullptr;
 #ifdef SKIF_Win32
+    wcex.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1); // COLOR_BACKGROUND is unsupported on Win10+
+    wcex.lpszMenuName = nullptr;
     wcex.lpszClassName = SKIF_ImGui_WindowClass;
     HMODULE hModHost =
       ::GetModuleHandle (nullptr);
@@ -2045,7 +2082,9 @@ static void ImGui_ImplWin32_InitPlatformInterface(bool platform_has_own_dc)
      wcex.hIconSm       =
        LoadIcon (hModHost, MAKEINTRESOURCE (IDI_SKIV));
 #else
-    wcex.lpszClassName = _T("ImGui Platform");;
+    wcex.hbrBackground = (HBRUSH)(COLOR_BACKGROUND + 1);
+    wcex.lpszMenuName = nullptr;
+    wcex.lpszClassName = _T("ImGui Platform");
     wcex.hIconSm = nullptr;
 #endif // SKIF_Win32
     ::RegisterClassEx(&wcex);
@@ -2093,13 +2132,8 @@ static void ImGui_ImplWin32_ShutdownPlatformInterface()
 }
 
 //---------------------------------------------------------------------------------------------------------
-
-#endif // #ifndef IMGUI_DISABLE
-
-
-//--------------------------------------------------------------------------------------------------------
 // SKIF CUSTOM WIN32 IMPLEMENTATION
-//--------------------------------------------------------------------------------------------------------
+//---------------------------------------------------------------------------------------------------------
 
 #include <imgui/imgui_internal.h>
 #include "../../version.h"
@@ -2128,8 +2162,6 @@ SKIF_ImGui_ImplWin32_SetDWMBorders (void* hWnd)
                         (255 * imguiBorderColor.y),
                         (255 * imguiBorderColor.z));
   
-  extern HWND
-      SKIF_ImGui_hWnd;
   if (SKIF_ImGui_hWnd ==       NULL ||
       SKIF_ImGui_hWnd == (HWND)hWnd)
     dwmCornerPreference = DWMWCP_ROUND;      // Main window
@@ -2232,6 +2264,7 @@ SKIF_ImGui_ImplWin32_WantUpdateMonitors (void)
   return ImGui_ImplWin32_GetBackendData()->WantUpdateMonitors;
 }
 
+
 bool
 SKIF_ImGui_ImplWin32_SetFullscreen (int fullscreen)
 {
@@ -2311,3 +2344,13 @@ SKIF_ImGui_ImplWin32_SetFullscreen (int fullscreen)
 
   return _cached.Fullscreen;
 }
+
+//---------------------------------------------------------------------------------------------------------
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+
+#endif // #ifndef IMGUI_DISABLE
