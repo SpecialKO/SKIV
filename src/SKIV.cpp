@@ -1058,9 +1058,9 @@ wWinMain ( _In_     HINSTANCE hInstance,
   SKIF_ImGui_InitFonts (SKIF_ImGui_FontSizeDefault, (! _Signal.Launcher && ! _Signal.LauncherURI && ! _Signal.Quit && ! _Signal.ServiceMode) );
 
   // Variable related to continue/pause rendering behaviour
-  bool HiddenFramesContinueRendering = true;  // We always have hidden frames that require to continue rendering on init
+  bool HiddenFramesContinueProcessing = true;  // We always have hidden frames that require to continue processing on init
   int  HiddenFramesRemaining         = 0;
-  bool svcTransitionFromPendingState = false; // This is used to continue rendering if we transitioned over from a pending state (which kills the refresh timer)
+  bool svcTransitionFromPendingState = false; // This is used to continue processing if we transitioned over from a pending state (which kills the refresh timer)
 
   bool repositionToCenter = false;
 
@@ -1505,7 +1505,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
       SK_RunOnce (ImGui::GetCurrentWindow()->HiddenFramesCannotSkipItems += 2);
 
       HiddenFramesRemaining         = ImGui::GetCurrentWindowRead()->HiddenFramesCannotSkipItems;
-      HiddenFramesContinueRendering = (HiddenFramesRemaining > 0);
+      HiddenFramesContinueProcessing = (HiddenFramesRemaining > 0);
       HoverTipActive = false;
 
       extern ImGuiPlatformMonitor*
@@ -1936,7 +1936,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
 
       // Font warning
-      if (failedLoadFontsPrompt && ! HiddenFramesContinueRendering)
+      if (failedLoadFontsPrompt && ! HiddenFramesContinueProcessing)
       {
         failedLoadFontsPrompt = false;
 
@@ -1988,7 +1988,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
       static float  UpdateAvailableWidth = 0.0f;
 
       // Only open the update prompt after the library has appeared (fixes the popup weirdly closing for some unknown reason)
-      if (UpdatePromptPopup == PopupState_Open && ! HiddenFramesContinueRendering && ! SKIF_ImGui_IsAnyPopupOpen ( ) && ! ImGui::IsMouseDragging (ImGuiMouseButton_Left))
+      if (UpdatePromptPopup == PopupState_Open && ! HiddenFramesContinueProcessing && ! SKIF_ImGui_IsAnyPopupOpen ( ) && ! ImGui::IsMouseDragging (ImGuiMouseButton_Left))
       {
         //UpdateAvailableWidth = ImGui::CalcTextSize ((SK_WideCharToUTF8 (newVersion.description) + " is ready to be installed.").c_str()).x + 3 * ImGui::GetStyle().ItemSpacing.x;
         UpdateAvailableWidth = 360.0f;
@@ -2193,7 +2193,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
       static float  HistoryPopupWidth          = 0.0f;
       static std::string HistoryPopupTitle;
 
-      if (HistoryPopup == PopupState_Open && ! HiddenFramesContinueRendering && ! SKIF_ImGui_IsAnyPopupOpen ( ))
+      if (HistoryPopup == PopupState_Open && ! HiddenFramesContinueProcessing && ! SKIF_ImGui_IsAnyPopupOpen ( ))
       {
         HistoryPopupWidth = 360.0f;
 
@@ -2301,7 +2301,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
       }
       
       // Only open the popup prompt after the library has appeared (fixes the popup weirdly closing for some unknown reason)
-      if (AutoUpdatePopup == PopupState_Open && ! HiddenFramesContinueRendering && ! SKIF_ImGui_IsAnyPopupOpen ( ))
+      if (AutoUpdatePopup == PopupState_Open && ! HiddenFramesContinueProcessing && ! SKIF_ImGui_IsAnyPopupOpen ( ))
       {
         AutoUpdatePopupWidth = 360.0f;
 
@@ -2605,7 +2605,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
     // Handle dynamic pausing
     bool pause = false;
     static int
-      renderAdditionalFrames = 0;
+      processAdditionalFrames = 0;
 
     bool input = SKIF_ImGui_IsAnyInputDown ( ) || uiLastMsg == WM_SKIF_GAMEPAD ||
                    (uiLastMsg >= WM_MOUSEFIRST && uiLastMsg <= WM_MOUSELAST)   ||
@@ -2614,30 +2614,30 @@ wWinMain ( _In_     HINSTANCE hInstance,
     // We want SKIF to continue rendering in some specific scenarios
     ImGuiWindow* wnd = ImGui::FindWindowByName ("###KeyboardHint");
     if (wnd != nullptr && wnd->Active)
-      renderAdditionalFrames = ImGui::GetFrameCount ( ) + 3; // If the keyboard hint/search is active
+      processAdditionalFrames = ImGui::GetFrameCount ( ) + 3; // If the keyboard hint/search is active
     else if (uiLastMsg == WM_SETCURSOR  || uiLastMsg == WM_TIMER   ||
              uiLastMsg == WM_SETFOCUS   || uiLastMsg == WM_KILLFOCUS)
-      renderAdditionalFrames = ImGui::GetFrameCount ( ) + 3; // If we received some event changes
+      processAdditionalFrames = ImGui::GetFrameCount ( ) + 3; // If we received some event changes
     else if (input)
-      renderAdditionalFrames = ImGui::GetFrameCount ( ) + 3; // If we received any gamepad input or an input is held down
+      processAdditionalFrames = ImGui::GetFrameCount ( ) + 3; // If we received any gamepad input or an input is held down
     else if (svcTransitionFromPendingState)
-      renderAdditionalFrames = ImGui::GetFrameCount ( ) + 3; // If we transitioned away from a pending service state
+      processAdditionalFrames = ImGui::GetFrameCount ( ) + 3; // If we transitioned away from a pending service state
     else if (1.0f > ImGui::GetCurrentContext()->DimBgRatio && ImGui::GetCurrentContext()->DimBgRatio > 0.0f)
-      renderAdditionalFrames = ImGui::GetFrameCount ( ) + 3; // If the background is currently currently undergoing a fade effect
+      processAdditionalFrames = ImGui::GetFrameCount ( ) + 3; // If the background is currently currently undergoing a fade effect
     else if (SKIF_Tab_Selected == UITab_Viewer && imageFadeActive)
-      renderAdditionalFrames = ImGui::GetFrameCount ( ) + 3; // If the cover is currently undergoing a fade effect
+      processAdditionalFrames = ImGui::GetFrameCount ( ) + 3; // If the cover is currently undergoing a fade effect
     else if (addAdditionalFrames > 0)
-      renderAdditionalFrames = ImGui::GetFrameCount ( ) + addAdditionalFrames; // Used when the cover is currently loading in, or the update check just completed
+      processAdditionalFrames = ImGui::GetFrameCount ( ) + addAdditionalFrames; // Used when the cover is currently loading in, or the update check just completed
     /*
     else if (  AddGamePopup == PopupState_Open ||
                ConfirmPopup == PopupState_Open ||
             ModifyGamePopup == PopupState_Open ||
           UpdatePromptPopup == PopupState_Open ||
                HistoryPopup == PopupState_Open )
-      renderAdditionalFrames = ImGui::GetFrameCount ( ) + 3; // If a popup is transitioning to an opened state
+      processAdditionalFrames = ImGui::GetFrameCount ( ) + 3; // If a popup is transitioning to an opened state
     */
-    else if (ImGui::GetFrameCount ( ) > renderAdditionalFrames)
-      renderAdditionalFrames = 0;
+    else if (ImGui::GetFrameCount ( ) > processAdditionalFrames)
+      processAdditionalFrames = 0;
 
     addAdditionalFrames = 0;
 
@@ -2654,11 +2654,11 @@ wWinMain ( _In_     HINSTANCE hInstance,
     //  OutputDebugString((L"[doWhile] Message spotted: " + std::to_wstring(uiLastMsg) + L"\n").c_str());
     
     // Pause if we don't need to render any additional frames
-    if (renderAdditionalFrames == 0)
+    if (processAdditionalFrames == 0)
       pause = true;
 
     // Don't pause if there's hidden frames that needs rendering
-    if (HiddenFramesContinueRendering)
+    if (HiddenFramesContinueProcessing)
       pause = false;
 
     // Follow up on our attempt to restart the Steam client
@@ -2718,7 +2718,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
         }
 
         // Always render 3 additional frames after we wake up
-        renderAdditionalFrames = ImGui::GetFrameCount() + 3;
+        processAdditionalFrames = ImGui::GetFrameCount() + 3;
       }
 
       if (bRefresh && ! msgDontRedraw && SKIF_ImGui_hWnd != NULL && ! vSwapchainWaitHandles.empty())
@@ -2733,7 +2733,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
         else
         {
           static bool bWaitTimeoutSwapChainsFallback = false;
-          auto timePre = SKIF_Util_timeGetTime1 ( );
+          //auto timePre = SKIF_Util_timeGetTime1 ( );
 
           DWORD res =
             WaitForMultipleObjectsEx (static_cast<DWORD>(vSwapchainWaitHandles.size()), vSwapchainWaitHandles.data(), true, bWaitTimeoutSwapChainsFallback ? dwDwmPeriod : 1000, true);
@@ -2758,6 +2758,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
             });
           }
 
+#if 0
           auto timePost = SKIF_Util_timeGetTime1 ( );
           auto timeDiff = timePost - timePre;
 
@@ -2768,6 +2769,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
             frameRateUnlocked = true;
 
           //PLOG_VERBOSE << "Waited: " << timeDiff << " ms (handles : " << vSwapchainWaitHandles.size() << ")";
+#endif
         }
       }
       
