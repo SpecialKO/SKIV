@@ -2971,10 +2971,14 @@ bool CreateDeviceD3D (HWND hWnd)
     // HDR formats
     if (_registry._RendererCanHDR && _registry.iHDRMode > 0)
     {
+#ifdef SKIV_HDR10_SUPPORT
       if      (_registry.iHDRMode == 2)
         dxgi_format = DXGI_FORMAT_R16G16B16A16_FLOAT; // scRGB (16 bpc)
       else
         dxgi_format = DXGI_FORMAT_R10G10B10A2_UNORM;  // HDR10 (10 bpc)
+#else
+      dxgi_format = DXGI_FORMAT_R16G16B16A16_FLOAT; // scRGB (16 bpc)
+#endif
     }
 
     // SDR formats

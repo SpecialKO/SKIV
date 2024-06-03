@@ -419,12 +419,14 @@ SKIF_UI_Tab_DrawSettings (void)
           _registry.regKVHDRMode.putData (         _registry.iHDRMode);
           RecreateSwapChains = true;
         }
+#ifdef SKIV_HDR10_SUPPORT
         ImGui::SameLine        ( );
         if (ImGui::RadioButton ("HDR10 (10 bpc)", &_registry.iHDRMode, 1))
         {
           _registry.regKVHDRMode.putData (         _registry.iHDRMode);
           RecreateSwapChains = true;
         }
+#endif
         ImGui::SameLine        ( );
         if (ImGui::RadioButton ("scRGB (16 bpc)", &_registry.iHDRMode, 2))
         {
