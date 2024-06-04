@@ -104,6 +104,23 @@ struct image_s {
     bool  isHDR        = false;
   } light_info;
 
+  struct gamut_info_s {
+    struct pixel_samples_s {
+      uint32_t rec_709;
+      uint32_t rec_2020;
+      uint32_t dci_p3;
+      uint32_t ap1;
+      uint32_t invalid;
+      uint32_t total;
+
+      float getPercentRec709  (void) const;
+      float getPercentRec2020 (void) const;
+      float getPercentDCIP3   (void) const;
+      float getPercentAP1     (void) const;
+      float getPercentInvalid (void) const;
+    } pixel_counts;
+  } colorimetry;
+
   // copy assignment
   image_s& operator= (const image_s other) noexcept
   {
@@ -117,6 +134,7 @@ struct image_s {
     pRawTexSRV.p        = other.pRawTexSRV.p;
     pTonemappedTexSRV.p = other.pTonemappedTexSRV.p;
     light_info          = other.light_info;
+    colorimetry         = other.colorimetry;
     return *this;
   }
 
@@ -132,7 +150,48 @@ struct image_s {
     pRawTexSRV.p        = nullptr;
     pTonemappedTexSRV.p = nullptr;
     light_info          = { };
+    colorimetry         = { };
   }
+};
+
+float
+image_s::gamut_info_s::pixel_samples_s::getPercentRec709 (void) const
+{
+  return (total == 0 || rec_709 == 0) ? 0.0f : 100.0f *
+    static_cast <float> ( static_cast <double> (rec_709) /
+                          static_cast <double> (total) );
+}
+
+float
+image_s::gamut_info_s::pixel_samples_s::getPercentRec2020 (void) const
+{
+  return (total == 0 || rec_2020 == 0) ? 0.0f : 100.0f *
+    static_cast <float> ( static_cast <double> (rec_2020) /
+                          static_cast <double> (total)  );
+};
+
+float
+image_s::gamut_info_s::pixel_samples_s::getPercentDCIP3 (void) const
+{
+  return (total == 0 || dci_p3 == 0) ? 0.0f : 100.0f *
+    static_cast <float> ( static_cast <double> (dci_p3) /
+                          static_cast <double> (total)  );
+};
+
+float
+image_s::gamut_info_s::pixel_samples_s::getPercentAP1 (void) const
+{
+  return (total == 0 || ap1 == 0) ? 0.0f : 100.0f *
+    static_cast <float> ( static_cast <double> (ap1) /
+                          static_cast <double> (total) );
+};
+
+float
+image_s::gamut_info_s::pixel_samples_s::getPercentInvalid (void) const
+{
+  return (total == 0 || invalid == 0) ? 0.0f : 100.0f *
+    static_cast <float> ( static_cast <double> (invalid) /
+                          static_cast <double> (total) );
 };
 
 std::wstring dragDroppedFilePath = L"";
@@ -419,20 +478,79 @@ using namespace DirectX;
     static const XMVECTORF32 s_luminance_2020 =
       { 0.2627f,   0.678f,    0.0593f,   0.f };
 
-    static const XMMATRIX c_from2020to709 =
+    static const XMVECTORF32 s_luminance =
+      { 0.2126729f, 0.7151522f, 0.0721750f, 0.f };
+
+    static const XMMATRIX c_from2020to709 = // Transposed
     {
-      {  1.6604910f, -0.1245505f, -0.0181508f, 0.f },
-      { -0.5876411f,  1.1328999f, -0.1005789f, 0.f },
-      { -0.0728499f, -0.0083494f,  1.1187297f, 0.f },
+      {  1.6604910f, -0.5876411f, -0.0728499f, 0.f },
+      { -0.1245505f,  1.1328999f, -0.0083494f, 0.f },
+      { -0.0181508f, -0.1005789f,  1.1187297f, 0.f },
       {  0.f,         0.f,         0.f,        1.f }
     };
 
-    static const XMMATRIX c_from709to2020 =
+    static const XMMATRIX c_from709to2020 = // Transposed
     {
-      { 0.627225305694944f,  0.329476882715808f,  0.0432978115892484f, 0.0f },
-      { 0.0690418812810714f, 0.919605681354755f,  0.0113524373641739f, 0.0f },
-      { 0.0163911702607078f, 0.0880887513437058f, 0.895520078395586f,  0.0f },
+      { 0.627225305694944f,  0.0690418812810714f, 0.0163911702607078f, 0.0f },
+      { 0.329476882715808f,  0.919605681354755f,  0.0880887513437058f, 0.0f },
+      { 0.0432978115892484f, 0.0113524373641739f, 0.895520078395586f,  0.0f },
       { 0.0f,                0.0f,                0.0f,                1.0f }
+    };
+
+    static const XMMATRIX c_fromXYZtoDCIP3 = // Transposed
+    {
+      {  2.7253940305, -0.7951680258,  0.0412418914, 0.0f },
+      { -1.0180030062,  1.6897320548, -0.0876390192, 0.0f },
+      { -0.4401631952,  0.0226471906,  1.1009293786, 0.0f },
+      {  0.0f,          0.0f,          0.0f,         1.0f }
+    };
+
+    static const XMMATRIX c_fromXYZtoAP1 = // Transposed
+    {
+      {  1.6410233797, -0.6636628587,  0.0117218943, 0.0f },
+      { -0.3248032942,  1.6153315917, -0.0082844420, 0.0f },
+      { -0.2364246952,  0.0167563477,  0.9883948585, 0.0f },
+      {  0.0f,          0.0f,          0.0f,         1.0f }
+    };
+
+    static const XMMATRIX c_from709toXYZ = // Transposed
+    {
+      { 0.4123907983303070068359375f,  0.2126390039920806884765625f,   0.0193308182060718536376953125f, 0.0f },
+      { 0.3575843274593353271484375f,  0.715168654918670654296875f,    0.119194783270359039306640625f,  0.0f },
+      { 0.18048079311847686767578125f, 0.072192318737506866455078125f, 0.950532138347625732421875f,     0.0f },
+      { 0.0f,                          0.0f,                           0.0f,                            1.0f }
+    };
+
+    static const XMMATRIX c_from709toDCIP3 = // Transposed
+    {
+      { 0.82246196269989013671875f,    0.03319419920444488525390625f, 0.017082631587982177734375f,  0.0f },
+      { 0.17753803730010986328125f,    0.96680581569671630859375f,    0.0723974406719207763671875f, 0.0f },
+      { 0.0f,                          0.0f,                          0.91051995754241943359375f,   0.0f },
+      { 0.0f,                          0.0f,                          0.0f,                         1.0f }
+    };
+
+    static const XMMATRIX c_from709toAP1 = // Transposed
+    {
+      { 0.61702883243560791015625f,       0.333867609500885009765625f,    0.04910354316234588623046875f,     0.0f },
+      { 0.069922320544719696044921875f,   0.91734969615936279296875f,     0.012727967463433742523193359375f, 0.0f },
+      { 0.02054978720843791961669921875f, 0.107552029192447662353515625f, 0.871898174285888671875f,          0.0f },
+      { 0.0f,                             0.0f,                           0.0f,                              1.0f }
+    };
+
+    static const XMMATRIX c_fromAP1toXYZ = // Transposed
+    {
+      { 0.647507190704345703125f,      0.266086399555206298828125f,   -0.00544886849820613861083984375f,  0.0f },
+      { 0.13437913358211517333984375f, 0.67596781253814697265625f,     0.004072095267474651336669921875f, 0.0f },
+      { 0.1685695946216583251953125f,  0.057945795357227325439453125f, 1.090434551239013671875f,          0.0f },
+      { 0.0f,                          0.0f,                           0.0f,                              1.0f }
+    };
+
+    static const XMMATRIX c_fromXYZto709 = // Transposed
+    {
+      {  3.2409698963165283203125f,    -0.96924364566802978515625f,       0.055630080401897430419921875f, 0.0f },
+      { -1.53738319873809814453125f,    1.875967502593994140625f,        -0.2039769589900970458984375f,   0.0f },
+      { -0.4986107647418975830078125f,  0.0415550582110881805419921875f,  1.05697154998779296875f,        0.0f },
+      {  0.0f,                          0.0f,                             0.0f,                           1.0f }
     };
 
     XMVECTOR vMaxCLL = g_XMZero;
@@ -446,23 +564,82 @@ using namespace DirectX;
     {
       UNREFERENCED_PARAMETER(y);
 
+      XMVECTOR vColorXYZ;
+      XMVECTOR vColorP3;
+      XMVECTOR vColor2020;
+      XMVECTOR vColorAP1;
+      XMVECTOR v;
+
+      uint32_t xm_test_all = 0x0;
+
       for (size_t j = 0; j < width; ++j)
       {
-        XMVECTOR v = *pixels;
+        v = *pixels;
 
         vMaxCLL =
           XMVectorMax (v, vMaxCLL);
 
-        v = XMVector3Transform (v, c_from709to2020);
+        vColorXYZ =
+          XMVectorMax (
+            XMVector3Transform (v, c_from709toXYZ), g_XMZero
+          );
 
-        XMVECTOR vLum =
-          XMVector3Dot ( v, s_luminance_2020 );
+        xm_test_all = 0x0;
+
+        if (XMVectorGreaterOrEqualR (&xm_test_all, v, g_XMZero);
+            XMComparisonAllTrue     ( xm_test_all))
+        {
+          image.colorimetry.pixel_counts.rec_709++;
+        }
+
+        else
+        {
+          vColorP3 =
+            XMVector3Transform (v, c_from709toDCIP3);
+
+          if (XMVectorGreaterOrEqualR (&xm_test_all, vColorP3, g_XMZero);
+              XMComparisonAnyFalse    ( xm_test_all))
+          {
+            vColor2020 =
+              XMVector3Transform (v, c_from709to2020);
+
+            if (XMVectorGreaterOrEqualR (&xm_test_all, vColor2020, g_XMZero);
+                XMComparisonAnyFalse    ( xm_test_all))
+            {
+              vColorAP1 =
+                XMVector3Transform (v, c_from709toAP1);
+
+              if (XMVectorGreaterOrEqualR (&xm_test_all, vColorAP1, g_XMZero);
+                  XMComparisonAnyFalse    ( xm_test_all))
+              {
+                image.colorimetry.pixel_counts.invalid++;
+              }
+
+              else
+              {
+                image.colorimetry.pixel_counts.ap1++;
+              }
+            }
+
+            else
+            {
+              image.colorimetry.pixel_counts.rec_2020++;
+            }
+          }
+
+          else
+          {
+            image.colorimetry.pixel_counts.dci_p3++;
+          }
+        }
+
+        image.colorimetry.pixel_counts.total++;
 
         fMaxLum =
-          std::max (fMaxLum, vLum.m128_f32 [0]);
+          std::max (fMaxLum, vColorXYZ.m128_f32 [1]);
 
         fMinLum =
-          std::min (fMinLum, vLum.m128_f32 [0]);
+          std::min (fMinLum, vColorXYZ.m128_f32 [1]);
 
         //lumTotal +=
         //  logf ( std::max (0.000001f, 0.000001f + v.m128_f32 [1]) ),
@@ -482,9 +659,9 @@ using namespace DirectX;
     XMVECTOR vMaxCLLReplicated =
       XMVectorReplicate (fMaxCLL);
 
-    DirectX::TransformImage ( pImg->GetImages     (),
-                              pImg->GetImageCount (),
-                              pImg->GetMetadata   (),
+    TransformImage ( pImg->GetImages     (),
+                     pImg->GetImageCount (),
+                     pImg->GetMetadata   (),
     [&](XMVECTOR* outPixels, const XMVECTOR* inPixels, size_t width, size_t y)
     {
       UNREFERENCED_PARAMETER(y);
@@ -905,7 +1082,38 @@ SKIF_UI_Tab_DrawViewer (void)
     ImGui::TextUnformatted (szLightLevels);
     ImGui::SameLine        ();
     ImGui::TextUnformatted (szLightUnits);
+
+    auto light_pos =
+      ImGui::GetCursorPos ();
+
     ImGui::SetCursorPos    (orig_pos);
+
+    const float fPercent709     = cover.colorimetry.pixel_counts.getPercentRec709  ();
+    const float fPercentP3      = cover.colorimetry.pixel_counts.getPercentDCIP3   ();
+    const float fPercent2020    = cover.colorimetry.pixel_counts.getPercentRec2020 ();
+    const float fPercentAP1     = cover.colorimetry.pixel_counts.getPercentAP1     ();
+    const float fPercentInvalid = cover.colorimetry.pixel_counts.getPercentInvalid ();
+
+    ImGui::SetCursorPos    (ImVec2 (0.0f, light_pos.y));
+    ImGui::TextUnformatted ("\n");
+
+    ImGui::BeginGroup ();
+    if (fPercent709     > 0.0f) ImGui::TextUnformatted ("Rec 709: ");
+    if (fPercentP3      > 0.0f) ImGui::TextUnformatted ("DCI P3: ");
+    if (fPercent2020    > 0.0f) ImGui::TextUnformatted ("Rec 2020: ");
+    if (fPercentAP1     > 0.0f) ImGui::TextUnformatted ("AP1: ");
+    if (fPercentInvalid > 0.0f) ImGui::TextUnformatted ("Invalid: ");
+    ImGui::EndGroup   ();
+    ImGui::SameLine   ();
+    ImGui::BeginGroup ();
+    if (fPercent709     > 0.0f) ImGui::Text ("%8.4f %%", fPercent709);
+    if (fPercentP3      > 0.0f) ImGui::Text ("%8.4f %%", fPercentP3);
+    if (fPercent2020    > 0.0f) ImGui::Text ("%8.4f %%", fPercent2020);
+    if (fPercentAP1     > 0.0f) ImGui::Text ("%8.4f %%", fPercentAP1);
+    if (fPercentInvalid > 0.0f) ImGui::Text ("%8.4f %%", fPercentInvalid);
+    ImGui::EndGroup   ();
+
+    ImGui::SetCursorPos (orig_pos);
   }
 
 #pragma region ContextMenu
@@ -1095,6 +1303,7 @@ SKIF_UI_Tab_DrawViewer (void)
         cover.pRawTexSRV        = _data->image.pRawTexSRV;
         cover.pTonemappedTexSRV = _data->image.pTonemappedTexSRV;
         cover.light_info        = _data->image.light_info;
+        cover.colorimetry       = _data->image.colorimetry;
 
         extern ImVec2 SKIV_ResizeApp;
         SKIV_ResizeApp.x = cover.width;
