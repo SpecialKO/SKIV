@@ -23,10 +23,11 @@ float4 main(PS_INPUT input) : SV_Target
 
 struct PS_INPUT
 {
-  float4 pos : SV_POSITION;
-  float2 uv  : TEXCOORD0;
-  float4 col : COLOR0;
-  float4 lum : COLOR1; // constant_buffer->luminance_scale
+  float4 pos     : SV_POSITION;
+  float2 uv      : TEXCOORD0;
+  float4 col     : COLOR0;
+  float4 lum     : COLOR1; // constant_buffer->luminance_scale
+  float  hdr_img : COLOR2;
 };
 
 cbuffer fontDims : register(b0)
@@ -85,6 +86,20 @@ RemoveSRGBCurve (float3 x)
   return (x < 0.04045 ? x / 12.92 :
                   pow( (x + 0.055) / 1.055, 2.4 ));
 #endif
+}
+
+float3
+ApplyGammaExp (float3 x, float exp)
+{
+  return     sign (x) *
+         pow (abs (x), 1.0f/exp);
+}
+
+float3
+RemoveGammaExp (float3 x, float exp)
+{
+  return     sign (x) *
+         pow (abs (x), exp);
 }
 
 float3 ApplyREC709Curve (float3 x)
@@ -245,15 +260,81 @@ bool IsInf (float x)
     (asuint (x) & 0x7FFFFFFF) == 0x7F800000;
 }
 
+bool AnyIsInf (float2 x)
+{
+  return
+    any ((asuint (x) & 0x7FFFFFFF) == 0x7F800000);
+}
+
+bool AnyIsInf (float3 x)
+{
+  return
+    any ((asuint (x) & 0x7FFFFFFF) == 0x7F800000);
+}
+
+bool AnyIsInf (float4 x)
+{
+  return
+    any ((asuint (x) & 0x7FFFFFFF) == 0x7F800000);
+}
+
+bool AnyIsNan (float2 x)
+{
+  return
+    any ((asuint (x) & 0x7fffffff) > 0x7f800000);
+}
+
+bool AnyIsNan (float3 x)
+{
+  return
+    any ((asuint (x) & 0x7fffffff) > 0x7f800000);
+}
+
+bool AnyIsNan (float4 x)
+{
+  return
+    any ((asuint (x) & 0x7fffffff) > 0x7f800000);
+}
+
+bool IsInfOrNan (float x)
+{
+  return
+    (asuint (x) & 0x7fffffff) >= 0x7f800000;
+}
+
+bool AnyIsInfOrNan (float2 x)
+{
+  return
+    any ((asuint (x) & 0x7fffffff) >= 0x7f800000);
+}
+
+bool AnyIsInfOrNan (float3 x)
+{
+  return
+    any ((asuint(x) & 0x7fffffff) >= 0x7f800000);
+}
+
+bool AnyIsInfOrNan (float4 x)
+{
+  return
+    any ((asuint (x) & 0x7fffffff) >= 0x7f800000);
+}
+
+#define float_MAX 65504.0 // (2 - 2^-10) * 2^15
 #define FP16_MIN 0.00000009
 
 float3 Clamp_scRGB (float3 c)
 {
-  // Clamp to Rec 2020
-  return
-    REC2020toREC709 (
-      max (REC709toREC2020 (c), FP16_MIN)
-    );
+  if (any (c < 0.0f) || AnyIsInfOrNan (c))
+  {
+    // Clamp to Rec 2020
+    return
+      REC2020toREC709 (
+        max (REC709toREC2020 (c), 0.0f)
+      );
+  }
+
+  return c;
 }
 
 float3 Clamp_scRGB_StripNaN (float3 c)
@@ -261,30 +342,56 @@ float3 Clamp_scRGB_StripNaN (float3 c)
   // Remove special floating-point bit patterns, clamping is the
   //   final step before output and outputting NaN or Infinity would
   //     break color blending!
-  c =
-    float3 ( (! IsNan (c.r)) * (! IsInf (c.r)) * c.r,
-             (! IsNan (c.g)) * (! IsInf (c.g)) * c.g,
-             (! IsNan (c.b)) * (! IsInf (c.b)) * c.b );
-   
+  if (AnyIsInfOrNan (c))
+  {
+    c =
+      float3 ( (! IsNan (c.r)) * IsInf (c.r) ? sign (c.r) * float_MAX : c.r,
+               (! IsNan (c.g)) * IsInf (c.g) ? sign (c.g) * float_MAX : c.g,
+               (! IsNan (c.b)) * IsInf (c.b) ? sign (c.b) * float_MAX : c.b );
+  }
+
   return Clamp_scRGB (c);
+}
+
+float Clamp_scRGB (float c, bool strip_nan = false)
+{
+  // No colorspace clamp here, just keep it away from 0.0
+  if (strip_nan && IsInfOrNan (c))
+    c = (! IsNan (c)) * IsInf (c) ? sign (c) * float_MAX : c;
+
+  return clamp (c + sign (c) * FP16_MIN, -float_MAX,
+                                          float_MAX);
 }
 
 
 
 float4 main (PS_INPUT input) : SV_Target
 {
-  float4 out_col  =
+  float4 input_col = input.col;
+
+  if (input.hdr_img)
+  {
+    input_col = float4 (1.0f, 1.0f, 1.0f, 1.0f);
+  }
+
+  float4 out_col =
     texture0.Sample (sampler0, input.uv);
 
   // Input is an alpha-only font texture if these are non-zero
   if (font_dims.x + font_dims.y > 0.0f)
   {
-    // Supply constant 1.0 for the color components, we only want alpha
+  // Supply constant 1.0 for the color components, we only want alpha
     out_col.rgb = 1.0f;
   }
 
+  // Other way around for everything else, we do not want a texture's alpha
+  else
+  {
+    out_col.a = 1.0f;
+  }
+
   float4 orig_col = out_col;
-  
+
               // input.lum.x        // Luminance (white point)
   bool isHDR   = input.lum.y > 0.0; // HDR (10 bpc or 16 bpc)
   bool is10bpc = input.lum.z > 0.0; // 10 bpc
@@ -298,10 +405,13 @@ float4 main (PS_INPUT input) : SV_Target
   {
     // Clamp_scRGB_StripNaN ( expandGamut
     out_col =
-      float4 (  RemoveSRGBCurve (           input.col.rgb) *
-                RemoveSRGBCurve (             out_col.rgb),
+      float4 (  input.hdr_img ?
+                RemoveGammaExp  (           input_col.rgb,        2.2f) *
+                                              out_col.rgb               :
+                RemoveGammaExp  (           input_col.rgb *
+                               ApplyGammaExp (out_col.rgb, 2.2f), 2.2f),
                                   saturate (  out_col.a)  *
-                                  saturate (input.col.a)
+                                  saturate (input_col.a)
               );
 
 //#def EXPAND
@@ -310,24 +420,23 @@ float4 main (PS_INPUT input) : SV_Target
                                   saturate (out_col.rgb), 0.0333)
               );
 #endif
-    
+
     float hdr_scale = input.lum.x;
-    
-    out_col.rgb =                 saturate (out_col.rgb) * hdr_scale;
-    
-#ifdef EXPAND
-    out_col.r = (orig_col.r <= 0.00013 && orig_col.r >= -0.00013) ? 0.0f : out_col.r;
-    out_col.g = (orig_col.g <= 0.00013 && orig_col.g >= -0.00013) ? 0.0f : out_col.g;
-    out_col.b = (orig_col.b <= 0.00013 && orig_col.b >= -0.00013) ? 0.0f : out_col.b;
-    out_col.a = (orig_col.a <= 0.00013 && orig_col.a >= -0.00013) ? 0.0f : out_col.a;
-#endif
-    
+
+    if (! input.hdr_img)
+      out_col.rgb = saturate (out_col.rgb) * hdr_scale;
+    else
+      out_col.a = 1.0f; // Opaque
+
+    if (abs (orig_col.r + orig_col.g + orig_col.b) <= 0.000013)
+      out_col.rgb = 0.0f;
+
     // Manipulate the alpha channel a bit...
   //out_col.a = 1.0f - RemoveSRGBCurve (1.0f - out_col.a); // Sort of perfect alpha transparency handling, but worsens fonts (more haloing), in particular for bright fonts on dark backgrounds
   //out_col.a = out_col.a;                                 // Worse alpha transparency handling, but improves fonts (less haloing)
   //out_col.a = 1.0f - ApplySRGBCurve  (1.0f - out_col.a); // Unusable alpha transparency, and worsens dark fonts on bright backgrounds
     // No perfect solution for various reasons (ImGui not having proper subpixel font rendering or doing linear colors for example)
-    
+
     out_col.rgb *= out_col.a;
   }
   
@@ -338,10 +447,10 @@ float4 main (PS_INPUT input) : SV_Target
   else if (is10bpc && isHDR)
   {
     out_col =
-      float4 (  RemoveSRGBCurve (           input.col.rgb) *
-                RemoveSRGBCurve (             out_col.rgb),
+      float4 (  RemoveGammaExp (            input_col.rgb *
+                               ApplyGammaExp (out_col.rgb, 2.2f), 2.2f),
                                   saturate (  out_col.a)  *
-                                  saturate (input.col.a)
+                                  saturate (input_col.a)
               );
     
     float hdr_scale = (-input.lum.x / 10000.0);
@@ -356,7 +465,7 @@ float4 main (PS_INPUT input) : SV_Target
     
     out_col.rgb *= out_col.a;
   }
-  
+
   // 10 bpc SDR
   // ColSpace:  DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709
   // Gamma:     2.2
@@ -364,50 +473,50 @@ float4 main (PS_INPUT input) : SV_Target
   else if (is10bpc)
   {
     out_col =
-      float4 (  RemoveSRGBCurve (           input.col.rgb) *
-                RemoveSRGBCurve (             out_col.rgb),
+      float4 (  RemoveGammaExp  (           input_col.rgb *
+                               ApplyGammaExp (out_col.rgb, 2.2f), 2.2f),
                                   saturate (  out_col.a)  *
-                                  saturate (input.col.a)
+                                  saturate (input_col.a)
               );
-    
+
     out_col.rgb = ApplySRGBCurve (out_col.rgb);
-    
+
     out_col.rgb *= out_col.a;
   }
-  
+
   // 8 bpc SDR (sRGB)
   else
   {
-    
+
 #ifdef _SRGB
     out_col =
-      float4 (   (           input.col.rgb) *
+      float4 (   (           input_col.rgb) *
                  (             out_col.rgb),
                                   saturate (  out_col.a)  *
-                                  saturate (input.col.a)
+                                  saturate (input_col.a)
               );
-    
+
     out_col.rgb = RemoveSRGBCurve (out_col.rgb);
-    
+
     // Manipulate the alpha channel a bit...
     out_col.a = 1.0f - RemoveSRGBCurve (1.0f - out_col.a);
 #else
-    
+
     out_col =
-      float4 (  RemoveSRGBCurve (           input.col.rgb) *
-                RemoveSRGBCurve (             out_col.rgb),
+      float4 (  RemoveGammaExp (           input_col.rgb *
+                              ApplyGammaExp (out_col.rgb, 2.2f), 2.2f),
                                   saturate (  out_col.a)  *
-                                  saturate (input.col.a)
+                                  saturate (input_col.a)
               );
-    
+
     out_col.rgb = ApplySRGBCurve (out_col.rgb);
-    
+
 #endif
-    
+
     out_col.rgb *= out_col.a;
     
   }
-  
+
   return out_col;
 };
 
