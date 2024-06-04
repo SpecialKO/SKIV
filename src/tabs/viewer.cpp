@@ -257,7 +257,7 @@ LoadLibraryTexture (image_s& image)
 
           decoder = 
             (type.file_extension == L".jpg"  ) ? ImageDecoder_stbi : // covers both .jpeg and .jpg
-            (type.file_extension == L".png"  ) ? ImageDecoder_WIC :  // Use WIC for proper color correction
+            (type.file_extension == L".png"  ) ? ImageDecoder_stbi : // Use WIC for proper color correction
           //(type.file_extension == L".tga"  ) ? ImageDecoder_stbi : // TGA has no real unique header identifier, so just use the file extension on those
             (type.file_extension == L".bmp"  ) ? ImageDecoder_stbi :
             (type.file_extension == L".psd"  ) ? ImageDecoder_stbi :
@@ -292,7 +292,16 @@ LoadLibraryTexture (image_s& image)
         channels_in_file = 0,
         desired_channels = STBI_rgb_alpha;
 
-    unsigned char *pixels = stbi_load (szPath.c_str(), &width, &height, &channels_in_file, desired_channels);
+#define STBI_FLOAT
+#ifdef STBI_FLOAT
+    float*                pixels = stbi_loadf (szPath.c_str(), &width, &height, &channels_in_file, desired_channels);
+    typedef float         pixel_size;
+    constexpr DXGI_FORMAT dxgi_format = DXGI_FORMAT::DXGI_FORMAT_R32G32B32A32_FLOAT;
+#else
+    unsigned char*        pixels = stbi_load  (szPath.c_str(), &width, &height, &channels_in_file, desired_channels);
+    typedef unsigned char pixel_size;
+    constexpr DXGI_FORMAT dxgi_format = DXGI_FORMAT::DXGI_FORMAT_R8G8B8A8_UNORM;
+#endif
 
     if (pixels != NULL)
     {
@@ -301,12 +310,12 @@ LoadLibraryTexture (image_s& image)
       meta.depth     = 1;
       meta.arraySize = 1;
       meta.mipLevels = 1;
-      meta.format    = DXGI_FORMAT_R8G8B8A8_UNORM; // STBI_rgb_alpha
+      meta.format    = dxgi_format; // STBI_rgb_alpha
       meta.dimension = DirectX::TEX_DIMENSION_TEXTURE2D;
 
       if (SUCCEEDED (img.Initialize2D (meta.format, width, height, 1, 1)))
       {
-        size_t   imageSize = width * height * desired_channels * sizeof(uint8_t);
+        size_t   imageSize = width * height * desired_channels * sizeof(pixel_size);
         uint8_t* pDest     = img.GetImage(0, 0, 0)->pixels;
         memcpy(pDest, pixels, imageSize);
 
@@ -322,7 +331,7 @@ LoadLibraryTexture (image_s& image)
     if (SUCCEEDED (
         DirectX::LoadFromWICFile (
           image.path.c_str (),
-            DirectX::WIC_FLAGS_FILTER_POINT,
+            DirectX::WIC_FLAGS_FILTER_POINT | DirectX::WIC_FLAGS_DEFAULT_SRGB,
               &meta, img)))
     {
       succeeded = true;
