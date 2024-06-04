@@ -101,6 +101,7 @@ struct image_s {
     float max_nits     = 0.0f;
     float min_nits     = 0.0f;
     float avg_nits     = 0.0f;
+    bool  isHDR        = false;
   } light_info;
 
   // copy assignment
@@ -294,6 +295,9 @@ LoadLibraryTexture (image_s& image)
 
 #define STBI_FLOAT
 #ifdef STBI_FLOAT
+    // Check whether the image is a HDR image or not
+    image.light_info.isHDR = stbi_is_hdr (szPath.c_str());
+
     float*                pixels = stbi_loadf (szPath.c_str(), &width, &height, &channels_in_file, desired_channels);
     typedef float         pixel_size;
     constexpr DXGI_FORMAT dxgi_format = DXGI_FORMAT::DXGI_FORMAT_R32G32B32A32_FLOAT;
@@ -530,6 +534,10 @@ using namespace DirectX;
   {
     if (meta.format == DXGI_FORMAT_R16G16B16A16_FLOAT || meta.format == DXGI_FORMAT_R32G32B32A32_FLOAT)
       DirectX::CreateTexture (pDevice, normalized_hdr.GetImages (), normalized_hdr.GetImageCount (), normalized_hdr.GetMetadata (), (ID3D11Resource **)&pTonemappedTex2D.p);
+
+    // Remember HDR images read using the WIC encoder
+    if (meta.format == DXGI_FORMAT_R16G16B16A16_FLOAT && decoder == ImageDecoder_WIC)
+      image.light_info.isHDR = true;
 
     D3D11_SHADER_RESOURCE_VIEW_DESC
     srv_desc                           = { };
@@ -823,26 +831,6 @@ SKIF_UI_Tab_DrawViewer (void)
         ? AdjustAlpha (fTint)
         : fTint;
 
-  D3D11_TEXTURE2D_DESC texDesc = { };
-
-  if (cover_old.pRawTexSRV != nullptr)
-  {
-    CComPtr <ID3D11Resource>         pRes;
-    cover_old.pRawTexSRV->GetResource (&pRes.p);
-
-    if (pRes != nullptr)
-    {
-      if (CComQIPtr <ID3D11Texture2D> pTex2D (pRes);
-                                      pTex2D != nullptr)
-      {
-        pTex2D->GetDesc (&texDesc);
-      }
-    }
-  }
-  
-  bool bIsHDR =
-    texDesc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT || texDesc.Format == DXGI_FORMAT_R32G32B32A32_FLOAT;
-
   static const ImVec2 hdr_uv (-2048.0f, -2048.0f);
 
   // Display previous fading out cover
@@ -853,35 +841,17 @@ SKIF_UI_Tab_DrawViewer (void)
     if (sizeCover_old.y < ImGui::GetContentRegionAvail().y)
       ImGui::SetCursorPosY ((ImGui::GetContentRegionAvail().y - sizeCover_old.y) * 0.5f);
   
-    SKIF_ImGui_OptImage  ((_registry._RendererHDREnabled || (! bIsHDR)) ? cover_old.pRawTexSRV.p :
-                                                                          cover_old.pTonemappedTexSRV,
+    SKIF_ImGui_OptImage  ((_registry._RendererHDREnabled || (! cover_old.light_info.isHDR)) ? cover_old.pRawTexSRV.p :
+                                                                                              cover_old.pTonemappedTexSRV,
                                                       ImVec2 (sizeCover_old.x,
                                                               sizeCover_old.y),
-                                    bIsHDR ? hdr_uv : cover_old.uv0, // Top Left coordinates
-                                    bIsHDR ? hdr_uv : cover_old.uv1, // Bottom Right coordinates
+                                    cover_old.light_info.isHDR ? hdr_uv : cover_old.uv0, // Top Left coordinates
+                                    cover_old.light_info.isHDR ? hdr_uv : cover_old.uv1, // Bottom Right coordinates
                                     (_registry._StyleLightMode) ? ImVec4 (1.0f, 1.0f, 1.0f, fGammaCorrectedTint * AdjustAlpha (fAlphaPrev))  : ImVec4 (fTint, fTint, fTint, fAlphaPrev) // Alpha transparency
     );
   
     ImGui::SetCursorPos (originalPos);
   }
-
-  if (cover.pRawTexSRV != nullptr)
-  {
-    CComPtr <ID3D11Resource>     pRes;
-    cover.pRawTexSRV->GetResource (&pRes.p);
-
-    if (pRes != nullptr)
-    {
-      if (CComQIPtr <ID3D11Texture2D> pTex2D (pRes);
-                                      pTex2D != nullptr)
-      {
-        pTex2D->GetDesc (&texDesc);
-      }
-    }
-  }
-
-  bIsHDR =
-    texDesc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT || texDesc.Format == DXGI_FORMAT_R32G32B32A32_FLOAT;
 
   if (sizeCover.x < ImGui::GetContentRegionAvail().x)
     ImGui::SetCursorPosX ((ImGui::GetContentRegionAvail().x - sizeCover.x) * 0.5f);
@@ -889,12 +859,12 @@ SKIF_UI_Tab_DrawViewer (void)
     ImGui::SetCursorPosY ((ImGui::GetContentRegionAvail().y - sizeCover.y) * 0.5f);
 
   // Display game cover image
-  SKIF_ImGui_OptImage  ((_registry._RendererHDREnabled || (! bIsHDR)) ? cover.pRawTexSRV.p :
+  SKIF_ImGui_OptImage  ((_registry._RendererHDREnabled || (! cover.light_info.isHDR)) ? cover.pRawTexSRV.p :
                                                                         cover.pTonemappedTexSRV.p,
                                                     ImVec2 (sizeCover.x,
                                                             sizeCover.y),
-                                  bIsHDR ? hdr_uv : cover.uv0, // Top Left coordinates
-                                  bIsHDR ? hdr_uv : cover.uv1, // Bottom Right coordinates
+                                  cover.light_info.isHDR ? hdr_uv : cover.uv0, // Top Left coordinates
+                                  cover.light_info.isHDR ? hdr_uv : cover.uv1, // Bottom Right coordinates
                                   (_registry._StyleLightMode) ? ImVec4 (1.0f, 1.0f, 1.0f, fGammaCorrectedTint * AdjustAlpha (fAlpha))  :
                                                                 ImVec4 (fTint, fTint, fTint, fAlpha) // Alpha transparency (2024-01-01, removed fGammaCorrectedTint * fAlpha for the light style)
   );
@@ -908,7 +878,7 @@ SKIF_UI_Tab_DrawViewer (void)
     ContextMenu = PopupState_Open;
 
   // HDR Light Levels
-  if (bIsHDR && cover.pTonemappedTexSRV.p != nullptr)
+  if (cover.light_info.isHDR && cover.pTonemappedTexSRV.p != nullptr)
   {
     static const char szLightLabels [] = "MaxCLL:\t\t\n"
                                          "Max Luminance:\t\n"
