@@ -407,7 +407,8 @@ LoadLibraryTexture (image_s& image)
 
   DirectX::ScratchImage normalized_hdr;
 
-  if (meta.format == DXGI_FORMAT_R16G16B16A16_FLOAT)
+  if (meta.format == DXGI_FORMAT_R16G16B16A16_FLOAT ||
+      meta.format == DXGI_FORMAT_R32G32B32A32_FLOAT)
   {
 using namespace DirectX;
 
@@ -477,9 +478,9 @@ using namespace DirectX;
     XMVECTOR vMaxCLLReplicated =
       XMVectorReplicate (fMaxCLL);
 
-    TransformImage ( pImg->GetImages     (),
-                     pImg->GetImageCount (),
-                     pImg->GetMetadata   (),
+    DirectX::TransformImage ( pImg->GetImages     (),
+                              pImg->GetImageCount (),
+                              pImg->GetMetadata   (),
     [&](XMVECTOR* outPixels, const XMVECTOR* inPixels, size_t width, size_t y)
     {
       UNREFERENCED_PARAMETER(y);
@@ -513,6 +514,13 @@ using namespace DirectX;
     image.light_info.max_cll_name = cMaxChannel;
     image.light_info.max_nits     = fMaxLum * 80.0f; // scRGB
     image.light_info.min_nits     = fMinLum * 80.0f; // scRGB
+
+    PLOG_VERBOSE << "\n"
+                 << "HDR Metadata : \n"
+              // << "Avg Luminance : " << image.light_info.avg_nits << "\n"
+                 << "MaxCLL        : " << image.light_info.max_cll  << "\n"
+                 << "Max Luminance : " << image.light_info.max_nits << "\n"
+                 << "Min Luminance : " << image.light_info.min_nits;
   }
 
   HRESULT hr =
@@ -520,7 +528,7 @@ using namespace DirectX;
 
   if (SUCCEEDED (hr))
   {
-    if (meta.format == DXGI_FORMAT_R16G16B16A16_FLOAT)
+    if (meta.format == DXGI_FORMAT_R16G16B16A16_FLOAT || meta.format == DXGI_FORMAT_R32G32B32A32_FLOAT)
       DirectX::CreateTexture (pDevice, normalized_hdr.GetImages (), normalized_hdr.GetImageCount (), normalized_hdr.GetMetadata (), (ID3D11Resource **)&pTonemappedTex2D.p);
 
     D3D11_SHADER_RESOURCE_VIEW_DESC
@@ -833,7 +841,7 @@ SKIF_UI_Tab_DrawViewer (void)
   }
   
   bool bIsHDR =
-    texDesc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT;
+    texDesc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT || texDesc.Format == DXGI_FORMAT_R32G32B32A32_FLOAT;
 
   static const ImVec2 hdr_uv (-2048.0f, -2048.0f);
 
@@ -873,7 +881,7 @@ SKIF_UI_Tab_DrawViewer (void)
   }
 
   bIsHDR =
-    texDesc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT;
+    texDesc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT || texDesc.Format == DXGI_FORMAT_R32G32B32A32_FLOAT;
 
   if (sizeCover.x < ImGui::GetContentRegionAvail().x)
     ImGui::SetCursorPosX ((ImGui::GetContentRegionAvail().x - sizeCover.x) * 0.5f);
