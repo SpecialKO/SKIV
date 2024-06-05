@@ -263,6 +263,16 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
   if (regKVSDRMode.hasData(&hKey))
     iSDRMode               =   regKVSDRMode                .getData (&hKey);
 
+    // Temp(?) enabled due to:
+    // CatGPT — 5 June 2024 19:49
+    // I'd also suggest removing the 16-bpc SDR option (or hiding it for now).
+    // This is because STB is loading FP textures for everything and if you display those in an FP16 buffer, SDR gamma doesn't work right.
+    // I can fix that later, but best to avoid letting users do that for now. 
+#if 1
+  if (iSDRMode == 2)
+    iSDRMode = 1;
+#endif
+
   if (regKVHDRMode.hasData(&hKey))
     iHDRMode               =   regKVHDRMode                .getData (&hKey);
 
