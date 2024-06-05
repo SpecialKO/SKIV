@@ -24,6 +24,14 @@ SKIF_UI_Tab_DrawSettings (void)
 {
   static SKIF_CommonPathsCache& _path_cache = SKIF_CommonPathsCache::GetInstance ( );
   static SKIF_RegistrySettings& _registry   = SKIF_RegistrySettings::GetInstance ( );
+
+  bool goBack = false;
+  
+  if (ImGui::Button (ICON_FA_LEFT_LONG " Go back###GoBackBtn1", ImVec2 (150.0f * SKIF_ImGui_GlobalDPIScale, 30.0f * SKIF_ImGui_GlobalDPIScale)))
+    SKIF_Tab_ChangeTo = UITab_Viewer;
+
+  SKIF_ImGui_Spacing ( );
+  SKIF_ImGui_Spacing ( );
   
   ImGui::PushStyleColor   (
     ImGuiCol_SKIF_TextCaption, ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextCaption) * ImVec4(0.5f, 0.5f, 0.5f, 1.0f)
@@ -928,8 +936,15 @@ SKIF_UI_Tab_DrawSettings (void)
     ImGui::PopStyleColor    ( );
   }
 
+  SKIF_ImGui_Spacing ( );
+  SKIF_ImGui_Spacing ( );
+  
+  if (ImGui::Button (ICON_FA_LEFT_LONG " Go back###GoBackBtn2", ImVec2 (150.0f * SKIF_ImGui_GlobalDPIScale, 30.0f * SKIF_ImGui_GlobalDPIScale)))
+    SKIF_Tab_ChangeTo = UITab_Viewer;
+
   ImGui::Spacing ();
   ImGui::Spacing ();
+
 #pragma endregion
 
 }
