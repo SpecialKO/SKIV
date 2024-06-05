@@ -265,6 +265,11 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
 
   if (regKVHDRMode.hasData(&hKey))
     iHDRMode               =   regKVHDRMode                .getData (&hKey);
+
+  // HDR10 is not available for SKIV
+  if (iHDRMode == 1)
+    iHDRMode = 2;
+
   if (regKVHDRBrightness.hasData(&hKey))
   {
     iHDRBrightness         =   regKVHDRBrightness          .getData (&hKey);
