@@ -900,7 +900,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
               << "\n| App registration | " << _registry.wsAppRegistration
               << "\n+------------------+-------------------------------------+";
 
-    SKIF_Util_RegisterApp ( );
+    // Always force registration for SKIV
+    SKIF_Util_RegisterApp (true);
   }
 
   PLOG_INFO << "Creating notification icon...";
@@ -1119,11 +1120,15 @@ wWinMain ( _In_     HINSTANCE hInstance,
          hotkeyF7    = (              ImGui::GetKeyData (ImGuiKey_F7    )->DownDuration == 0.0f), // Appearance: Cycle between color themes
          hotkeyF8    = (              ImGui::GetKeyData (ImGuiKey_F8    )->DownDuration == 0.0f), // Appearance: Toggle UI borders
          hotkeyF9    = (              ImGui::GetKeyData (ImGuiKey_F9    )->DownDuration == 0.0f), // Appearance: Toggle color depth
+         hotkeyF11   = (              ImGui::GetKeyData (ImGuiKey_F11   )->DownDuration == 0.0f), // Toggle Fullscreen Mode
          hotkeyEsc   = (              ImGui::GetKeyData (ImGuiKey_Escape)->DownDuration == 0.0f), // Close the app
          hotkeyCtrlQ = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_Q     )->DownDuration == 0.0f), // Close the app
          hotkeyCtrlW = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_W     )->DownDuration == 0.0f), // Close the app
          hotkeyCtrlR = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_R     )->DownDuration == 0.0f), // Library/About: Refresh data
-         hotkeyCtrlA = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_A     )->DownDuration == 0.0f), // Library: Add game
+         hotkeyCtrlO = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_O     )->DownDuration == 0.0f), // Viewer: Open File
+         hotkeyCtrlA = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_A     )->DownDuration == 0.0f), // Viewer: Open File
+         hotkeyCtrlD = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_D     )->DownDuration == 0.0f), // Viewer: Toggle Image Details
+         hotkeyCtrlF = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_F     )->DownDuration == 0.0f), // Toggle Fullscreen Mode
          hotkeyCtrlN = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_N     )->DownDuration == 0.0f), // Minimize app
          hotkeyCtrl1 = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_1     )->DownDuration == 0.0f), // Switch to Viewer
          hotkeyCtrl2 = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_2     )->DownDuration == 0.0f), // Switch to Settings
@@ -1295,6 +1300,16 @@ wWinMain ( _In_     HINSTANCE hInstance,
         _registry.iSDRMode = (_registry.iSDRMode + 1) % 3; // Cycle between 0 (8 bpc), 1 (10 bpc), and 2 (16 bpc)
 
       RecreateSwapChains = true;
+    }
+
+    // F11 / Ctrl+F toggles fullscreen mode
+    if (hotkeyF11 || hotkeyCtrlF)
+      SKIF_ImGui_SetFullscreen (! SKIF_ImGui_IsFullscreen( ));
+
+    if (hotkeyCtrlD)
+    {
+      _registry.bImageDetails = ! _registry.bImageDetails;
+      _registry.regKVImageDetails.putData (_registry.bImageDetails);
     }
 
     // Should we invalidate the fonts and/or recreate them?
@@ -1577,12 +1592,13 @@ wWinMain ( _In_     HINSTANCE hInstance,
               SKIF_Tab_ChangeTo  = UITab_About;
         }
 
-        if (hotkeyCtrlA && allowShortcutCtrlA)
+        if (allowShortcutCtrlA && (hotkeyCtrlA || hotkeyCtrlO))
         {
           if (SKIF_Tab_Selected != UITab_Viewer)
               SKIF_Tab_ChangeTo  = UITab_Viewer;
-
-          //AddGamePopup = PopupState_Open;
+          
+          extern PopupState  OpenFileDialog; // Viewer: open file dialog
+          OpenFileDialog = PopupState_Open;
         }
       }
 
