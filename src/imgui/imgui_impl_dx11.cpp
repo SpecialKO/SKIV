@@ -73,6 +73,8 @@ extern std::vector<HANDLE> vSwapchainWaitHandles;
 extern bool  RecreateSwapChains;
 extern bool  RecreateSwapChainsPending;
 
+extern uint32_t SKIV_HDR_VisualizationId;
+
 struct ImGui_ImplDX11_ViewportData;
 
 #endif // SKIF_D3D11
@@ -119,7 +121,10 @@ struct VERTEX_CONSTANT_BUFFER_DX11 {
 
 #ifdef SKIF_D3D11
 struct PIXEL_CONSTANT_BUFFER_DX11 {
-  float font_dims [4];
+  float    font_dims [4];
+  uint32_t hdr_visualization;
+  float    hdr_max_luminance;
+  uint32_t padding [2];
 };
 #endif
 
@@ -561,6 +566,7 @@ void ImGui_ImplDX11_RenderDrawData (ImDrawData *draw_data)
 
     pix_constant_buffer->font_dims [0] = (float)ImGui::GetIO ().Fonts->TexWidth;
     pix_constant_buffer->font_dims [1] = (float)ImGui::GetIO ().Fonts->TexHeight;
+    pix_constant_buffer->hdr_visualization = SKIV_HDR_VisualizationId;
 
     ctx->Unmap ( bd->pFontConstantBuffer, 0 );
 
@@ -577,6 +583,7 @@ void ImGui_ImplDX11_RenderDrawData (ImDrawData *draw_data)
 
     pix_constant_buffer->font_dims [0] = 0.0f;
     pix_constant_buffer->font_dims [1] = 0.0f;
+    pix_constant_buffer->hdr_visualization = SKIV_HDR_VisualizationId;
 
     ctx->Unmap ( bd->pPixelConstantBuffer, 0 );
   }
