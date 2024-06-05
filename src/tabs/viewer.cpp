@@ -89,7 +89,8 @@ const float fTintMin     = 0.75f;
       float fTint        = 1.0f;
       float fAlpha       = 0.0f;
       float fAlphaPrev   = 1.0f;
-      
+
+PopupState OpenFileDialog  = PopupState_Closed;
 PopupState ContextMenu     = PopupState_Closed;
 
 struct image_s {
@@ -1037,8 +1038,8 @@ SKIF_UI_Tab_DrawViewer (void)
   {
     ImVec2 labelSize = ImGui::CalcTextSize (pcstrLabel);
     ImGui::SetCursorPos (ImVec2 (
-      ImGui::GetContentRegionAvail ( ).x / 2 - labelSize.x / 2,
-      ImGui::GetContentRegionAvail ( ).y / 2 - labelSize.y / 2));
+      ImGui::GetWindowContentRegionMax ( ).x / 2 - labelSize.x / 2,
+      ImGui::GetWindowContentRegionMax ( ).y / 2 - labelSize.y / 2));
     ImGui::TextDisabled (pcstrLabel);
   }
 
@@ -1098,67 +1099,105 @@ SKIF_UI_Tab_DrawViewer (void)
 
 #pragma endregion
 
-  // HDR Light Levels
-  if (cover.light_info.isHDR && cover.pTonemappedTexSRV.p != nullptr)
+#pragma region ImageDetails
+
+  if (cover.pRawTexSRV.p != nullptr && _registry.bImageDetails)
   {
-    static const char szLightLabels [] = "MaxCLL:\t\t\n"
-                                         "Max Luminance:\t\n"
-                                         "Min Luminance:\t";
-
-    char     szLightUnits  [512] = { };
-    char     szLightLevels [512] = { };
-    sprintf (szLightUnits, "(%c)\n"
-                           "nits\n"
-                           "nits", cover.light_info.max_cll_name);
-
-    sprintf (szLightLevels, "%8.3f \n"
-                            "%7.2f \n"
-                            "%7.2f ", cover.light_info.max_cll,
-                                      cover.light_info.max_nits,
-                                      cover.light_info.min_nits);
-
-    auto orig_pos =
+    auto parent_pos =
       ImGui::GetCursorPos ();
 
     ImGui::SetCursorPos    (ImVec2 (0.0f, 0.0f));
-    ImGui::TextUnformatted (szLightLabels);
-    ImGui::SameLine        ();
-    ImGui::TextUnformatted (szLightLevels);
-    ImGui::SameLine        ();
-    ImGui::TextUnformatted (szLightUnits);
 
-    auto light_pos =
-      ImGui::GetCursorPos ();
+    ImGui::PushStyleColor (ImGuiCol_ChildBg, ImGui::GetStyleColorVec4 (ImGuiCol_WindowBg));
+    ImGui::BeginChild     ("###ImageDetails", ImVec2 (0, 0), ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_AutoResizeX | ImGuiChildFlags_AutoResizeY | ((_registry.bUIBorders) ? ImGuiChildFlags_Border : ImGuiChildFlags_None), ImGuiWindowFlags_NoScrollbar);
+    ImGui::PopStyleColor  ( );
 
-    ImGui::SetCursorPos    (orig_pos);
+    // Basic Image Details
+    {
+      static const char szLabels [] = "Resolution:\t\n"
+                                      "Dynamic Range:\t";
+      
+      char     szLabelsData  [512] = { };
 
-    const float fPercent709     = cover.colorimetry.pixel_counts.getPercentRec709  ();
-    const float fPercentP3      = cover.colorimetry.pixel_counts.getPercentDCIP3   ();
-    const float fPercent2020    = cover.colorimetry.pixel_counts.getPercentRec2020 ();
-    const float fPercentAP1     = cover.colorimetry.pixel_counts.getPercentAP1     ();
-    const float fPercentInvalid = cover.colorimetry.pixel_counts.getPercentInvalid ();
+      sprintf (szLabelsData, "%.0fx%.0f\n"
+                             "%s",    cover.width,
+                                      cover.height,
+                                     (cover.is_hdr) ? "HDR" : "SDR");
 
-    ImGui::SetCursorPos    (ImVec2 (0.0f, light_pos.y));
-    ImGui::TextUnformatted ("\n");
+      ImGui::TextUnformatted (szLabels);
+      ImGui::SameLine        ();
+      ImGui::TextUnformatted (szLabelsData);
+    }
 
-    ImGui::BeginGroup ();
-    if (fPercent709     > 0.0f) ImGui::TextUnformatted ("Rec 709: ");
-    if (fPercentP3      > 0.0f) ImGui::TextUnformatted ("DCI P3: ");
-    if (fPercent2020    > 0.0f) ImGui::TextUnformatted ("Rec 2020: ");
-    if (fPercentAP1     > 0.0f) ImGui::TextUnformatted ("AP1: ");
-    if (fPercentInvalid > 0.0f) ImGui::TextUnformatted ("Invalid: ");
-    ImGui::EndGroup   ();
-    ImGui::SameLine   ();
-    ImGui::BeginGroup ();
-    if (fPercent709     > 0.0f) ImGui::Text ("%8.4f %%", fPercent709);
-    if (fPercentP3      > 0.0f) ImGui::Text ("%8.4f %%", fPercentP3);
-    if (fPercent2020    > 0.0f) ImGui::Text ("%8.4f %%", fPercent2020);
-    if (fPercentAP1     > 0.0f) ImGui::Text ("%8.4f %%", fPercentAP1);
-    if (fPercentInvalid > 0.0f) ImGui::Text ("%8.4f %%", fPercentInvalid);
-    ImGui::EndGroup   ();
+    // HDR Light Levels
+    if (cover.light_info.isHDR && cover.pTonemappedTexSRV.p != nullptr)
+    {
+      ImGui::TextUnformatted ("\n");
 
-    ImGui::SetCursorPos (orig_pos);
+      static const char szLightLabels [] = "MaxCLL:\t\t\n"
+                                           "Max Luminance:\t\n"
+                                           "Min Luminance:\t";
+
+      char     szLightUnits  [512] = { };
+      char     szLightLevels [512] = { };
+      sprintf (szLightUnits, "(%c)\n"
+                             "nits\n"
+                             "nits", cover.light_info.max_cll_name);
+
+      sprintf (szLightLevels, "%8.3f \n"
+                              "%7.2f \n"
+                              "%7.2f ", cover.light_info.max_cll,
+                                        cover.light_info.max_nits,
+                                        cover.light_info.min_nits);
+
+      auto orig_pos =
+        ImGui::GetCursorPos ();
+
+      //ImGui::SetCursorPos    (ImVec2 (0.0f, 0.0f));
+      ImGui::TextUnformatted (szLightLabels);
+      ImGui::SameLine        ();
+      ImGui::TextUnformatted (szLightLevels);
+      ImGui::SameLine        ();
+      ImGui::TextUnformatted (szLightUnits);
+
+      auto light_pos =
+        ImGui::GetCursorPos ();
+
+      ImGui::SetCursorPos    (orig_pos);
+
+      const float fPercent709     = cover.colorimetry.pixel_counts.getPercentRec709  ();
+      const float fPercentP3      = cover.colorimetry.pixel_counts.getPercentDCIP3   ();
+      const float fPercent2020    = cover.colorimetry.pixel_counts.getPercentRec2020 ();
+      const float fPercentAP1     = cover.colorimetry.pixel_counts.getPercentAP1     ();
+      const float fPercentInvalid = cover.colorimetry.pixel_counts.getPercentInvalid ();
+
+      ImGui::SetCursorPos    (ImVec2 (orig_pos.x, light_pos.y));
+      ImGui::TextUnformatted ("\n");
+
+      ImGui::BeginGroup ();
+      if (fPercent709     > 0.0f) ImGui::TextUnformatted ("Rec 709: ");
+      if (fPercentP3      > 0.0f) ImGui::TextUnformatted ("DCI P3: ");
+      if (fPercent2020    > 0.0f) ImGui::TextUnformatted ("Rec 2020: ");
+      if (fPercentAP1     > 0.0f) ImGui::TextUnformatted ("AP1: ");
+      if (fPercentInvalid > 0.0f) ImGui::TextUnformatted ("Invalid: ");
+      ImGui::EndGroup   ();
+      ImGui::SameLine   ();
+      ImGui::BeginGroup ();
+      if (fPercent709     > 0.0f) ImGui::Text ("%8.4f %%", fPercent709);
+      if (fPercentP3      > 0.0f) ImGui::Text ("%8.4f %%", fPercentP3);
+      if (fPercent2020    > 0.0f) ImGui::Text ("%8.4f %%", fPercent2020);
+      if (fPercentAP1     > 0.0f) ImGui::Text ("%8.4f %%", fPercentAP1);
+      if (fPercentInvalid > 0.0f) ImGui::Text ("%8.4f %%", fPercentInvalid);
+      ImGui::EndGroup   ();
+
+      ImGui::SetCursorPos (orig_pos);
+    }
+
+    ImGui::EndChild     ( ); // ###ImageDetails
+    ImGui::SetCursorPos (parent_pos);
   }
+
+#pragma endregion
 
 #pragma region ContextMenu
 
@@ -1178,27 +1217,19 @@ SKIF_UI_Tab_DrawViewer (void)
     ImGui::PushStyleColor (ImGuiCol_NavHighlight, ImVec4(0,0,0,0));
 
     if (SKIF_ImGui_MenuItemEx2 ("Open", ICON_FA_FOLDER_OPEN, ImColor(255, 207, 72)))
-    {
-      LPWSTR pwszFilePath = NULL;
-      HRESULT hr          =
-        SK_FileOpenDialog (&pwszFilePath, COMDLG_FILTERSPEC{ L"Images", L"*.png;*.jpg;*.jpeg;*.webp;*.psd;*.bmp;*.jxr;*.hdr" }, 1, FOS_FILEMUSTEXIST, FOLDERID_Pictures);
-          
-      if (hr == HRESULT_FROM_WIN32(ERROR_CANCELLED))
-      {
-        // If cancelled, do nothing
-      }
+      OpenFileDialog = PopupState_Open;
 
-      else if (SUCCEEDED(hr))
-      {
-        dragDroppedFilePath = pwszFilePath;
-      }
+    if (tryingToLoadImage)
+    {
+      ImGui::PushStyleColor  (ImGuiCol_Text, ImGui::GetStyleColorVec4 (ImGuiCol_TextDisabled));
+      SKIF_ImGui_MenuItemEx2 ("Loading...", ICON_FA_SPINNER, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+      ImGui::PopStyleColor   ( );
     }
 
-    if (cover.pRawTexSRV.p != nullptr)
+    else if (cover.pRawTexSRV.p != nullptr)
     {
       if (SKIF_ImGui_MenuItemEx2 ("Close", 0, ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info)))
         _SwapOutCover ();
-
 
       // Image scaling
 
@@ -1264,40 +1295,46 @@ SKIF_UI_Tab_DrawViewer (void)
         ImGui::EndMenu ( );
       }
 
+      if (cover.is_hdr)
+      {
+        ImGui::PushID ("#HDRVisualization");
+
+        if (SKIF_ImGui_BeginMenuEx2 ("Visualization", ICON_FA_EYE))
+        {
+          static bool bNone    = true;
+          static bool bHeatmap = false;
+          
+          if (SKIF_ImGui_MenuItemEx2 ("None", ICON_FA_BAN, ImGui::GetStyleColorVec4 (ImGuiCol_Text), spaces, &bNone))
+          {
+            bHeatmap                 = false;
+            SKIV_HDR_VisualizationId = SKIV_HDR_VISUALIZTION_NONE;
+          }
+
+      
+          if (SKIF_ImGui_MenuItemEx2 ("Heatmap", ICON_FA_CIRCLE_RADIATION, ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Yellow), spaces, &bHeatmap))
+          {
+            bNone                    = false;
+            SKIV_HDR_VisualizationId = SKIV_HDR_VISUALIZTION_HEATMAP;
+          }
+
+          ImGui::EndMenu ( );
+        }
+
+        ImGui::PopID ( );
+      }
+      
+      if (SKIF_ImGui_MenuItemEx2 ("Details", ICON_FA_BARCODE, ImGui::GetStyleColorVec4 (ImGuiCol_Text), spaces, &_registry.bImageDetails))
+        _registry.regKVImageDetails.putData (_registry.bImageDetails);
+
       ImGui::PopID ( );
     }
+
+    ImGui::Separator       ( );
 
     if (SKIF_ImGui_MenuItemEx2 ("Settings", ICON_FA_LIST_CHECK))
       SKIF_Tab_ChangeTo = UITab_Settings;
 
     ImGui::Separator ( );
-
-    if (cover.is_hdr)
-    {
-      ImGui::PushID ("#HDRVisualization");
-
-      if (SKIF_ImGui_BeginMenuEx2 ("Visualization", ICON_FA_EYE))
-      {
-        static bool bNone    = true;
-        static bool bHeatmap = false;
-
-        if (ImGui::MenuItem (ICON_FA_BAN " None", spaces, &bNone))
-        {
-          bHeatmap                 = false;
-          SKIV_HDR_VisualizationId = SKIV_HDR_VISUALIZTION_NONE;
-        }
-
-        if (ImGui::MenuItem (ICON_FA_CIRCLE_RADIATION " Heatmap", spaces, &bHeatmap))
-        {
-          bNone                    = false;
-          SKIV_HDR_VisualizationId = SKIV_HDR_VISUALIZTION_HEATMAP;
-        }
-
-        ImGui::EndMenu ( );
-      }
-
-      ImGui::PopID ( );
-    }
 
     if (SKIF_ImGui_MenuItemEx2 ("Fullscreen", SKIF_ImGui_IsFullscreen () ? ICON_FA_DOWN_LEFT_AND_UP_RIGHT_TO_CENTER : ICON_FA_UP_RIGHT_AND_DOWN_LEFT_FROM_CENTER))
     {
@@ -1428,6 +1465,27 @@ SKIF_UI_Tab_DrawViewer (void)
   }
 
 #pragma endregion
+
+  if (OpenFileDialog == PopupState_Open)
+  {
+    OpenFileDialog = PopupState_Opened;
+
+    LPWSTR pwszFilePath = NULL;
+    HRESULT hr          =
+      SK_FileOpenDialog (&pwszFilePath, COMDLG_FILTERSPEC{ L"Images", L"*.png;*.jpg;*.jpeg;*.webp;*.psd;*.bmp;*.jxr;*.hdr" }, 1, FOS_FILEMUSTEXIST, FOLDERID_Pictures);
+          
+    if (hr == HRESULT_FROM_WIN32(ERROR_CANCELLED))
+    {
+      // If cancelled, do nothing
+    }
+
+    else if (SUCCEEDED(hr))
+    {
+      dragDroppedFilePath = pwszFilePath;
+    }
+
+    OpenFileDialog = PopupState_Closed;
+  }
 
   if (! dragDroppedFilePath.empty())
   {
