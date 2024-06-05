@@ -349,6 +349,7 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
   bOpenAtCursorPosition    =   regKVOpenAtCursorPosition   .getData (&hKey);
   bGhost                   =   regKVGhost                  .getData (&hKey);
   bLoggingDeveloper        =   regKVLoggingDeveloper       .getData (&hKey);
+  bImageDetails            =   regKVImageDetails           .getData (&hKey);
 
   if (hKey != nullptr)
     RegCloseKey (hKey);
