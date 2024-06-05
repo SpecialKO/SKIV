@@ -1098,10 +1098,6 @@ SKIF_UI_Tab_DrawViewer (void)
 
 #pragma endregion
 
-  if (! SKIF_ImGui_IsAnyPopupOpen() &&
-    ImGui::IsItemClicked (ImGuiMouseButton_Right))
-    ContextMenu = PopupState_Open;
-
   // HDR Light Levels
   if (cover.light_info.isHDR && cover.pTonemappedTexSRV.p != nullptr)
   {
@@ -1165,6 +1161,10 @@ SKIF_UI_Tab_DrawViewer (void)
   }
 
 #pragma region ContextMenu
+
+  // Act on all right clicks, because why not? :D
+  if (! SKIF_ImGui_IsAnyPopupOpen ( ) && ImGui::IsMouseClicked (ImGuiMouseButton_Right))
+    ContextMenu = PopupState_Open;
 
   // Open the Empty Space Menu
   if (ContextMenu == PopupState_Open)
