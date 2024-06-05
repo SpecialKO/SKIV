@@ -1411,7 +1411,7 @@ void
 SKIF_ImGui_SetFullscreen (bool fullscreen)
 {
   extern bool SKIF_ImGui_ImplWin32_SetFullscreen (int);
-  SKIF_ImGui_ImplWin32_SetFullscreen             (static_cast<bool> (fullscreen));
+  SKIF_ImGui_ImplWin32_SetFullscreen             (static_cast<int> (fullscreen));
 }
 
 void

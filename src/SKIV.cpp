@@ -1444,6 +1444,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
       if (resizeAppWindow)
       {
+
+#if 0
         ImVec2 size_maximum = monitor_extent.GetSize() * 0.8f;
         float contentAspectRatio = SKIV_ResizeApp.x / SKIV_ResizeApp.y;
 
@@ -1458,9 +1460,18 @@ wWinMain ( _In_     HINSTANCE hInstance,
           SKIV_ResizeApp.y = size_maximum.y;
           SKIV_ResizeApp.x = SKIV_ResizeApp.y * contentAspectRatio;
         }
+#endif
 
-        ImGui::SetNextWindowSize (SKIV_ResizeApp);
-        //RespectMonBoundaries = true;
+        ImVec2 size_maximum = monitor_extent.GetSize();
+
+        if (size_maximum.x < SKIV_ResizeApp.x || size_maximum.y < SKIV_ResizeApp.y)
+        {
+          SKIF_ImGui_SetFullscreen (! SKIF_ImGui_IsFullscreen( ));
+          resizeAppWindow = false;
+        }
+
+        else
+          ImGui::SetNextWindowSize (SKIV_ResizeApp);
       }
 
       SKIV_ResizeApp       = ImVec2 (0.0f, 0.0f);
