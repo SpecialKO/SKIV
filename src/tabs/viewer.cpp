@@ -66,6 +66,14 @@
 
 #include <stb_image.h>
 
+enum SKIV_HDR_Visualizations
+{
+  SKIV_HDR_VISUALIZTION_NONE    = 0,
+  SKIV_HDR_VISUALIZTION_HEATMAP = 1
+};
+
+uint32_t SKIV_HDR_VisualizationId = SKIV_HDR_VISUALIZTION_NONE;
+
 bool                   loadImage         = false;
 bool                   tryingToLoadImage = false;
 std::atomic<bool>      imageLoading      = false;
@@ -92,6 +100,9 @@ struct image_s {
   ImVec2       uv1 = ImVec2 (1, 1);
   ImVec2       avail_size;        // Holds the frame size used (affected by the scaling method)
   ImVec2       avail_size_cache;  // Holds a cached value used to determine if avail_size needs recalculating
+
+  bool         is_hdr      = false;
+
   CComPtr <ID3D11ShaderResourceView> pRawTexSRV;
   CComPtr <ID3D11ShaderResourceView> pTonemappedTexSRV;
 
@@ -132,6 +143,7 @@ struct image_s {
     avail_size_cache    = other.avail_size_cache;
     pRawTexSRV.p        = other.pRawTexSRV.p;
     pTonemappedTexSRV.p = other.pTonemappedTexSRV.p;
+    is_hdr              = other.is_hdr;
     light_info          = other.light_info;
     colorimetry         = other.colorimetry;
     return *this;
@@ -148,6 +160,7 @@ struct image_s {
     avail_size_cache    = { };
     pRawTexSRV.p        = nullptr;
     pTonemappedTexSRV.p = nullptr;
+    is_hdr              = false;
     light_info          = { };
     colorimetry         = { };
   }
@@ -327,6 +340,13 @@ LoadLibraryTexture (image_s& image)
             (type.file_extension == L".tiff" ) ? ImageDecoder_WIC  :
                                                  ImageDecoder_WIC;   // Not actually being used
 
+          if (type.file_extension == L".hdr" ||
+              type.file_extension == L".jxr" ||
+              type.file_extension == L".avif")
+          {
+            image.is_hdr = true;
+          }
+
           break;
         }
       }
@@ -466,10 +486,15 @@ LoadLibraryTexture (image_s& image)
 
   DirectX::ScratchImage normalized_hdr;
 
-  if (meta.format == DXGI_FORMAT_R16G16B16A16_FLOAT ||
-      meta.format == DXGI_FORMAT_R32G32B32A32_FLOAT)
+  if (image.is_hdr)
   {
+    assert (meta.format == DXGI_FORMAT_R16G16B16A16_FLOAT ||
+            meta.format == DXGI_FORMAT_R32G32B32A32_FLOAT);
+
 using namespace DirectX;
+
+    static const XMVECTORF32 s_luminance_AP1 =
+      { 0.272229f, 0.674082f, 0.0536895f, 0.f };
 
     static const XMVECTORF32 s_luminance_2020 =
       { 0.2627f,   0.678f,    0.0593f,   0.f };
@@ -533,6 +558,14 @@ using namespace DirectX;
       { 0.0f,                             0.0f,                           0.0f,                              1.0f }
     };
 
+    static const XMMATRIX c_fromAP1to709 = // Transposed
+    {
+      {  1.70505f, -0.13026f, -0.02400f, 0.0f },
+      { -0.62179f,  1.14080f, -0.12897f, 0.0f },
+      { -0.08326f, -0.01055f,  1.15297f, 0.0f },
+      {  0.0f,      0.0f,      0.0f,     1.0f }
+    };
+
     static const XMMATRIX c_fromAP1toXYZ = // Transposed
     {
       { 0.647507190704345703125f,      0.266086399555206298828125f,   -0.00544886849820613861083984375f,  0.0f },
@@ -550,8 +583,13 @@ using namespace DirectX;
     };
 
     XMVECTOR vMaxCLL = g_XMZero;
-    float    fMaxLum = 0.0f;
-    float    fMinLum = FLT_MAX;
+    XMVECTOR vMaxLum = g_XMZero;
+    XMVECTOR vMinLum = g_XMOne;
+
+    static constexpr float FLT16_MIN = 0.00006103515625f;
+
+    static const XMVECTOR vMinFP16 =
+      XMVectorReplicate (-FLT16_MIN * 0.5f);
 
     EvaluateImage ( pImg->GetImages     (),
                     pImg->GetImageCount (),
@@ -572,17 +610,17 @@ using namespace DirectX;
       {
         v = *pixels;
 
+        XMVectorSetZ (v, 1.0f);
+
         vMaxCLL =
           XMVectorMax (v, vMaxCLL);
 
         vColorXYZ =
-          XMVectorMax (
-            XMVector3Transform (v, c_from709toXYZ), g_XMZero
-          );
+          XMVector3Transform (v, c_from709toXYZ);
 
         xm_test_all = 0x0;
 
-        if (XMVectorGreaterOrEqualR (&xm_test_all, v, g_XMZero);
+        if (XMVectorGreaterOrEqualR (&xm_test_all, v, vMinFP16);
             XMComparisonAllTrue     ( xm_test_all))
         {
           image.colorimetry.pixel_counts.rec_709++;
@@ -593,19 +631,19 @@ using namespace DirectX;
           vColorP3 =
             XMVector3Transform (v, c_from709toDCIP3);
 
-          if (XMVectorGreaterOrEqualR (&xm_test_all, vColorP3, g_XMZero);
+          if (XMVectorGreaterOrEqualR (&xm_test_all, vColorP3, vMinFP16);
               XMComparisonAnyFalse    ( xm_test_all))
           {
             vColor2020 =
               XMVector3Transform (v, c_from709to2020);
 
-            if (XMVectorGreaterOrEqualR (&xm_test_all, vColor2020, g_XMZero);
+            if (XMVectorGreaterOrEqualR (&xm_test_all, vColor2020, vMinFP16);
                 XMComparisonAnyFalse    ( xm_test_all))
             {
               vColorAP1 =
                 XMVector3Transform (v, c_from709toAP1);
 
-              if (XMVectorGreaterOrEqualR (&xm_test_all, vColorAP1, g_XMZero);
+              if (XMVectorGreaterOrEqualR (&xm_test_all, vColorAP1, vMinFP16);
                   XMComparisonAnyFalse    ( xm_test_all))
               {
                 image.colorimetry.pixel_counts.invalid++;
@@ -631,14 +669,14 @@ using namespace DirectX;
 
         image.colorimetry.pixel_counts.total++;
 
-        fMaxLum =
-          std::max (fMaxLum, vColorXYZ.m128_f32 [1]);
+        vMaxLum =
+          XMVectorMax (vMaxLum, vColorXYZ);
 
-        fMinLum =
-          std::min (fMinLum, vColorXYZ.m128_f32 [1]);
+        vMinLum =
+          XMVectorMin (vMinLum, vColorXYZ);
 
         //lumTotal +=
-        //  logf ( std::max (0.000001f, 0.000001f + v.m128_f32 [1]) ),
+        //  logf ( std::max (0.000001f, 0.000001f + XMVectorGetY (v)) ),
         //++N;
 
         pixels++;
@@ -647,9 +685,9 @@ using namespace DirectX;
 
     const float fMaxCLL =
       std::max ({
-        vMaxCLL.m128_f32 [0],
-        vMaxCLL.m128_f32 [1],
-        vMaxCLL.m128_f32 [2]
+        XMVectorGetX (vMaxCLL),
+        XMVectorGetY (vMaxCLL),
+        XMVectorGetZ (vMaxCLL)
       });
 
     XMVECTOR vMaxCLLReplicated =
@@ -672,10 +710,14 @@ using namespace DirectX;
     }, normalized_hdr );
 
     char cMaxChannel =
-      fMaxCLL == vMaxCLL.m128_f32 [0] ? 'R' :
-      fMaxCLL == vMaxCLL.m128_f32 [1] ? 'G' :
-      fMaxCLL == vMaxCLL.m128_f32 [2] ? 'B' :
-                                        'X';
+      fMaxCLL == XMVectorGetX (vMaxCLL) ? 'R' :
+      fMaxCLL == XMVectorGetY (vMaxCLL) ? 'G' :
+      fMaxCLL == XMVectorGetZ (vMaxCLL) ? 'B' :
+                                          'X';
+
+    // In XYZ space, so Y=Luminance
+    float fMaxLum = XMVectorGetY (vMaxLum);
+    float fMinLum = XMVectorGetY (vMinLum);
 
     if (fMinLum < 0.0f)
     {
@@ -705,7 +747,7 @@ using namespace DirectX;
 
   if (SUCCEEDED (hr))
   {
-    if (meta.format == DXGI_FORMAT_R16G16B16A16_FLOAT || meta.format == DXGI_FORMAT_R32G32B32A32_FLOAT)
+    if (image.is_hdr)
       DirectX::CreateTexture (pDevice, normalized_hdr.GetImages (), normalized_hdr.GetImageCount (), normalized_hdr.GetMetadata (), (ID3D11Resource **)&pTonemappedTex2D.p);
 
     D3D11_SHADER_RESOURCE_VIEW_DESC
@@ -999,26 +1041,9 @@ SKIF_UI_Tab_DrawViewer (void)
       ( _registry._RendererHDREnabled && _registry.iHDRMode == 2))
         ? AdjustAlpha (fTint)
         : fTint;
-
-  D3D11_TEXTURE2D_DESC texDesc = { };
-
-  if (cover_old.pRawTexSRV != nullptr)
-  {
-    CComPtr <ID3D11Resource>         pRes;
-    cover_old.pRawTexSRV->GetResource (&pRes.p);
-
-    if (pRes != nullptr)
-    {
-      if (CComQIPtr <ID3D11Texture2D> pTex2D (pRes);
-                                      pTex2D != nullptr)
-      {
-        pTex2D->GetDesc (&texDesc);
-      }
-    }
-  }
   
   bool bIsHDR =
-    texDesc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT || texDesc.Format == DXGI_FORMAT_R32G32B32A32_FLOAT;
+    cover_old.is_hdr;
 
   static const ImVec2 hdr_uv (-2048.0f, -2048.0f);
 
@@ -1042,23 +1067,8 @@ SKIF_UI_Tab_DrawViewer (void)
     ImGui::SetCursorPos (originalPos);
   }
 
-  if (cover.pRawTexSRV != nullptr)
-  {
-    CComPtr <ID3D11Resource>     pRes;
-    cover.pRawTexSRV->GetResource (&pRes.p);
-
-    if (pRes != nullptr)
-    {
-      if (CComQIPtr <ID3D11Texture2D> pTex2D (pRes);
-                                      pTex2D != nullptr)
-      {
-        pTex2D->GetDesc (&texDesc);
-      }
-    }
-  }
-
   bIsHDR =
-    texDesc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT || texDesc.Format == DXGI_FORMAT_R32G32B32A32_FLOAT;
+    cover.is_hdr;
 
   if (sizeCover.x < ImGui::GetContentRegionAvail().x)
     ImGui::SetCursorPosX ((ImGui::GetContentRegionAvail().x - sizeCover.x) * 0.5f);
@@ -1254,6 +1264,33 @@ SKIF_UI_Tab_DrawViewer (void)
 
     ImGui::Separator ( );
 
+    if (cover.is_hdr)
+    {
+      ImGui::PushID ("#HDRVisualization");
+
+      if (SKIF_ImGui_BeginMenuEx2 ("Visualization", ICON_FA_EYE))
+      {
+        static bool bNone    = true;
+        static bool bHeatmap = false;
+
+        if (ImGui::MenuItem (ICON_FA_BAN " None", spaces, &bNone))
+        {
+          bHeatmap                 = false;
+          SKIV_HDR_VisualizationId = SKIV_HDR_VISUALIZTION_NONE;
+        }
+
+        if (ImGui::MenuItem (ICON_FA_CIRCLE_RADIATION " Heatmap", spaces, &bHeatmap))
+        {
+          bNone                    = false;
+          SKIV_HDR_VisualizationId = SKIV_HDR_VISUALIZTION_HEATMAP;
+        }
+
+        ImGui::EndMenu ( );
+      }
+
+      ImGui::PopID ( );
+    }
+
     if (SKIF_ImGui_MenuItemEx2 ("Fullscreen", SKIF_ImGui_IsFullscreen () ? ICON_FA_DOWN_LEFT_AND_UP_RIGHT_TO_CENTER : ICON_FA_UP_RIGHT_AND_DOWN_LEFT_FROM_CENTER))
     {
       SKIF_ImGui_SetFullscreen (! SKIF_ImGui_IsFullscreen( ));
@@ -1334,6 +1371,7 @@ SKIF_UI_Tab_DrawViewer (void)
         cover.pTonemappedTexSRV = _data->image.pTonemappedTexSRV;
         cover.light_info        = _data->image.light_info;
         cover.colorimetry       = _data->image.colorimetry;
+        cover.is_hdr            = _data->image.is_hdr;
 
         extern ImVec2 SKIV_ResizeApp;
         SKIV_ResizeApp.x = cover.width;
