@@ -533,6 +533,7 @@ SKIF_UI_Tab_DrawSettings (void)
                                            &_registry.bAdjustWindow))
       _registry.regKVAdjustWindow.putData  (_registry.bAdjustWindow);
 
+#if 0
     if (! SKIF_Util_GetDragFromMaximized ( ))
       SKIF_ImGui_PushDisableState ( );
 
@@ -546,6 +547,7 @@ SKIF_UI_Tab_DrawSettings (void)
       SKIF_ImGui_SetHoverTip ("Feature is inaccessible due to snapping and/or\n"
                               "drag from maximized being disabled in Windows.");
     }
+#endif
 
     if ( ImGui::Checkbox (
             "Allow multiple instances of this app",

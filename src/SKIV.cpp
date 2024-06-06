@@ -1206,6 +1206,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
         SKIF_ImGui_ImplWin32_UpdateDWMBorders (    );
     }
 
+#if 0
     // Registry watch to check if snapping/drag from window settings has changed in Windows
     // No need to for SKIF to wake up on changes when unfocused, so skip having it be global
     static SKIF_RegistryWatch
@@ -1223,6 +1224,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
           : true                                             // otherwise default to true,
         : false;                                             // and false if OS prerequisites are disabled
     }
+#endif
 
     // Escape does situational stuff
     if (hotkeyEsc)

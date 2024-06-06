@@ -378,7 +378,9 @@ struct SKIF_RegistrySettings {
   bool bFirstLaunch             = false;
   bool bMultipleInstances       = false;
   bool bOpenAtCursorPosition    = false;
+#if 0
   bool bMaximizeOnDoubleClick   =  true;
+#endif
   bool bAutoUpdate              = false; // Automatically runs downloaded installers
   bool bDeveloperMode           = false;
   bool bEfficiencyMode          =  true; // Should the main thread try to engage EcoQoS / Efficiency Mode on Windows 11 ?
