@@ -127,8 +127,9 @@ static void ImGui_ImplWin32_UpdateMonitors();
 
 // SKIF CUSTOM Forward Declarations
 void    SKIF_ImGui_ImplWin32_UpdateDWMBorders (void);
-void    SKIF_ImGui_ImplWin32_SetDWMBorders    (void* hWnd);
+void    SKIF_ImGui_ImplWin32_SetDWMBorders    (void* hWnd, DWM_WINDOW_CORNER_PREFERENCE dwmCornerPreference = DWMWCP_DEFAULT);
 bool    SKIF_ImGui_ImplWin32_IsFocused        (void);
+bool    SKIF_ImGui_ImplWin32_SetFullscreen    (int fullscreen);
 
 struct ImGui_ImplWin32_Data
 {
@@ -2139,7 +2140,7 @@ static void ImGui_ImplWin32_ShutdownPlatformInterface()
 #include "../../version.h"
 
 void
-SKIF_ImGui_ImplWin32_SetDWMBorders (void* hWnd)
+SKIF_ImGui_ImplWin32_SetDWMBorders (void* hWnd, DWM_WINDOW_CORNER_PREFERENCE dwmCornerPreference /* = DWMWCP_DEFAULT */)
 {
   if (! hWnd)
     return;
@@ -2152,8 +2153,6 @@ SKIF_ImGui_ImplWin32_SetDWMBorders (void* hWnd)
   if (! _registry.bWin11Corners)
     return;
 
-  DWM_WINDOW_CORNER_PREFERENCE
-           dwmCornerPreference = DWMWCP_DEFAULT;
   COLORREF dwmBorderColor      = DWMWA_COLOR_DEFAULT; // DWMWA_COLOR_NONE
   BOOL     dwmUseDarkMode      = true;
   ImVec4   imguiBorderColor    = ImGui::GetStyleColorVec4 (ImGuiCol_Border);
@@ -2161,12 +2160,19 @@ SKIF_ImGui_ImplWin32_SetDWMBorders (void* hWnd)
   dwmBorderColor = RGB ((255 * imguiBorderColor.x),
                         (255 * imguiBorderColor.y),
                         (255 * imguiBorderColor.z));
-  
-  if (SKIF_ImGui_hWnd ==       NULL ||
-      SKIF_ImGui_hWnd == (HWND)hWnd)
-    dwmCornerPreference = DWMWCP_ROUND;      // Main window
-  else
-    dwmCornerPreference = DWMWCP_ROUNDSMALL; // Popups (spanning outside of the main window)
+
+  // Use SKIF's defaults when not using a specific value
+  if (dwmCornerPreference == DWMWCP_DEFAULT)
+  {
+    // Main window
+    if (SKIF_ImGui_hWnd ==       NULL ||
+        SKIF_ImGui_hWnd == (HWND)hWnd)
+      dwmCornerPreference = (! SKIF_ImGui_ImplWin32_SetFullscreen (-1)) ? DWMWCP_ROUND : DWMWCP_DONOTROUND; // Do not round the main window if we are in fullscreen mode
+
+    // Popups (spanning outside of the main window)
+    else
+      dwmCornerPreference = DWMWCP_ROUNDSMALL;
+  }
 
   ::DwmSetWindowAttribute ((HWND)hWnd, DWMWA_WINDOW_CORNER_PREFERENCE, &dwmCornerPreference, sizeof (dwmCornerPreference));
   ::DwmSetWindowAttribute ((HWND)hWnd, DWMWA_USE_IMMERSIVE_DARK_MODE,  &dwmUseDarkMode,      sizeof (dwmUseDarkMode));
@@ -2318,6 +2324,8 @@ SKIF_ImGui_ImplWin32_SetFullscreen (int fullscreen)
         mi.cbSize = sizeof(mi);
         GetMonitorInfo (MonitorFromWindow (hwnd, MONITOR_DEFAULTTONEAREST), &mi);
         rect = mi.rcMonitor;
+
+        SKIF_ImGui_ImplWin32_SetDWMBorders (hwnd, DWMWCP_DONOTROUND);
       }
 
       // Exiting fullscreen mode
@@ -2330,6 +2338,8 @@ SKIF_ImGui_ImplWin32_SetFullscreen (int fullscreen)
 
         if (_cached.Maximized) // Restore maximized state (does not really work properly?)
           ::SendMessage (hwnd, WM_SYSCOMMAND, SC_MAXIMIZE, 0);
+
+        SKIF_ImGui_ImplWin32_SetDWMBorders (hwnd);
       }
         
       float top    = static_cast<float> (rect.top);
