@@ -106,6 +106,7 @@ PopupState ContextMenu     = PopupState_Closed;
 
 struct image_s {
   std::wstring path        = L"";
+  std:: string path_utf8   =  "";
   float        width       = 0.0f;
   float        height      = 0.0f;
   ImVec2       uv0 = ImVec2 (0, 0);
@@ -150,6 +151,7 @@ struct image_s {
   image_s& operator= (const image_s other) noexcept
   {
     path                = other.path;
+    path_utf8           = other.path_utf8;
     width               = other.width;
     height              = other.height;
     uv0                 = other.uv0;
@@ -167,6 +169,7 @@ struct image_s {
   void reset (void)
   {
     path                = L"";
+    path_utf8           =  "";
     width               = 0.0f;
     height              = 0.0f;
     uv0                 = ImVec2 (0, 0);
@@ -275,7 +278,7 @@ enum ImageDecoder {
 void
 LoadLibraryTexture (image_s& image)
 {
-  // NOT REALLY THREAD-SAFE WHILE IT RELIES ON THESE STATIC GLOBAL OBJECTS!
+  // NOT REALLY THREAD-SAFE WHILE IT RELIES ON THESE GLOBAL OBJECTS!
   static SKIF_RegistrySettings& _registry   = SKIF_RegistrySettings::GetInstance ( );
   static SKIF_CommonPathsCache& _path_cache = SKIF_CommonPathsCache::GetInstance ( );
 
@@ -1291,7 +1294,7 @@ SKIF_UI_Tab_DrawViewer (void)
 
     ImGui::PushStyleColor (ImGuiCol_NavHighlight, ImVec4(0,0,0,0));
 
-    if (SKIF_ImGui_MenuItemEx2 ("Open", ICON_FA_FOLDER_OPEN, ImColor(255, 207, 72)))
+    if (SKIF_ImGui_MenuItemEx2 ("Open", ICON_FA_EYE))
       OpenFileDialog = PopupState_Open;
 
     if (tryingToLoadImage)
@@ -1425,6 +1428,11 @@ SKIF_UI_Tab_DrawViewer (void)
       
       if (SKIF_ImGui_MenuItemEx2 ("Details", ICON_FA_BARCODE, ImGui::GetStyleColorVec4 (ImGuiCol_Text), spaces, &_registry.bImageDetails))
         _registry.regKVImageDetails.putData (_registry.bImageDetails);
+
+      ImGui::Separator       ( );
+
+      if (! cover.path.empty() && SKIF_ImGui_MenuItemEx2 ("Open in File Explorer", ICON_FA_FOLDER_OPEN, ImColor(255, 207, 72)))
+        SKIF_Util_FileExplorer_SelectFile (cover.path.c_str());
     }
 
     ImGui::Separator       ( );
@@ -1475,7 +1483,8 @@ SKIF_UI_Tab_DrawViewer (void)
   
     thread_s* data = new thread_s;
 
-    data->image.path = new_path;
+    data->image.path      = new_path;
+    data->image.path_utf8 = SK_WideCharToUTF8 (new_path);
     new_path.clear();
 
     // We're going to stream the cover in asynchronously on this thread
@@ -1506,6 +1515,8 @@ SKIF_UI_Tab_DrawViewer (void)
       {
         PLOG_DEBUG << "Texture is live! Swapping it in.";
 
+        cover.path              = _data->image.path;
+        cover.path_utf8         = _data->image.path_utf8;
         cover.width             = _data->image.width;
         cover.height            = _data->image.height;
         cover.uv0               = _data->image.uv0;
