@@ -1370,6 +1370,8 @@ SKIF_UI_Tab_DrawViewer (void)
         ImGui::EndMenu ( );
       }
 
+      ImGui::PopID ( ); // #ImageScaling
+
       if (cover.is_hdr)
       {
         ImGui::PushID ("#HDRVisualization");
@@ -1418,13 +1420,11 @@ SKIF_UI_Tab_DrawViewer (void)
           ImGui::EndMenu ( );
         }
 
-        ImGui::PopID ( );
+        ImGui::PopID ( ); // #HDRVisualization
       }
       
       if (SKIF_ImGui_MenuItemEx2 ("Details", ICON_FA_BARCODE, ImGui::GetStyleColorVec4 (ImGuiCol_Text), spaces, &_registry.bImageDetails))
         _registry.regKVImageDetails.putData (_registry.bImageDetails);
-
-      ImGui::PopID ( );
     }
 
     ImGui::Separator       ( );
