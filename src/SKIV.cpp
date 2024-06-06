@@ -268,6 +268,9 @@ SKIF_Startup_CopyDataRunningInstance (void)
     cds.lpData = &wszFilePath;
     cds.cbData = sizeof(wszFilePath);
 
+    // We must allow the running instance to set foreground window
+    AllowSetForegroundWindow (SKIF_Util_GetProcessIdFromHwnd (_Signal._RunningInstance));
+
     // If the running instance returns true on our WM_COPYDATA call,
     //   that means this instance has done its job and can be closed.
     if (SendMessage (_Signal._RunningInstance,
@@ -3164,6 +3167,25 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
           dragDroppedFilePath = std::wstring(wszFilePath);
 
           PLOG_VERBOSE << "WM_COPYDATA: " << dragDroppedFilePath;
+
+          // Restore, and whatnot
+          if (SKIF_ImGui_hWnd != NULL)
+          {
+            if (IsIconic (SKIF_ImGui_hWnd))
+              ShowWindow (SKIF_ImGui_hWnd, SW_RESTORE);
+
+            if (! UpdateWindow        (SKIF_ImGui_hWnd))
+              PLOG_DEBUG << "UpdateWindow ( ) failed!";
+
+            if (! SetForegroundWindow (SKIF_ImGui_hWnd))
+              PLOG_DEBUG << "SetForegroundWindow ( ) failed!";
+
+            if (! SetActiveWindow     (SKIF_ImGui_hWnd))
+              PLOG_DEBUG << "SetActiveWindow ( ) failed: "  << SKIF_Util_GetErrorAsWStr ( );
+
+            if (! BringWindowToTop    (SKIF_ImGui_hWnd))
+              PLOG_DEBUG << "BringWindowToTop ( ) failed: " << SKIF_Util_GetErrorAsWStr ( );
+          }
 
           return true; // Signal the other instance that we successfully handled the data
         }
