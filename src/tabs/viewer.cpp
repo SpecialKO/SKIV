@@ -69,8 +69,19 @@
 enum SKIV_HDR_Visualizations
 {
   SKIV_HDR_VISUALIZTION_NONE    = 0,
-  SKIV_HDR_VISUALIZTION_HEATMAP = 1
+  SKIV_HDR_VISUALIZTION_HEATMAP = 1,
+  SKIV_HDR_VISUALIZTION_GAMUT   = 2,
+  SKIV_HDR_VISUALIZTION_SDR     = 3
 };
+
+float SKIV_HDR_SDRWhite = 80.0f;
+
+float SKIV_HDR_GamutHue_Rec709    [4] = { 1.0f, 1.0f, 1.0f, 1.0f }; // White
+float SKIV_HDR_GamutHue_DciP3     [4] = { 0.0f, 1.0f, 1.0f, 1.0f }; // Cyan
+float SKIV_HDR_GamutHue_Rec2020   [4] = { 0.0f, 1.0f, 0.0f, 1.0f }; // Green
+float SKIV_HDR_GamutHue_Ap1       [4] = { 1.0f, 1.0f, 0.0f, 1.0f }; // Yellow
+float SKIV_HDR_GamutHue_Ap0       [4] = { 1.0f, 0.0f, 1.0f, 1.0f }; // Magenta
+float SKIV_HDR_GamutHue_Undefined [4] = { 1.0f, 0.0f, 0.0f, 1.0f }; // Red
 
 uint32_t SKIV_HDR_VisualizationId = SKIV_HDR_VISUALIZTION_NONE;
 
@@ -122,14 +133,16 @@ struct image_s {
       uint32_t rec_2020;
       uint32_t dci_p3;
       uint32_t ap1;
-      uint32_t invalid;
+      uint32_t ap0;
+      uint32_t undefined;
       uint32_t total;
 
-      float getPercentRec709  (void) const;
-      float getPercentRec2020 (void) const;
-      float getPercentDCIP3   (void) const;
-      float getPercentAP1     (void) const;
-      float getPercentInvalid (void) const;
+      float getPercentRec709    (void) const;
+      float getPercentRec2020   (void) const;
+      float getPercentDCIP3     (void) const;
+      float getPercentAP1       (void) const;
+      float getPercentAP0       (void) const;
+      float getPercentUndefined (void) const;
     } pixel_counts;
   } colorimetry;
 
@@ -201,10 +214,18 @@ image_s::gamut_info_s::pixel_samples_s::getPercentAP1 (void) const
 };
 
 float
-image_s::gamut_info_s::pixel_samples_s::getPercentInvalid (void) const
+image_s::gamut_info_s::pixel_samples_s::getPercentAP0 (void) const
 {
-  return (total == 0 || invalid == 0) ? 0.0f : 100.0f *
-    static_cast <float> ( static_cast <double> (invalid) /
+  return (total == 0 || ap0 == 0) ? 0.0f : 100.0f *
+    static_cast <float> ( static_cast <double> (ap0) /
+                          static_cast <double> (total) );
+};
+
+float
+image_s::gamut_info_s::pixel_samples_s::getPercentUndefined (void) const
+{
+  return (total == 0 || undefined == 0) ? 0.0f : 100.0f *
+    static_cast <float> ( static_cast <double> (undefined) /
                           static_cast <double> (total) );
 };
 
@@ -555,6 +576,14 @@ using namespace DirectX;
       { 0.0f,                          0.0f,                          0.0f,                         1.0f }
     };
 
+    static const XMMATRIX c_from709toAP0 = // Transposed
+    {
+      { 0.4339316189289093017578125f, 0.088618390262126922607421875f, 0.01775003969669342041015625f,  0.0f },
+      { 0.3762523829936981201171875f, 0.809275329113006591796875f,    0.109447620809078216552734375f, 0.0f },
+      { 0.1898159682750701904296875f, 0.10210628807544708251953125f,  0.872802317142486572265625f,    0.0f },
+      { 0.0f,                         0.0f,                           0.0f,                           1.0f }
+    };
+
     static const XMMATRIX c_from709toAP1 = // Transposed
     {
       { 0.61702883243560791015625f,       0.333867609500885009765625f,    0.04910354316234588623046875f,     0.0f },
@@ -591,10 +620,10 @@ using namespace DirectX;
     XMVECTOR vMaxLum = g_XMZero;
     XMVECTOR vMinLum = g_XMOne;
 
-    static constexpr float FLT16_MIN = 0.00006103515625f;
+    static constexpr float FLT16_MIN = 0.0000000894069671630859375f;
 
     static const XMVECTOR vMinFP16 =
-      XMVectorReplicate (-FLT16_MIN * 0.5f);
+      XMVectorReplicate (-FLT16_MIN);
 
     EvaluateImage ( pImg->GetImages     (),
                     pImg->GetImageCount (),
@@ -604,9 +633,10 @@ using namespace DirectX;
       UNREFERENCED_PARAMETER(y);
 
       XMVECTOR vColorXYZ;
-      XMVECTOR vColorP3;
+      XMVECTOR vColorDCIP3;
       XMVECTOR vColor2020;
       XMVECTOR vColorAP1;
+      XMVECTOR vColorAP0;
       XMVECTOR v;
 
       uint32_t xm_test_all = 0x0;
@@ -633,10 +663,10 @@ using namespace DirectX;
 
         else
         {
-          vColorP3 =
+          vColorDCIP3 =
             XMVector3Transform (v, c_from709toDCIP3);
 
-          if (XMVectorGreaterOrEqualR (&xm_test_all, vColorP3, vMinFP16);
+          if (XMVectorGreaterOrEqualR (&xm_test_all, vColorDCIP3, vMinFP16);
               XMComparisonAnyFalse    ( xm_test_all))
           {
             vColor2020 =
@@ -651,7 +681,19 @@ using namespace DirectX;
               if (XMVectorGreaterOrEqualR (&xm_test_all, vColorAP1, vMinFP16);
                   XMComparisonAnyFalse    ( xm_test_all))
               {
-                image.colorimetry.pixel_counts.invalid++;
+                vColorAP0 =
+                  XMVector3Transform (v, c_from709toAP0);
+
+                if (XMVectorGreaterOrEqualR (&xm_test_all, vColorAP0, vMinFP16);
+                    XMComparisonAnyFalse    ( xm_test_all))
+                {
+                  image.colorimetry.pixel_counts.undefined++;
+                }
+
+                else
+                {
+                  image.colorimetry.pixel_counts.ap0++;
+                }
               }
 
               else
@@ -1165,29 +1207,62 @@ SKIF_UI_Tab_DrawViewer (void)
 
       ImGui::SetCursorPos    (orig_pos);
 
-      const float fPercent709     = cover.colorimetry.pixel_counts.getPercentRec709  ();
-      const float fPercentP3      = cover.colorimetry.pixel_counts.getPercentDCIP3   ();
-      const float fPercent2020    = cover.colorimetry.pixel_counts.getPercentRec2020 ();
-      const float fPercentAP1     = cover.colorimetry.pixel_counts.getPercentAP1     ();
-      const float fPercentInvalid = cover.colorimetry.pixel_counts.getPercentInvalid ();
+      const float fPercent709       = cover.colorimetry.pixel_counts.getPercentRec709    ();
+      const float fPercentP3        = cover.colorimetry.pixel_counts.getPercentDCIP3     ();
+      const float fPercent2020      = cover.colorimetry.pixel_counts.getPercentRec2020   ();
+      const float fPercentAP1       = cover.colorimetry.pixel_counts.getPercentAP1       ();
+      const float fPercentAP0       = cover.colorimetry.pixel_counts.getPercentAP0       ();
+      const float fPercentUndefined = cover.colorimetry.pixel_counts.getPercentUndefined ();
 
       ImGui::SetCursorPos    (ImVec2 (orig_pos.x, light_pos.y));
       ImGui::TextUnformatted ("\n");
 
       ImGui::BeginGroup ();
-      if (fPercent709     > 0.0f) ImGui::TextUnformatted ("Rec 709: ");
-      if (fPercentP3      > 0.0f) ImGui::TextUnformatted ("DCI P3: ");
-      if (fPercent2020    > 0.0f) ImGui::TextUnformatted ("Rec 2020: ");
-      if (fPercentAP1     > 0.0f) ImGui::TextUnformatted ("AP1: ");
-      if (fPercentInvalid > 0.0f) ImGui::TextUnformatted ("Invalid: ");
+      if (SKIV_HDR_VisualizationId == SKIV_HDR_VISUALIZTION_GAMUT)
+      {
+        if (fPercent709       > 0.0f)  ImGui::TextColored (ImVec4 (SKIV_HDR_GamutHue_Rec709 [0],
+                                                                   SKIV_HDR_GamutHue_Rec709 [1],
+                                                                   SKIV_HDR_GamutHue_Rec709 [2], 1.0f),
+                                                                   "Rec. 709: ");
+        if (fPercentP3        > 0.05f) ImGui::TextColored (ImVec4 (SKIV_HDR_GamutHue_DciP3 [0],
+                                                                   SKIV_HDR_GamutHue_DciP3 [1],
+                                                                   SKIV_HDR_GamutHue_DciP3 [2], 1.0f),
+                                                                   "DCI-P3: ");
+        if (fPercent2020      > 0.05f) ImGui::TextColored (ImVec4 (SKIV_HDR_GamutHue_Rec2020 [0],
+                                                                   SKIV_HDR_GamutHue_Rec2020 [1],
+                                                                   SKIV_HDR_GamutHue_Rec2020 [2], 1.0f),
+                                                                   "Rec. 2020: ");
+        if (fPercentAP1       > 0.05f) ImGui::TextColored (ImVec4 (SKIV_HDR_GamutHue_Ap1 [0],
+                                                                   SKIV_HDR_GamutHue_Ap1 [1],
+                                                                   SKIV_HDR_GamutHue_Ap1 [2], 1.0f),
+                                                                   "ACES AP1: ");
+        if (fPercentAP0       > 0.05f) ImGui::TextColored (ImVec4 (SKIV_HDR_GamutHue_Ap0 [0],
+                                                                   SKIV_HDR_GamutHue_Ap0 [1],
+                                                                   SKIV_HDR_GamutHue_Ap0 [2], 1.0f),
+                                                                   "ACES AP0: ");
+        if (fPercentUndefined > 0.05f) ImGui::TextColored (ImVec4 (SKIV_HDR_GamutHue_Undefined [0],
+                                                                   SKIV_HDR_GamutHue_Undefined [1],
+                                                                   SKIV_HDR_GamutHue_Undefined [2], 1.0f),
+                                                                   "Undefined: ");
+      }
+      else
+      {
+        if (fPercent709       > 0.0f)  ImGui::TextUnformatted ("Rec. 709: " );
+        if (fPercentP3        > 0.05f) ImGui::TextUnformatted ("DCI-P3: "   );
+        if (fPercent2020      > 0.05f) ImGui::TextUnformatted ("Rec. 2020: ");
+        if (fPercentAP1       > 0.05f) ImGui::TextUnformatted ("ACES AP1: " );
+        if (fPercentAP0       > 0.05f) ImGui::TextUnformatted ("ACES AP0: " );
+        if (fPercentUndefined > 0.05f) ImGui::TextUnformatted ("Undefined: ");
+      }
       ImGui::EndGroup   ();
       ImGui::SameLine   ();
       ImGui::BeginGroup ();
-      if (fPercent709     > 0.0f) ImGui::Text ("%8.4f %%", fPercent709);
-      if (fPercentP3      > 0.0f) ImGui::Text ("%8.4f %%", fPercentP3);
-      if (fPercent2020    > 0.0f) ImGui::Text ("%8.4f %%", fPercent2020);
-      if (fPercentAP1     > 0.0f) ImGui::Text ("%8.4f %%", fPercentAP1);
-      if (fPercentInvalid > 0.0f) ImGui::Text ("%8.4f %%", fPercentInvalid);
+      if (fPercent709       > 0.0f)  ImGui::Text ("%8.4f %%", fPercent709);
+      if (fPercentP3        > 0.05f) ImGui::Text ("%8.4f %%", fPercentP3);
+      if (fPercent2020      > 0.05f) ImGui::Text ("%8.4f %%", fPercent2020);
+      if (fPercentAP1       > 0.05f) ImGui::Text ("%8.4f %%", fPercentAP1);
+      if (fPercentAP0       > 0.05f) ImGui::Text ("%8.4f %%", fPercentAP0);
+      if (fPercentUndefined > 0.05f) ImGui::Text ("%8.4f %%", fPercentUndefined);
       ImGui::EndGroup   ();
 
       ImGui::SetCursorPos (orig_pos);
@@ -1303,18 +1378,41 @@ SKIF_UI_Tab_DrawViewer (void)
         {
           static bool bNone    = true;
           static bool bHeatmap = false;
-          
+          static bool bGamut   = false;
+          static bool bSDR     = false;
+
+          auto _ResetSelection = [&](bool& new_selection) {
+            bNone    = false;
+            bHeatmap = false;
+            bGamut   = false;
+            bSDR     = false;
+
+            new_selection = true;
+          };
+
           if (SKIF_ImGui_MenuItemEx2 ("None", ICON_FA_BAN, ImGui::GetStyleColorVec4 (ImGuiCol_Text), spaces, &bNone))
           {
-            bHeatmap                 = false;
+            _ResetSelection (bNone);
             SKIV_HDR_VisualizationId = SKIV_HDR_VISUALIZTION_NONE;
           }
 
       
-          if (SKIF_ImGui_MenuItemEx2 ("Heatmap", ICON_FA_CIRCLE_RADIATION, ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Yellow), spaces, &bHeatmap))
+          if (SKIF_ImGui_MenuItemEx2 ("Luminance Heatmap", ICON_FA_CIRCLE_RADIATION, ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Yellow), spaces, &bHeatmap))
           {
-            bNone                    = false;
+            _ResetSelection (bHeatmap);
             SKIV_HDR_VisualizationId = SKIV_HDR_VISUALIZTION_HEATMAP;
+          }
+
+          if (SKIF_ImGui_MenuItemEx2 ("Gamut Coverage", ICON_FA_PALETTE, ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Icon), spaces, &bGamut))
+          {
+            _ResetSelection (bGamut);
+            SKIV_HDR_VisualizationId = SKIV_HDR_VISUALIZTION_GAMUT;
+          }
+
+          if (SKIF_ImGui_MenuItemEx2 ("SDR Grayscale", ICON_FA_CIRCLE_HALF_STROKE, ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Icon), spaces, &bSDR))
+          {
+            _ResetSelection (bSDR);
+            SKIV_HDR_VisualizationId = SKIV_HDR_VISUALIZTION_SDR;
           }
 
           ImGui::EndMenu ( );
