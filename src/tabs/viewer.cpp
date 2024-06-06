@@ -85,6 +85,25 @@ float SKIV_HDR_GamutHue_Undefined [4] = { 1.0f, 0.0f, 0.0f, 1.0f }; // Red
 
 uint32_t SKIV_HDR_VisualizationId = SKIV_HDR_VISUALIZTION_NONE;
 
+// Identify file type by reading the file signature
+const auto supported_formats =
+{
+  FileSignature { L"image/jpeg",                L".jpg",  { 0xFF, 0xD8, 0x00, 0x00 },   // JPEG (SOI; Start of Image)
+                                                          { 0xFF, 0xFF, 0x00, 0x00 } }, // JPEG App Markers are masked as they can be all over the place (e.g. 0xFF 0xD8 0xFF 0xED)
+  FileSignature { L"image/png",                 L".png",  { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A } },
+  FileSignature { L"image/webp",                L".webp", { 0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50 },     // 52 49 46 46 ?? ?? ?? ?? 57 45 42 50
+                                                          { 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF } }, // mask
+  FileSignature { L"image/bmp",                 L".bmp",  { 0x42, 0x4D } },
+  FileSignature { L"image/vnd.ms-photo",        L".jxr",  { 0x49, 0x49, 0xBC } },
+  FileSignature { L"image/vnd.adobe.photoshop", L".psd",  { 0x38, 0x42, 0x50, 0x53 } },
+  FileSignature { L"image/tiff",                L".tiff", { 0x49, 0x49, 0x2A, 0x00 } }, // TIFF: little-endian
+  FileSignature { L"image/tiff",                L".tiff", { 0x4D, 0x4D, 0x00, 0x2A } }, // TIFF: big-endian
+  FileSignature { L"image/vnd.radiance",        L".hdr",  { 0x23, 0x3F, 0x52, 0x41, 0x44, 0x49, 0x41, 0x4E, 0x43, 0x45, 0x0A } }, // Radiance High Dynamic Range image file
+  FileSignature { L"image/gif",                 L".gif",  { 0x47, 0x49, 0x46, 0x38, 0x37, 0x61 } }, // GIF87a
+  FileSignature { L"image/gif",                 L".gif",  { 0x47, 0x49, 0x46, 0x38, 0x39, 0x61 } }  // GIF89a
+//FileSignature { L"image/x-targa",             L".tga",  { 0x00, } }, // TGA has no real unique header identifier, so just use the file extension on those
+};
+
 bool                   loadImage         = false;
 bool                   tryingToLoadImage = false;
 std::atomic<bool>      imageLoading      = false;
@@ -300,25 +319,6 @@ LoadLibraryTexture (image_s& image)
 
   ImageDecoder decoder = ImageDecoder_None;
 
-  // Identify file type by reading the file signature
-  static const auto types =
-  {
-    FileSignature { L"image/jpeg",                L".jpg",  { 0xFF, 0xD8, 0x00, 0x00 },   // JPEG (SOI; Start of Image)
-                                                            { 0xFF, 0xFF, 0x00, 0x00 } }, // JPEG App Markers are masked as they can be all over the place (e.g. 0xFF 0xD8 0xFF 0xED)
-    FileSignature { L"image/png",                 L".png",  { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A } },
-    FileSignature { L"image/webp",                L".webp", { 0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50 },     // 52 49 46 46 ?? ?? ?? ?? 57 45 42 50
-                                                            { 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF } }, // mask
-    FileSignature { L"image/bmp",                 L".bmp",  { 0x42, 0x4D } },
-    FileSignature { L"image/vnd.ms-photo",        L".jxr",  { 0x49, 0x49, 0xBC } },
-    FileSignature { L"image/vnd.adobe.photoshop", L".psd",  { 0x38, 0x42, 0x50, 0x53 } },
-    FileSignature { L"image/tiff",                L".tiff", { 0x49, 0x49, 0x2A, 0x00 } }, // TIFF: little-endian
-    FileSignature { L"image/tiff",                L".tiff", { 0x4D, 0x4D, 0x00, 0x2A } }, // TIFF: big-endian
-    FileSignature { L"image/vnd.radiance",        L".hdr",  { 0x23, 0x3F, 0x52, 0x41, 0x44, 0x49, 0x41, 0x4E, 0x43, 0x45, 0x0A } }, // Radiance High Dynamic Range image file
-    FileSignature { L"image/gif",                 L".gif",  { 0x47, 0x49, 0x46, 0x38, 0x37, 0x61 } }, // GIF87a
-    FileSignature { L"image/gif",                 L".gif",  { 0x47, 0x49, 0x46, 0x38, 0x39, 0x61 } }  // GIF89a
-  //FileSignature { L"image/x-targa",             L".tga",  { 0x00, } }, // TGA has no real unique header identifier, so just use the file extension on those
-  };
-
   if (ext == L".tga")
     decoder = ImageDecoder_stbi;
 
@@ -328,7 +328,7 @@ LoadLibraryTexture (image_s& image)
         maxLength  = 0;
     if (maxLength == 0)
     {
-      for (auto& type : types)
+      for (auto& type : supported_formats)
         if (type.signature.size() > maxLength)
           maxLength = type.signature.size();
     }
@@ -347,7 +347,7 @@ LoadLibraryTexture (image_s& image)
       file.read (buffer.data(), maxLength);
       file.close();
 
-      for (auto& type : types)
+      for (auto& type : supported_formats)
       {
         if (SKIF_Util_HasFileSignature (buffer, type))
         {
@@ -783,13 +783,6 @@ using namespace DirectX;
     image.light_info.max_cll_name = cMaxChannel;
     image.light_info.max_nits     = fMaxLum * 80.0f; // scRGB
     image.light_info.min_nits     = fMinLum * 80.0f; // scRGB
-
-    PLOG_VERBOSE << "\n"
-                 << "HDR Metadata : \n"
-              // << "Avg Luminance : " << image.light_info.avg_nits << "\n"
-                 << "MaxCLL        : " << image.light_info.max_cll  << "\n"
-                 << "Max Luminance : " << image.light_info.max_nits << "\n"
-                 << "Min Luminance : " << image.light_info.min_nits;
   }
 
   HRESULT hr =
@@ -1047,6 +1040,128 @@ SKIF_UI_Tab_DrawViewer (void)
     tmp_iDarkenImages = _registry.iDarkenImages;
   }
 
+  // Monitor the current image folder
+  struct {
+    std::wstring              file;
+    std::wstring              path;
+    std:: string              path_utf8;
+    SKIF_DirectoryWatch       watch;
+    std::vector<std::wstring> fileList;
+    unsigned int              fileListIndex = 0;
+
+    void reset (void)
+    {
+      path.clear();
+      path_utf8.clear();
+      fileList.clear();
+      fileListIndex = 0;
+      watch.reset();
+    }
+
+    std::wstring nextImage (void)
+    {
+      if (fileList.size() == 0 || fileListIndex == fileList.size() - 1)
+        return L"";
+
+      fileListIndex++;
+      fileListIndex %= fileList.size();
+      return (path + LR"(\)" + fileList[fileListIndex]);
+    }
+
+    std::wstring prevImage (void)
+    {
+      if (fileList.size() == 0 || fileListIndex == 0)
+        return L"";
+
+      fileListIndex--;
+      fileListIndex %= fileList.size();
+      return (path + LR"(\)" + fileList[fileListIndex]);
+    }
+
+    // Retrieve all files in the folder, and identify our current place among them...
+    void updateFolderData (void)
+    {
+      HANDLE hFind        = INVALID_HANDLE_VALUE;
+      WIN32_FIND_DATA ffd = { };
+
+      hFind = 
+        FindFirstFileExW ((path + LR"(\*.*)").c_str(), FindExInfoBasic, &ffd, FindExSearchNameMatch, NULL, NULL);
+
+      if (INVALID_HANDLE_VALUE != hFind)
+      {
+        fileList.push_back (ffd.cFileName);
+
+        while (FindNextFile (hFind, &ffd))
+          fileList.push_back (ffd.cFileName);
+
+        FindClose (hFind);
+      }
+
+      if (! fileList.empty())
+      {
+        std::vector<std::wstring> filtered;
+
+        // Filter out unsupported file formats using their file extension
+        for (auto& file : fileList)
+        {
+          for (auto& type : supported_formats)
+          {
+            if (type.file_extension == std::filesystem::path(file).extension().wstring())
+            {
+              filtered.push_back (file);
+              break;
+            }
+          }
+        }
+        fileList = filtered;
+
+        if (! fileList.empty())
+        {
+          std::sort (fileList.begin(),
+                     fileList.end  (), 
+            []( const std::wstring& a,
+                const std::wstring& b ) -> int
+            {
+              return StrCmpLogicalW (a.c_str(), b.c_str()) < 0;
+            }
+          );
+
+          // Set the index to the proper position
+          fileListIndex = 0;
+          for (auto& _file : fileList)
+          {
+            if (file != _file)
+              fileListIndex++;
+            else
+              break;
+          }
+        }
+      }
+    }
+  } static _current_folder;
+
+  if (cover.path.empty())
+  {
+    if (! _current_folder.path.empty())
+      _current_folder.reset();
+  }
+
+  if (cover.path != _current_folder.path)
+  {
+    _current_folder.reset();
+
+    std::filesystem::path path = SKIF_Util_NormalizeFullPath (cover.path);
+    _current_folder.file       = path.filename().wstring();
+    _current_folder.path       = path.parent_path().wstring();
+    _current_folder.path_utf8  = SK_WideCharToUTF8 (_current_folder.path);
+    _current_folder.updateFolderData();
+  }
+
+  if (_current_folder.watch.isSignaled (_current_folder.path))
+  {
+    _current_folder.updateFolderData();
+  }
+
 #pragma endregion
 
   ImVec2 sizeCover     = GetCurrentAspectRatio (cover)     * ((_registry.iImageScaling == 0) ? 1 : SKIF_ImGui_GlobalDPIScale);
@@ -1151,11 +1266,31 @@ SKIF_UI_Tab_DrawViewer (void)
     auto parent_pos =
       ImGui::GetCursorPos ();
 
+    // Display in the top left corner
     ImGui::SetCursorPos    (ImVec2 (0.0f, 0.0f));
 
     ImGui::PushStyleColor (ImGuiCol_ChildBg, ImGui::GetStyleColorVec4 (ImGuiCol_WindowBg));
     ImGui::BeginChild     ("###ImageDetails", ImVec2 (0, 0), ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_AutoResizeX | ImGuiChildFlags_AutoResizeY | ((_registry.bUIBorders) ? ImGuiChildFlags_Border : ImGuiChildFlags_None), ImGuiWindowFlags_NoScrollbar);
     ImGui::PopStyleColor  ( );
+
+    // Additional Developer Details
+    if (_registry.bDeveloperMode)
+    {
+      static const char szLabels [] = "Current Folder:\t\n"
+                                      "Image Path:\t";
+      
+      char     szLabelsData  [512] = { };
+
+      sprintf (szLabelsData, "%s\n"
+                             "%s",    _current_folder.path_utf8.c_str(),
+                                      cover.path_utf8.c_str());
+
+      ImGui::TextUnformatted (szLabels);
+      ImGui::SameLine        ();
+      ImGui::TextUnformatted (szLabelsData);
+
+      ImGui::TextUnformatted ("\n");
+    }
 
     // Basic Image Details
     {
@@ -1594,6 +1729,16 @@ SKIF_UI_Tab_DrawViewer (void)
     }
 
     OpenFileDialog = PopupState_Closed;
+  }
+
+  if (ImGui::IsKeyPressed (ImGuiKey_RightArrow))
+  {
+    dragDroppedFilePath = _current_folder.nextImage ( );
+  }
+
+  else if (ImGui::IsKeyPressed (ImGuiKey_LeftArrow))
+  {
+    dragDroppedFilePath = _current_folder.prevImage ( );
   }
 
   if (! dragDroppedFilePath.empty())
