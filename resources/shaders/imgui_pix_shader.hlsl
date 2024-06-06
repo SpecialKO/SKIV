@@ -23,6 +23,8 @@ float4 main(PS_INPUT input) : SV_Target
 
 #define SKIV_VISUALIZATION_NONE    0
 #define SKIV_VISUALIZATION_HEATMAP 1
+#define SKIV_VISUALIZATION_GAMUT   2
+#define SKIV_VISUALIZATION_SDR     3
 
 struct PS_INPUT
 {
@@ -38,6 +40,14 @@ cbuffer imgui_cbuffer : register (b0)
   float4 font_dims;
   uint   hdr_visualization;
   float  hdr_max_luminance;
+  float  sdr_reference_white;
+  float  padding0;
+  float4 rec709_gamut_hue;
+  float4 dcip3_gamut_hue;
+  float4 rec2020_gamut_hue;
+  float4 ap1_gamut_hue;
+  float4 ap0_gamut_hue;
+  float4 invalid_gamut_hue;
 };
 
 sampler   sampler0 : register (s0);
@@ -107,7 +117,7 @@ RemoveGammaExp (float3 x, float exp)
          pow (abs (x), exp);
 }
 
-float3 ApplyREC709Curve (float3 x)
+float3 ApplyRec709Curve (float3 x)
 {
   return x < 0.0181 ? 4.5 * x : 1.0993 * pow(x, 0.45) - 0.0993;
 }
@@ -151,27 +161,64 @@ float3 RemoveREC2084Curve (float3 N)
 // pq_inverse_eotf
 float3 LinearToST2084 (float3 normalizedLinearValue)
 {
-    return pow((0.8359375f + 18.8515625f * pow(abs(normalizedLinearValue), 0.1593017578f)) / (1.0f + 18.6875f * pow(abs(normalizedLinearValue), 0.1593017578f)), 78.84375f);
+  return pow((0.8359375f + 18.8515625f * pow(abs(normalizedLinearValue), 0.1593017578f)) / (1.0f + 18.6875f * pow(abs(normalizedLinearValue), 0.1593017578f)), 78.84375f);
 }
 
 // ST.2084 to linear, resulting in a linear normalized value
 float3 ST2084ToLinear (float3 ST2084)
 {
-    return pow(max(pow(abs(ST2084), 1.0f / 78.84375f) - 0.8359375f, 0.0f) / (18.8515625f - 18.6875f * pow(abs(ST2084), 1.0f / 78.84375f)), 1.0f / 0.1593017578f);
+  return pow(max(pow(abs(ST2084), 1.0f / 78.84375f) - 0.8359375f, 0.0f) / (18.8515625f - 18.6875f * pow(abs(ST2084), 1.0f / 78.84375f)), 1.0f / 0.1593017578f);
 }
 
-float3 REC709toREC2020 (float3 linearRec709)
+float3 Rec709toRec2020 (float3 linearRec709)
 {
   static const float3x3 ConvMat =
   {
-    0.627401924722236,  0.329291971755002,  0.0433061035227622,
-    0.0690954897392608, 0.919544281267395,  0.0113602289933443,
-    0.0163937090881632, 0.0880281623979006, 0.895578128513936
+    0.627403914928436279296875f,      0.3292830288410186767578125f,  0.0433130674064159393310546875f,
+    0.069097287952899932861328125f,   0.9195404052734375f,           0.011362315155565738677978515625f,
+    0.01639143936336040496826171875f, 0.08801330626010894775390625f, 0.895595252513885498046875f
   };
+
   return mul (ConvMat, linearRec709);
 }
 
-float3 REC2020toREC709 (float3 linearRec2020)
+float3 Rec709toDCIP3 (float3 linearRec709)
+{
+  static const float3x3 ConvMat =
+  {
+    0.82246196269989013671875f,    0.17753803730010986328125f,   0.f,
+    0.03319419920444488525390625f, 0.96680581569671630859375f,   0.f,
+    0.017082631587982177734375f,   0.0723974406719207763671875f, 0.91051995754241943359375f
+  };
+
+  return mul (ConvMat, linearRec709);
+}
+
+float3 Rec709toAP1_D65 (float3 linearRec709)
+{
+  static const float3x3 ConvMat =
+  {
+    0.61702883243560791015625f,       0.333867609500885009765625f,    0.04910354316234588623046875f,
+    0.069922320544719696044921875f,   0.91734969615936279296875f,     0.012727967463433742523193359375f,
+    0.02054978720843791961669921875f, 0.107552029192447662353515625f, 0.871898174285888671875f
+  };
+
+  return mul (ConvMat, linearRec709);
+}
+
+float3 Rec709toAP0_D65 (float3 linearRec709)
+{
+  static const float3x3 ConvMat =
+  {
+    0.4339316189289093017578125f,   0.3762523829936981201171875f,   0.1898159682750701904296875f,
+    0.088618390262126922607421875f, 0.809275329113006591796875f,    0.10210628807544708251953125f,
+    0.01775003969669342041015625f,  0.109447620809078216552734375f, 0.872802317142486572265625f
+  };
+
+  return mul (ConvMat, linearRec709);
+}
+
+float3 Rec2020toRec709 (float3 linearRec2020)
 {
   static const float3x3 ConvMat =
   {
@@ -182,7 +229,7 @@ float3 REC2020toREC709 (float3 linearRec2020)
   return mul (ConvMat, linearRec2020);
 }
 
-float3 Rec709_to_XYZ (float3 linearRec709)
+float3 Rec709toXYZ (float3 linearRec709)
 {
   static const float3x3 ConvMat =
   {
@@ -265,32 +312,32 @@ expandGamut (float3 vHDRColor, float fExpandGamut = 1.0f)
   return vHDRColor;
 }
 
-bool  IsNan (half  x) { return (asuint (x) & 0x7fffffff)  > 0x7f800000; } // Scalar NaN checker
-half2 IsNan (half2 v) { return half2 ( IsNan (v.x), IsNan (v.y) );                           }
-half3 IsNan (half3 v) { return half3 ( IsNan (v.x), IsNan (v.y), IsNan (v.z) );              }
-half4 IsNan (half4 v) { return half4 ( IsNan (v.x), IsNan (v.y), IsNan (v.z), IsNan (v.w) ); }
+bool   IsNan (float  x) { return (asuint (x) & 0x7fffffff)  > 0x7f800000; } // Scalar NaN checker
+float2 IsNan (float2 v) { return float2 ( IsNan (v.x), IsNan (v.y) );                           }
+float3 IsNan (float3 v) { return float3 ( IsNan (v.x), IsNan (v.y), IsNan (v.z) );              }
+float4 IsNan (float4 v) { return float4 ( IsNan (v.x), IsNan (v.y), IsNan (v.z), IsNan (v.w) ); }
 
-bool  IsInf (half  x) { return (asuint (x) & 0x7f800000) == 0x7f800000; } // Scalar Infinity checker
-half2 IsInf (half2 v) { return half2 ( IsInf (v.x), IsInf (v.y) );                           }
-half3 IsInf (half3 v) { return half3 ( IsInf (v.x), IsInf (v.y), IsInf (v.z) );              }
-half4 IsInf (half4 v) { return half4 ( IsInf (v.x), IsInf (v.y), IsInf (v.z), IsInf (v.w) ); }
+bool   IsInf (float  x) { return (asuint (x) & 0x7f800000) == 0x7f800000; } // Scalar Infinity checker
+float2 IsInf (float2 v) { return float2 ( IsInf (v.x), IsInf (v.y) );                           }
+float3 IsInf (float3 v) { return float3 ( IsInf (v.x), IsInf (v.y), IsInf (v.z) );              }
+float4 IsInf (float4 v) { return float4 ( IsInf (v.x), IsInf (v.y), IsInf (v.z), IsInf (v.w) ); }
 
 // Vectorized versions
-bool AnyIsInf (half  x)    { return        IsInf (x);                                 }
-bool AnyIsInf (half2 xy)   { return any ((asuint (xy)   & 0x7f800000) == 0x7f800000); }
-bool AnyIsInf (half3 xyz)  { return any ((asuint (xyz)  & 0x7f800000) == 0x7f800000); }
-bool AnyIsInf (half4 xyzw) { return any ((asuint (xyzw) & 0x7f800000) == 0x7f800000); }
+bool AnyIsInf (float  x)    { return        IsInf (x);                                 }
+bool AnyIsInf (float2 xy)   { return any ((asuint (xy)   & 0x7f800000) == 0x7f800000); }
+bool AnyIsInf (float3 xyz)  { return any ((asuint (xyz)  & 0x7f800000) == 0x7f800000); }
+bool AnyIsInf (float4 xyzw) { return any ((asuint (xyzw) & 0x7f800000) == 0x7f800000); }
 
-bool AnyIsNan (half  x)    { return        IsNan (x);                                 }
-bool AnyIsNan (half2 xy)   { return any ((asuint (xy)   & 0x7fffffff)  > 0x7f800000); }
-bool AnyIsNan (half3 xyz)  { return any ((asuint (xyz)  & 0x7fffffff)  > 0x7f800000); }
-bool AnyIsNan (half4 xyzw) { return any ((asuint (xyzw) & 0x7fffffff)  > 0x7f800000); }
+bool AnyIsNan (float  x)    { return        IsNan (x);                                 }
+bool AnyIsNan (float2 xy)   { return any ((asuint (xy)   & 0x7fffffff)  > 0x7f800000); }
+bool AnyIsNan (float3 xyz)  { return any ((asuint (xyz)  & 0x7fffffff)  > 0x7f800000); }
+bool AnyIsNan (float4 xyzw) { return any ((asuint (xyzw) & 0x7fffffff)  > 0x7f800000); }
 
 // Combined NaN and Infinity check
-bool isnormal (half  x)    { return (! (     (asuint (x)    & 0x7fffffff) >= 0x7f800000));  }
-bool isnormal (half2 xy)   { return (! (any ((asuint (xy)   & 0x7fffffff) >= 0x7f800000))); }
-bool isnormal (half3 xyz)  { return (! (any ((asuint (xyz)  & 0x7fffffff) >= 0x7f800000))); }
-bool isnormal (half4 xyzw) { return (! (any ((asuint (xyzw) & 0x7fffffff) >= 0x7f800000))); }
+bool isnormal (float  x)    { return (! (     (asuint (x)    & 0x7fffffff) >= 0x7f800000));  }
+bool isnormal (float2 xy)   { return (! (any ((asuint (xy)   & 0x7fffffff) >= 0x7f800000))); }
+bool isnormal (float3 xyz)  { return (! (any ((asuint (xyz)  & 0x7fffffff) >= 0x7f800000))); }
+bool isnormal (float4 xyzw) { return (! (any ((asuint (xyzw) & 0x7fffffff) >= 0x7f800000))); }
 
 // Remove special floating-point bit patterns, clamping is the
 //   final step before output and outputting NaN or Infinity would
@@ -298,7 +345,8 @@ bool isnormal (half4 xyzw) { return (! (any ((asuint (xyzw) & 0x7fffffff) >= 0x7
 #define SanitizeFP(c) ((! isnormal ((c))) ? (! IsNan ((c))) * (IsInf ((c)) ? sign ((c)) * float_MAX : (c)) : (c))
 
 #define float_MAX 65504.0 // (2 - 2^-10) * 2^15
-#define FP16_MIN 0.00006103515625f                 
+//#define FP16_MIN 0.00006103515625f
+#define FP16_MIN 0.0000000894069671630859375f
 
 float3 Clamp_scRGB (float3 c)
 {
@@ -306,8 +354,8 @@ float3 Clamp_scRGB (float3 c)
   {
     // Clamp to Rec 2020
     return
-      REC2020toREC709 (
-        max (REC709toREC2020 (c), 0.0f)
+      Rec2020toRec709 (
+        max (Rec709toRec2020 (c), 0.0f)
       );
   }
 
@@ -329,6 +377,20 @@ float4 ApplyHDRVisualization (uint type, float4 hdr_color)
 {
   switch (type)
   {
+    case SKIV_VISUALIZATION_SDR:
+    {
+      float luminance =
+        max (Rec709toXYZ (hdr_color.rgb).y, 0.0);
+
+      if (luminance * 80.0f <= sdr_reference_white)
+      {
+        return
+          float4 (luminance, luminance, luminance, 1.0f);
+      }
+
+      return hdr_color;
+    } break;
+
     case SKIV_VISUALIZATION_HEATMAP:
     {
       // Taken from https://github.com/microsoft/Windows-universal-samples/blob/main/Samples/D2DAdvancedColorImages/cpp/D2DAdvancedColorImages/LuminanceHeatmapEffect.hlsl in order to match HDR + WCG Image Viewer's Heatmap
@@ -359,7 +421,7 @@ float4 ApplyHDRVisualization (uint type, float4 hdr_color)
       // 1: Calculate luminance in nits.
       // Input is in scRGB. First convert to Y from CIEXYZ, then scale by whitepoint of 80 nits.
       float nits =
-        max (Rec709_to_XYZ (hdr_color.rgb).y, 0.0) * 80.0f;
+        max (Rec709toXYZ (hdr_color.rgb).y, 0.0) * 80.0f;
 
       // 2: Determine which gradient segment will be used.
       // Only one of useSegmentN will be 1 (true) for a given nits value.
@@ -393,6 +455,52 @@ float4 ApplyHDRVisualization (uint type, float4 hdr_color)
         lerp (STOP6_COLOR, STOP7_COLOR, lerpSegment6) * useSegment6 +
         lerp (STOP7_COLOR, STOP8_COLOR, lerpSegment7) * useSegment7;
       hdr_color.a = 1.0f;
+    } break;
+
+    case SKIV_VISUALIZATION_GAMUT:
+    {
+      #define REC709_HUE  rec709_gamut_hue
+      #define DCIP3_HUE   dcip3_gamut_hue
+      #define REC2020_HUE rec2020_gamut_hue
+      #define AP1_HUE     ap1_gamut_hue
+      #define AP0_HUE     ap0_gamut_hue
+      #define INVALID_HUE invalid_gamut_hue
+
+      float fLuminance =
+        min (125.0f, Rec709toXYZ (hdr_color.rgb).y);//5.0f;//min (125.0f, Rec709toXYZ (normalize (hdr_color.rgb)).y);
+
+      if ((! isnormal (hdr_color.rgb)) || any (Rec709toAP0_D65 (hdr_color.rgb) < -FP16_MIN))
+      {
+        return
+          fLuminance * INVALID_HUE;
+      }
+
+      if (any (Rec709toAP1_D65 (hdr_color.rgb) < -FP16_MIN))
+      {
+        return
+          fLuminance * AP0_HUE;
+      }
+
+      if (any (Rec709toRec2020 (hdr_color.rgb) < -FP16_MIN))
+      {
+        return
+          fLuminance * AP1_HUE;
+      }
+
+      if (any (Rec709toDCIP3 (hdr_color.rgb) < -FP16_MIN))
+      {
+        return
+          fLuminance * REC2020_HUE;
+      }
+
+      if (any (hdr_color.rgb < -FP16_MIN))
+      {
+        return
+          fLuminance * DCIP3_HUE;
+      }
+
+      return
+        fLuminance * REC709_HUE;
     } break;
 
     case SKIV_VISUALIZATION_NONE:
@@ -505,7 +613,7 @@ float4 main (PS_INPUT input) : SV_Target
     
     out_col.rgb =
         LinearToST2084 (
-          REC709toREC2020 ( saturate (out_col.rgb) ) * hdr_scale);
+          Rec709toRec2020 ( saturate (out_col.rgb) ) * hdr_scale);
 
     // Manipulate the alpha channel a bit... sometimes...
     if (orig_col.a < 0.5f)

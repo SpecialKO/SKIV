@@ -124,7 +124,14 @@ struct PIXEL_CONSTANT_BUFFER_DX11 {
   float    font_dims [4];
   uint32_t hdr_visualization;
   float    hdr_max_luminance;
-  uint32_t padding [2];
+  float    sdr_reference_white = 80.0f;
+  uint32_t padding [1];
+  float    rec709_gamut_hue    [4];
+  float    dcip3_gamut_hue     [4];
+  float    rec2020_gamut_hue   [4];
+  float    ap1_gamut_hue       [4];
+  float    ap0_gamut_hue       [4];
+  float    undefined_gamut_hue [4];
 };
 #endif
 
@@ -564,9 +571,27 @@ void ImGui_ImplDX11_RenderDrawData (ImDrawData *draw_data)
     // Assert that the constant buffer remains 16-byte aligned.
     static_assert((sizeof(PIXEL_CONSTANT_BUFFER_DX11) % 16) == 0, "Constant Buffer size must be 16-byte aligned");
 
-    pix_constant_buffer->font_dims [0] = (float)ImGui::GetIO ().Fonts->TexWidth;
-    pix_constant_buffer->font_dims [1] = (float)ImGui::GetIO ().Fonts->TexHeight;
-    pix_constant_buffer->hdr_visualization = SKIV_HDR_VisualizationId;
+    *pix_constant_buffer = PIXEL_CONSTANT_BUFFER_DX11 ();
+
+    extern float SKIV_HDR_SDRWhite;
+    extern float SKIV_HDR_GamutHue_Rec709    [4];
+    extern float SKIV_HDR_GamutHue_DciP3     [4];
+    extern float SKIV_HDR_GamutHue_Rec2020   [4];
+    extern float SKIV_HDR_GamutHue_Ap1       [4];
+    extern float SKIV_HDR_GamutHue_Ap0       [4];
+    extern float SKIV_HDR_GamutHue_Undefined [4];
+
+    pix_constant_buffer->font_dims [0]       = (float)ImGui::GetIO ().Fonts->TexWidth;
+    pix_constant_buffer->font_dims [1]       = (float)ImGui::GetIO ().Fonts->TexHeight;
+    pix_constant_buffer->hdr_visualization   = SKIV_HDR_VisualizationId;
+    pix_constant_buffer->sdr_reference_white = SKIV_HDR_SDRWhite;
+
+    memcpy (pix_constant_buffer->rec709_gamut_hue,    SKIV_HDR_GamutHue_Rec709,    sizeof (float) * 4);
+    memcpy (pix_constant_buffer->dcip3_gamut_hue,     SKIV_HDR_GamutHue_DciP3,     sizeof (float) * 4);
+    memcpy (pix_constant_buffer->rec2020_gamut_hue,   SKIV_HDR_GamutHue_Rec2020,   sizeof (float) * 4);
+    memcpy (pix_constant_buffer->ap1_gamut_hue,       SKIV_HDR_GamutHue_Ap1,       sizeof (float) * 4);
+    memcpy (pix_constant_buffer->ap0_gamut_hue,       SKIV_HDR_GamutHue_Ap0,       sizeof (float) * 4);
+    memcpy (pix_constant_buffer->undefined_gamut_hue, SKIV_HDR_GamutHue_Undefined, sizeof (float) * 4);
 
     ctx->Unmap ( bd->pFontConstantBuffer, 0 );
 
@@ -581,9 +606,18 @@ void ImGui_ImplDX11_RenderDrawData (ImDrawData *draw_data)
     // Assert that the constant buffer remains 16-byte aligned.
     static_assert((sizeof(PIXEL_CONSTANT_BUFFER_DX11) % 16) == 0, "Constant Buffer size must be 16-byte aligned");
 
-    pix_constant_buffer->font_dims [0] = 0.0f;
-    pix_constant_buffer->font_dims [1] = 0.0f;
-    pix_constant_buffer->hdr_visualization = SKIV_HDR_VisualizationId;
+    *pix_constant_buffer = PIXEL_CONSTANT_BUFFER_DX11 ();
+    pix_constant_buffer->font_dims [0]       = 0.0f;
+    pix_constant_buffer->font_dims [1]       = 0.0f;
+    pix_constant_buffer->hdr_visualization   = SKIV_HDR_VisualizationId;
+    pix_constant_buffer->sdr_reference_white = SKIV_HDR_SDRWhite;
+
+    memcpy (pix_constant_buffer->rec709_gamut_hue,    SKIV_HDR_GamutHue_Rec709,    sizeof (float) * 4);
+    memcpy (pix_constant_buffer->dcip3_gamut_hue,     SKIV_HDR_GamutHue_DciP3,     sizeof (float) * 4);
+    memcpy (pix_constant_buffer->rec2020_gamut_hue,   SKIV_HDR_GamutHue_Rec2020,   sizeof (float) * 4);
+    memcpy (pix_constant_buffer->ap1_gamut_hue,       SKIV_HDR_GamutHue_Ap1,       sizeof (float) * 4);
+    memcpy (pix_constant_buffer->ap0_gamut_hue,       SKIV_HDR_GamutHue_Ap0,       sizeof (float) * 4);
+    memcpy (pix_constant_buffer->undefined_gamut_hue, SKIV_HDR_GamutHue_Undefined, sizeof (float) * 4);
 
     ctx->Unmap ( bd->pPixelConstantBuffer, 0 );
   }
