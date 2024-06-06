@@ -124,8 +124,9 @@ PopupState OpenFileDialog  = PopupState_Closed;
 PopupState ContextMenu     = PopupState_Closed;
 
 struct image_s {
-  std::wstring path        = L"";
+  std::wstring path        = L""; // Image path (full)
   std:: string path_utf8   =  "";
+  std::wstring folder_path = L""; // Parent folder path
   float        width       = 0.0f;
   float        height      = 0.0f;
   ImVec2       uv0 = ImVec2 (0, 0);
@@ -189,6 +190,7 @@ struct image_s {
   {
     path                = L"";
     path_utf8           =  "";
+    folder_path         = L"";
     width               = 0.0f;
     height              = 0.0f;
     uv0                 = ImVec2 (0, 0);
@@ -1042,8 +1044,9 @@ SKIF_UI_Tab_DrawViewer (void)
 
   // Monitor the current image folder
   struct {
-    std::wstring              file;
-    std::wstring              path;
+    std::wstring              orig_path; // Holds a cached copy of cover.path
+    std::wstring              filename;  // Image filename
+    std::wstring              path;      // Parent folder path
     std:: string              path_utf8;
     SKIF_DirectoryWatch       watch;
     std::vector<std::wstring> fileList;
@@ -1051,6 +1054,10 @@ SKIF_UI_Tab_DrawViewer (void)
 
     void reset (void)
     {
+      PLOG_VERBOSE << "reset _current_folder!";
+
+      orig_path.clear();
+      filename.clear();
       path.clear();
       path_utf8.clear();
       fileList.clear();
@@ -1078,11 +1085,28 @@ SKIF_UI_Tab_DrawViewer (void)
       return (path + LR"(\)" + fileList[fileListIndex]);
     }
 
+    // Find the position of the image in the current folder
+    void findFileIndex (void)
+    {
+      // Set the index to the proper position
+      fileListIndex = 0;
+      for (auto& file : fileList)
+      {
+        if (filename != file)
+          fileListIndex++;
+        else
+          break;
+      }
+    }
+
     // Retrieve all files in the folder, and identify our current place among them...
     void updateFolderData (void)
     {
       HANDLE hFind        = INVALID_HANDLE_VALUE;
       WIN32_FIND_DATA ffd = { };
+      fileList.clear();
+
+      PLOG_DEBUG << "Discovering ... " << (path + LR"(\*.*)");
 
       hFind = 
         FindFirstFileExW ((path + LR"(\*.*)").c_str(), FindExInfoBasic, &ffd, FindExSearchNameMatch, NULL, NULL);
@@ -1126,40 +1150,62 @@ SKIF_UI_Tab_DrawViewer (void)
             }
           );
 
-          // Set the index to the proper position
-          fileListIndex = 0;
-          for (auto& _file : fileList)
-          {
-            if (file != _file)
-              fileListIndex++;
-            else
-              break;
-          }
+          findFileIndex ( );
         }
       }
+
+      PLOG_DEBUG << "Found " << fileList.size() << " supported images in the folder.";
     }
   } static _current_folder;
 
-  if (cover.path.empty())
+  // Do not clear when we are loading an image (so as to not process the same folder constantly)
+  if (! loadImage && ! tryingToLoadImage)
   {
-    if (! _current_folder.path.empty())
+    static DWORD dwLastSignaled = 0;
+
+    // Identify when an image has been closed
+    if (cover.path.empty())
+    {
+      if (! _current_folder.path.empty())
+        _current_folder.reset();
+    }
+
+    // Identify when we're dealing with a whole new folder
+    if (cover.folder_path != _current_folder.path)
+    {
       _current_folder.reset();
-  }
+      
+      _current_folder.orig_path  = cover.path;
+      std::filesystem::path path = SKIF_Util_NormalizeFullPath (cover.path);
+      _current_folder.filename   = path.filename().wstring();
+      _current_folder.path       = path.parent_path().wstring();
+      _current_folder.path_utf8  = SK_WideCharToUTF8 (_current_folder.path);
 
-  if (cover.path != _current_folder.path)
-  {
-    _current_folder.reset();
+      // This triggers a new updateFolderData() run below
+      dwLastSignaled = 1;
+    }
 
-    std::filesystem::path path = SKIF_Util_NormalizeFullPath (cover.path);
-    _current_folder.file       = path.filename().wstring();
-    _current_folder.path       = path.parent_path().wstring();
-    _current_folder.path_utf8  = SK_WideCharToUTF8 (_current_folder.path);
-    _current_folder.updateFolderData();
-  }
+    // Identify when a new file from the same folder has been dropped
+    if (cover.path != _current_folder.orig_path)
+    {
+      _current_folder.orig_path  = cover.path;
+      std::filesystem::path path = SKIF_Util_NormalizeFullPath (cover.path);
+      _current_folder.filename   = path.filename().wstring();
+      _current_folder.findFileIndex ( );
+    }
 
-  if (_current_folder.watch.isSignaled (_current_folder.path))
-  {
-    _current_folder.updateFolderData();
+    // Identify when the folder was changed outside of the app
+    if (_current_folder.watch.isSignaled (_current_folder.path))
+    {
+      dwLastSignaled = SKIF_Util_timeGetTime();
+      PLOG_VERBOSE << "_current_folder.watch was signaled! Delay checking the folder for another 500ms...";
+    }
+
+    if (dwLastSignaled != 0 && dwLastSignaled + 500 < SKIF_Util_timeGetTime())
+    {
+      _current_folder.updateFolderData();
+      dwLastSignaled = 0;
+    }
   }
 
 #pragma endregion
@@ -1662,6 +1708,10 @@ SKIF_UI_Tab_DrawViewer (void)
         cover.colorimetry       = _data->image.colorimetry;
         cover.is_hdr            = _data->image.is_hdr;
 
+        // Parent folder (used for the directory watch)
+        std::filesystem::path path = SKIF_Util_NormalizeFullPath (cover.path);
+        cover.folder_path          = path.parent_path().wstring();
+
         extern ImVec2 SKIV_ResizeApp;
         SKIV_ResizeApp.x = cover.width;
         SKIV_ResizeApp.y = cover.height;
@@ -1731,14 +1781,17 @@ SKIF_UI_Tab_DrawViewer (void)
     OpenFileDialog = PopupState_Closed;
   }
 
-  if (ImGui::IsKeyPressed (ImGuiKey_RightArrow))
+  if (! tryingToLoadImage)
   {
-    dragDroppedFilePath = _current_folder.nextImage ( );
-  }
+    if (ImGui::IsKeyPressed (ImGuiKey_RightArrow))
+    {
+      dragDroppedFilePath = _current_folder.nextImage ( );
+    }
 
-  else if (ImGui::IsKeyPressed (ImGuiKey_LeftArrow))
-  {
-    dragDroppedFilePath = _current_folder.prevImage ( );
+    else if (ImGui::IsKeyPressed (ImGuiKey_LeftArrow))
+    {
+      dragDroppedFilePath = _current_folder.prevImage ( );
+    }
   }
 
   if (! dragDroppedFilePath.empty())
