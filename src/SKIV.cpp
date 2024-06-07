@@ -1631,7 +1631,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
           SKIF_Tab_ChangeTo == UITab_Viewer)
       {
         ImGui::PushStyleVar (ImGuiStyleVar_FramePadding, ImVec2());
-        bool show = SKIF_ImGui_BeginMainChildFrame ( );
+        bool show = SKIF_ImGui_BeginMainChildFrame (ImGuiWindowFlags_NoScrollWithMouse);
         ImGui::PopStyleVar  ( );
 
         /*

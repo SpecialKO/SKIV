@@ -692,7 +692,7 @@ SKIF_ImGui_Columns (int columns_count, const char* id, bool border, bool resizeb
 }
 
 // This is used to set up the main content area for all tabs
-bool SKIF_ImGui_BeginMainChildFrame (void)
+bool SKIF_ImGui_BeginMainChildFrame (ImGuiWindowFlags window_flags)
 {
   static SKIF_RegistrySettings& _registry = SKIF_RegistrySettings::GetInstance ( );
 
@@ -706,7 +706,7 @@ bool SKIF_ImGui_BeginMainChildFrame (void)
     frame_content_area_id,
     ImVec2 (0.0f, 0.0f),
     ImGuiChildFlags_None, // ImGuiChildFlags_AlwaysUseWindowPadding, // ImGuiChildFlags_FrameStyle
-    ImGuiWindowFlags_NavFlattened | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_HorizontalScrollbar
+    ImGuiWindowFlags_NavFlattened | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_HorizontalScrollbar | window_flags
   );
 }
 

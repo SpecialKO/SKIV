@@ -135,6 +135,7 @@ struct image_s {
 
   float        width       = 0.0f;
   float        height      = 0.0f;
+  float        zoom        = 1.0f;
   ImVec2       uv0 = ImVec2 (0, 0);
   ImVec2       uv1 = ImVec2 (1, 1);
   ImVec2       avail_size;        // Holds the frame size used (affected by the scaling method)
@@ -179,6 +180,7 @@ struct image_s {
     file_info           = other.file_info;
     width               = other.width;
     height              = other.height;
+    zoom                = other.zoom;
     uv0                 = other.uv0;
     uv1                 = other.uv1;
     avail_size          = other.avail_size;
@@ -196,6 +198,7 @@ struct image_s {
     file_info           = { };
     width               = 0.0f;
     height              = 0.0f;
+    zoom                = 1.0f;
     uv0                 = ImVec2 (0, 0);
     uv1                 = ImVec2 (1, 1);
     avail_size          = { };
@@ -1213,8 +1216,8 @@ SKIF_UI_Tab_DrawViewer (void)
 
 #pragma endregion
 
-  ImVec2 sizeCover     = GetCurrentAspectRatio (cover)     * ((_registry.iImageScaling == 0) ? 1 : SKIF_ImGui_GlobalDPIScale);
-  ImVec2 sizeCover_old = GetCurrentAspectRatio (cover_old) * ((_registry.iImageScaling == 0) ? 1 : SKIF_ImGui_GlobalDPIScale);
+  ImVec2 sizeCover     = GetCurrentAspectRatio (cover)     * ((_registry.iImageScaling == 0) ? 1 : SKIF_ImGui_GlobalDPIScale) * cover.zoom;
+  ImVec2 sizeCover_old = GetCurrentAspectRatio (cover_old) * ((_registry.iImageScaling == 0) ? 1 : SKIF_ImGui_GlobalDPIScale) * cover_old.zoom;
 
   // From now on ImGui UI calls starts being made...
 
@@ -1304,6 +1307,8 @@ SKIF_UI_Tab_DrawViewer (void)
                                                                 ImVec4 (fTint, fTint, fTint, fAlpha) // Alpha transparency (2024-01-01, removed fGammaCorrectedTint * fAlpha for the light style)
   );
 
+  isImageHovered = ImGui::IsItemHovered();
+
   // Reset scroll (center-align the scroll)
   if (resetScrollCenter && cover_old.pRawTexSRV.p == nullptr)
   {
@@ -1315,7 +1320,12 @@ SKIF_UI_Tab_DrawViewer (void)
     ImGui::SetScrollHereX ( );
   }
 
-  isImageHovered = ImGui::IsItemHovered();
+  // Using 4.975f and 0.075f to work around some floating point shenanigans
+  if (     ImGui::GetIO().MouseWheel > 0 && cover.zoom < 4.975f)
+    cover.zoom += 0.05f;
+
+  else if (ImGui::GetIO().MouseWheel < 0 && cover.zoom > 0.075f)
+    cover.zoom -= 0.05f;
 
 #pragma endregion
 
@@ -1347,13 +1357,15 @@ SKIF_UI_Tab_DrawViewer (void)
       {
         sprintf (szLabels,     "Image:\n"
                                "Image Path:\n"
-                               "Current Folder:");
+                               "Current Folder:\n"
+                               "Zoom Level:");
         sprintf (szLabelsData, "%s\n"
                                "%s\n"
-                               "%s",    cover.file_info.filename_utf8.c_str(),
+                               "%s\n"
+                               "%.2f",  cover.file_info.filename_utf8.c_str(),
                                         cover.file_info.path_utf8.c_str(),
-                                        _current_folder.path_utf8.c_str());
-
+                                        _current_folder.path_utf8.c_str(),
+                                        cover.zoom);
       }
 
       // Basic
@@ -1734,6 +1746,7 @@ SKIF_UI_Tab_DrawViewer (void)
         cover.file_info         = _data->image.file_info;
         cover.width             = _data->image.width;
         cover.height            = _data->image.height;
+        cover.zoom              = _data->image.zoom;
         cover.uv0               = _data->image.uv0;
         cover.uv1               = _data->image.uv1;
         cover.pRawTexSRV        = _data->image.pRawTexSRV;
