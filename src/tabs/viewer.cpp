@@ -1370,8 +1370,11 @@ SKIF_UI_Tab_DrawViewer (void)
 
       // Basic
       else {
-            sprintf (szLabels, "Image:");
-        sprintf (szLabelsData, "%s",    cover.file_info.filename_utf8.c_str());
+        sprintf (szLabels,     "Image:\n"
+                               "Zoom Level:");
+        sprintf (szLabelsData, "%s\n"
+                               "%.2f",  cover.file_info.filename_utf8.c_str(),
+                                        cover.zoom);
       }
 
       ImGui::TextUnformatted (szLabels);
