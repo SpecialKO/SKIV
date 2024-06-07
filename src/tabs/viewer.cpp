@@ -1561,6 +1561,7 @@ SKIF_UI_Tab_DrawViewer (void)
           _registry.regKVImageScaling.putData (_registry.iImageScaling);
         }
 
+#if _DEBUG
         if (ImGui::MenuItem ("Stretch",  spaces, &bStretch))
         {
           _registry.iImageScaling = 3;
@@ -1572,6 +1573,7 @@ SKIF_UI_Tab_DrawViewer (void)
 
           _registry.regKVImageScaling.putData (_registry.iImageScaling);
         }
+#endif
 
         ImGui::EndMenu ( );
       }

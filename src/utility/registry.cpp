@@ -259,6 +259,13 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
 
   if (regKVImageScaling.hasData(&hKey))
     iImageScaling          =   regKVImageScaling           .getData (&hKey);
+
+#ifndef _DEBUG
+
+  if (iImageScaling == 3)
+    iImageScaling = 2;
+
+#endif
   
   if (regKVSDRMode.hasData(&hKey))
     iSDRMode               =   regKVSDRMode                .getData (&hKey);

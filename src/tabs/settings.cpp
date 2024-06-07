@@ -95,10 +95,12 @@ SKIF_UI_Tab_DrawSettings (void)
     if (ImGui::RadioButton ("Fit",        &_registry.iImageScaling, 2))
       _registry.regKVImageScaling.putData (_registry.iImageScaling);
 
+#ifdef _DEBUG
     ImGui::SameLine        ( );
 
     if (ImGui::RadioButton ("Stretch",    &_registry.iImageScaling, 3))
       _registry.regKVImageScaling.putData (_registry.iImageScaling);
+#endif
 
     ImGui::TreePop         ( );
 
