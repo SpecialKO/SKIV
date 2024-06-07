@@ -696,19 +696,6 @@ using namespace DirectX;
         vColorXYZ =
           XMVector3Transform (v, c_from709toXYZ);
 
-        SK_RunOnce ({
-          XMVECTOR vRec709White = XMVectorSet (1.0f, 1.0f, 1.0f, 1.0f);
-
-          wchar_t wszLuminance [128];
-
-          swprintf (
-            wszLuminance, L"Rec 709 white is %f in XYZ Luminance...",
-              XMVectorGetY (XMVector3Transform (vRec709White, c_from709toXYZ))
-          );
-
-          MessageBox (nullptr, wszLuminance, L"Test", MB_OK);
-        });
-
         xm_test_all = 0x0;
 
         #define FP16_MIN 0.0000000894069671630859375f
