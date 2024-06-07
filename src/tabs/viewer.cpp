@@ -1304,6 +1304,17 @@ SKIF_UI_Tab_DrawViewer (void)
                                                                 ImVec4 (fTint, fTint, fTint, fAlpha) // Alpha transparency (2024-01-01, removed fGammaCorrectedTint * fAlpha for the light style)
   );
 
+  // Reset scroll (center-align the scroll)
+  if (resetScrollCenter && cover_old.pRawTexSRV.p == nullptr)
+  {
+    PLOG_VERBOSE << "Attempted to reset scroll...";
+
+    resetScrollCenter = false;
+    
+    ImGui::SetScrollHereY ( );
+    ImGui::SetScrollHereX ( );
+  }
+
   isImageHovered = ImGui::IsItemHovered();
 
 #pragma endregion
@@ -1315,8 +1326,8 @@ SKIF_UI_Tab_DrawViewer (void)
     auto parent_pos =
       ImGui::GetCursorPos ();
 
-    // Display in the top left corner
-    ImGui::SetCursorPos    (ImVec2 (0.0f, 0.0f));
+    // Display "floating" in the top left corner regardless of scroll position
+    ImGui::SetCursorPos   (ImVec2 (ImGui::GetScrollX ( ), ImGui::GetScrollY ( )));
 
     ImGui::PushStyleColor (ImGuiCol_ChildBg, ImGui::GetStyleColorVec4 (ImGuiCol_WindowBg));
     ImGui::BeginChild     ("###ImageDetails", ImVec2 (0, 0), ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_AutoResizeX | ImGuiChildFlags_AutoResizeY | ((_registry.bUIBorders) ? ImGuiChildFlags_Border : ImGuiChildFlags_None), ImGuiWindowFlags_NoScrollbar);
@@ -1945,15 +1956,6 @@ SKIF_UI_Tab_DrawViewer (void)
     timeLastTick = current_time;
 
   // END FADE/DIM LOGIC
-
-  // Reset scroll (center-align the scroll)
-  if (resetScrollCenter && cover_old.pRawTexSRV.p == nullptr)
-  {
-    resetScrollCenter = false;
-
-    ImGui::SetScrollHereX ( );
-    ImGui::SetScrollHereY ( );
-  }
 
   // In case of a device reset, unload all currently loaded textures
   if (invalidatedDevice == 1)
