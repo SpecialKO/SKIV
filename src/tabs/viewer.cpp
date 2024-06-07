@@ -1247,8 +1247,8 @@ SKIF_UI_Tab_DrawViewer (void)
   {
     ImVec2 labelSize = ImGui::CalcTextSize (pcstrLabel);
     ImGui::SetCursorPos (ImVec2 (
-      ImGui::GetWindowContentRegionMax ( ).x / 2 - labelSize.x / 2,
-      ImGui::GetWindowContentRegionMax ( ).y / 2 - labelSize.y / 2));
+      ImGui::GetWindowSize ( ).x / 2 - labelSize.x / 2 + ImGui::GetScrollX ( ),
+      ImGui::GetWindowSize ( ).y / 2 - labelSize.y / 2 + ImGui::GetScrollY ( )));
     ImGui::TextDisabled (pcstrLabel);
   }
 
