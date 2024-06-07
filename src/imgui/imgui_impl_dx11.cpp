@@ -74,6 +74,8 @@ extern bool  RecreateSwapChains;
 extern bool  RecreateSwapChainsPending;
 
 extern uint32_t SKIV_HDR_VisualizationId;
+extern uint32_t SKIV_HDR_VisualizationFlagsSDR;
+extern float    SKIV_HDR_MaxCLL;
 
 struct ImGui_ImplDX11_ViewportData;
 
@@ -122,10 +124,11 @@ struct VERTEX_CONSTANT_BUFFER_DX11 {
 #ifdef SKIF_D3D11
 struct PIXEL_CONSTANT_BUFFER_DX11 {
   float    font_dims [4];
+  uint32_t hdr_visualization_flags [4];
   uint32_t hdr_visualization;
   float    hdr_max_luminance;
+  float    hdr_max_cll;
   float    sdr_reference_white = 80.0f;
-  uint32_t padding [1];
   float    rec709_gamut_hue    [4];
   float    dcip3_gamut_hue     [4];
   float    rec2020_gamut_hue   [4];
@@ -574,6 +577,7 @@ void ImGui_ImplDX11_RenderDrawData (ImDrawData *draw_data)
     *pix_constant_buffer = PIXEL_CONSTANT_BUFFER_DX11 ();
 
     extern float SKIV_HDR_SDRWhite;
+    extern float SKIV_HDR_MaxLuminance;
     extern float SKIV_HDR_GamutHue_Rec709    [4];
     extern float SKIV_HDR_GamutHue_DciP3     [4];
     extern float SKIV_HDR_GamutHue_Rec2020   [4];
@@ -581,10 +585,14 @@ void ImGui_ImplDX11_RenderDrawData (ImDrawData *draw_data)
     extern float SKIV_HDR_GamutHue_Ap0       [4];
     extern float SKIV_HDR_GamutHue_Undefined [4];
 
-    pix_constant_buffer->font_dims [0]       = (float)ImGui::GetIO ().Fonts->TexWidth;
-    pix_constant_buffer->font_dims [1]       = (float)ImGui::GetIO ().Fonts->TexHeight;
-    pix_constant_buffer->hdr_visualization   = SKIV_HDR_VisualizationId;
-    pix_constant_buffer->sdr_reference_white = SKIV_HDR_SDRWhite;
+    *pix_constant_buffer = PIXEL_CONSTANT_BUFFER_DX11 ();
+    pix_constant_buffer->font_dims [0]               = (float)ImGui::GetIO ().Fonts->TexWidth;
+    pix_constant_buffer->font_dims [1]               = (float)ImGui::GetIO ().Fonts->TexHeight;
+    pix_constant_buffer->hdr_max_luminance           = SKIV_HDR_MaxLuminance;
+    pix_constant_buffer->hdr_max_cll                 = SKIV_HDR_MaxCLL;
+    pix_constant_buffer->hdr_visualization           = SKIV_HDR_VisualizationId;
+    pix_constant_buffer->sdr_reference_white         = SKIV_HDR_SDRWhite;
+    pix_constant_buffer->hdr_visualization_flags [3] = SKIV_HDR_VisualizationFlagsSDR;
 
     memcpy (pix_constant_buffer->rec709_gamut_hue,    SKIV_HDR_GamutHue_Rec709,    sizeof (float) * 4);
     memcpy (pix_constant_buffer->dcip3_gamut_hue,     SKIV_HDR_GamutHue_DciP3,     sizeof (float) * 4);
@@ -607,10 +615,13 @@ void ImGui_ImplDX11_RenderDrawData (ImDrawData *draw_data)
     static_assert((sizeof(PIXEL_CONSTANT_BUFFER_DX11) % 16) == 0, "Constant Buffer size must be 16-byte aligned");
 
     *pix_constant_buffer = PIXEL_CONSTANT_BUFFER_DX11 ();
-    pix_constant_buffer->font_dims [0]       = 0.0f;
-    pix_constant_buffer->font_dims [1]       = 0.0f;
-    pix_constant_buffer->hdr_visualization   = SKIV_HDR_VisualizationId;
-    pix_constant_buffer->sdr_reference_white = SKIV_HDR_SDRWhite;
+    pix_constant_buffer->font_dims [0]               = 0.0f;
+    pix_constant_buffer->font_dims [1]               = 0.0f;
+    pix_constant_buffer->hdr_max_luminance           = SKIV_HDR_MaxLuminance;
+    pix_constant_buffer->hdr_max_cll                 = SKIV_HDR_MaxCLL;
+    pix_constant_buffer->hdr_visualization           = SKIV_HDR_VisualizationId;
+    pix_constant_buffer->sdr_reference_white         = SKIV_HDR_SDRWhite;
+    pix_constant_buffer->hdr_visualization_flags [3] = SKIV_HDR_VisualizationFlagsSDR;
 
     memcpy (pix_constant_buffer->rec709_gamut_hue,    SKIV_HDR_GamutHue_Rec709,    sizeof (float) * 4);
     memcpy (pix_constant_buffer->dcip3_gamut_hue,     SKIV_HDR_GamutHue_DciP3,     sizeof (float) * 4);
@@ -674,10 +685,42 @@ void ImGui_ImplDX11_RenderDrawData (ImDrawData *draw_data)
 
         if (pcmd->TextureId == ImGui::GetIO ().Fonts->TexID)
         ctx->PSSetConstantBuffers ( 0, 1, &bd->pFontConstantBuffer );
+
+        //
+        // If GamutCoverageUAV is non-null, then the image we are
+        //   rendering to is eligible for output to the gamut texture.
+        //
+        //  The pixel shader does the actual work of determining whether
+        //    to output gamut coverage, just bind the UAV for all eligible
+        //      render passes.
+        //
+        CComPtr <ID3D11RenderTargetView> rtv;
+        ctx->OMGetRenderTargets     (1, &rtv.p, nullptr);
+
+        extern CComPtr <ID3D11UnorderedAccessView>
+            SKIV_HDR_GamutCoverageUAV;
+        extern CComPtr <ID3D11ShaderResourceView>
+            SKIV_HDR_GamutCoverageSRV;
+        if (SKIV_HDR_GamutCoverageUAV != nullptr)
+        {
+          if (texture_srv != SKIV_HDR_GamutCoverageSRV.p)
+          {
+            // Set the PS resources first because D3D11 will refuse
+            //   to allow a UAV and SRV to the same resource to be
+            //     bound simultaneously.
+            ctx->PSSetShaderResources                      (0, 1, &texture_srv);
+            ctx->OMSetRenderTargetsAndUnorderedAccessViews (1, &rtv.p, nullptr, 1, 1, &SKIV_HDR_GamutCoverageUAV, nullptr);
+          }
+        }
+
         ctx->PSSetShaderResources ( 0, 1, &texture_srv);
         ctx->DrawIndexed          ( pcmd->ElemCount,
                                     pcmd->IdxOffset + global_idx_offset,
                                     pcmd->VtxOffset + global_vtx_offset );
+
+        ID3D11UnorderedAccessView* pNulUAV = nullptr;
+
+        ctx->OMSetRenderTargetsAndUnorderedAccessViews (1, &rtv.p, nullptr, 1, 1, &pNulUAV, nullptr);
       }
     }
 

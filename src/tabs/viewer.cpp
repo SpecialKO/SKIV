@@ -74,6 +74,13 @@ enum SKIV_HDR_Visualizations
   SKIV_HDR_VISUALIZTION_SDR     = 3
 };
 
+enum SKIV_HDR_VisualizationFlags
+{
+  SKIV_VIZ_FLAG_SDR_CONSIDER_LUMINANCE  = 0x1,
+  SKIV_VIZ_FLAG_SDR_CONSIDER_GAMUT      = 0x2,
+  SKIV_VIZ_FLAG_SDR_CONSIDER_OVERBRIGHT = 0x4
+};
+
 float SKIV_HDR_SDRWhite = 80.0f;
 
 float SKIV_HDR_GamutHue_Rec709    [4] = { 1.0f, 1.0f, 1.0f, 1.0f }; // White
@@ -83,7 +90,15 @@ float SKIV_HDR_GamutHue_Ap1       [4] = { 1.0f, 1.0f, 0.0f, 1.0f }; // Yellow
 float SKIV_HDR_GamutHue_Ap0       [4] = { 1.0f, 0.0f, 1.0f, 1.0f }; // Magenta
 float SKIV_HDR_GamutHue_Undefined [4] = { 1.0f, 0.0f, 0.0f, 1.0f }; // Red
 
-uint32_t SKIV_HDR_VisualizationId = SKIV_HDR_VISUALIZTION_NONE;
+uint32_t SKIV_HDR_VisualizationId       = SKIV_HDR_VISUALIZTION_NONE;
+uint32_t SKIV_HDR_VisualizationFlagsSDR = 0xFFFFFFFFU;
+float    SKIV_HDR_MaxCLL                = 1.0f;
+float    SKIV_HDR_MaxLuminance          = 80.0f;
+
+CComPtr <ID3D11UnorderedAccessView>
+         SKIV_HDR_GamutCoverageUAV      = nullptr;
+CComPtr <ID3D11ShaderResourceView>
+         SKIV_HDR_GamutCoverageSRV      = nullptr;
 
 bool                   loadImage         = false;
 bool                   tryingToLoadImage = false;
@@ -115,8 +130,10 @@ struct image_s {
 
   bool         is_hdr      = false;
 
-  CComPtr <ID3D11ShaderResourceView> pRawTexSRV;
-  CComPtr <ID3D11ShaderResourceView> pTonemappedTexSRV;
+  CComPtr <ID3D11ShaderResourceView>  pRawTexSRV;
+  CComPtr <ID3D11ShaderResourceView>  pTonemappedTexSRV;
+  CComPtr <ID3D11UnorderedAccessView> pGamutCoverageUAV;
+  CComPtr <ID3D11ShaderResourceView>  pGamutCoverageSRV;
 
   struct light_info_s {
     float max_cll      = 0.0f;
@@ -158,6 +175,8 @@ struct image_s {
     avail_size_cache    = other.avail_size_cache;
     pRawTexSRV.p        = other.pRawTexSRV.p;
     pTonemappedTexSRV.p = other.pTonemappedTexSRV.p;
+    pGamutCoverageSRV.p = other.pGamutCoverageSRV.p;
+    pGamutCoverageUAV.p = other.pGamutCoverageUAV.p;
     is_hdr              = other.is_hdr;
     light_info          = other.light_info;
     colorimetry         = other.colorimetry;
@@ -175,6 +194,8 @@ struct image_s {
     avail_size_cache    = { };
     pRawTexSRV.p        = nullptr;
     pTonemappedTexSRV.p = nullptr;
+    pGamutCoverageSRV.p = nullptr;
+    pGamutCoverageUAV.p = nullptr;
     is_hdr              = false;
     light_info          = { };
     colorimetry         = { };
@@ -281,10 +302,12 @@ LoadLibraryTexture (image_s& image)
 
   CComPtr <ID3D11Texture2D> pRawTex2D;
   CComPtr <ID3D11Texture2D> pTonemappedTex2D;
+  CComPtr <ID3D11Texture2D> pGamutCoverageTex2D;
   DirectX::TexMetadata        meta = { };
   DirectX::ScratchImage        img = { };
 
-  bool succeeded    = false;
+  bool succeeded = false;
+  bool converted = false;
 
   DWORD pre = SKIF_Util_timeGetTime1();
 
@@ -418,11 +441,34 @@ LoadLibraryTexture (image_s& image)
       meta.format    = dxgi_format; // STBI_rgb_alpha
       meta.dimension = DirectX::TEX_DIMENSION_TEXTURE2D;
 
-      if (SUCCEEDED (img.Initialize2D (meta.format, width, height, 1, 1)))
+      if (dxgi_format == DXGI_FORMAT_R32G32B32A32_FLOAT)
       {
-        size_t   imageSize = width * height * desired_channels * sizeof(pixel_size);
+        // Good grief this is inefficient, let's convert it to something reasonable...
+        DirectX::ScratchImage raw_fp32_img;
+
+        if (SUCCEEDED (raw_fp32_img.Initialize2D (meta.format, width, height, 1, 1)))
+        {
+          size_t   imageSize = width * height * desired_channels * sizeof (pixel_size);
+          uint8_t* pDest     = raw_fp32_img.GetImage (0, 0, 0)->pixels;
+          memcpy  (pDest, pixels, imageSize);
+
+          // Still overkill for SDR, but we're saving some VRAM...
+          const DXGI_FORMAT final_format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+
+          if (SUCCEEDED (DirectX::Convert (*raw_fp32_img.GetImages (), final_format, DirectX::TEX_FILTER_DEFAULT, 0.0f, img)))
+          {
+            meta.format = final_format;
+            converted   = true;
+            succeeded   = true;
+          }
+        }
+      }
+
+      if (converted == false && SUCCEEDED (img.Initialize2D (meta.format, width, height, 1, 1)))
+      {
+        size_t   imageSize = width * height * desired_channels * sizeof (pixel_size);
         uint8_t* pDest     = img.GetImage(0, 0, 0)->pixels;
-        memcpy(pDest, pixels, imageSize);
+        memcpy  (pDest, pixels, imageSize);
 
         succeeded = true;
       }
@@ -622,9 +668,6 @@ using namespace DirectX;
 
     static constexpr float FLT16_MIN = 0.0000000894069671630859375f;
 
-    static const XMVECTOR vMinFP16 =
-      XMVectorReplicate (-FLT16_MIN);
-
     EvaluateImage ( pImg->GetImages     (),
                     pImg->GetImageCount (),
                     pImg->GetMetadata   (),
@@ -653,10 +696,25 @@ using namespace DirectX;
         vColorXYZ =
           XMVector3Transform (v, c_from709toXYZ);
 
+        SK_RunOnce ({
+          XMVECTOR vRec709White = XMVectorSet (1.0f, 1.0f, 1.0f, 1.0f);
+
+          wchar_t wszLuminance [128];
+
+          swprintf (
+            wszLuminance, L"Rec 709 white is %f in XYZ Luminance...",
+              XMVectorGetY (XMVector3Transform (vRec709White, c_from709toXYZ))
+          );
+
+          MessageBox (nullptr, wszLuminance, L"Test", MB_OK);
+        });
+
         xm_test_all = 0x0;
 
-        if (XMVectorGreaterOrEqualR (&xm_test_all, v, vMinFP16);
-            XMComparisonAllTrue     ( xm_test_all))
+        #define FP16_MIN 0.0000000894069671630859375f
+
+        if (XMVectorGreaterOrEqualR (&xm_test_all, v, g_XMZero);
+            XMComparisonAllTrue     ( xm_test_all) || XMVectorGetY (vColorXYZ) < FP16_MIN)
         {
           image.colorimetry.pixel_counts.rec_709++;
         }
@@ -666,25 +724,25 @@ using namespace DirectX;
           vColorDCIP3 =
             XMVector3Transform (v, c_from709toDCIP3);
 
-          if (XMVectorGreaterOrEqualR (&xm_test_all, vColorDCIP3, vMinFP16);
+          if (XMVectorGreaterOrEqualR (&xm_test_all, vColorDCIP3, g_XMZero);
               XMComparisonAnyFalse    ( xm_test_all))
           {
             vColor2020 =
               XMVector3Transform (v, c_from709to2020);
 
-            if (XMVectorGreaterOrEqualR (&xm_test_all, vColor2020, vMinFP16);
+            if (XMVectorGreaterOrEqualR (&xm_test_all, vColor2020, g_XMZero);
                 XMComparisonAnyFalse    ( xm_test_all))
             {
               vColorAP1 =
                 XMVector3Transform (v, c_from709toAP1);
 
-              if (XMVectorGreaterOrEqualR (&xm_test_all, vColorAP1, vMinFP16);
+              if (XMVectorGreaterOrEqualR (&xm_test_all, vColorAP1, g_XMZero);
                   XMComparisonAnyFalse    ( xm_test_all))
               {
                 vColorAP0 =
                   XMVector3Transform (v, c_from709toAP0);
 
-                if (XMVectorGreaterOrEqualR (&xm_test_all, vColorAP0, vMinFP16);
+                if (XMVectorGreaterOrEqualR (&xm_test_all, vColorAP0, g_XMZero);
                     XMComparisonAnyFalse    ( xm_test_all))
                 {
                   image.colorimetry.pixel_counts.undefined++;
@@ -795,7 +853,35 @@ using namespace DirectX;
   if (SUCCEEDED (hr))
   {
     if (image.is_hdr)
+    {
       DirectX::CreateTexture (pDevice, normalized_hdr.GetImages (), normalized_hdr.GetImageCount (), normalized_hdr.GetMetadata (), (ID3D11Resource **)&pTonemappedTex2D.p);
+
+      D3D11_TEXTURE2D_DESC
+        texDesc            = { };
+        texDesc.BindFlags  = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
+        texDesc.Format     = DXGI_FORMAT_R16G16B16A16_FLOAT;
+        texDesc.SampleDesc = { .Count   = 1,
+                               .Quality = 0 };
+        texDesc.Usage      = D3D11_USAGE_DEFAULT;
+        texDesc.ArraySize  = 1;
+        texDesc.Width      = 512;
+        texDesc.Height     = 512;
+
+      if (SUCCEEDED (pDevice->CreateTexture2D (&texDesc, nullptr, &pGamutCoverageTex2D.p)))
+      {
+        pDevice->CreateUnorderedAccessView (pGamutCoverageTex2D.p, nullptr, &image.pGamutCoverageUAV.p);
+        pDevice->CreateShaderResourceView  (pGamutCoverageTex2D.p, nullptr, &image.pGamutCoverageSRV.p);
+
+        CComPtr <ID3D11DeviceContext>  pDevCtx;
+        pDevice->GetImmediateContext (&pDevCtx);
+
+        if (pDevCtx.p != nullptr)
+        {
+          FLOAT fClearColor [] = { 0.f, 0.f, 0.f, 0.f };
+          pDevCtx->ClearUnorderedAccessViewFloat (image.pGamutCoverageUAV, fClearColor);
+        }
+      }
+    }
 
     // Remember HDR images read using the WIC encoder
     if (meta.format == DXGI_FORMAT_R16G16B16A16_FLOAT && decoder == ImageDecoder_WIC)
@@ -824,8 +910,9 @@ using namespace DirectX;
     }
 
     // SRV is holding a reference, this is not needed anymore.
-    pRawTex2D        = nullptr;
-    pTonemappedTex2D = nullptr;
+    pRawTex2D           = nullptr;
+    pTonemappedTex2D    = nullptr;
+    pGamutCoverageTex2D = nullptr;
   }
 };
 
@@ -990,6 +1077,20 @@ SKIF_UI_Tab_DrawViewer (void)
         cover_old.pTonemappedTexSRV.p = nullptr;
       }
 
+      if (cover_old.pGamutCoverageSRV.p != nullptr)
+      {
+        PLOG_VERBOSE << "SKIF_ResourcesToFree: Pushing " << cover_old.pGamutCoverageSRV.p << " to be released";;
+        SKIF_ResourcesToFree.push(cover_old.pGamutCoverageSRV.p);
+        cover_old.pGamutCoverageSRV.p = nullptr;
+      }
+
+      if (cover_old.pGamutCoverageUAV.p != nullptr)
+      {
+        PLOG_VERBOSE << "SKIF_ResourcesToFree: Pushing " << cover_old.pGamutCoverageUAV.p << " to be released";;
+        SKIF_ResourcesToFree.push(cover_old.pGamutCoverageUAV.p);
+        cover_old.pGamutCoverageUAV.p = nullptr;
+      }
+
       // Set up the current one to be released
       cover_old = cover;
       cover.reset();
@@ -1031,6 +1132,20 @@ SKIF_UI_Tab_DrawViewer (void)
       SKIF_ResourcesToFree.push(cover_old.pTonemappedTexSRV.p);
       cover_old.pTonemappedTexSRV.p = nullptr;
     }
+
+    if (cover_old.pGamutCoverageSRV.p != nullptr)
+    {
+      PLOG_VERBOSE << "SKIF_ResourcesToFree: Pushing " << cover_old.pGamutCoverageSRV.p << " to be released";;
+      SKIF_ResourcesToFree.push(cover_old.pGamutCoverageSRV.p);
+      cover_old.pGamutCoverageSRV.p = nullptr;
+    }
+
+    if (cover_old.pGamutCoverageUAV.p != nullptr)
+    {
+      PLOG_VERBOSE << "SKIF_ResourcesToFree: Pushing " << cover_old.pGamutCoverageUAV.p << " to be released";;
+      SKIF_ResourcesToFree.push(cover_old.pGamutCoverageUAV.p);
+      cover_old.pGamutCoverageUAV.p = nullptr;
+    }
   }
 
   // Apply changes when the image changes
@@ -1052,6 +1167,8 @@ SKIF_UI_Tab_DrawViewer (void)
   // From now on ImGui UI calls starts being made...
 
 #pragma region GameCover
+
+  static const ImVec2 hdr_uv (-2048.0f, -2048.0f);
   
   static int    queuePosGameCover  = 0;
   static char   cstrLabelLoading[] = "...";
@@ -1096,7 +1213,13 @@ SKIF_UI_Tab_DrawViewer (void)
   bool bIsHDR =
     cover_old.is_hdr;
 
-  static const ImVec2 hdr_uv (-2048.0f, -2048.0f);
+  SKIV_HDR_MaxCLL       = cover_old.light_info.max_cll;
+  SKIV_HDR_MaxLuminance = cover_old.light_info.max_nits;
+
+  if (_registry._RendererHDREnabled)
+    SKIV_HDR_MaxCLL = 1.0f;
+
+  bool fading = false;
 
   // Display previous fading out cover
   if (cover_old.pRawTexSRV.p != nullptr && fAlphaPrev > 0.0f)
@@ -1116,18 +1239,38 @@ SKIF_UI_Tab_DrawViewer (void)
     );
   
     ImGui::SetCursorPos (originalPos);
+
+    fading = true;
   }
 
   bIsHDR =
     cover.is_hdr;
+
+  if (bIsHDR && (! fading))
+  {
+    SKIV_HDR_GamutCoverageUAV = cover.pGamutCoverageUAV;
+    SKIV_HDR_GamutCoverageSRV = cover.pGamutCoverageSRV;
+  }
+
+  else
+  {
+    SKIV_HDR_GamutCoverageUAV = nullptr;
+    SKIV_HDR_GamutCoverageSRV = nullptr;
+  }
+
+  SKIV_HDR_MaxCLL       = cover.light_info.max_cll;
+  SKIV_HDR_MaxLuminance = cover.light_info.max_nits;
 
   if (sizeCover.x < ImGui::GetContentRegionAvail().x)
     ImGui::SetCursorPosX ((ImGui::GetContentRegionAvail().x - sizeCover.x) * 0.5f);
   if (sizeCover.y < ImGui::GetContentRegionAvail().y)
     ImGui::SetCursorPosY ((ImGui::GetContentRegionAvail().y - sizeCover.y) * 0.5f);
 
+  if (_registry._RendererHDREnabled)
+    SKIV_HDR_MaxCLL = 1.0f;
+
   // Display game cover image
-  SKIF_ImGui_OptImage  ((_registry._RendererHDREnabled || (! cover.light_info.isHDR)) ? cover.pRawTexSRV.p :
+  SKIF_ImGui_OptImage  ((_registry._RendererHDREnabled || SKIV_HDR_VisualizationId != SKIV_HDR_VISUALIZTION_NONE || (! cover.light_info.isHDR)) ? cover.pRawTexSRV.p :
                                                                         cover.pTonemappedTexSRV.p,
                                                     ImVec2 (sizeCover.x,
                                                             sizeCover.y),
@@ -1176,15 +1319,16 @@ SKIF_UI_Tab_DrawViewer (void)
     {
       ImGui::TextUnformatted ("\n");
 
-      static const char szLightLabels [] = "MaxCLL:\t\t\n"
-                                           "Max Luminance:\t\n"
-                                           "Min Luminance:\t";
+      static const char szLightLabels [] = "MaxCLL (scRGB): \n"
+                                           "Max Luminance: \n"
+                                           "Min Luminance: ";
 
       char     szLightUnits  [512] = { };
       char     szLightLevels [512] = { };
-      sprintf (szLightUnits, "(%c)\n"
-                             "nits\n"
-                             "nits", cover.light_info.max_cll_name);
+      sprintf (szLightUnits, (const char*)
+                             u8"(%c)\n"
+                             u8"cd / m²\n"
+                             u8"cd / m²", cover.light_info.max_cll_name);
 
       sprintf (szLightLevels, "%8.3f \n"
                               "%7.2f \n"
@@ -1223,47 +1367,87 @@ SKIF_UI_Tab_DrawViewer (void)
         if (fPercent709       > 0.0f)  ImGui::TextColored (ImVec4 (SKIV_HDR_GamutHue_Rec709 [0],
                                                                    SKIV_HDR_GamutHue_Rec709 [1],
                                                                    SKIV_HDR_GamutHue_Rec709 [2], 1.0f),
-                                                                   "Rec. 709: ");
-        if (fPercentP3        > 0.05f) ImGui::TextColored (ImVec4 (SKIV_HDR_GamutHue_DciP3 [0],
-                                                                   SKIV_HDR_GamutHue_DciP3 [1],
-                                                                   SKIV_HDR_GamutHue_DciP3 [2], 1.0f),
-                                                                   "DCI-P3: ");
-        if (fPercent2020      > 0.05f) ImGui::TextColored (ImVec4 (SKIV_HDR_GamutHue_Rec2020 [0],
-                                                                   SKIV_HDR_GamutHue_Rec2020 [1],
-                                                                   SKIV_HDR_GamutHue_Rec2020 [2], 1.0f),
-                                                                   "Rec. 2020: ");
-        if (fPercentAP1       > 0.05f) ImGui::TextColored (ImVec4 (SKIV_HDR_GamutHue_Ap1 [0],
-                                                                   SKIV_HDR_GamutHue_Ap1 [1],
-                                                                   SKIV_HDR_GamutHue_Ap1 [2], 1.0f),
-                                                                   "ACES AP1: ");
-        if (fPercentAP0       > 0.05f) ImGui::TextColored (ImVec4 (SKIV_HDR_GamutHue_Ap0 [0],
-                                                                   SKIV_HDR_GamutHue_Ap0 [1],
-                                                                   SKIV_HDR_GamutHue_Ap0 [2], 1.0f),
-                                                                   "ACES AP0: ");
-        if (fPercentUndefined > 0.05f) ImGui::TextColored (ImVec4 (SKIV_HDR_GamutHue_Undefined [0],
-                                                                   SKIV_HDR_GamutHue_Undefined [1],
-                                                                   SKIV_HDR_GamutHue_Undefined [2], 1.0f),
-                                                                   "Undefined: ");
+                                                                   "Rec. 709:\t\t ");
+        if (fPercentP3        > 0.001f) ImGui::TextColored (ImVec4 (SKIV_HDR_GamutHue_DciP3 [0],
+                                                                    SKIV_HDR_GamutHue_DciP3 [1],
+                                                                    SKIV_HDR_GamutHue_DciP3 [2], 1.0f),
+                                                                    "DCI-P3:\t\t ");
+        if (fPercent2020      > 0.001f) ImGui::TextColored (ImVec4 (SKIV_HDR_GamutHue_Rec2020 [0],
+                                                                    SKIV_HDR_GamutHue_Rec2020 [1],
+                                                                    SKIV_HDR_GamutHue_Rec2020 [2], 1.0f),
+                                                                    "Rec. 2020:\t\t ");
+        if (fPercentAP1       > 0.001f) ImGui::TextColored (ImVec4 (SKIV_HDR_GamutHue_Ap1 [0],
+                                                                    SKIV_HDR_GamutHue_Ap1 [1],
+                                                                    SKIV_HDR_GamutHue_Ap1 [2], 1.0f),
+                                                                    "ACES AP1:\t\t ");
+        if (fPercentAP0       > 0.001f) ImGui::TextColored (ImVec4 (SKIV_HDR_GamutHue_Ap0 [0],
+                                                                    SKIV_HDR_GamutHue_Ap0 [1],
+                                                                    SKIV_HDR_GamutHue_Ap0 [2], 1.0f),
+                                                                    "ACES AP0:\t\t ");
+        if (fPercentUndefined > 0.001f) ImGui::TextColored (ImVec4 (SKIV_HDR_GamutHue_Undefined [0],
+                                                                    SKIV_HDR_GamutHue_Undefined [1],
+                                                                    SKIV_HDR_GamutHue_Undefined [2], 1.0f),
+                                                                    "Undefined:\t\t ");
       }
       else
       {
-        if (fPercent709       > 0.0f)  ImGui::TextUnformatted ("Rec. 709: " );
-        if (fPercentP3        > 0.05f) ImGui::TextUnformatted ("DCI-P3: "   );
-        if (fPercent2020      > 0.05f) ImGui::TextUnformatted ("Rec. 2020: ");
-        if (fPercentAP1       > 0.05f) ImGui::TextUnformatted ("ACES AP1: " );
-        if (fPercentAP0       > 0.05f) ImGui::TextUnformatted ("ACES AP0: " );
-        if (fPercentUndefined > 0.05f) ImGui::TextUnformatted ("Undefined: ");
+        if (fPercent709       > 0.0f)   ImGui::TextUnformatted ("Rec. 709:\t\t " );
+        if (fPercentP3        > 0.001f) ImGui::TextUnformatted ("DCI-P3:\t\t "   );
+        if (fPercent2020      > 0.001f) ImGui::TextUnformatted ("Rec. 2020:\t\t ");
+        if (fPercentAP1       > 0.001f) ImGui::TextUnformatted ("ACES AP1:\t\t " );
+        if (fPercentAP0       > 0.001f) ImGui::TextUnformatted ("ACES AP0:\t\t " );
+        if (fPercentUndefined > 0.001f) ImGui::TextUnformatted ("Undefined:\t\t ");
       }
       ImGui::EndGroup   ();
       ImGui::SameLine   ();
       ImGui::BeginGroup ();
-      if (fPercent709       > 0.0f)  ImGui::Text ("%8.4f %%", fPercent709);
-      if (fPercentP3        > 0.05f) ImGui::Text ("%8.4f %%", fPercentP3);
-      if (fPercent2020      > 0.05f) ImGui::Text ("%8.4f %%", fPercent2020);
-      if (fPercentAP1       > 0.05f) ImGui::Text ("%8.4f %%", fPercentAP1);
-      if (fPercentAP0       > 0.05f) ImGui::Text ("%8.4f %%", fPercentAP0);
-      if (fPercentUndefined > 0.05f) ImGui::Text ("%8.4f %%", fPercentUndefined);
+      if (fPercent709       > 0.0f)   ImGui::Text ("%8.4f %%", fPercent709);
+      if (fPercentP3        > 0.001f) ImGui::Text ("%8.4f %%", fPercentP3);
+      if (fPercent2020      > 0.001f) ImGui::Text ("%8.4f %%", fPercent2020);
+      if (fPercentAP1       > 0.001f) ImGui::Text ("%8.4f %%", fPercentAP1);
+      if (fPercentAP0       > 0.001f) ImGui::Text ("%8.4f %%", fPercentAP0);
+      if (fPercentUndefined > 0.001f) ImGui::Text ("%8.4f %%", fPercentUndefined);
       ImGui::EndGroup   ();
+
+      ImGui::Spacing ();
+
+      SKIF_ImGui_OptImage  ( cover.pGamutCoverageSRV,
+                             ImVec2 (512.0f, 512.0f),
+                             cover.uv0, // Top Left coordinates
+                             cover.uv1, // Bottom Right coordinates
+                             ImVec4 (1.0f, 1.0f, 1.0f, 1.0f)
+      );
+
+      if (SKIV_HDR_VisualizationId == SKIV_HDR_VISUALIZTION_SDR)
+      {
+        ImGui::TextUnformatted ("");
+
+        ImGui::TextUnformatted ("SDR Grayscale Settings");
+        ImGui::TreePush        ("");
+
+        bool luminance = (SKIV_HDR_VisualizationFlagsSDR & SKIV_VIZ_FLAG_SDR_CONSIDER_LUMINANCE);
+        if (ImGui::Checkbox ("Test HDR Luminance", &luminance))
+        {
+          if (luminance) SKIV_HDR_VisualizationFlagsSDR |=  SKIV_VIZ_FLAG_SDR_CONSIDER_LUMINANCE;
+          else           SKIV_HDR_VisualizationFlagsSDR &= ~SKIV_VIZ_FLAG_SDR_CONSIDER_LUMINANCE;
+        }
+
+        bool gamut = (SKIV_HDR_VisualizationFlagsSDR & SKIV_VIZ_FLAG_SDR_CONSIDER_GAMUT);
+        if (ImGui::Checkbox ("Test HDR Gamut", &gamut))
+        {
+          if (gamut) SKIV_HDR_VisualizationFlagsSDR |=  SKIV_VIZ_FLAG_SDR_CONSIDER_GAMUT;
+          else       SKIV_HDR_VisualizationFlagsSDR &= ~SKIV_VIZ_FLAG_SDR_CONSIDER_GAMUT;
+        }
+
+        bool overbright = (SKIV_HDR_VisualizationFlagsSDR & SKIV_VIZ_FLAG_SDR_CONSIDER_OVERBRIGHT);
+        if (ImGui::Checkbox ("Test HDR Overbright", &overbright))
+        {
+          if (overbright) SKIV_HDR_VisualizationFlagsSDR |=  SKIV_VIZ_FLAG_SDR_CONSIDER_OVERBRIGHT;
+          else            SKIV_HDR_VisualizationFlagsSDR &= ~SKIV_VIZ_FLAG_SDR_CONSIDER_OVERBRIGHT;
+        }
+
+        ImGui::TreePop ();
+      }
 
       ImGui::SetCursorPos (orig_pos);
     }
@@ -1512,6 +1696,8 @@ SKIF_UI_Tab_DrawViewer (void)
         cover.uv1               = _data->image.uv1;
         cover.pRawTexSRV        = _data->image.pRawTexSRV;
         cover.pTonemappedTexSRV = _data->image.pTonemappedTexSRV;
+        cover.pGamutCoverageSRV = _data->image.pGamutCoverageSRV;
+        cover.pGamutCoverageUAV = _data->image.pGamutCoverageUAV;
         cover.light_info        = _data->image.light_info;
         cover.colorimetry       = _data->image.colorimetry;
         cover.is_hdr            = _data->image.is_hdr;
@@ -1527,7 +1713,7 @@ SKIF_UI_Tab_DrawViewer (void)
         PostMessage (SKIF_Notify_hWnd, WM_SKIF_COVER, 0x0, 0x0);
       }
 
-      else if (_data->image.pRawTexSRV.p != nullptr || _data->image.pTonemappedTexSRV != nullptr)
+      else if (_data->image.pRawTexSRV.p != nullptr || _data->image.pTonemappedTexSRV != nullptr || _data->image.pGamutCoverageSRV != nullptr || _data->image.pGamutCoverageUAV != nullptr)
       {
         if (_data->image.pRawTexSRV.p != nullptr)
         {
@@ -1543,6 +1729,22 @@ SKIF_UI_Tab_DrawViewer (void)
           PLOG_VERBOSE << "SKIF_ResourcesToFree: Pushing " << _data->image.pTonemappedTexSRV.p << " to be released";;
           SKIF_ResourcesToFree.push(_data->image.pTonemappedTexSRV.p);
           _data->image.pTonemappedTexSRV.p = nullptr;
+        }
+
+        if (_data->image.pGamutCoverageSRV != nullptr)
+        {
+          PLOG_DEBUG << "Texture is late! (" << queuePos << " vs " << currentQueueLength << ")";
+          PLOG_VERBOSE << "SKIF_ResourcesToFree: Pushing " << _data->image.pGamutCoverageSRV << " to be released";;
+          SKIF_ResourcesToFree.push(_data->image.pGamutCoverageSRV.p);
+          _data->image.pGamutCoverageSRV.p = nullptr;
+        }
+
+        if (_data->image.pGamutCoverageUAV != nullptr)
+        {
+          PLOG_DEBUG << "Texture is late! (" << queuePos << " vs " << currentQueueLength << ")";
+          PLOG_VERBOSE << "SKIF_ResourcesToFree: Pushing " << _data->image.pGamutCoverageUAV << " to be released";;
+          SKIF_ResourcesToFree.push(_data->image.pGamutCoverageUAV.p);
+          _data->image.pGamutCoverageUAV.p = nullptr;
         }
       }
 
@@ -1746,6 +1948,18 @@ SKIF_UI_Tab_DrawViewer (void)
       {
         SKIF_ResourcesToFree.push(cover_old.pTonemappedTexSRV.p);
         cover_old.pTonemappedTexSRV.p = nullptr;
+      }
+
+      if (cover_old.pGamutCoverageSRV.p != nullptr)
+      {
+        SKIF_ResourcesToFree.push(cover_old.pGamutCoverageSRV.p);
+        cover_old.pGamutCoverageSRV.p = nullptr;
+      }
+
+      if (cover_old.pGamutCoverageUAV.p != nullptr)
+      {
+        SKIF_ResourcesToFree.push(cover_old.pGamutCoverageUAV.p);
+        cover_old.pGamutCoverageUAV.p = nullptr;
       }
     }
 
