@@ -164,6 +164,7 @@ PopupState HistoryPopup      = PopupState_Closed;
 PopupState AutoUpdatePopup   = PopupState_Closed;
 UITab SKIF_Tab_Selected      = UITab_Viewer,
       SKIF_Tab_ChangeTo      = UITab_None;
+extern PopupState  OpenFileDialog; // Viewer: open file dialog
 
 HMODULE hModSKIF     = nullptr;
 HMODULE hModSpecialK = nullptr;
@@ -237,12 +238,14 @@ SKIF_Startup_ProcessCmdLineArgs (LPWSTR lpCmdLine)
     wcscmp (lpCmdLine, L"0") == NULL;
   _Signal.Minimize        = 
     wcscmp (lpCmdLine, L"1") == NULL;
-  _Signal.CheckForUpdates = 
-    wcscmp (lpCmdLine, L"2") == NULL;
+//_Signal.CheckForUpdates = 
+//  wcscmp (lpCmdLine, L"2") == NULL;
+  _Signal.OpenFileDialog = 
+    _wcsicmp (lpCmdLine, L"/OpenFileDialog") == NULL;
 
   if (! _Signal.Quit     &&
       ! _Signal.Minimize &&
-      ! _Signal.CheckForUpdates)
+      ! _Signal.OpenFileDialog)
     _Signal._FilePath = std::wstring(lpCmdLine);
 
   SKIF_Util_TrimLeadingSpacesW (_Signal._FilePath);
@@ -340,6 +343,7 @@ SKIF_Startup_ProxyCommandLineArguments (void)
     return;
 
   if (! _Signal.Minimize         &&
+      ! _Signal.OpenFileDialog   &&
       ! _Signal.CheckForUpdates  &&
       ! _Signal.Quit)
     return;
@@ -358,6 +362,23 @@ SKIF_Startup_ProxyCommandLineArguments (void)
       if (RealGetWindowClassW (hWnd,  wszRealWindowClass, 64))
         if (StrCmpIW ((LPWSTR)lParam, wszRealWindowClass) == 0)
           PostMessage (hWnd, WM_SKIF_MINIMIZE, 0x0, 0x0);
+      return TRUE;
+    }, (LPARAM)SKIF_NotifyIcoClass);
+  }
+
+  if (_Signal.OpenFileDialog)
+  {
+    // Send WM_SKIF_FILE_DIALOG to a single running instance (including ourselves)
+    EnumWindows ( []( HWND   hWnd,
+                      LPARAM lParam ) -> BOOL
+    {
+      wchar_t                         wszRealWindowClass [64] = { };
+      if (RealGetWindowClassW (hWnd,  wszRealWindowClass, 64))
+        if (StrCmpIW ((LPWSTR)lParam, wszRealWindowClass) == 0)
+        {
+          PostMessage (hWnd, WM_SKIF_FILE_DIALOG, 0x0, 0x0);
+          return FALSE;
+        }
       return TRUE;
     }, (LPARAM)SKIF_NotifyIcoClass);
   }
@@ -532,16 +553,16 @@ void SKIF_Shell_CreateJumpList (void)
 
     if   (SUCCEEDED (pObjColl.CoCreateInstance (CLSID_EnumerableObjectCollection)))
     {
-      // Task #4: Check for Updates
+      // Task #1: /OpenFileDialog
       if (SUCCEEDED (pLink.CoCreateInstance (CLSID_ShellLink)))
       {
         CComQIPtr <IPropertyStore>   pPropStore = pLink.p;                      // The link title is kept in the object's property store, so QI for that interface.
 
         pLink     ->SetPath         (_path_cache.skiv_executable);
-        pLink     ->SetArguments    (L"RunUpdater");                            // Set the arguments
+        pLink     ->SetArguments    (L"/OpenFileDialog");                       // Set the arguments
         pLink     ->SetIconLocation (_path_cache.skiv_executable, 0);           // Set the icon location.
-        pLink     ->SetDescription  (L"Checks for any available updates");      // Set the link description (tooltip on the jump list item)
-        InitPropVariantFromString   (L"Check for Updates", &pv);
+        pLink     ->SetDescription  (L"Open the file dialog");                  // Set the link description (tooltip on the jump list item)
+        InitPropVariantFromString   (L"Open", &pv);
         pPropStore->SetValue                   (PKEY_Title, pv);                // Set the title property.
         PropVariantClear                                  (&pv);
         pPropStore->Commit          ( );                                        // Save the changes we made to the property store
@@ -1601,8 +1622,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
         {
           if (SKIF_Tab_Selected != UITab_Viewer)
               SKIF_Tab_ChangeTo  = UITab_Viewer;
-          
-          extern PopupState  OpenFileDialog; // Viewer: open file dialog
+
           OpenFileDialog = PopupState_Open;
         }
       }
@@ -2580,6 +2600,19 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
     ImGui::UpdatePlatformWindows ( ); // This creates all ImGui related windows, including the main application window, and also updates the window and swapchain sizes etc
 
+    // Update the title of the main app window to indicate we're loading...
+    // This is a fix for the window title being set wrong on launch when we started loading an image
+    //   before the Win32 window was even created
+    static bool fixLoadingWindowTitleOnLaunch = true;
+    if (fixLoadingWindowTitleOnLaunch && SKIF_ImGui_hWnd != NULL)
+    {
+      fixLoadingWindowTitleOnLaunch = false;
+
+      extern bool tryingToLoadImage;
+      if (tryingToLoadImage)
+        ::SetWindowText (SKIF_ImGui_hWnd, L"Loading... - " SKIV_WINDOW_TITLE_SHORT_W);
+    }
+
     if (bRefresh)
     {
       // This renders the main viewport (index 0)
@@ -3343,14 +3376,14 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
       extern bool tryingToLoadImage;
       extern std::atomic<bool> imageLoading;
       tryingToLoadImage = imageLoading.load();
-      
+
       // Empty working set after the cover has finished loading
       if (! tryingToLoadImage)
       {
         SKIF_Util_CompactWorkingSet ( );
 
-        extern bool resetScrollCenter;
-        resetScrollCenter = true;
+        extern bool newImageLoaded;
+        newImageLoaded = true;
       }
       break;
 
@@ -3373,6 +3406,10 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
     case WM_SKIF_ICON:
       addAdditionalFrames += 3;
+      break;
+
+    case WM_SKIF_FILE_DIALOG:
+      OpenFileDialog = PopupState_Open;
       break;
 
     case WM_SKIF_RUN_UPDATER:

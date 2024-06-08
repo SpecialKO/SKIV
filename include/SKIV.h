@@ -55,6 +55,7 @@ constexpr UINT           SKIF_NTOAST_SERVICE    =                1; // Appears c
 constexpr UINT           WM_SKIF_MINIMIZE       = WM_USER +  0x512;
 constexpr UINT           WM_SKIF_RESTORE        = WM_USER +  0x513;
 constexpr UINT           WM_SKIF_RUN_UPDATER    = WM_USER + 0x1029; // Triggers a check for updates
+constexpr UINT           WM_SKIF_FILE_DIALOG    = WM_USER + 0x1030; // Triggers a check for updates
 
 // Thread workers
 constexpr UINT           WM_SKIF_GAMEPAD        = WM_USER + 0x2049; // Gamepad input worker detected new input
@@ -114,6 +115,7 @@ struct SKIF_Signals { // Used for command line arguments
   BOOL Launcher             = FALSE;
   BOOL LauncherURI          = FALSE;
   BOOL CheckForUpdates      = FALSE;
+  BOOL OpenFileDialog       = FALSE;
   BOOL ServiceMode          = FALSE;
 
   // Helper variables

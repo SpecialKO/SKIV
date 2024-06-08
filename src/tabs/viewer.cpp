@@ -21,6 +21,7 @@
 //
 
 #include <tabs/viewer.h>
+#include "../../version.h"
 
 #include <wmsdk.h>
 #include <filesystem>
@@ -123,6 +124,7 @@ bool                   loadImage         = false;
 bool                   tryingToLoadImage = false;
 std::atomic<bool>      imageLoading      = false;
 bool                   resetScrollCenter = false;
+bool                   newImageLoaded    = false; // Set by the window msg handler when a new image has been loaded
 
 bool                   coverRefresh      = false; // This just triggers a refresh of the cover
 std::wstring           coverRefreshPath  = L"";
@@ -1088,6 +1090,10 @@ SKIF_UI_Tab_DrawViewer (void)
 
       fAlphaPrev          = (_registry.bFadeCovers) ? fAlpha   : 0.0f;
       fAlpha              = (_registry.bFadeCovers) ?   0.0f   : 1.0f;
+
+      // Reset the title of the main app window
+      if (SKIF_ImGui_hWnd != NULL)
+        ::SetWindowText (SKIF_ImGui_hWnd, SKIV_WINDOW_TITLE_SHORT_W);
     }
   };
 
@@ -1148,6 +1154,16 @@ SKIF_UI_Tab_DrawViewer (void)
     fTint = (_registry.iDarkenImages == 0) ? 1.0f : fTintMin;
 
     tmp_iDarkenImages = _registry.iDarkenImages;
+  }
+
+  if (newImageLoaded)
+  {
+    newImageLoaded    = false;
+    resetScrollCenter = true;
+
+    // Update the title of the main app window with the image filename
+    if (SKIF_ImGui_hWnd != NULL)
+      ::SetWindowText (SKIF_ImGui_hWnd, (cover.file_info.filename + L" - " + SKIV_WINDOW_TITLE_SHORT_W).c_str());
   }
 
   // Monitor the current image folder
@@ -1877,6 +1893,10 @@ SKIF_UI_Tab_DrawViewer (void)
     imageLoading.store (true);
     tryingToLoadImage = true;
     queuePosGameCover = textureLoadQueueLength.load() + 1;
+
+    // Update the title of the main app window to indicate we're loading...
+    if (SKIF_ImGui_hWnd != NULL)
+      ::SetWindowText (SKIF_ImGui_hWnd, L"Loading... - " SKIV_WINDOW_TITLE_SHORT_W);
 
     struct thread_s {
       image_s image = { };
