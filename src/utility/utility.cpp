@@ -1,7 +1,6 @@
 #include <utility/utility.h>
 #include <utility/sk_utility.h>
 #include <comdef.h>
-#include <gsl/gsl_util>
 #include <Psapi.h>
 #include <cwctype>
 #include <unordered_set>
@@ -624,7 +623,7 @@ bool
 SKIF_Util_HasFileExtension (const std::wstring extension, const FileSignature& signature)
 {
   for (auto& ext : signature.file_extensions)
-    if (_wcsicmp (extension.c_str(), ext.c_str()) == NULL) // case insensitive comparison
+    if (_wcsicmp (extension.c_str(), ext.c_str()) == NULL) // case insensitive ( exact ) comparison
       return true;
 
   return false;
@@ -2227,7 +2226,7 @@ SKIF_Util_SetClipboardData (const std::wstring_view& data)
 
     if (hGlobal)
     {
-      wchar_t *pszDestination = static_cast<wchar_t*> (GlobalLock (hGlobal));
+      wchar_t* pszDestination = static_cast<wchar_t*> (GlobalLock (hGlobal));
 
       if (pszDestination != nullptr)
       {
@@ -2240,6 +2239,32 @@ SKIF_Util_SetClipboardData (const std::wstring_view& data)
 
       if (! result)
         GlobalFree (hGlobal);
+    }
+
+    CloseClipboard ( );
+  }
+
+  return result;
+}
+
+std::wstring
+SKIF_Util_GetClipboardData (void)
+{
+  std::wstring result = { };
+
+  if (OpenClipboard (SKIF_ImGui_hWnd))
+  {
+    HGLOBAL hGlobal = GetClipboardData (CF_UNICODETEXT);
+
+    if (hGlobal)
+    {
+      const wchar_t* pszSource = static_cast<const wchar_t*> (GlobalLock (hGlobal));
+
+      if (pszSource != nullptr)
+      {
+        result = std::wstring (pszSource);
+        GlobalUnlock (hGlobal);
+      }
     }
 
     CloseClipboard ( );
@@ -3008,10 +3033,11 @@ SKIF_Util_GetWebUri (skif_get_web_uri_t* get)
     return 0;
   };
   
-  PLOG_VERBOSE                           << "Method: " << std::wstring(get->method);
-  PLOG_VERBOSE                           << "Target: " << ((get->https) ? "https://" : "http://") << get->wszHostName << get->wszHostPath;
-  PLOG_VERBOSE_IF(! get->header.empty()) << "Header: " << get->header;
-  PLOG_VERBOSE_IF(! get->body.empty())   << "  Body: " << get->body;
+  PLOG_VERBOSE                                   << "Method  : " << std::wstring(get->method);
+  PLOG_VERBOSE                                   << "Target  : " << ((get->https) ? "https://" : "http://") << get->wszHostName << get->wszHostPath;
+  PLOG_VERBOSE_IF(get->wszExtraInfo[0] != L'\0') << "Fragment: " << get->wszExtraInfo;
+  PLOG_VERBOSE_IF(! get->header.empty())         << "Header  : " << get->header;
+  PLOG_VERBOSE_IF(! get->body.empty())           << "  Body  : " << get->body;
 
   hInetRoot =
     InternetOpen (
@@ -3046,10 +3072,14 @@ SKIF_Util_GetWebUri (skif_get_web_uri_t* get)
 //else
     flags  |= INTERNET_FLAG_RELOAD                   | INTERNET_FLAG_NO_CACHE_WRITE           | INTERNET_FLAG_PRAGMA_NOCACHE;
 
+  std::wstring full_path = std::wstring (get->wszHostPath);
+  if (get->wszExtraInfo[0] != L'\0')
+    full_path += std::wstring (get->wszExtraInfo);
+
   hInetHTTPGetReq =
     HttpOpenRequest ( hInetHost,
                         get->method,
-                          get->wszHostPath,
+                          full_path.c_str(),
                             L"HTTP/1.1",
                               nullptr,
                                 rgpszAcceptTypes,
@@ -3161,13 +3191,16 @@ SKIF_Util_GetWebResource (std::wstring url, std::wstring_view destination, std::
 
   URL_COMPONENTSW urlcomps = { };
 
-  urlcomps.dwStructSize     = sizeof (URL_COMPONENTSW);
+  urlcomps.dwStructSize      = sizeof (URL_COMPONENTSW);
 
-  urlcomps.lpszHostName     = get->wszHostName;
-  urlcomps.dwHostNameLength = INTERNET_MAX_HOST_NAME_LENGTH;
+  urlcomps.lpszHostName      = get->wszHostName;
+  urlcomps.dwHostNameLength  = INTERNET_MAX_HOST_NAME_LENGTH;
 
-  urlcomps.lpszUrlPath      = get->wszHostPath;
-  urlcomps.dwUrlPathLength  = INTERNET_MAX_PATH_LENGTH;
+  urlcomps.lpszUrlPath       = get->wszHostPath;
+  urlcomps.dwUrlPathLength   = INTERNET_MAX_PATH_LENGTH;
+
+  urlcomps.lpszExtraInfo     = get->wszExtraInfo;
+  urlcomps.dwExtraInfoLength = INTERNET_MAX_PATH_LENGTH;
 
   if (! method.empty())
     get->method = method.c_str();
@@ -3179,7 +3212,7 @@ SKIF_Util_GetWebResource (std::wstring url, std::wstring_view destination, std::
     get->body = body;
 
   if ( InternetCrackUrl (          url.c_str  (),
-         gsl::narrow_cast <DWORD> (url.length ()),
+         static_cast <DWORD> (url.length ()),
                             0x00,
                               &urlcomps
                         )
@@ -3203,6 +3236,38 @@ SKIF_Util_GetWebResource (std::wstring url, std::wstring_view destination, std::
   }
 
   return 0;
+}
+
+skif_get_web_uri_t
+SKIF_Util_CrackWebUrl (const std::wstring url)
+{
+  skif_get_web_uri_t cracked = { };
+  URL_COMPONENTSW urlcomps   = { };
+
+  urlcomps.dwStructSize      = sizeof (URL_COMPONENTSW);
+
+  urlcomps.lpszHostName      = cracked.wszHostName;
+  urlcomps.dwHostNameLength  = INTERNET_MAX_HOST_NAME_LENGTH;
+
+  urlcomps.lpszUrlPath       = cracked.wszHostPath;
+  urlcomps.dwUrlPathLength   = INTERNET_MAX_PATH_LENGTH;
+
+  urlcomps.lpszExtraInfo     = cracked.wszExtraInfo;
+  urlcomps.dwExtraInfoLength = INTERNET_MAX_PATH_LENGTH;
+
+  if (! InternetCrackUrl (url.c_str(), static_cast <DWORD> (url.length ()), 0x00, &urlcomps))
+    PLOG_ERROR << "Failed to cracks a URL into its component parts! URL: " << url;
+
+#ifdef _DEBUG
+  else {
+    PLOG_VERBOSE << "Cracked URL:\n"
+                 << "wszHostName : " << std::wstring (cracked.wszHostName) << "\n"
+                 << "wszHostPath : " << std::wstring (cracked.wszHostPath) << "\n"
+                 << "wszExtraInfo: " << std::wstring (cracked.wszExtraInfo);
+  }
+#endif
+
+  return cracked;
 }
 
 

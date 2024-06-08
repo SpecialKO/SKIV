@@ -172,6 +172,7 @@ int             SKIF_Util_RegisterApp                 (bool force   = false);
 bool            SKIF_Util_IsMPOsDisabledInRegistry    (bool refresh = false);
 void            SKIF_Util_GetMonitorHzPeriod          (HWND hwnd, DWORD dwFlags, DWORD& dwPeriod);
 bool            SKIF_Util_SetClipboardData            (const std::wstring_view& data);
+std::wstring    SKIF_Util_GetClipboardData            (void);
 std::wstring    SKIF_Util_AddEnvironmentBlock         (const void* pEnvBlock, const std::wstring& varName, const std::wstring& varValue);
 void            SKIF_Util_FileExplorer_SelectFile     (PCWSTR filePath);
 std::string     SKIF_Util_GetWindowMessageAsStr       (UINT msg);
@@ -202,6 +203,7 @@ bool            SKIF_Util_GetHotKeyStateSVCTemp       (void);
 struct skif_get_web_uri_t {
   wchar_t wszHostName [INTERNET_MAX_HOST_NAME_LENGTH] = { };
   wchar_t wszHostPath [INTERNET_MAX_PATH_LENGTH]      = { };
+  wchar_t wszExtraInfo[INTERNET_MAX_PATH_LENGTH]      = { };
   wchar_t wszLocalPath[MAX_PATH + 2]                  = { };
   LPCWSTR method                                      = L"GET";
   bool         https                                  = false;
@@ -211,7 +213,7 @@ struct skif_get_web_uri_t {
 
 DWORD WINAPI SKIF_Util_GetWebUri              (skif_get_web_uri_t* get);
 DWORD        SKIF_Util_GetWebResource         (std::wstring url, std::wstring_view destination, std::wstring method = L"GET", std::wstring header = L"", std::string body = "");
-
+skif_get_web_uri_t SKIF_Util_CrackWebUrl      (const std::wstring url);
 
 // Shortcuts (*.lnk)
 
