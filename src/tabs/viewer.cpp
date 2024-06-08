@@ -989,8 +989,8 @@ using namespace DirectX;
                                .Quality = 0 };
         texDesc.Usage      = D3D11_USAGE_DEFAULT;
         texDesc.ArraySize  = 1;
-        texDesc.Width      = 512;
-        texDesc.Height     = 512;
+        texDesc.Width      = 1024;
+        texDesc.Height     = 1024;
 
       if (SUCCEEDED (pDevice->CreateTexture2D (&texDesc, nullptr, &pGamutCoverageTex2D.p)))
       {
@@ -1785,7 +1785,7 @@ SKIF_UI_Tab_DrawViewer (void)
       ImGui::Spacing ();
 
       SKIF_ImGui_OptImage  ( cover.pGamutCoverageSRV,
-                             ImVec2 (512.0f, 512.0f),
+                             ImVec2 (256.0f, 256.0f),
                              cover.uv0, // Top Left coordinates
                              cover.uv1, // Bottom Right coordinates
                              ImVec4 (1.0f, 1.0f, 1.0f, 1.0f)

@@ -636,6 +636,17 @@ void ImGui_ImplDX11_RenderDrawData (ImDrawData *draw_data)
   // Setup desired DX state
   ImGui_ImplDX11_SetupRenderState (draw_data, ctx);
 
+
+  extern CComPtr <ID3D11UnorderedAccessView>
+      SKIV_HDR_GamutCoverageUAV;
+  extern CComPtr <ID3D11ShaderResourceView>
+      SKIV_HDR_GamutCoverageSRV;
+  if (SKIV_HDR_GamutCoverageUAV != nullptr)
+  {
+    FLOAT                                                          fClearColor [] = { 0.f, 0.f, 0.f, 0.f };
+    ctx->ClearUnorderedAccessViewFloat (SKIV_HDR_GamutCoverageUAV, fClearColor);
+  }
+
   // Render command lists
   // (Because we merged all buffers into a single one, we maintain our own offset into them)
   int global_idx_offset = 0;
@@ -697,10 +708,6 @@ void ImGui_ImplDX11_RenderDrawData (ImDrawData *draw_data)
         CComPtr <ID3D11RenderTargetView> rtv;
         ctx->OMGetRenderTargets     (1, &rtv.p, nullptr);
 
-        extern CComPtr <ID3D11UnorderedAccessView>
-            SKIV_HDR_GamutCoverageUAV;
-        extern CComPtr <ID3D11ShaderResourceView>
-            SKIV_HDR_GamutCoverageSRV;
         if (SKIV_HDR_GamutCoverageUAV != nullptr)
         {
           if (texture_srv != SKIV_HDR_GamutCoverageSRV.p)

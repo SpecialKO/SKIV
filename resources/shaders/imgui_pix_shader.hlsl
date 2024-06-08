@@ -319,8 +319,8 @@ void UpdateCIE1931 (float4 hdr_color)
 
   if (all (Rec709toAP1_D65 (hdr_color.rgb) >= 0))
   {
-    texGamutCoverage [ uint2 (       512 * XYZ.x / xyz,
-                               512 - 512 * XYZ.y / xyz ) ].rgba =
+    texGamutCoverage [ uint2 (        1024 * XYZ.x / xyz,
+                               1024 - 1024 * XYZ.y / xyz ) ].rgba =
       float4 (normalized_color.rgb * 2.0f, 1.0f);
   }
 }
