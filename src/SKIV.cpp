@@ -1213,6 +1213,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
          hotkeyCtrlA = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_A     )->DownDuration == 0.0f), // Viewer: Open File
          hotkeyCtrlD = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_D     )->DownDuration == 0.0f), // Viewer: Toggle Image Details
          hotkeyCtrlF = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_F     )->DownDuration == 0.0f), // Toggle Fullscreen Mode
+         hotkeyCtrlV = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_V     )->DownDuration == 0.0f), // Paste data through the clipboard
          hotkeyCtrlN = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_N     )->DownDuration == 0.0f), // Minimize app
          hotkeyCtrl1 = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_1     )->DownDuration == 0.0f), // Switch to Viewer
          hotkeyCtrl2 = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_2     )->DownDuration == 0.0f), // Switch to Settings
@@ -2537,6 +2538,12 @@ wWinMain ( _In_     HINSTANCE hInstance,
 #endif
 
       //OutputDebugString((L"Hidden frames: " + std::to_wstring(ImGui::GetCurrentWindow()->HiddenFramesCannotSkipItems) + L"\n").c_str());
+
+      // Read the clipboard
+      // Optionally we'd filter out the data here too, but it would just
+      //   duplicate the same processing we're already doing in viewer.cpp
+      if (hotkeyCtrlV && ! ImGui::IsAnyItemFocused ( ) && ! ImGui::IsAnyItemActive ( ))
+        dragDroppedFilePath = SKIF_Util_GetClipboardData ( );
 
       // End the main ImGui window
       ImGui::End ( );

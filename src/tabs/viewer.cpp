@@ -103,7 +103,7 @@ CComPtr <ID3D11ShaderResourceView>
          SKIV_HDR_GamutCoverageSRV      = nullptr;
 
 // Identify file type by reading the file signature
-const auto supported_formats =
+const std::initializer_list<FileSignature> supported_formats =
 {
   FileSignature { L"image/jpeg",                { L".jpg", L".jpeg" }, { 0xFF, 0xD8, 0x00, 0x00 },   // JPEG (SOI; Start of Image)
                                                                        { 0xFF, 0xFF, 0x00, 0x00 } }, // JPEG App Markers are masked as they can be all over the place (e.g. 0xFF 0xD8 0xFF 0xED)
@@ -122,6 +122,15 @@ const auto supported_formats =
                                                                        { 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF } } // ?? ?? ?? ?? 66 74 79 70 61 76 69 66
 //FileSignature { L"image/x-targa",             { L".tga"  },          { 0x00, } }, // TGA has no real unique header identifier, so just use the file extension on those
 };
+
+bool isExtensionSupported (const std::wstring extension)
+{
+  for (auto& type : supported_formats)
+    if (SKIF_Util_HasFileExtension (extension, type))
+      return true;
+
+  return false;
+}
 
 bool                   loadImage         = false;
 bool                   tryingToLoadImage = false;
@@ -352,7 +361,7 @@ SaveTempImage (std::wstring_view source, std::wstring_view filename)
     SKIF_Util_SetThreadPowerThrottling (GetCurrentThread (), 1); // Enable EcoQoS for this thread
     SetThreadPriority (GetCurrentThread (), THREAD_MODE_BACKGROUND_BEGIN);
 
-    PLOG_DEBUG << "SKIV_ImageWorkerHTTP thread started!";
+  //PLOG_DEBUG << "SKIV_ImageWorkerHTTP thread started!";
 
     thread_s* _data = static_cast<thread_s*>(var);
 
@@ -413,12 +422,12 @@ SaveTempImage (std::wstring_view source, std::wstring_view filename)
 
     PLOG_ERROR_IF(! success) << "Failed to process the new cover image!";
 
-    PLOG_INFO  << "Finished updating game cover asynchronously...";
+    PLOG_INFO  << "Finished downloading web image asynchronously...";
     
     // Free up the memory we allocated
     delete _data;
 
-    PLOG_DEBUG << "SKIV_ImageWorkerHTTP thread stopped!";
+  //PLOG_DEBUG << "SKIV_ImageWorkerHTTP thread stopped!";
 
     SetThreadPriority (GetCurrentThread (), THREAD_MODE_BACKGROUND_END);
 
@@ -1389,18 +1398,9 @@ SKIF_UI_Tab_DrawViewer (void)
 
         // Filter out unsupported file formats using their file extension
         for (auto& file : fileList)
-        {
-          std::wstring ext = std::filesystem::path(file).extension().wstring();
+          if (isExtensionSupported (std::filesystem::path(file).extension().wstring()))
+            filtered.push_back (file);
 
-          for (auto& type : supported_formats)
-          {
-            if (SKIF_Util_HasFileExtension (ext, type))
-            {
-              filtered.push_back (file);
-              break;
-            }
-          }
-        }
         fileList = filtered;
 
         if (! fileList.empty())
@@ -2229,33 +2229,29 @@ SKIF_UI_Tab_DrawViewer (void)
 
   if (! dragDroppedFilePath.empty())
   {
-    PLOG_VERBOSE << "New drop was given: " << dragDroppedFilePath;
-
     // First position is a quotation mark -- we need to strip those
     if (dragDroppedFilePath.find(L"\"") == 0)
       dragDroppedFilePath = dragDroppedFilePath.substr(1, dragDroppedFilePath.find(L"\"", 1) - 1) + dragDroppedFilePath.substr(dragDroppedFilePath.find(L"\"", 1) + 1, std::wstring::npos);
 
-    std::error_code ec;
-    std::wstring targetPath = L"";
-    const std::filesystem::path p = std::filesystem::path(dragDroppedFilePath.data());
-    const std::wstring ext        = p.extension().wstring();
-    const std::wstring filename   = p.filename().wstring();
-    bool         isURL      = PathIsURL (dragDroppedFilePath.data());
-    PLOG_VERBOSE << "    File extension: " << ext;
+    std::wstring filename = dragDroppedFilePath;
+    bool isURL = PathIsURL (dragDroppedFilePath.data());
 
-    bool isImage = false;
-
-    for (auto& type : supported_formats)
+    if (isURL)
     {
-      if (SKIF_Util_HasFileExtension (ext, type))
-      {
-        isImage = true;
-        break;
-      }
+      skif_get_web_uri_t cracked = SKIF_Util_CrackWebUrl (dragDroppedFilePath);
+
+      if (cracked.wszHostPath[0] != '\0')
+        filename = std::wstring (cracked.wszHostPath);
     }
 
-    // URL
-    if (isImage)
+    const std::filesystem::path p = std::filesystem::path(filename.data());
+    const std::wstring ext        = p.extension().wstring();
+    filename                      = p.filename().wstring();
+
+    PLOG_VERBOSE << "New " << ((isURL) ? "URL" : "file") << " drop was given; extension: \"" << ext << "\", path: " << dragDroppedFilePath;
+
+    // Images + URLs
+    if (isExtensionSupported (ext))
     {
       if (isURL)
         SaveTempImage (dragDroppedFilePath, filename);
@@ -2268,7 +2264,7 @@ SKIF_UI_Tab_DrawViewer (void)
     }
 
     // Unsupported files
-    else if (! isImage)
+    else
     {
       constexpr char* error_title =
         "Unsupported file format";
