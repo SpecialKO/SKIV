@@ -804,6 +804,64 @@ void SKIF_Initialize (LPWSTR lpCmdLine)
             << "\n| Location         | " << _path_cache.skiv_install
             << "\n|    > user data   | " << _path_cache.skiv_userdata
             << "\n+------------------+-------------------------------------+";
+
+  // SKIV also uses a folder to temporary internet files
+  const std::wstring tempDir =
+    std::wstring (_path_cache.app_data_local.path) + LR"(\Temp\skiv\)";
+
+  wcsncpy_s (_path_cache.skiv_temp, MAX_PATH,
+                  tempDir.c_str(), _TRUNCATE);
+
+  // Clear out any temp files older than a day
+  if (PathFileExists (_path_cache.skiv_temp))
+  {
+    auto _isDayOld = [&](FILETIME ftLastWriteTime) -> bool
+    {
+      FILETIME ftSystemTime{}, ftAdjustedFileTime{};
+      SYSTEMTIME systemTime{};
+      GetSystemTime (&systemTime);
+
+      if (SystemTimeToFileTime(&systemTime, &ftSystemTime))
+      {
+        ULARGE_INTEGER uintLastWriteTime{};
+
+        // Copy to ULARGE_INTEGER union to perform 64-bit arithmetic
+        uintLastWriteTime.HighPart        = ftLastWriteTime.dwHighDateTime;
+        uintLastWriteTime.LowPart         = ftLastWriteTime.dwLowDateTime;
+
+        // Perform 64-bit arithmetic to add 1 day to last modified timestamp
+        uintLastWriteTime.QuadPart        = uintLastWriteTime.QuadPart + ULONGLONG(1 * 24 * 60 * 60 * 1.0e+7);
+
+        // Copy the results to an FILETIME struct
+        ftAdjustedFileTime.dwHighDateTime = uintLastWriteTime.HighPart;
+        ftAdjustedFileTime.dwLowDateTime  = uintLastWriteTime.LowPart;
+
+        // Compare with system time, and if system time is later (1), then return true
+        if (CompareFileTime (&ftSystemTime, &ftAdjustedFileTime) == 1)
+          return true;
+      }
+
+      return false;
+    };
+
+    HANDLE hFind        = INVALID_HANDLE_VALUE;
+    WIN32_FIND_DATA ffd = { };
+
+    hFind = 
+      FindFirstFileExW ((tempDir + L"*").c_str(), FindExInfoBasic, &ffd, FindExSearchNameMatch, NULL, NULL);
+
+    if (INVALID_HANDLE_VALUE != hFind)
+    {
+      if (_isDayOld  (ffd.ftLastWriteTime))
+        DeleteFile  ((tempDir + ffd.cFileName).c_str());
+
+      while (FindNextFile (hFind, &ffd))
+        if (_isDayOld  (ffd.ftLastWriteTime))
+          DeleteFile  ((tempDir + ffd.cFileName).c_str());
+
+      FindClose (hFind);
+    }
+  }
 }
 
 bool bKeepWindowAlive  = true,

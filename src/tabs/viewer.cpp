@@ -44,11 +44,12 @@
 #include <string>
 #include <sstream>
 #include <concurrent_queue.h>
-#include <utility/fsutil.h>
+#include <strsafe.h>
 #include <atlimage.h>
 #include <TlHelp32.h>
 #include <gsl/gsl_util>
 
+#include <utility/fsutil.h>
 #include <utility/registry.h>
 #include <utility/updater.h>
 #include <utility/sk_utility.h>
@@ -319,6 +320,123 @@ AdjustAlpha (float a)
 {
   return std::pow (a, 1.0f / 2.2f );
 }
+
+#pragma region SaveTempImage
+
+static bool
+SaveTempImage (std::wstring_view source, std::wstring_view filename)
+{
+  static SKIF_CommonPathsCache& _path_cache = SKIF_CommonPathsCache::GetInstance ( );
+
+  if (source.empty())
+    return false;
+
+  struct thread_s {
+    std::wstring source      = L"";
+    std::wstring destination = L"";
+    std::wstring filename    = L"";
+  };
+  
+  thread_s* data = new thread_s;
+
+  data->source      = source;
+  data->destination = _path_cache.skiv_temp;
+  data->filename    = filename;
+
+  HANDLE hWorkerThread = (HANDLE)
+  _beginthreadex (nullptr, 0x0, [](void* var) -> unsigned
+  {
+    SKIF_Util_SetThreadDescription (GetCurrentThread (), L"SKIV_ImageWorkerHTTP");
+
+    // Is this combo really appropriate for this thread?
+    SKIF_Util_SetThreadPowerThrottling (GetCurrentThread (), 1); // Enable EcoQoS for this thread
+    SetThreadPriority (GetCurrentThread (), THREAD_MODE_BACKGROUND_BEGIN);
+
+    PLOG_DEBUG << "SKIV_ImageWorkerHTTP thread started!";
+
+    thread_s* _data = static_cast<thread_s*>(var);
+
+    CoInitializeEx (nullptr, 0x0);
+
+    PLOG_INFO  << "Downloading web image asynchronously...";
+
+    std::error_code ec;
+    // Create any missing directories
+    if (! std::filesystem::exists (            _data->destination, ec))
+          std::filesystem::create_directories (_data->destination, ec);
+
+    // Combine the destination folder + filename
+    _data->destination += _data->filename;
+
+    bool success = false;
+
+    // This both downloads a new image from the internet as well as copies a local file to the destination
+    // BMP files are downloaded to .tmp, while all others are downloaded to their intended path
+    success = SKIF_Util_GetWebResource (_data->source, _data->destination);
+
+    // If the file was copied successfully, we also need to ensure it's not marked as read-only
+    if (success)
+      SetFileAttributes (_data->destination.c_str(),
+      GetFileAttributes (_data->destination.c_str()) & ~FILE_ATTRIBUTE_READONLY);
+
+    else
+    {
+      PLOG_ERROR << "Could not save the source image to the destination path!";
+      PLOG_ERROR << "Source:      " << _data->source;
+      PLOG_ERROR << "Destination: " << _data->destination;
+    }
+
+    if (success)
+    {
+      // If the specified window was created by the calling thread, the window procedure is called immediately as a subroutine. 
+      wchar_t                    wszFilePath [MAX_PATH] = { };
+      if (S_OK == StringCbCopyW (wszFilePath, MAX_PATH, _data->destination.data()))
+      {
+        COPYDATASTRUCT cds { };
+        cds.dwData = SKIV_CDS_STRING;
+        cds.lpData = &wszFilePath;
+        cds.cbData = sizeof(wszFilePath);
+
+        // If the window msg pump returns true on our WM_COPYDATA call,
+        //   that means the data has been transferred over and we can free the memroy.
+        if (SendMessage (SKIF_Notify_hWnd,
+                      WM_COPYDATA,
+                      (WPARAM) SKIF_ImGui_hWnd,
+                      (LPARAM) (LPVOID) &cds))
+          PLOG_VERBOSE << "Data transfer successful!";
+
+        // Delete the temp file in case of an error
+        else
+          DeleteFile (_data->destination.c_str());
+      }
+    }
+
+    PLOG_ERROR_IF(! success) << "Failed to process the new cover image!";
+
+    PLOG_INFO  << "Finished updating game cover asynchronously...";
+    
+    // Free up the memory we allocated
+    delete _data;
+
+    PLOG_DEBUG << "SKIV_ImageWorkerHTTP thread stopped!";
+
+    SetThreadPriority (GetCurrentThread (), THREAD_MODE_BACKGROUND_END);
+
+    return 0;
+  }, data, 0x0, nullptr);
+
+  bool threadCreated = (hWorkerThread != NULL);
+
+  if (threadCreated) // We don't care about how it goes so the handle is unneeded
+    CloseHandle (hWorkerThread);
+  else // Someting went wrong during thread creation, so free up the memory we allocated earlier
+    delete data;
+
+  return threadCreated;
+}
+
+#pragma endregion
+
 
 #pragma region LoadTexture
 
@@ -1901,13 +2019,13 @@ SKIF_UI_Tab_DrawViewer (void)
     HANDLE hWorkerThread = (HANDLE)
     _beginthreadex (nullptr, 0x0, [](void* var) -> unsigned
     {
-      SKIF_Util_SetThreadDescription (GetCurrentThread (), L"SKIF_ImageWorker");
+      SKIF_Util_SetThreadDescription (GetCurrentThread (), L"SKIV_ImageWorker");
 
       thread_s* _data = static_cast<thread_s*>(var);
 
       CoInitializeEx (nullptr, 0x0);
 
-      PLOG_DEBUG << "SKIF_ImageWorker thread started!";
+      PLOG_DEBUG << "SKIV_ImageWorker thread started!";
 
       PLOG_INFO  << "Streaming game cover asynchronously...";
 
@@ -1994,7 +2112,7 @@ SKIF_UI_Tab_DrawViewer (void)
       delete _data;
 
       PLOG_INFO  << "Finished streaming image asynchronously...";
-      PLOG_DEBUG << "SKIF_ImageWorker thread stopped!";
+      PLOG_DEBUG << "SKIV_ImageWorker thread stopped!";
 
       return 0;
     }, data, 0x0, nullptr);
@@ -2119,7 +2237,9 @@ SKIF_UI_Tab_DrawViewer (void)
 
     std::error_code ec;
     std::wstring targetPath = L"";
-    const std::wstring ext  = std::filesystem::path(dragDroppedFilePath.data()).extension().wstring();
+    const std::filesystem::path p = std::filesystem::path(dragDroppedFilePath.data());
+    const std::wstring ext        = p.extension().wstring();
+    const std::wstring filename   = p.filename().wstring();
     bool         isURL      = PathIsURL (dragDroppedFilePath.data());
     PLOG_VERBOSE << "    File extension: " << ext;
 
@@ -2134,8 +2254,21 @@ SKIF_UI_Tab_DrawViewer (void)
       }
     }
 
-    // URLs + non-images
-    if (isURL || ! isImage)
+    // URL
+    if (isImage)
+    {
+      if (isURL)
+        SaveTempImage (dragDroppedFilePath, filename);
+
+      else
+      {
+        dragDroppedFilePath = SKIF_Util_NormalizeFullPath (dragDroppedFilePath);
+        new_path     = dragDroppedFilePath;
+      }
+    }
+
+    // Unsupported files
+    else if (! isImage)
     {
       constexpr char* error_title =
         "Unsupported file format";
@@ -2160,9 +2293,6 @@ SKIF_UI_Tab_DrawViewer (void)
 
       SKIF_ImGui_InfoMessage (error_title, error_label);
     }
-
-    else
-      new_path = dragDroppedFilePath;
 
     dragDroppedFilePath.clear();
   }

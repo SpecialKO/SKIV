@@ -92,6 +92,7 @@ struct SKIF_CommonPathsCache {
   wchar_t skiv_install      [MAX_PATH + 2] = { }; // Holds the install folder for SKIV
   wchar_t skiv_userdata     [MAX_PATH + 2] = { }; // Holds the user data folder for SKIV
   wchar_t specialk_userdata [MAX_PATH + 2] = { }; // Holds the user data folder for SK (often lines up with its install folder)
+  wchar_t skiv_temp         [MAX_PATH + 2] = { }; // Holds the temp data folder for SKIV (images downloaded from the web; cleared out on every launch): %APPDATA%\TEMP\SKIV\
 
   
   // Functions
