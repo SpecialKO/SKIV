@@ -259,6 +259,13 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
 
   if (regKVImageScaling.hasData(&hKey))
     iImageScaling          =   regKVImageScaling           .getData (&hKey);
+
+#ifndef _DEBUG
+
+  if (iImageScaling == 3)
+    iImageScaling = 2;
+
+#endif
   
   if (regKVSDRMode.hasData(&hKey))
     iSDRMode               =   regKVSDRMode                .getData (&hKey);
@@ -295,11 +302,13 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
   if (regKVDiagnostics.hasData(&hKey))
     iDiagnostics           =   regKVDiagnostics            .getData (&hKey);
 
+#if 0
   if (! SKIF_Util_GetDragFromMaximized ( ))
     bMaximizeOnDoubleClick = false; // Force disabled IF the OS prerequisites are not enabled
 
   else if (regKVMaximizeOnDoubleClick.hasData(&hKey))
     bMaximizeOnDoubleClick = regKVMaximizeOnDoubleClick    .getData (&hKey);
+#endif
 
   if (regKVNotifications.hasData(&hKey))
     bNotifications         =   regKVNotifications          .getData (&hKey);

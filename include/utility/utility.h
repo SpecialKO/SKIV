@@ -162,6 +162,7 @@ bool            SKIF_Util_IsTouchCapable              (void);
 bool            SKIF_Util_IsProcessAdmin              (DWORD PID);
 bool            SKIF_Util_IsProcessX86                (HANDLE process);
 PROCESSENTRY32W SKIF_Util_FindProcessByName           (const wchar_t* wszName);
+DWORD           SKIF_Util_GetProcessIdFromHwnd        (HWND hwnd);
 HANDLE          SKIF_Util_GetProcessHandleFromHwnd    (HWND hwnd, DWORD dwDesiredAccess);
 bool            SKIF_Util_SaveExtractExeIcon          (std::wstring exePath, std::wstring targetPath);
 bool            SKIF_Util_GetDragFromMaximized        (bool refresh = false);
@@ -171,6 +172,7 @@ bool            SKIF_Util_IsMPOsDisabledInRegistry    (bool refresh = false);
 void            SKIF_Util_GetMonitorHzPeriod          (HWND hwnd, DWORD dwFlags, DWORD& dwPeriod);
 bool            SKIF_Util_SetClipboardData            (const std::wstring_view& data);
 std::wstring    SKIF_Util_AddEnvironmentBlock         (const void* pEnvBlock, const std::wstring& varName, const std::wstring& varValue);
+void            SKIF_Util_FileExplorer_SelectFile     (PCWSTR filePath);
 std::string     SKIF_Util_GetWindowMessageAsStr       (UINT msg);
 
 

@@ -350,7 +350,7 @@ struct SKIF_RegistrySettings {
                          LR"(AppsUseLightTheme)" );
 
   // Default settings (multiple options)
-  int iImageScaling            = 2;   // 0 = None,                        1 = Fill,                   2 = Fit,                         3 = Stretch
+  int iImageScaling            = 2;   // 0 = None,                        1 = Fill,                   2 = Fit (default),               3 = Stretch
   int iStyle                   = 0;   // 0 = Dynamic,                     1 = SKIF Dark,              2 = SKIF Light,                  3 = ImGui Classic,                  4 = ImGui Dark
   int iStyleTemp               = 0;   // Used to temporary hold changes in the style during the current session
   int iDarkenImages            = 0;   // 0 = Never,                       1 = Always,                 2 = On mouse hover
@@ -378,7 +378,9 @@ struct SKIF_RegistrySettings {
   bool bFirstLaunch             = false;
   bool bMultipleInstances       = false;
   bool bOpenAtCursorPosition    = false;
+#if 0
   bool bMaximizeOnDoubleClick   =  true;
+#endif
   bool bAutoUpdate              = false; // Automatically runs downloaded installers
   bool bDeveloperMode           = false;
   bool bEfficiencyMode          =  true; // Should the main thread try to engage EcoQoS / Efficiency Mode on Windows 11 ?

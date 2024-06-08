@@ -34,7 +34,7 @@ void     SKIF_ImGui_SetMouseCursorHand    (void);
 void     SKIF_ImGui_SetHoverTip           (const std::string_view& szText, bool ignoreDisabledTooltips = false);
 void     SKIF_ImGui_SetHoverText          (const std::string_view& szText, bool overrideExistingText = false);
 bool     SKIF_ImGui_BeginChildFrame       (ImGuiID id, const ImVec2& size, ImGuiChildFlags child_flags, ImGuiWindowFlags window_flags = ImGuiWindowFlags_None);
-bool     SKIF_ImGui_BeginMainChildFrame   (void);
+bool     SKIF_ImGui_BeginMainChildFrame   (ImGuiWindowFlags window_flags = ImGuiWindowFlags_None);
 bool     SKIF_ImGui_BeginMenuEx2          (const char* label, const char* icon, const ImVec4& colIcon = ImGui::GetStyleColorVec4 (ImGuiCol_Text), bool enabled = true);
 bool     SKIF_ImGui_MenuItemEx2           (const char* label, const char* icon, const ImVec4& colIcon = ImGui::GetStyleColorVec4 (ImGuiCol_Text), const char* shortcut = NULL, bool* p_selected = nullptr, bool enabled = true);
 bool     SKIF_ImGui_IconButton            (ImGuiID id, std::string icon, std::string label, const ImVec4& colIcon = ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_TextCaption));

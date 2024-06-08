@@ -8,7 +8,8 @@ New versions will probably be distributed through their own packaged installer.
 ## Features
 
 - Basic image viewer
-- ~~HDR support~~
+- HDR support
+- Drag-n-drop support
 
 ## Command line arguments
 
@@ -23,12 +24,15 @@ New versions will probably be distributed through their own packaged installer.
 
 | Shortcut&ensp;&ensp;&ensp;&ensp;&ensp;&ensp;&ensp;&ensp; | What it does |
 | ------------------------: | -------------- |
+| `Ctrl+O` *or* `Ctrl+A`    | Open a new image.                                       |
+| `Ctrl+D`                  | Toggle image details.                                   |
 | `F1` *or* `Ctrl+1`        | Switch to the Viewer tab.                               |
 | `F2` *or* `Ctrl+2`        | Switch to the Settings tab.                             |
 | `F6`                      | Appearance: Toggles DPI scaling.                        |
 | `F7`                      | Appearance: Cycles between available color themes.      |
 | `F8`                      | Appearance: Toggles borders.                            |
 | `F9`                      | Appearance: Toggles color depth.                        |
+| `F11` *or* `Ctrl+F`       | Toggle fullscreen mode.                                 |
 | `Esc` *or* `Ctrl+Q` *or* `Ctrl+W` | Closes the app.                                 |
 | `Ctrl+N`                  | Minimizes the app.                                      |
 

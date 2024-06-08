@@ -100,6 +100,25 @@ CComPtr <ID3D11UnorderedAccessView>
 CComPtr <ID3D11ShaderResourceView>
          SKIV_HDR_GamutCoverageSRV      = nullptr;
 
+// Identify file type by reading the file signature
+const auto supported_formats =
+{
+  FileSignature { L"image/jpeg",                L".jpg",  { 0xFF, 0xD8, 0x00, 0x00 },   // JPEG (SOI; Start of Image)
+                                                          { 0xFF, 0xFF, 0x00, 0x00 } }, // JPEG App Markers are masked as they can be all over the place (e.g. 0xFF 0xD8 0xFF 0xED)
+  FileSignature { L"image/png",                 L".png",  { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A } },
+  FileSignature { L"image/webp",                L".webp", { 0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50 },     // 52 49 46 46 ?? ?? ?? ?? 57 45 42 50
+                                                          { 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF } }, // mask
+  FileSignature { L"image/bmp",                 L".bmp",  { 0x42, 0x4D } },
+  FileSignature { L"image/vnd.ms-photo",        L".jxr",  { 0x49, 0x49, 0xBC } },
+  FileSignature { L"image/vnd.adobe.photoshop", L".psd",  { 0x38, 0x42, 0x50, 0x53 } },
+  FileSignature { L"image/tiff",                L".tiff", { 0x49, 0x49, 0x2A, 0x00 } }, // TIFF: little-endian
+  FileSignature { L"image/tiff",                L".tiff", { 0x4D, 0x4D, 0x00, 0x2A } }, // TIFF: big-endian
+  FileSignature { L"image/vnd.radiance",        L".hdr",  { 0x23, 0x3F, 0x52, 0x41, 0x44, 0x49, 0x41, 0x4E, 0x43, 0x45, 0x0A } }, // Radiance High Dynamic Range image file
+  FileSignature { L"image/gif",                 L".gif",  { 0x47, 0x49, 0x46, 0x38, 0x37, 0x61 } }, // GIF87a
+  FileSignature { L"image/gif",                 L".gif",  { 0x47, 0x49, 0x46, 0x38, 0x39, 0x61 } }  // GIF89a
+//FileSignature { L"image/x-targa",             L".tga",  { 0x00, } }, // TGA has no real unique header identifier, so just use the file extension on those
+};
+
 bool                   loadImage         = false;
 bool                   tryingToLoadImage = false;
 std::atomic<bool>      imageLoading      = false;
@@ -120,9 +139,18 @@ PopupState OpenFileDialog  = PopupState_Closed;
 PopupState ContextMenu     = PopupState_Closed;
 
 struct image_s {
-  std::wstring path        = L"";
+  struct file_s {
+    std::wstring filename      = { }; // Image filename
+    std:: string filename_utf8 = { };
+    std::wstring path          = { }; // Image path (full)
+    std:: string path_utf8     = { };
+    std::wstring folder_path   = { }; // Parent folder path
+    file_s ( ) { };
+  } file_info;
+
   float        width       = 0.0f;
   float        height      = 0.0f;
+  float        zoom        = 1.0f;
   ImVec2       uv0 = ImVec2 (0, 0);
   ImVec2       uv1 = ImVec2 (1, 1);
   ImVec2       avail_size;        // Holds the frame size used (affected by the scaling method)
@@ -166,9 +194,10 @@ struct image_s {
   // copy assignment
   image_s& operator= (const image_s other) noexcept
   {
-    path                = other.path;
+    file_info           = other.file_info;
     width               = other.width;
     height              = other.height;
+    zoom                = other.zoom;
     uv0                 = other.uv0;
     uv1                 = other.uv1;
     avail_size          = other.avail_size;
@@ -185,9 +214,10 @@ struct image_s {
 
   void reset (void)
   {
-    path                = L"";
+    file_info           = { };
     width               = 0.0f;
     height              = 0.0f;
+    zoom                = 1.0f;
     uv0                 = ImVec2 (0, 0);
     uv1                 = ImVec2 (1, 1);
     avail_size          = { };
@@ -296,7 +326,7 @@ enum ImageDecoder {
 void
 LoadLibraryTexture (image_s& image)
 {
-  // NOT REALLY THREAD-SAFE WHILE IT RELIES ON THESE STATIC GLOBAL OBJECTS!
+  // NOT REALLY THREAD-SAFE WHILE IT RELIES ON THESE GLOBAL OBJECTS!
   static SKIF_RegistrySettings& _registry   = SKIF_RegistrySettings::GetInstance ( );
   static SKIF_CommonPathsCache& _path_cache = SKIF_CommonPathsCache::GetInstance ( );
 
@@ -311,33 +341,14 @@ LoadLibraryTexture (image_s& image)
 
   DWORD pre = SKIF_Util_timeGetTime1();
 
-  if (image.path.empty())
+  if (image.file_info.path.empty())
     return;
 
-  const std::filesystem::path imagePath (image.path.data());
+  const std::filesystem::path imagePath (image.file_info.path.data());
   std::wstring ext = SKIF_Util_ToLowerW (imagePath.extension().wstring());
-  std::string szPath = SK_WideCharToUTF8(image.path);
+  std::string szPath = SK_WideCharToUTF8(image.file_info.path);
 
   ImageDecoder decoder = ImageDecoder_None;
-
-  // Identify file type by reading the file signature
-  static const auto types =
-  {
-    FileSignature { L"image/jpeg",                L".jpg",  { 0xFF, 0xD8, 0x00, 0x00 },   // JPEG (SOI; Start of Image)
-                                                            { 0xFF, 0xFF, 0x00, 0x00 } }, // JPEG App Markers are masked as they can be all over the place (e.g. 0xFF 0xD8 0xFF 0xED)
-    FileSignature { L"image/png",                 L".png",  { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A } },
-    FileSignature { L"image/webp",                L".webp", { 0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50 },     // 52 49 46 46 ?? ?? ?? ?? 57 45 42 50
-                                                            { 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF } }, // mask
-    FileSignature { L"image/bmp",                 L".bmp",  { 0x42, 0x4D } },
-    FileSignature { L"image/vnd.ms-photo",        L".jxr",  { 0x49, 0x49, 0xBC } },
-    FileSignature { L"image/vnd.adobe.photoshop", L".psd",  { 0x38, 0x42, 0x50, 0x53 } },
-    FileSignature { L"image/tiff",                L".tiff", { 0x49, 0x49, 0x2A, 0x00 } }, // TIFF: little-endian
-    FileSignature { L"image/tiff",                L".tiff", { 0x4D, 0x4D, 0x00, 0x2A } }, // TIFF: big-endian
-    FileSignature { L"image/vnd.radiance",        L".hdr",  { 0x23, 0x3F, 0x52, 0x41, 0x44, 0x49, 0x41, 0x4E, 0x43, 0x45, 0x0A } }, // Radiance High Dynamic Range image file
-    FileSignature { L"image/gif",                 L".gif",  { 0x47, 0x49, 0x46, 0x38, 0x37, 0x61 } }, // GIF87a
-    FileSignature { L"image/gif",                 L".gif",  { 0x47, 0x49, 0x46, 0x38, 0x39, 0x61 } }  // GIF89a
-  //FileSignature { L"image/x-targa",             L".tga",  { 0x00, } }, // TGA has no real unique header identifier, so just use the file extension on those
-  };
 
   if (ext == L".tga")
     decoder = ImageDecoder_stbi;
@@ -348,7 +359,7 @@ LoadLibraryTexture (image_s& image)
         maxLength  = 0;
     if (maxLength == 0)
     {
-      for (auto& type : types)
+      for (auto& type : supported_formats)
         if (type.signature.size() > maxLength)
           maxLength = type.signature.size();
     }
@@ -367,7 +378,7 @@ LoadLibraryTexture (image_s& image)
       file.read (buffer.data(), maxLength);
       file.close();
 
-      for (auto& type : types)
+      for (auto& type : supported_formats)
       {
         if (SKIF_Util_HasFileSignature (buffer, type))
         {
@@ -481,7 +492,7 @@ LoadLibraryTexture (image_s& image)
   {
     if (SUCCEEDED (
         DirectX::LoadFromWICFile (
-          image.path.c_str (),
+          image.file_info.path.c_str (),
             DirectX::WIC_FLAGS_FILTER_POINT | DirectX::WIC_FLAGS_DEFAULT_SRGB,
               &meta, img)))
     {
@@ -825,13 +836,6 @@ using namespace DirectX;
     image.light_info.max_cll_name = cMaxChannel;
     image.light_info.max_nits     = fMaxLum * 80.0f; // scRGB
     image.light_info.min_nits     = fMinLum * 80.0f; // scRGB
-
-    PLOG_VERBOSE << "\n"
-                 << "HDR Metadata : \n"
-              // << "Avg Luminance : " << image.light_info.avg_nits << "\n"
-                 << "MaxCLL        : " << image.light_info.max_cll  << "\n"
-                 << "Max Luminance : " << image.light_info.max_nits << "\n"
-                 << "Min Luminance : " << image.light_info.min_nits;
   }
 
   HRESULT hr =
@@ -1096,7 +1100,7 @@ SKIF_UI_Tab_DrawViewer (void)
   // Load a new cover
   // Ensure we aren't already loading this cover
   if (! new_path.empty() &&
-        new_path != cover.path)
+        new_path != cover.file_info.path)
   {
     loadImage = true;
 
@@ -1146,10 +1150,176 @@ SKIF_UI_Tab_DrawViewer (void)
     tmp_iDarkenImages = _registry.iDarkenImages;
   }
 
+  // Monitor the current image folder
+  struct {
+    std::wstring              orig_path; // Holds a cached copy of cover.path
+    std::wstring              filename;  // Image filename
+    std::wstring              path;      // Parent folder path
+    std:: string              path_utf8;
+    SKIF_DirectoryWatch       watch;
+    std::vector<std::wstring> fileList;
+    unsigned int              fileListIndex = 0;
+
+    void reset (void)
+    {
+      PLOG_VERBOSE << "reset _current_folder!";
+
+      orig_path.clear();
+      filename.clear();
+      path.clear();
+      path_utf8.clear();
+      fileList.clear();
+      fileListIndex = 0;
+      watch.reset();
+    }
+
+    std::wstring nextImage (void)
+    {
+      if (fileList.size() == 0 || fileListIndex == fileList.size() - 1)
+        return L"";
+
+      fileListIndex++;
+      fileListIndex %= fileList.size();
+      return (path + LR"(\)" + fileList[fileListIndex]);
+    }
+
+    std::wstring prevImage (void)
+    {
+      if (fileList.size() == 0 || fileListIndex == 0)
+        return L"";
+
+      fileListIndex--;
+      fileListIndex %= fileList.size();
+      return (path + LR"(\)" + fileList[fileListIndex]);
+    }
+
+    // Find the position of the image in the current folder
+    void findFileIndex (void)
+    {
+      // Set the index to the proper position
+      fileListIndex = 0;
+      for (auto& file : fileList)
+      {
+        if (filename != file)
+          fileListIndex++;
+        else
+          break;
+      }
+    }
+
+    // Retrieve all files in the folder, and identify our current place among them...
+    void updateFolderData (void)
+    {
+      HANDLE hFind        = INVALID_HANDLE_VALUE;
+      WIN32_FIND_DATA ffd = { };
+      fileList.clear();
+
+      PLOG_DEBUG << "Discovering ... " << (path + LR"(\*.*)");
+
+      hFind = 
+        FindFirstFileExW ((path + LR"(\*.*)").c_str(), FindExInfoBasic, &ffd, FindExSearchNameMatch, NULL, NULL);
+
+      if (INVALID_HANDLE_VALUE != hFind)
+      {
+        fileList.push_back (ffd.cFileName);
+
+        while (FindNextFile (hFind, &ffd))
+          fileList.push_back (ffd.cFileName);
+
+        FindClose (hFind);
+      }
+
+      if (! fileList.empty())
+      {
+        std::vector<std::wstring> filtered;
+
+        // Filter out unsupported file formats using their file extension
+        for (auto& file : fileList)
+        {
+          for (auto& type : supported_formats)
+          {
+            if (type.file_extension == std::filesystem::path(file).extension().wstring())
+            {
+              filtered.push_back (file);
+              break;
+            }
+          }
+        }
+        fileList = filtered;
+
+        if (! fileList.empty())
+        {
+          std::sort (fileList.begin(),
+                     fileList.end  (), 
+            []( const std::wstring& a,
+                const std::wstring& b ) -> int
+            {
+              return StrCmpLogicalW (a.c_str(), b.c_str()) < 0;
+            }
+          );
+
+          findFileIndex ( );
+        }
+      }
+
+      PLOG_DEBUG << "Found " << fileList.size() << " supported images in the folder.";
+    }
+  } static _current_folder;
+
+  // Do not clear when we are loading an image (so as to not process the same folder constantly)
+  if (! loadImage && ! tryingToLoadImage)
+  {
+    static DWORD dwLastSignaled = 0;
+
+    // Identify when an image has been closed
+    if (cover.file_info.path.empty())
+    {
+      if (! _current_folder.path.empty())
+        _current_folder.reset();
+    }
+
+    // Identify when we're dealing with a whole new folder
+    if (cover.file_info.folder_path != _current_folder.path)
+    {
+      _current_folder.reset();
+      
+      _current_folder.orig_path  = cover.file_info.path;
+      std::filesystem::path path = SKIF_Util_NormalizeFullPath (cover.file_info.path);
+      _current_folder.filename   = path.filename().wstring();
+      _current_folder.path       = path.parent_path().wstring();
+      _current_folder.path_utf8  = SK_WideCharToUTF8 (_current_folder.path);
+
+      // This triggers a new updateFolderData() run below
+      dwLastSignaled = 1;
+    }
+
+    // Identify when a new file from the same folder has been dropped
+    if (cover.file_info.path != _current_folder.orig_path)
+    {
+      _current_folder.orig_path  = cover.file_info.path;
+      std::filesystem::path path = SKIF_Util_NormalizeFullPath (cover.file_info.path);
+      _current_folder.filename   = path.filename().wstring();
+      _current_folder.findFileIndex ( );
+    }
+
+    // Identify when the folder was changed outside of the app
+    if (_current_folder.watch.isSignaled (_current_folder.path))
+    {
+      dwLastSignaled = SKIF_Util_timeGetTime();
+      PLOG_VERBOSE << "_current_folder.watch was signaled! Delay checking the folder for another 500ms...";
+    }
+
+    if (dwLastSignaled != 0 && dwLastSignaled + 500 < SKIF_Util_timeGetTime())
+    {
+      _current_folder.updateFolderData();
+      dwLastSignaled = 0;
+    }
+  }
+
 #pragma endregion
 
-  ImVec2 sizeCover     = GetCurrentAspectRatio (cover)     * ((_registry.iImageScaling == 0) ? 1 : SKIF_ImGui_GlobalDPIScale);
-  ImVec2 sizeCover_old = GetCurrentAspectRatio (cover_old) * ((_registry.iImageScaling == 0) ? 1 : SKIF_ImGui_GlobalDPIScale);
+  ImVec2 sizeCover     = GetCurrentAspectRatio (cover)     * ((_registry.iImageScaling == 0) ? 1 : SKIF_ImGui_GlobalDPIScale) * cover.zoom;
+  ImVec2 sizeCover_old = GetCurrentAspectRatio (cover_old) * ((_registry.iImageScaling == 0) ? 1 : SKIF_ImGui_GlobalDPIScale) * cover_old.zoom;
 
   // From now on ImGui UI calls starts being made...
 
@@ -1184,8 +1354,8 @@ SKIF_UI_Tab_DrawViewer (void)
   {
     ImVec2 labelSize = ImGui::CalcTextSize (pcstrLabel);
     ImGui::SetCursorPos (ImVec2 (
-      ImGui::GetWindowContentRegionMax ( ).x / 2 - labelSize.x / 2,
-      ImGui::GetWindowContentRegionMax ( ).y / 2 - labelSize.y / 2));
+      ImGui::GetWindowSize ( ).x / 2 - labelSize.x / 2 + ImGui::GetScrollX ( ),
+      ImGui::GetWindowSize ( ).y / 2 - labelSize.y / 2 + ImGui::GetScrollY ( )));
     ImGui::TextDisabled (pcstrLabel);
   }
 
@@ -1269,6 +1439,24 @@ SKIF_UI_Tab_DrawViewer (void)
 
   isImageHovered = ImGui::IsItemHovered();
 
+  // Reset scroll (center-align the scroll)
+  if (resetScrollCenter && cover_old.pRawTexSRV.p == nullptr)
+  {
+    PLOG_VERBOSE << "Attempted to reset scroll...";
+
+    resetScrollCenter = false;
+    
+    ImGui::SetScrollHereY ( );
+    ImGui::SetScrollHereX ( );
+  }
+
+  // Using 4.975f and 0.075f to work around some floating point shenanigans
+  if (     ImGui::GetIO().MouseWheel > 0 && cover.zoom < 4.975f)
+    cover.zoom += 0.05f;
+
+  else if (ImGui::GetIO().MouseWheel < 0 && cover.zoom > 0.075f)
+    cover.zoom -= 0.05f;
+
 #pragma endregion
 
 #pragma region ImageDetails
@@ -1278,16 +1466,59 @@ SKIF_UI_Tab_DrawViewer (void)
     auto parent_pos =
       ImGui::GetCursorPos ();
 
-    ImGui::SetCursorPos    (ImVec2 (0.0f, 0.0f));
+    // Display "floating" in the top left corner regardless of scroll position
+    ImGui::SetCursorPos   (ImVec2 (ImGui::GetScrollX ( ), ImGui::GetScrollY ( )));
 
     ImGui::PushStyleColor (ImGuiCol_ChildBg, ImGui::GetStyleColorVec4 (ImGuiCol_WindowBg));
     ImGui::BeginChild     ("###ImageDetails", ImVec2 (0, 0), ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_AutoResizeX | ImGuiChildFlags_AutoResizeY | ((_registry.bUIBorders) ? ImGuiChildFlags_Border : ImGuiChildFlags_None), ImGuiWindowFlags_NoScrollbar);
     ImGui::PopStyleColor  ( );
 
+    // Monospace font
+    ImGui::PushFont       (fontConsolas);
+
+    float posXvalues = 150.0f * SKIF_ImGui_GlobalDPIScale;
+
+    { // Basic File Details
+      char     szLabels      [512] = { };
+      char     szLabelsData  [512] = { };
+
+      // Developer Mode
+      if (_registry.bDeveloperMode)
+      {
+        sprintf (szLabels,     "Image:\n"
+                               "Image Path:\n"
+                               "Current Folder:\n"
+                               "Zoom Level:");
+        sprintf (szLabelsData, "%s\n"
+                               "%s\n"
+                               "%s\n"
+                               "%.2f",  cover.file_info.filename_utf8.c_str(),
+                                        cover.file_info.path_utf8.c_str(),
+                                        _current_folder.path_utf8.c_str(),
+                                        cover.zoom);
+      }
+
+      // Basic
+      else {
+        sprintf (szLabels,     "Image:\n"
+                               "Zoom Level:");
+        sprintf (szLabelsData, "%s\n"
+                               "%3.0f %%", cover.file_info.filename_utf8.c_str(),
+                                          cover.zoom * 100);
+      }
+
+      ImGui::TextUnformatted (szLabels);
+      ImGui::SameLine        (posXvalues);
+      ImGui::TextUnformatted (szLabelsData);
+
+      if (_registry.bDeveloperMode)
+        ImGui::TextUnformatted ("\n");
+    }
+
     // Basic Image Details
     {
-      static const char szLabels [] = "Resolution:\t\n"
-                                      "Dynamic Range:\t";
+      static const char szLabels [] = "Resolution:\n"
+                                      "Dynamic Range:";
       
       char     szLabelsData  [512] = { };
 
@@ -1297,7 +1528,7 @@ SKIF_UI_Tab_DrawViewer (void)
                                      (cover.is_hdr) ? "HDR" : "SDR");
 
       ImGui::TextUnformatted (szLabels);
-      ImGui::SameLine        ();
+      ImGui::SameLine        (posXvalues);
       ImGui::TextUnformatted (szLabelsData);
     }
 
@@ -1309,26 +1540,27 @@ SKIF_UI_Tab_DrawViewer (void)
       static const char szLightLabels [] = "MaxCLL (scRGB): \n"
                                            "Max Luminance: \n"
                                            "Min Luminance: ";
-
-      char     szLightUnits  [512] = { };
       char     szLightLevels [512] = { };
+      
       sprintf (szLightUnits, (const char*)
                              u8"(%c)\n"
-                             u8"cd / m²\n"
-                             u8"cd / m²", cover.light_info.max_cll_name);
-
-      sprintf (szLightLevels, "%8.3f \n"
-                              "%7.2f \n"
-                              "%7.2f ", cover.light_info.max_cll,
+                             u8"cd / mï¿½\n"
+                             u8"cd / mï¿½", cover.light_info.max_cll_name);
+      sprintf (szLightLevels, "%.3f \n"
+                              "%.2f \n"
+                              "%.2f ", cover.light_info.max_cll,
                                         cover.light_info.max_nits,
                                         cover.light_info.min_nits);
+      sprintf (szLightUnits, "(%c)\n"
+                             "nits\n"
+                             "nits", cover.light_info.max_cll_name);
 
       auto orig_pos =
         ImGui::GetCursorPos ();
 
       //ImGui::SetCursorPos    (ImVec2 (0.0f, 0.0f));
       ImGui::TextUnformatted (szLightLabels);
-      ImGui::SameLine        ();
+      ImGui::SameLine        (posXvalues);
       ImGui::TextUnformatted (szLightLevels);
       ImGui::SameLine        ();
       ImGui::TextUnformatted (szLightUnits);
@@ -1386,7 +1618,7 @@ SKIF_UI_Tab_DrawViewer (void)
         if (fPercentUndefined > 0.001f) ImGui::TextUnformatted ("Undefined:\t\t ");
       }
       ImGui::EndGroup   ();
-      ImGui::SameLine   ();
+      ImGui::SameLine   (posXvalues);
       ImGui::BeginGroup ();
       if (fPercent709       > 0.0f)   ImGui::Text ("%8.4f %%", fPercent709);
       if (fPercentP3        > 0.001f) ImGui::Text ("%8.4f %%", fPercentP3);
@@ -1439,6 +1671,7 @@ SKIF_UI_Tab_DrawViewer (void)
       ImGui::SetCursorPos (orig_pos);
     }
 
+    ImGui::PopFont      ( ); // fontConsolas
     ImGui::EndChild     ( ); // ###ImageDetails
     ImGui::SetCursorPos (parent_pos);
   }
@@ -1462,7 +1695,7 @@ SKIF_UI_Tab_DrawViewer (void)
 
     ImGui::PushStyleColor (ImGuiCol_NavHighlight, ImVec4(0,0,0,0));
 
-    if (SKIF_ImGui_MenuItemEx2 ("Open", ICON_FA_FOLDER_OPEN, ImColor(255, 207, 72)))
+    if (SKIF_ImGui_MenuItemEx2 ("Open", ICON_FA_EYE))
       OpenFileDialog = PopupState_Open;
 
     if (tryingToLoadImage)
@@ -1526,6 +1759,7 @@ SKIF_UI_Tab_DrawViewer (void)
           _registry.regKVImageScaling.putData (_registry.iImageScaling);
         }
 
+#if _DEBUG
         if (ImGui::MenuItem ("Stretch",  spaces, &bStretch))
         {
           _registry.iImageScaling = 3;
@@ -1537,9 +1771,12 @@ SKIF_UI_Tab_DrawViewer (void)
 
           _registry.regKVImageScaling.putData (_registry.iImageScaling);
         }
+#endif
 
         ImGui::EndMenu ( );
       }
+
+      ImGui::PopID ( ); // #ImageScaling
 
       if (cover.is_hdr)
       {
@@ -1589,13 +1826,16 @@ SKIF_UI_Tab_DrawViewer (void)
           ImGui::EndMenu ( );
         }
 
-        ImGui::PopID ( );
+        ImGui::PopID ( ); // #HDRVisualization
       }
       
       if (SKIF_ImGui_MenuItemEx2 ("Details", ICON_FA_BARCODE, ImGui::GetStyleColorVec4 (ImGuiCol_Text), spaces, &_registry.bImageDetails))
         _registry.regKVImageDetails.putData (_registry.bImageDetails);
 
-      ImGui::PopID ( );
+      ImGui::Separator       ( );
+
+      if (! cover.file_info.path.empty() && SKIF_ImGui_MenuItemEx2 ("Open in File Explorer", ICON_FA_FOLDER_OPEN, ImColor(255, 207, 72)))
+        SKIF_Util_FileExplorer_SelectFile (cover.file_info.path.c_str());
     }
 
     ImGui::Separator       ( );
@@ -1646,7 +1886,8 @@ SKIF_UI_Tab_DrawViewer (void)
   
     thread_s* data = new thread_s;
 
-    data->image.path = new_path;
+    data->image.file_info.path      = new_path;
+    data->image.file_info.path_utf8 = SK_WideCharToUTF8 (new_path);
     new_path.clear();
 
     // We're going to stream the cover in asynchronously on this thread
@@ -1677,8 +1918,10 @@ SKIF_UI_Tab_DrawViewer (void)
       {
         PLOG_DEBUG << "Texture is live! Swapping it in.";
 
+        cover.file_info         = _data->image.file_info;
         cover.width             = _data->image.width;
         cover.height            = _data->image.height;
+        cover.zoom              = _data->image.zoom;
         cover.uv0               = _data->image.uv0;
         cover.uv1               = _data->image.uv1;
         cover.pRawTexSRV        = _data->image.pRawTexSRV;
@@ -1688,6 +1931,12 @@ SKIF_UI_Tab_DrawViewer (void)
         cover.light_info        = _data->image.light_info;
         cover.colorimetry       = _data->image.colorimetry;
         cover.is_hdr            = _data->image.is_hdr;
+
+        // Parent folder (used for the directory watch)
+        std::filesystem::path path    = SKIF_Util_NormalizeFullPath (cover.file_info.path);
+        cover.file_info.folder_path   = path.parent_path().wstring();
+        cover.file_info.filename      = path.filename()   .wstring();
+        cover.file_info.filename_utf8 = SK_WideCharToUTF8 (cover.file_info.filename);
 
         extern ImVec2 SKIV_ResizeApp;
         SKIV_ResizeApp.x = cover.width;
@@ -1772,6 +2021,19 @@ SKIF_UI_Tab_DrawViewer (void)
     }
 
     OpenFileDialog = PopupState_Closed;
+  }
+
+  if (! tryingToLoadImage)
+  {
+    if (ImGui::IsKeyPressed (ImGuiKey_RightArrow))
+    {
+      dragDroppedFilePath = _current_folder.nextImage ( );
+    }
+
+    else if (ImGui::IsKeyPressed (ImGuiKey_LeftArrow))
+    {
+      dragDroppedFilePath = _current_folder.prevImage ( );
+    }
   }
 
   if (! dragDroppedFilePath.empty())
@@ -1900,15 +2162,6 @@ SKIF_UI_Tab_DrawViewer (void)
     timeLastTick = current_time;
 
   // END FADE/DIM LOGIC
-
-  // Reset scroll (center-align the scroll)
-  if (resetScrollCenter && cover_old.pRawTexSRV.p == nullptr)
-  {
-    resetScrollCenter = false;
-
-    ImGui::SetScrollHereX ( );
-    ImGui::SetScrollHereY ( );
-  }
 
   // In case of a device reset, unload all currently loaded textures
   if (invalidatedDevice == 1)

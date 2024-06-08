@@ -268,6 +268,9 @@ SKIF_Startup_CopyDataRunningInstance (void)
     cds.lpData = &wszFilePath;
     cds.cbData = sizeof(wszFilePath);
 
+    // We must allow the running instance to set foreground window
+    AllowSetForegroundWindow (SKIF_Util_GetProcessIdFromHwnd (_Signal._RunningInstance));
+
     // If the running instance returns true on our WM_COPYDATA call,
     //   that means this instance has done its job and can be closed.
     if (SendMessage (_Signal._RunningInstance,
@@ -1206,6 +1209,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
         SKIF_ImGui_ImplWin32_UpdateDWMBorders (    );
     }
 
+#if 0
     // Registry watch to check if snapping/drag from window settings has changed in Windows
     // No need to for SKIF to wake up on changes when unfocused, so skip having it be global
     static SKIF_RegistryWatch
@@ -1223,6 +1227,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
           : true                                             // otherwise default to true,
         : false;                                             // and false if OS prerequisites are disabled
     }
+#endif
 
     // Escape does situational stuff
     if (hotkeyEsc)
@@ -1626,7 +1631,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
           SKIF_Tab_ChangeTo == UITab_Viewer)
       {
         ImGui::PushStyleVar (ImGuiStyleVar_FramePadding, ImVec2());
-        bool show = SKIF_ImGui_BeginMainChildFrame ( );
+        bool show = SKIF_ImGui_BeginMainChildFrame (ImGuiWindowFlags_NoScrollWithMouse);
         ImGui::PopStyleVar  ( );
 
         /*
@@ -3162,6 +3167,25 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
           dragDroppedFilePath = std::wstring(wszFilePath);
 
           PLOG_VERBOSE << "WM_COPYDATA: " << dragDroppedFilePath;
+
+          // Restore, and whatnot
+          if (SKIF_ImGui_hWnd != NULL)
+          {
+            if (IsIconic (SKIF_ImGui_hWnd))
+              ShowWindow (SKIF_ImGui_hWnd, SW_RESTORE);
+
+            if (! UpdateWindow        (SKIF_ImGui_hWnd))
+              PLOG_DEBUG << "UpdateWindow ( ) failed!";
+
+            if (! SetForegroundWindow (SKIF_ImGui_hWnd))
+              PLOG_DEBUG << "SetForegroundWindow ( ) failed!";
+
+            if (! SetActiveWindow     (SKIF_ImGui_hWnd))
+              PLOG_DEBUG << "SetActiveWindow ( ) failed: "  << SKIF_Util_GetErrorAsWStr ( );
+
+            if (! BringWindowToTop    (SKIF_ImGui_hWnd))
+              PLOG_DEBUG << "BringWindowToTop ( ) failed: " << SKIF_Util_GetErrorAsWStr ( );
+          }
 
           return true; // Signal the other instance that we successfully handled the data
         }
