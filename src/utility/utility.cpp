@@ -620,6 +620,16 @@ SKIF_Util_HasFileSignature (const std::vector<char>& header, const FileSignature
   return false;
 }
 
+bool
+SKIF_Util_HasFileExtension (const std::wstring extension, const FileSignature& signature)
+{
+  for (auto& ext : signature.file_extensions)
+    if (_wcsicmp (extension.c_str(), ext.c_str()) == NULL) // case insensitive comparison
+      return true;
+
+  return false;
+}
+
 
 // Usernames / Machine Name
 

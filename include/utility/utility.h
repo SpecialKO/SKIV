@@ -42,18 +42,18 @@ enum UITab {
 };
 
 struct FileSignature {
-  std::wstring          mime_type;
-  std::wstring          file_extension;
-  std::vector <uint8_t> signature = { };
-  std::vector <uint8_t> mask      = { };
+  std::wstring               mime_type       = L"";
+  std::vector <std::wstring> file_extensions = { };
+  std::vector <uint8_t>      signature       = { };
+  std::vector <uint8_t>      mask            = { };
 
-  FileSignature (std::wstring m, std::wstring e, std::vector <uint8_t> s) : mime_type(m), file_extension(e), signature(s)
+  FileSignature (std::wstring m, std::vector <std::wstring> e, std::vector <uint8_t> s) : mime_type(m), file_extensions(e), signature(s)
   {
     // Fill the mask with 0xFF everywhere
     mask = std::vector <uint8_t> (signature.size(), 0xFF);
   };
 
-  FileSignature (std::wstring m, std::wstring e, std::vector <uint8_t> s, std::vector <uint8_t> m2) : mime_type(m), file_extension(e), signature(s), mask(m2)
+  FileSignature (std::wstring m, std::vector <std::wstring> e, std::vector <uint8_t> s, std::vector <uint8_t> m2) : mime_type(m), file_extensions(e), signature(s), mask(m2)
   {
     if (mask.size() != signature.size())
       throw std::invalid_argument ("different sizes for signature and mask");
@@ -100,6 +100,7 @@ std::wstring    SKIF_Util_ReplaceInvalidFilenameChars (std::wstring name, wchar_
 std:: string    SKIF_Util_NormalizeFullPath           (std:: string string);
 std::wstring    SKIF_Util_NormalizeFullPath           (std::wstring string);
 bool            SKIF_Util_HasFileSignature            (const std::vector<char>& header, const FileSignature& signature);
+bool            SKIF_Util_HasFileExtension            (const std::wstring extension,    const FileSignature& signature);
 
 // Usernames
 std:: string    SKIF_Util_StripPersonalData           (std:: string input);
