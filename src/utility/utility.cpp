@@ -3211,12 +3211,7 @@ SKIF_Util_GetWebResource (std::wstring url, std::wstring_view destination, std::
   if (! body.empty())
     get->body = body;
 
-  if ( InternetCrackUrl (          url.c_str  (),
-         static_cast <DWORD> (url.length ()),
-                            0x00,
-                              &urlcomps
-                        )
-     )
+  if (InternetCrackUrl (url.c_str(), static_cast <DWORD> (url.length ()), 0x00, &urlcomps))
   {
     wcsncpy ( get->wszLocalPath,
                            destination.data (),

@@ -215,6 +215,7 @@ DWORD WINAPI SKIF_Util_GetWebUri              (skif_get_web_uri_t* get);
 DWORD        SKIF_Util_GetWebResource         (std::wstring url, std::wstring_view destination, std::wstring method = L"GET", std::wstring header = L"", std::string body = "");
 skif_get_web_uri_t SKIF_Util_CrackWebUrl      (const std::wstring url);
 
+
 // Shortcuts (*.lnk)
 
 void         SKIF_Util_ResolveShortcut       (HWND hwnd, LPCWSTR lpszLinkFile, LPWSTR lpszTarget, LPWSTR lpszArguments, int iPathBufferSize);
