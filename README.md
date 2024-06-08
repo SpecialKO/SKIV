@@ -16,7 +16,7 @@ New versions will probably be distributed through their own packaged installer.
 | Argument&ensp;&ensp;&ensp;&ensp;&ensp;&ensp;&ensp;&ensp; | What it does |
 | -----------------------------: | -------------- |
 | `<empty>`                      | Launches the app. |
-| `Quit`                         | Closes all running instances of the app. |
+| `Exit`                         | Closes all running instances of the app. |
 | `Minimize`                     | Launches SKIV minimized *or* minimizes any running instances of SKIV. |
 | `"<path-to-local-image-file>"` | Opens the provided image in the app. |
 

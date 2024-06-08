@@ -235,7 +235,7 @@ SKIF_Startup_ProcessCmdLineArgs (LPWSTR lpCmdLine)
   // Use specific shorthands for our internal tasks instead of
   //   a case insensitive search which would produce false positives
   _Signal.Quit            = 
-    wcscmp (lpCmdLine, L"0") == NULL;
+    _wcsicmp (lpCmdLine, L"/Exit") == NULL;
   _Signal.Minimize        = 
     wcscmp (lpCmdLine, L"1") == NULL;
 //_Signal.CheckForUpdates = 
@@ -593,7 +593,7 @@ void SKIF_Shell_CreateJumpList (void)
         CComQIPtr <IPropertyStore>   pPropStore = pLink.p;                      // The link title is kept in the object's property store, so QI for that interface.
 
         pLink     ->SetPath         (_path_cache.skiv_executable);
-        pLink     ->SetArguments    (L"Quit");                                  // Set the arguments
+        pLink     ->SetArguments    (L"/Exit");                                 // Set the arguments
         pLink     ->SetIconLocation (_path_cache.skiv_executable, 0);           // Set the icon location.
       //pLink     ->SetDescription  (L"Closes the application");                // Set the link description (tooltip on the jump list item)
         InitPropVariantFromString   (L"Exit", &pv);
