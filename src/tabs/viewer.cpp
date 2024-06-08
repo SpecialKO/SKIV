@@ -1513,10 +1513,10 @@ SKIF_UI_Tab_DrawViewer (void)
         sprintf (szLabelsData, "%s\n"
                                "%s\n"
                                "%s\n"
-                               "%.2f",  cover.file_info.filename_utf8.c_str(),
-                                        cover.file_info.path_utf8.c_str(),
-                                        _current_folder.path_utf8.c_str(),
-                                        cover.zoom);
+                               "%3.0f %%", cover.file_info.filename_utf8.c_str(),
+                                           cover.file_info.path_utf8.c_str(),
+                                          _current_folder.path_utf8.c_str(),
+                                           cover.zoom * 100);
       }
 
       // Basic
@@ -1525,7 +1525,7 @@ SKIF_UI_Tab_DrawViewer (void)
                                "Zoom Level:");
         sprintf (szLabelsData, "%s\n"
                                "%3.0f %%", cover.file_info.filename_utf8.c_str(),
-                                          cover.zoom * 100);
+                                           cover.zoom * 100);
       }
 
       ImGui::TextUnformatted (szLabels);
