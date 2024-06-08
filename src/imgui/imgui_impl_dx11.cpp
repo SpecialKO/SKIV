@@ -1550,7 +1550,7 @@ ImGui_ImplDX11_SetWindowSize ( ImGuiViewport *viewport,
             swap_desc.Format,
             swap_desc.Flags
       );
-      PLOG_VERBOSE << "[" << ImGui::GetFrameCount() << "] Resized swapchain to " << size.x << "x" << size.y;
+    //PLOG_VERBOSE << "[" << ImGui::GetFrameCount() << "] Resized swapchain to " << size.x << "x" << size.y;
 
       vd->SwapChain->GetBuffer (
         0, IID_PPV_ARGS (

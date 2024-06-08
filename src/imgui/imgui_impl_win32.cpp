@@ -1525,7 +1525,7 @@ static void ImGui_ImplWin32_SetWindowSize(ImGuiViewport* viewport, ImVec2 size)
     RECT rect = { 0, 0, (LONG)size.x, (LONG)size.y };
   //::AdjustWindowRectEx(&rect, vd->DwStyle, FALSE, vd->DwExStyle); // Client to Screen
     ::SetWindowPos(vd->Hwnd, nullptr, 0, 0, rect.right - rect.left, rect.bottom - rect.top, SWP_NOZORDER | SWP_NOMOVE | SWP_NOACTIVATE);
-#ifdef SKIF_Win32
+#if 0 // #ifdef SKIF_Win32
     ImGuiViewportP* viewportP = (ImGuiViewportP*)viewport;
     PLOG_VERBOSE << "[" << ImGui::GetFrameCount() << "] Resized window to " << size.x << "x" << size.y;
     if (viewportP->LastPlatformSize != ImVec2(FLT_MAX, FLT_MAX))

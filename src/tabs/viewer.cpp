@@ -2247,7 +2247,7 @@ SKIF_UI_Tab_DrawViewer (void)
     const std::wstring ext        = p.extension().wstring();
     filename                      = p.filename().wstring();
 
-    PLOG_VERBOSE << "New " << ((isURL) ? "URL" : "file") << " drop was given; extension: \"" << ext << "\", path: " << dragDroppedFilePath;
+    PLOG_VERBOSE << "New " << ((isURL) ? "URL" : "file") << " drop was given; extension: " << ext << ", path: " << dragDroppedFilePath;
 
     // Images + URLs
     if (isExtensionSupported (ext))
