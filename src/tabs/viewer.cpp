@@ -1540,20 +1540,18 @@ SKIF_UI_Tab_DrawViewer (void)
       static const char szLightLabels [] = "MaxCLL (scRGB): \n"
                                            "Max Luminance: \n"
                                            "Min Luminance: ";
+      char     szLightUnits  [512] = { };
       char     szLightLevels [512] = { };
       
       sprintf (szLightUnits, (const char*)
-                             u8"(%c)\n"
-                             u8"cd / m�\n"
-                             u8"cd / m�", cover.light_info.max_cll_name);
+                           u8"(%c)\n"
+                           u8"cd / m\u00b2\n" // Unicode: Superscript Two
+                           u8"cd / m\u00b2", cover.light_info.max_cll_name);
       sprintf (szLightLevels, "%.3f \n"
                               "%.2f \n"
-                              "%.2f ", cover.light_info.max_cll,
+                              "%.2f ",  cover.light_info.max_cll,
                                         cover.light_info.max_nits,
                                         cover.light_info.min_nits);
-      sprintf (szLightUnits, "(%c)\n"
-                             "nits\n"
-                             "nits", cover.light_info.max_cll_name);
 
       auto orig_pos =
         ImGui::GetCursorPos ();
