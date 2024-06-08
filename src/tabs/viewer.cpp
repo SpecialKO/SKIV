@@ -2029,9 +2029,75 @@ SKIF_UI_Tab_DrawViewer (void)
   {
     OpenFileDialog = PopupState_Opened;
 
+    struct filterspec_s {
+      std::list<std::pair<std::wstring, std::wstring>> _raw_list  = { };
+      std::vector<COMDLG_FILTERSPEC>                   filterSpec = { };
+    };
+
+    auto _CreateFILTERSPEC = [](void) -> filterspec_s
+    {
+      filterspec_s _spec = { };
+
+      { // All supported formats
+        std::wstring ext_filter;
+
+        for (auto& type : supported_formats)
+        {
+          static std::wstring prev_mime;
+          std::wstring mime = type.mime_type;
+
+          if (mime == prev_mime)
+            continue;
+
+          for (auto& file_extension : type.file_extensions)
+            ext_filter += L"*" + file_extension + L";";
+
+          prev_mime = mime;
+        }
+
+        _spec._raw_list.push_back ({ L"All supported formats", ext_filter });
+      }
+
+      for (auto& type : supported_formats)
+      {
+        static std::wstring prev_mime;
+        std::wstring mime = type.mime_type;
+
+        if (mime == prev_mime)
+          continue;
+
+        std::wstring ext_filter;
+        for (auto& file_extension : type.file_extensions)
+          ext_filter += L"*" + file_extension + L";";
+
+        _spec._raw_list.push_back ({ type.mime_type, ext_filter });
+
+        prev_mime = mime;
+      }
+
+      _spec.filterSpec       = std::vector<COMDLG_FILTERSPEC> (_spec._raw_list.size());
+      COMDLG_FILTERSPEC* ptr = _spec.filterSpec.data();
+
+      for (const auto& filter : _spec._raw_list)
+      {
+        ptr->pszName = filter.first.c_str();
+        ptr->pszSpec = filter.second.c_str();
+        ++ptr;
+      }
+
+      return _spec;
+    };
+
+    static const filterspec_s filters = _CreateFILTERSPEC ( );
+
+#ifdef _DEBUG
+    for (auto& filter : filters.filterSpecs)
+      PLOG_VERBOSE << std::wstring (filter.pszName) << ": " << std::wstring (filter.pszSpec);
+#endif
+
     LPWSTR pwszFilePath = NULL;
-    HRESULT hr          =
-      SK_FileOpenDialog (&pwszFilePath, COMDLG_FILTERSPEC{ L"Images", L"*.png;*.jpg;*.jpeg;*.webp;*.psd;*.bmp;*.jxr;*.hdr" }, 1, FOS_FILEMUSTEXIST, FOLDERID_Pictures);
+    HRESULT hr          = // COMDLG_FILTERSPEC{ L"Images", L"*.png;*.jpg;*.jpeg;*.webp;*.psd;*.bmp;*.jxr;*.hdr;*.avif" }
+      SK_FileOpenDialog (&pwszFilePath, filters.filterSpec.data(), static_cast<UINT> (filters.filterSpec.size()), FOS_FILEMUSTEXIST, FOLDERID_Pictures);
           
     if (hr == HRESULT_FROM_WIN32(ERROR_CANCELLED))
     {
@@ -2098,8 +2164,10 @@ SKIF_UI_Tab_DrawViewer (void)
         static std::string prev_ext;
         std::string type_ext = SK_WideCharToUTF8 (type.file_extensions[0]);
 
-        if (prev_ext != type_ext) // Filter out duplicates (e.g. .tiff and .gif)
-          error_label += "   *" + type_ext + "\n";
+        if (prev_ext == type_ext) // Filter out duplicates (e.g. .tiff and .gif)
+          continue;
+
+        error_label += "   *" + type_ext + "\n";
 
         prev_ext = type_ext;
       }

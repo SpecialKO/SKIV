@@ -397,7 +397,7 @@ SK_GetFontsDir (void)
 }
 
 HRESULT
-SK_FileOpenDialog (LPWSTR *pszPath, const COMDLG_FILTERSPEC fileTypes, UINT cFileTypes, FILEOPENDIALOGOPTIONS dialogOptions, const GUID defaultFolder)
+SK_FileOpenDialog (LPWSTR *pszPath, const COMDLG_FILTERSPEC* fileTypes, UINT cFileTypes, FILEOPENDIALOGOPTIONS dialogOptions, const GUID defaultFolder)
 {
   IFileOpenDialog  *pFileOpen = nullptr;
   HRESULT hr = E_UNEXPECTED;
@@ -415,7 +415,7 @@ SK_FileOpenDialog (LPWSTR *pszPath, const COMDLG_FILTERSPEC fileTypes, UINT cFil
       psiDefaultFolder->Release();
     }
 
-    pFileOpen->SetFileTypes (cFileTypes, &fileTypes);
+    pFileOpen->SetFileTypes (cFileTypes, fileTypes);
     pFileOpen->SetOptions   (dialogOptions);
 
     hr = pFileOpen->Show(NULL);
