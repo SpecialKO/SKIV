@@ -1250,9 +1250,9 @@ SKIF_UI_Tab_DrawViewer (void)
   DWORD       current_time = SKIF_Util_timeGetTime ( );
 
   // Load a new cover
-  // Ensure we aren't already loading this cover
-  if (! new_path.empty() &&
-        new_path != cover.file_info.path)
+  // ~~ Ensure we aren't already loading this cover ~~
+  if (! new_path.empty() /* &&
+        new_path != cover.file_info.path */) // This prevents URL images that share name from being reloaded properly, so just ignore this stuff...
   {
     loadImage = true;
 
