@@ -587,7 +587,8 @@ void SKIF_Shell_CreateJumpList (void)
       }
       */
 
-      // Task #5: Exit
+      // Task #5: Exit -- Not actually needed since Windows exposes a "Close window" and "Close all windows" option in the jump list
+      /*
       if (SUCCEEDED (pLink.CoCreateInstance (CLSID_ShellLink)))
       {
         CComQIPtr <IPropertyStore>   pPropStore = pLink.p;                      // The link title is kept in the object's property store, so QI for that interface.
@@ -604,6 +605,7 @@ void SKIF_Shell_CreateJumpList (void)
         pPropStore .Release         ( );
         pLink      .Release         ( );
       }
+      */
 
       CComQIPtr <IObjectArray>       pTasksArray = pObjColl.p;                  // Get an IObjectArray interface for AddUserTasks.
       pDestList   ->AddUserTasks    (pTasksArray);                              // Add the tasks to the jump list.
