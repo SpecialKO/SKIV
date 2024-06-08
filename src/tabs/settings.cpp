@@ -71,6 +71,8 @@ SKIF_UI_Tab_DrawSettings (void)
 
     SKIF_ImGui_Spacing      ( );
 
+#if 0
+
     ImGui::TextColored (
       ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextCaption),
         "Scaling method:"
@@ -105,6 +107,8 @@ SKIF_UI_Tab_DrawSettings (void)
     ImGui::TreePop         ( );
 
     ImGui::Spacing         ( );
+
+#endif
 
     ImGui::TextColored     (ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info), ICON_FA_LIGHTBULB);
     SKIF_ImGui_SetHoverTip ("Useful if you find bright images an annoyance.");

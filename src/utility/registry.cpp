@@ -257,6 +257,7 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
   if (regKVAdjustWindow.hasData(&hKey))
     bAdjustWindow          =   regKVAdjustWindow           .getData (&hKey);
 
+#if 0
   if (regKVImageScaling.hasData(&hKey))
     iImageScaling          =   regKVImageScaling           .getData (&hKey);
 
@@ -264,6 +265,8 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
 
   if (iImageScaling == 3)
     iImageScaling = 2;
+
+#endif
 
 #endif
   

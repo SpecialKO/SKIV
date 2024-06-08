@@ -155,6 +155,7 @@ struct image_s {
   float        width       = 0.0f;
   float        height      = 0.0f;
   float        zoom        = 1.0f;
+  int          scaling     = -1;
   ImVec2       uv0 = ImVec2 (0, 0);
   ImVec2       uv1 = ImVec2 (1, 1);
   ImVec2       avail_size;        // Holds the frame size used (affected by the scaling method)
@@ -202,6 +203,7 @@ struct image_s {
     width               = other.width;
     height              = other.height;
     zoom                = other.zoom;
+    scaling             = other.scaling;
     uv0                 = other.uv0;
     uv1                 = other.uv1;
     avail_size          = other.avail_size;
@@ -222,6 +224,7 @@ struct image_s {
     width               = 0.0f;
     height              = 0.0f;
     zoom                = 1.0f;
+    scaling             = -1;
     uv0                 = ImVec2 (0, 0);
     uv1                 = ImVec2 (1, 1);
     avail_size          = { };
@@ -930,7 +933,7 @@ GetCurrentAspectRatio (image_s& image)
 
   // Do not recalculate when dealing with an unchanged situation
   if (avail_size   == image.avail_size_cache &&
-      last_scaling == _registry.iImageScaling)
+      last_scaling == image.scaling)
     return image.avail_size;
 
   image.avail_size_cache   = avail_size;
@@ -946,15 +949,29 @@ GetCurrentAspectRatio (image_s& image)
   image.uv0 = ImVec2 (0, 0);
   image.uv1 = ImVec2 (1, 1);
 
-  // None
-  if (_registry.iImageScaling == 0)
+  int _appliedScaling = image.scaling;
+
+  // Attempt to find best scaling method on load
+  if (_appliedScaling == -1)
+  {
+    // None: if smaller than window size
+    if (avail_width > image.width && avail_height > image.height)
+      _appliedScaling = 0;
+
+    // Fit: all other scenarios
+    else
+      _appliedScaling = 2;
+  }
+
+  // None / "View actual size"
+  if (_appliedScaling == 0)
   {
     avail_width  = image.width;
     avail_height = image.height;
   }
 
-  // Fill
-  else if (_registry.iImageScaling == 1)
+  // Fill / "Fill window"
+  else if (_appliedScaling == 1)
   {
     // Workaround to prevent content/frame fighting one another
     if (ImGui::GetScrollMaxY() == 0.0f)
@@ -998,8 +1015,8 @@ GetCurrentAspectRatio (image_s& image)
     */
   }
 
-  // Fit
-  else if (_registry.iImageScaling == 2)
+  // Fit / "Zoom to fit"
+  else if (_appliedScaling == 2)
   {
     if (contentAspectRatio > frameAspectRatio)
       avail_height = avail_width / contentAspectRatio;
@@ -1008,21 +1025,21 @@ GetCurrentAspectRatio (image_s& image)
   }
 
   // Stretch
-  else if (_registry.iImageScaling == 3)
+  else if (_appliedScaling == 3)
   {
     // Do nothing -- this cases the image to be stretched
   }
 
   // Cache the current image scaling _and_ reset the scroll center
-  if (last_scaling != _registry.iImageScaling)
+  if (last_scaling != image.scaling)
   {
-    last_scaling    = _registry.iImageScaling;
+    last_scaling    = image.scaling;
     resetScrollCenter = true;
   }
 
   PLOG_VERBOSE_IF(! ImGui::IsAnyMouseDown()) // Suppress logging while the mouse is down (e.g. window is being resized)
                << "\n"
-               << "Image scaling  : " << _registry.iImageScaling << "\n"
+               << "Image scaling  : " << _appliedScaling << "\n"
                << "Content region : " << avail_width << "x" << avail_height << "\n"
                << "Image details  :\n"
                << " > resolution  : " << image.width << "x" << image.height << "\n"
@@ -1339,8 +1356,9 @@ SKIF_UI_Tab_DrawViewer (void)
 
 #pragma endregion
 
-  ImVec2 sizeCover     = GetCurrentAspectRatio (cover)     * ((_registry.iImageScaling == 0) ? 1 : SKIF_ImGui_GlobalDPIScale) * cover.zoom;
-  ImVec2 sizeCover_old = GetCurrentAspectRatio (cover_old) * ((_registry.iImageScaling == 0) ? 1 : SKIF_ImGui_GlobalDPIScale) * cover_old.zoom;
+  // This allows images to be DPI-scaled on HiDPI displays up until the user uses "View actual size" to force them to appear as 100%
+  ImVec2 sizeCover     = GetCurrentAspectRatio (cover)     * ((cover    .scaling == 0) ? 1 : SKIF_ImGui_GlobalDPIScale) * cover    .zoom;
+  ImVec2 sizeCover_old = GetCurrentAspectRatio (cover_old) * ((cover_old.scaling == 0) ? 1 : SKIF_ImGui_GlobalDPIScale) * cover_old.zoom;
 
   // From now on ImGui UI calls starts being made...
 
@@ -1737,59 +1755,25 @@ SKIF_UI_Tab_DrawViewer (void)
 
       if (SKIF_ImGui_BeginMenuEx2 ("Scaling", ICON_FA_PANORAMA))
       {
-        static bool bNone    = (_registry.iImageScaling == 0) ? true : false;
-        static bool bFill    = (_registry.iImageScaling == 1) ? true : false;
-        static bool bFit     = (_registry.iImageScaling == 2) ? true : false;
-        static bool bStretch = (_registry.iImageScaling == 3) ? true : false;
+        auto _CreateMenuItem = [&](int image_scaling, const char* label) {
+          bool bEnabled = (cover.scaling == image_scaling);
 
-        if (ImGui::MenuItem ("None", spaces,  &bNone))
-        {
-          _registry.iImageScaling = 0;
+          if (bEnabled)
+            ImGui::PushStyleColor (ImGuiCol_Text, ImGui::GetStyleColorVec4 (ImGuiCol_TextDisabled));
 
-        //bNone    = false;
-          bFill    = false;
-          bFit     = false;
-          bStretch = false;
+          if (ImGui::MenuItem (label, spaces, (cover.scaling == image_scaling)))
+            cover.scaling = (cover.scaling == image_scaling) ? -1 : image_scaling;
 
-          _registry.regKVImageScaling.putData (_registry.iImageScaling);
-        }
+          if (bEnabled)
+            ImGui::PopStyleColor  ( );
+        };
 
-        if (ImGui::MenuItem ("Fill",  spaces, &bFill))
-        {
-          _registry.iImageScaling = 1;
-
-          bNone    = false;
-        //bFill    = false;
-          bFit     = false;
-          bStretch = false;
-
-          _registry.regKVImageScaling.putData (_registry.iImageScaling);
-        }
-
-        if (ImGui::MenuItem ("Fit",  spaces, &bFit))
-        {
-          _registry.iImageScaling = 2;
-
-          bNone    = false;
-          bFill    = false;
-        //bFit     = false;
-          bStretch = false;
-
-          _registry.regKVImageScaling.putData (_registry.iImageScaling);
-        }
+        _CreateMenuItem (0, "View actual size");
+        _CreateMenuItem (1, "Fill window");
+        _CreateMenuItem (2, "Zoom to fit");
 
 #if _DEBUG
-        if (ImGui::MenuItem ("Stretch",  spaces, &bStretch))
-        {
-          _registry.iImageScaling = 3;
-
-          bNone    = false;
-          bFill    = false;
-          bFit     = false;
-        //bStretch = false;
-
-          _registry.regKVImageScaling.putData (_registry.iImageScaling);
-        }
+        _CreateMenuItem (3, "Stretch");
 #endif
 
         ImGui::EndMenu ( );
