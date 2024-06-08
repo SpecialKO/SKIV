@@ -2048,9 +2048,9 @@ SKIF_UI_Tab_DrawViewer (void)
 
           if (mime == prev_mime)
             continue;
-
+          
           for (auto& file_extension : type.file_extensions)
-            ext_filter += L"*" + file_extension + L";";
+            ext_filter += ((! ext_filter.empty()) ? L";*" : L"*") + file_extension;
 
           prev_mime = mime;
         }
@@ -2068,7 +2068,7 @@ SKIF_UI_Tab_DrawViewer (void)
 
         std::wstring ext_filter;
         for (auto& file_extension : type.file_extensions)
-          ext_filter += L"*" + file_extension + L";";
+          ext_filter += ((! ext_filter.empty()) ? L";*" : L"*") + file_extension;
 
         _spec._raw_list.push_back ({ type.mime_type, ext_filter });
 
