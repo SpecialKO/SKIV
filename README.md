@@ -46,7 +46,6 @@ New versions will probably be distributed through their own packaged installer.
 * Uses [Plog](https://github.com/SergiusTheBest/plog), licensed under [MIT](https://github.com/SergiusTheBest/plog/blob/master/LICENSE).
 * Uses [pugixml](https://pugixml.org/), licensed under [MIT](https://pugixml.org/license.html).
 * Uses [ValveFileVDF](https://github.com/TinyTinni/ValveFileVDF), licensed under [MIT](https://github.com/TinyTinni/ValveFileVDF/blob/master/LICENSE).
-* Uses [Guidelines Support Library (GSL)](https://github.com/microsoft/GSL), licensed under [MIT](https://github.com/microsoft/GSL/blob/main/LICENSE).
 * Uses [TextFlowCpp](https://github.com/catchorg/textflowcpp), licensed under [BSL-1.0](https://github.com/catchorg/textflowcpp/blob/master/LICENSE.txt).
 * Uses [HybridDetect](https://github.com/GameTechDev/HybridDetect/), licensed under [MIT](https://github.com/GameTechDev/HybridDetect/blob/main/LICENSE.md).
 * Includes various snippets of code from [Stack Overflow](https://stackoverflow.com/), licensed under [Creative Commons Attribution-ShareAlike](https://stackoverflow.com/help/licensing).

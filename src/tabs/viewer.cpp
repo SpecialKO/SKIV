@@ -47,7 +47,6 @@
 #include <strsafe.h>
 #include <atlimage.h>
 #include <TlHelp32.h>
-#include <gsl/gsl_util>
 
 #include <utility/fsutil.h>
 #include <utility/registry.h>
