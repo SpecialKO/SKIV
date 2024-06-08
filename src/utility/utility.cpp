@@ -2358,8 +2358,6 @@ SKIF_Util_FileExplorer_SelectFile (PCWSTR filePath)
     // Because it is a direct pointer to allocated memory, it is aligned.
     PIDLIST_ABSOLUTE iidlPtr = nullptr;
 
-    PLOG_VERBOSE << "Worker_SelectFile booted up to handle... " << _data->path;
-
     // Unused
     SFGAOF           flags   = 0;
 
@@ -2368,15 +2366,10 @@ SKIF_Util_FileExplorer_SelectFile (PCWSTR filePath)
       // You should call this function from a background thread. Failure to do so could cause the UI to stop responding.
       if (S_OK == SHParseDisplayName (_data->path.c_str(), nullptr, &iidlPtr, 0, &flags))
       {
-        PLOG_VERBOSE << "SHParseDisplayName executed successfully!";
-
         // CoInitialize or CoInitializeEx must be called before using SHOpenFolderAndSelectItems.
         // Not doing so causes SHOpenFolderAndSelectItems to fail.
         if (S_OK == SHOpenFolderAndSelectItems (iidlPtr, 0, nullptr, 0))
-        {
-          PLOG_VERBOSE << "SHOpenFolderAndSelectItems executed successfully!";
-          // Success !
-        }
+        { } // Success
 
         // Use the task allocator to free to returned pidl
         ILFree (iidlPtr);
@@ -2384,11 +2377,8 @@ SKIF_Util_FileExplorer_SelectFile (PCWSTR filePath)
     }
 
     else {
-      PLOG_WARNING << "The file does not exist! Opening the folder instead...";
       SKIF_Util_ExplorePath (std::filesystem::path(_data->path).parent_path().wstring());
     }
-
-    PLOG_VERBOSE << "Worker_SelectFile shutting down...";
 
     // Free up the memory we allocated
     delete _data;
