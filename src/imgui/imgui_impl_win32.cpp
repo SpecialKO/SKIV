@@ -2275,7 +2275,7 @@ bool
 SKIF_ImGui_ImplWin32_SetFullscreen (int fullscreen)
 {
   struct {
-      bool   Fullscreen; // Current fullscreen state
+      bool   Fullscreen = 0; // Current fullscreen state
 
       // Previous window state (before entering fullscreen)
       bool   Maximized;
