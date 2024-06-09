@@ -114,13 +114,14 @@ const std::initializer_list<FileSignature> supported_formats =
   FileSignature { L"image/bmp",                 { L".bmp"  },          { 0x42, 0x4D } },
   FileSignature { L"image/vnd.ms-photo",        { L".jxr"  },          { 0x49, 0x49, 0xBC } },
   FileSignature { L"image/vnd.adobe.photoshop", { L".psd"  },          { 0x38, 0x42, 0x50, 0x53 } },
-  FileSignature { L"image/tiff",                { L".tiff", L".tif" }, { 0x49, 0x49, 0x2A, 0x00 } },    // TIFF: little-endian
+  FileSignature { L"image/tiff",                { L".tiff", L".tif" }, { 0x49, 0x49, 0x2A, 0x00 } }, // TIFF: little-endian
   FileSignature { L"image/tiff",                { L".tiff", L".tif" }, { 0x4D, 0x4D, 0x00, 0x2A } }, // TIFF: big-endian
   FileSignature { L"image/vnd.radiance",        { L".hdr"  },          { 0x23, 0x3F, 0x52, 0x41, 0x44, 0x49, 0x41, 0x4E, 0x43, 0x45, 0x0A } }, // Radiance High Dynamic Range image file
   FileSignature { L"image/gif",                 { L".gif"  },          { 0x47, 0x49, 0x46, 0x38, 0x37, 0x61 } }, // GIF87a
   FileSignature { L"image/gif",                 { L".gif"  },          { 0x47, 0x49, 0x46, 0x38, 0x39, 0x61 } }, // GIF89a
-  FileSignature { L"image/avif",                { L".avif" },          { 0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x61, 0x76, 0x69, 0x66 },  // ftypavif
-                                                                       { 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF } } // ?? ?? ?? ?? 66 74 79 70 61 76 69 66
+  FileSignature { L"image/avif",                { L".avif" },          { 0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x61, 0x76, 0x69, 0x66 },   // ftypavif
+                                                                       { 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF } }, // ?? ?? ?? ?? 66 74 79 70 61 76 69 66
+  FileSignature { L"image/vnd-ms.dds",          { L".dds"  },          { 0x44, 0x44, 0x53, 0x20 } },
 //FileSignature { L"image/x-targa",             { L".tga"  },          { 0x00, } }, // TGA has no real unique header identifier, so just use the file extension on those
 };
 
@@ -160,8 +161,10 @@ enum ImageScaling {
   ImageScaling_Auto,
   ImageScaling_None,
   ImageScaling_Fit,
-  ImageScaling_Fill
-//ImageScaling_Stretch
+  ImageScaling_Fill,
+#ifdef _DEBUG
+  ImageScaling_Stretch
+#endif
 };
 
 struct image_s {
@@ -609,6 +612,7 @@ extern CComPtr <ID3D11Device> SKIF_D3D11_GetDevice (bool bWait = true);
 enum ImageDecoder {
   ImageDecoder_None,
   ImageDecoder_WIC,
+  ImageDecoder_DSS,
   ImageDecoder_stbi
 };
 
@@ -684,7 +688,8 @@ LoadLibraryTexture (image_s& image)
              (type.mime_type == L"image/vnd.ms-photo"        ) ? ImageDecoder_WIC  :
              (type.mime_type == L"image/webp"                ) ? ImageDecoder_WIC  :
              (type.mime_type == L"image/tiff"                ) ? ImageDecoder_WIC  :
-           //(type.mime_type == L"image/avif"                ) ? ImageDecoder_???  :
+             (type.mime_type == L"image/avif"                ) ? ImageDecoder_WIC  :
+             (type.mime_type == L"image/vnd-ms.dds"          ) ? ImageDecoder_DSS  :
                                                                  ImageDecoder_WIC;   // Not actually being used
 
           // None of this is technically correct other than the .hdr case,
@@ -705,6 +710,7 @@ LoadLibraryTexture (image_s& image)
   PLOG_ERROR_IF(decoder == ImageDecoder_None) << "Failed to detect file type!";
   PLOG_DEBUG_IF(decoder == ImageDecoder_stbi) << "Using stbi decoder...";
   PLOG_DEBUG_IF(decoder == ImageDecoder_WIC ) << "Using WIC decoder...";
+  PLOG_DEBUG_IF(decoder == ImageDecoder_DSS ) << "Using DSS decoder...";
 
   if (decoder == ImageDecoder_None)
     return false;
@@ -852,6 +858,49 @@ LoadLibraryTexture (image_s& image)
               &meta, img)))
     {
       succeeded = true;
+    }
+  }
+
+  else if (decoder == ImageDecoder_DSS)
+  {
+    if (SUCCEEDED (
+        DirectX::LoadFromDDSFile (
+          image.file_info.path.c_str (),
+            DirectX::DDS_FLAGS_PERMISSIVE,
+              &meta, img)))
+    {
+      const DXGI_FORMAT final_format  = DXGI_FORMAT_R8G8B8A8_UNORM;
+      DirectX::ScratchImage temp_img  = { };
+
+      succeeded = true;
+
+      if (DirectX::IsCompressed (meta.format))
+      {
+        PLOG_VERBOSE << "Decompressing texture to the intended format...";
+
+        if (FAILED (DirectX::Decompress (*img.GetImage (0, 0, 0), final_format, temp_img)))
+        {
+          PLOG_ERROR << "Decompression failed!";
+          succeeded = false;
+        }
+
+        std::swap (img, temp_img);
+        meta = img.GetMetadata ( );
+      }
+
+      else if (meta.format != final_format)
+      {
+        PLOG_VERBOSE << "Converting texture to the intended format...";
+
+        if (FAILED (DirectX::Convert (*img.GetImage (0, 0, 0), final_format, DirectX::TEX_FILTER_DEFAULT, DirectX::TEX_THRESHOLD_DEFAULT, temp_img)))
+        {
+          PLOG_ERROR << "Conversion failed!";
+          succeeded = false;
+        }
+
+        std::swap (img, temp_img);
+        meta = img.GetMetadata ( );
+      }
     }
   }
 
@@ -2036,12 +2085,12 @@ SKIF_UI_Tab_DrawViewer (void)
             ImGui::PopStyleColor  ( );
         };
 
-        _CreateMenuItem (ImageScaling_None, "View actual size", "Ctrl+1");
-        _CreateMenuItem (ImageScaling_Fit,  "Zoom to fit",      "Ctrl+2");
-        _CreateMenuItem (ImageScaling_Fill, "Fill window",      "Ctrl+3");
+        _CreateMenuItem (ImageScaling_None,    "View actual size", "Ctrl+1");
+        _CreateMenuItem (ImageScaling_Fit,     "Zoom to fit",      "Ctrl+2");
+        _CreateMenuItem (ImageScaling_Fill,    "Fill window",      "Ctrl+3");
 
 #if _DEBUG
-        _CreateMenuItem (3, "Stretch");
+        _CreateMenuItem (ImageScaling_Stretch, "Stretch",       "Ctrl+4");
 #endif
 
         ImGui::EndMenu ( );
@@ -2350,7 +2399,7 @@ SKIF_UI_Tab_DrawViewer (void)
     static const filterspec_s filters = _CreateFILTERSPEC ( );
 
 #ifdef _DEBUG
-    for (auto& filter : filters.filterSpecs)
+    for (auto& filter : filters.filterSpec)
       PLOG_VERBOSE << std::wstring (filter.pszName) << ": " << std::wstring (filter.pszSpec);
 #endif
 
