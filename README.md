@@ -26,7 +26,7 @@ New versions will probably be distributed through their own packaged installer.
 * BMP
 * TIFF
 
-*\*No animation support.*
+*\* No animation support.*
 
 ## Command line arguments
 
