@@ -1542,7 +1542,9 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
       // Resize app window based on the image resolution
       extern bool tryingToLoadImage;
-      bool resizeAppWindow = (_registry.bAdjustWindow && ! SKIF_ImGui_IsFullscreen ( ) ) ? (! tryingToLoadImage && SKIV_ResizeApp.x != 0.0f && ! (GetWindowLongPtr (SKIF_ImGui_hWnd, GWL_STYLE) & WS_MAXIMIZE)) : false;
+      bool resizeAppWindow = (_registry.bAdjustWindow && ! SKIF_ImGui_IsFullscreen ( ) && SKIF_ImGui_hWnd != NULL)
+                           ? (! tryingToLoadImage && SKIV_ResizeApp.x != 0.0f && ! (GetWindowLongPtr (SKIF_ImGui_hWnd, GWL_STYLE) & WS_MAXIMIZE))
+                           : false;
 
       if (resizeAppWindow)
       {
@@ -1566,6 +1568,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
         ImVec2 size_maximum = monitor_extent.GetSize();
 
+        PLOG_VERBOSE << "SKIV_ResizeApp: " << SKIV_ResizeApp.x << "x" << SKIV_ResizeApp.y;
+
         if (size_maximum.x < SKIV_ResizeApp.x || size_maximum.y < SKIV_ResizeApp.y)
         {
           SKIF_ImGui_SetFullscreen (! SKIF_ImGui_IsFullscreen( ));
@@ -1574,9 +1578,9 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
         else
           ImGui::SetNextWindowSize (SKIV_ResizeApp);
-      }
 
-      SKIV_ResizeApp       = ImVec2 (0.0f, 0.0f);
+        SKIV_ResizeApp = ImVec2 (0.0f, 0.0f);
+      }
 
       static const ImVec2 wnd_minimum_size = ImVec2 (200.0f, 200.0f) * SKIF_ImGui_GlobalDPIScale;
 
