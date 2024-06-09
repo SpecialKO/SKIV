@@ -1016,10 +1016,12 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
   hIcon = LoadIcon (hModSKIF, MAKEINTRESOURCE (IDI_SKIV));
 
+#if 0
   // The notify window has been created but not displayed.
   // Now we have a parent window to which a notification tray icon can be associated.
   SKIF_Shell_CreateNotifyIcon       ();
   SKIF_Shell_CreateUpdateNotifyMenu ();
+#endif
 
   // Initialize the gamepad input child thread
   static SKIF_GamePadInputHelper& _gamepad =
@@ -3743,6 +3745,7 @@ SKIF_Notify_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
       break;
         
     default:
+#if 0
       // Taskbar was recreated (explorer.exe restarted),
       //   so we need to recreate the notification icon
       if (msg == SHELL_TASKBAR_RESTART)
@@ -3759,6 +3762,7 @@ SKIF_Notify_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         SKIF_Shell_CreateUpdateNotifyMenu ( );
         SKIF_Shell_UpdateNotifyIcon       ( );
       }
+#endif
       break;
   }
   return
