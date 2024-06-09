@@ -16,15 +16,17 @@ New versions will probably be distributed through their own packaged installer.
 ## Format support
 
 * JXR
-* AVIF (Windows 11 only)
+* AVIF* (Windows 11 only)
 * Radiance HDR (.hdr)
-* PNG
+* PNG*
 * JPEG (JPG)
-* WebP
+* WebP*
 * PSD
-* GIF
+* GIF*
 * BMP
 * TIFF
+
+*\*No animation support.*
 
 ## Command line arguments
 
