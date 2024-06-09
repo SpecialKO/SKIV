@@ -742,7 +742,14 @@ LoadLibraryTexture (image_s& image)
     constexpr DXGI_FORMAT dxgi_format = DXGI_FORMAT::DXGI_FORMAT_R8G8B8A8_UNORM;
 #endif
 
-    if (pixels != NULL)
+    // Fall back to using WIC if STB fails to parse the file
+    if (pixels == NULL)
+    {
+      decoder = ImageDecoder_WIC;
+      PLOG_ERROR << "Using WIC decoder due to STB failing with: " << stbi_failure_reason();
+    }
+
+    else
     {
       if (SKIV_STBI_CICP.primaries != 0)
       {
@@ -849,7 +856,7 @@ LoadLibraryTexture (image_s& image)
     }
   }
 
-  else if (decoder == ImageDecoder_WIC)
+  if (decoder == ImageDecoder_WIC)
   {
     if (SUCCEEDED (
         DirectX::LoadFromWICFile (
@@ -861,7 +868,7 @@ LoadLibraryTexture (image_s& image)
     }
   }
 
-  else if (decoder == ImageDecoder_DSS)
+  if (decoder == ImageDecoder_DSS)
   {
     if (SUCCEEDED (
         DirectX::LoadFromDDSFile (

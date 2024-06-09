@@ -5117,6 +5117,13 @@ static int stbi__parse_png_file(stbi__png *z, int scan, int req_comp)
             SKIV_STBI_CICP.range         = stbi__get8 (s);
             break;
 
+         //
+         // SKIV modification for gAMA (unsupported by STB)
+         //
+         case STBI__PNG_TYPE('g','A','M','A'):
+            return stbi__err("gamma correction required", "PNG not supported: gAMA chunk detected");
+            break;
+
          case STBI__PNG_TYPE('I','H','D','R'): {
             int comp,filter;
             if (!first) return stbi__err("multiple IHDR","Corrupt PNG");
