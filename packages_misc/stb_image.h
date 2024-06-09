@@ -816,6 +816,13 @@ typedef struct
 
    stbi_uc *img_buffer, *img_buffer_end;
    stbi_uc *img_buffer_original, *img_buffer_original_end;
+
+   struct cicp_s {
+     stbi_uc primaries;
+     stbi_uc transfer_func;
+     stbi_uc matrix_coeffs;
+     stbi_uc range;
+   };
 } stbi__context;
 
 
@@ -5098,6 +5105,18 @@ static int stbi__parse_png_file(stbi__png *z, int scan, int req_comp)
             is_iphone = 1;
             stbi__skip(s, c.length);
             break;
+
+         //
+         // SKIV modification for HDR
+         //
+         case STBI__PNG_TYPE('c','I','C','P'):
+            extern thread_local stbi__context::cicp_s SKIV_STBI_CICP;
+            SKIV_STBI_CICP.primaries     = stbi__get8 (s);
+            SKIV_STBI_CICP.transfer_func = stbi__get8 (s);
+            SKIV_STBI_CICP.matrix_coeffs = stbi__get8 (s);
+            SKIV_STBI_CICP.range         = stbi__get8 (s);
+            break;
+
          case STBI__PNG_TYPE('I','H','D','R'): {
             int comp,filter;
             if (!first) return stbi__err("multiple IHDR","Corrupt PNG");
