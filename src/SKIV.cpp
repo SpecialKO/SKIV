@@ -2542,7 +2542,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
       // Read the clipboard
       // Optionally we'd filter out the data here too, but it would just
       //   duplicate the same processing we're already doing in viewer.cpp
-      if (hotkeyCtrlV && ! ImGui::IsAnyItemFocused ( ) && ! ImGui::IsAnyItemActive ( ))
+      if (hotkeyCtrlV && ! ImGui::IsAnyItemActive ( )) // && ! ImGui::IsAnyItemFocused ( )
         dragDroppedFilePath = SKIF_Util_GetClipboardData ( );
 
       // End the main ImGui window
@@ -2676,7 +2676,10 @@ wWinMain ( _In_     HINSTANCE hInstance,
       fixLoadingWindowTitleOnLaunch = false;
 
       extern bool tryingToLoadImage;
-      if (tryingToLoadImage)
+      extern bool tryingToDownImage;
+      if (tryingToDownImage)
+        ::SetWindowText (SKIF_ImGui_hWnd, L"Downloading... - " SKIV_WINDOW_TITLE_SHORT_W);
+      else if (tryingToLoadImage)
         ::SetWindowText (SKIF_ImGui_hWnd, L"Loading... - " SKIV_WINDOW_TITLE_SHORT_W);
     }
 
@@ -3287,6 +3290,9 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
               PLOG_DEBUG << "BringWindowToTop ( ) failed: " << SKIF_Util_GetErrorAsWStr ( );
           }
 
+          extern bool tryingToDownImage;
+          tryingToDownImage = false;
+
           return true; // Signal the other instance that we successfully handled the data
         }
       }
@@ -3436,7 +3442,7 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         _gamepad.SleepThread ( );
       break;
 
-    case WM_SKIF_COVER:
+    case WM_SKIF_IMAGE:
       addAdditionalFrames += 3;
 
       // Update tryingToLoadCover
@@ -3449,8 +3455,15 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
       {
         SKIF_Util_CompactWorkingSet ( );
 
+        bool success = static_cast<bool> (lParam);
+
         extern bool newImageLoaded;
-        newImageLoaded = true;
+        extern bool newImageFailed;
+
+        if (success)
+          newImageLoaded = true;
+        else
+          newImageFailed = true;
       }
       break;
 

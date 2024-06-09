@@ -132,10 +132,13 @@ bool isExtensionSupported (const std::wstring extension)
 }
 
 bool                   loadImage         = false;
-bool                   tryingToLoadImage = false;
+bool                   tryingToLoadImage = false; // Loading image...
+bool                   tryingToDownImage = false; // Downloading image...
 std::atomic<bool>      imageLoading      = false;
 bool                   resetScrollCenter = false;
 bool                   newImageLoaded    = false; // Set by the window msg handler when a new image has been loaded
+bool                   newImageFailed    = false; // Set by the window msg handler when a new image failed to load
+bool                   imageFailWarning  = false; // Set to true to warn about a failed image load
 
 bool                   coverRefresh      = false; // This just triggers a refresh of the cover
 std::wstring           coverRefreshPath  = L"";
@@ -457,7 +460,7 @@ enum ImageDecoder {
   ImageDecoder_stbi
 };
 
-void
+bool
 LoadLibraryTexture (image_s& image)
 {
   // NOT REALLY THREAD-SAFE WHILE IT RELIES ON THESE GLOBAL OBJECTS!
@@ -476,7 +479,7 @@ LoadLibraryTexture (image_s& image)
   DWORD pre = SKIF_Util_timeGetTime1();
 
   if (image.file_info.path.empty())
-    return;
+    return false;
 
   const std::filesystem::path imagePath (image.file_info.path.data());
   std::wstring ext = SKIF_Util_ToLowerW (imagePath.extension().wstring());
@@ -503,7 +506,7 @@ LoadLibraryTexture (image_s& image)
     if (! file)
     {
       PLOG_ERROR << "Failed to open file!";
-      return;
+      return false;
     }
 
     if (file)
@@ -550,7 +553,7 @@ LoadLibraryTexture (image_s& image)
   PLOG_DEBUG_IF(decoder == ImageDecoder_WIC ) << "Using WIC decoder...";
 
   if (decoder == ImageDecoder_None)
-    return;
+    return false;
 
   if (decoder == ImageDecoder_stbi)
   {
@@ -654,7 +657,7 @@ LoadLibraryTexture (image_s& image)
   }
 
   if (! succeeded)
-    return;
+    return false;
 
   DirectX::ScratchImage* pImg  =   &img;
   DirectX::ScratchImage   converted_img;
@@ -697,10 +700,12 @@ LoadLibraryTexture (image_s& image)
     SKIF_D3D11_GetDevice ();
 
   if (! pDevice)
-    return;
+    return false;
 
   pRawTex2D        = nullptr;
   pTonemappedTex2D = nullptr;
+
+  succeeded = false;
 
   DirectX::ScratchImage normalized_hdr;
 
@@ -1033,6 +1038,8 @@ using namespace DirectX;
       // Update the image width/height
       image.width  = static_cast<float>(meta.width);
       image.height = static_cast<float>(meta.height);
+
+      succeeded = true;
     }
 
     // SRV is holding a reference, this is not needed anymore.
@@ -1040,6 +1047,8 @@ using namespace DirectX;
     pTonemappedTex2D    = nullptr;
     pGamutCoverageTex2D = nullptr;
   }
+
+  return succeeded;
 };
 
 #pragma endregion
@@ -1303,9 +1312,20 @@ SKIF_UI_Tab_DrawViewer (void)
     tmp_iDarkenImages = _registry.iDarkenImages;
   }
 
-  if (newImageLoaded)
+  if (newImageFailed)
+  {
+    newImageFailed   = false;
+    imageFailWarning = true;  // Show the failed warning label
+
+    // Reset the title of the main app window with the image filename
+    if (SKIF_ImGui_hWnd != NULL)
+      ::SetWindowText (SKIF_ImGui_hWnd, SKIV_WINDOW_TITLE_SHORT_W);
+  }
+
+  else if (newImageLoaded)
   {
     newImageLoaded    = false;
+    imageFailWarning  = false;
     resetScrollCenter = true;
 
     // Update the title of the main app window with the image filename
@@ -1487,7 +1507,10 @@ SKIF_UI_Tab_DrawViewer (void)
   static const ImVec2 hdr_uv (-2048.0f, -2048.0f);
   
   static int    queuePosGameCover  = 0;
+  static char   cstrLabelDowning[] = "Downloading...";
   static char   cstrLabelLoading[] = "...";
+  static char   cstrLabelFailed [] = "The image failed to load... :(\n"
+                                     "  Maybe try another image?";
   static char   cstrLabelMissing[] = "Drop an image...";
   char*         pcstrLabel     = nullptr;
   bool          isImageHovered = false;
@@ -1499,8 +1522,14 @@ SKIF_UI_Tab_DrawViewer (void)
   if (loadImage)
   { }
 
+  else if (tryingToDownImage)
+    pcstrLabel = cstrLabelDowning;
+
   else if (tryingToLoadImage)
     pcstrLabel = cstrLabelLoading;
+
+  else if (imageFailWarning)
+    pcstrLabel = cstrLabelFailed;
 
   else if (textureLoadQueueLength.load() == queuePosGameCover && cover.pRawTexSRV.p == nullptr)
     pcstrLabel = cstrLabelMissing;
@@ -1852,7 +1881,14 @@ SKIF_UI_Tab_DrawViewer (void)
     if (SKIF_ImGui_MenuItemEx2 ("Open", ICON_FA_EYE))
       OpenFileDialog = PopupState_Open;
 
-    if (tryingToLoadImage)
+    if (tryingToDownImage)
+    {
+      ImGui::PushStyleColor  (ImGuiCol_Text, ImGui::GetStyleColorVec4 (ImGuiCol_TextDisabled));
+      SKIF_ImGui_MenuItemEx2 ("Downloading...", ICON_FA_SPINNER, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+      ImGui::PopStyleColor   ( );
+    }
+
+    else if (tryingToLoadImage)
     {
       ImGui::PushStyleColor  (ImGuiCol_Text, ImGui::GetStyleColorVec4 (ImGuiCol_TextDisabled));
       SKIF_ImGui_MenuItemEx2 ("Loading...", ICON_FA_SPINNER, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
@@ -2031,7 +2067,7 @@ SKIF_UI_Tab_DrawViewer (void)
       int queuePos = getTextureLoadQueuePos();
       //PLOG_VERBOSE << "queuePos = " << queuePos;
     
-      LoadLibraryTexture ( _data->image );
+      bool success = LoadLibraryTexture ( _data->image );
 
       PLOG_VERBOSE << "_pRawTexSRV = "        << _data->image.pRawTexSRV;
       PLOG_VERBOSE << "_pTonemappedTexSRV = " << _data->image.pTonemappedTexSRV;
@@ -2040,7 +2076,10 @@ SKIF_UI_Tab_DrawViewer (void)
 
       if (currentQueueLength == queuePos)
       {
-        PLOG_DEBUG << "Texture is live! Swapping it in.";
+        if (success)
+          PLOG_VERBOSE << "Queue position is live, and texture was successfully loaded!";
+        else
+          PLOG_WARNING << "Queue position is live, but texture failed to load properly...";
 
         cover.file_info         = _data->image.file_info;
         cover.width             = _data->image.width;
@@ -2071,10 +2110,13 @@ SKIF_UI_Tab_DrawViewer (void)
         imageLoading.store (false);
 
         // Force a refresh when the cover has been swapped in
-        PostMessage (SKIF_Notify_hWnd, WM_SKIF_COVER, 0x0, 0x0);
+        PostMessage (SKIF_Notify_hWnd, WM_SKIF_IMAGE, 0x0, static_cast<LPARAM> (success));
       }
 
-      else if (_data->image.pRawTexSRV.p != nullptr || _data->image.pTonemappedTexSRV != nullptr || _data->image.pGamutCoverageSRV != nullptr || _data->image.pGamutCoverageUAV != nullptr)
+      else if (_data->image.pRawTexSRV.p        != nullptr ||
+               _data->image.pTonemappedTexSRV.p != nullptr ||
+               _data->image.pGamutCoverageSRV.p != nullptr ||
+               _data->image.pGamutCoverageUAV.p != nullptr)
       {
         if (_data->image.pRawTexSRV.p != nullptr)
         {
@@ -2084,7 +2126,7 @@ SKIF_UI_Tab_DrawViewer (void)
           _data->image.pRawTexSRV.p = nullptr;
         }
 
-        if (_data->image.pTonemappedTexSRV != nullptr)
+        if (_data->image.pTonemappedTexSRV.p != nullptr)
         {
           PLOG_DEBUG << "Texture is late! (" << queuePos << " vs " << currentQueueLength << ")";
           PLOG_VERBOSE << "SKIF_ResourcesToFree: Pushing " << _data->image.pTonemappedTexSRV.p << " to be released";;
@@ -2092,18 +2134,18 @@ SKIF_UI_Tab_DrawViewer (void)
           _data->image.pTonemappedTexSRV.p = nullptr;
         }
 
-        if (_data->image.pGamutCoverageSRV != nullptr)
+        if (_data->image.pGamutCoverageSRV.p != nullptr)
         {
           PLOG_DEBUG << "Texture is late! (" << queuePos << " vs " << currentQueueLength << ")";
-          PLOG_VERBOSE << "SKIF_ResourcesToFree: Pushing " << _data->image.pGamutCoverageSRV << " to be released";;
+          PLOG_VERBOSE << "SKIF_ResourcesToFree: Pushing " << _data->image.pGamutCoverageSRV.p << " to be released";;
           SKIF_ResourcesToFree.push(_data->image.pGamutCoverageSRV.p);
           _data->image.pGamutCoverageSRV.p = nullptr;
         }
 
-        if (_data->image.pGamutCoverageUAV != nullptr)
+        if (_data->image.pGamutCoverageUAV.p != nullptr)
         {
           PLOG_DEBUG << "Texture is late! (" << queuePos << " vs " << currentQueueLength << ")";
-          PLOG_VERBOSE << "SKIF_ResourcesToFree: Pushing " << _data->image.pGamutCoverageUAV << " to be released";;
+          PLOG_VERBOSE << "SKIF_ResourcesToFree: Pushing " << _data->image.pGamutCoverageUAV.p << " to be released";;
           SKIF_ResourcesToFree.push(_data->image.pGamutCoverageUAV.p);
           _data->image.pGamutCoverageUAV.p = nullptr;
         }
@@ -2214,7 +2256,7 @@ SKIF_UI_Tab_DrawViewer (void)
     OpenFileDialog = PopupState_Closed;
   }
 
-  if (! tryingToLoadImage)
+  if (! tryingToLoadImage && ! tryingToDownImage)
   {
     if (ImGui::IsKeyPressed (ImGuiKey_RightArrow))
     {
@@ -2254,7 +2296,7 @@ SKIF_UI_Tab_DrawViewer (void)
     if (isExtensionSupported (ext))
     {
       if (isURL)
-        SaveTempImage (dragDroppedFilePath, filename);
+        tryingToDownImage = SaveTempImage (dragDroppedFilePath, filename);
 
       else
       {

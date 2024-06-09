@@ -59,7 +59,7 @@ constexpr UINT           WM_SKIF_FILE_DIALOG    = WM_USER + 0x1030; // Triggers 
 
 // Thread workers
 constexpr UINT           WM_SKIF_GAMEPAD        = WM_USER + 0x2049; // Gamepad input worker detected new input
-constexpr UINT           WM_SKIF_COVER          = WM_USER + 0x2050; // Cover worker completed
+constexpr UINT           WM_SKIF_IMAGE          = WM_USER + 0x2050; // Image worker completed
 constexpr UINT           WM_SKIF_UPDATER        = WM_USER + 0x2051; // Updater worker completed
 constexpr UINT           WM_SKIF_ICON           = WM_USER + 0x2052; // Patreon/Cover/Icon textures workers completed...
 constexpr UINT           WM_SKIF_REFRESHCOVER   = WM_USER + 0x2053; // Refresh Cover -- Update Cover worker completed
