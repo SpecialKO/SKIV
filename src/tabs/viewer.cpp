@@ -153,11 +153,12 @@ PopupState ContextMenu     = PopupState_Closed;
 
 struct image_s {
   struct file_s {
-    std::wstring filename      = { }; // Image filename
-    std:: string filename_utf8 = { };
-    std::wstring path          = { }; // Image path (full)
-    std:: string path_utf8     = { };
-    std::wstring folder_path   = { }; // Parent folder path
+    std::wstring filename         = { }; // Image filename
+    std:: string filename_utf8    = { };
+    std::wstring folder_path      = { }; // Parent folder path
+    std:: string folder_path_utf8 = { };
+    std::wstring path             = { }; // Image path (full)
+    std:: string path_utf8        = { };
     file_s ( ) { };
   } file_info;
 
@@ -1444,6 +1445,8 @@ SKIF_UI_Tab_DrawViewer (void)
       _current_folder.path       = path.parent_path().wstring();
       _current_folder.path_utf8  = SK_WideCharToUTF8 (_current_folder.path);
 
+      PLOG_VERBOSE << "Watching the folder... " << _current_folder.path;
+
       // This triggers a new updateFolderData() run below
       dwLastSignaled = 1;
     }
@@ -1642,15 +1645,12 @@ SKIF_UI_Tab_DrawViewer (void)
       if (_registry.bDeveloperMode)
       {
         sprintf (szLabels,     "Image:\n"
-                               "Image Path:\n"
-                               "Current Folder:\n"
+                               "Folder:\n"
                                "Zoom Level:");
         sprintf (szLabelsData, "%s\n"
                                "%s\n"
-                               "%s\n"
                                "%3.0f %%", cover.file_info.filename_utf8.c_str(),
-                                           cover.file_info.path_utf8.c_str(),
-                                          _current_folder.path_utf8.c_str(),
+                                           cover.file_info.folder_path_utf8.c_str(),
                                            cover.zoom * 100);
       }
 
@@ -2057,10 +2057,11 @@ SKIF_UI_Tab_DrawViewer (void)
         cover.is_hdr            = _data->image.is_hdr;
 
         // Parent folder (used for the directory watch)
-        std::filesystem::path path    = SKIF_Util_NormalizeFullPath (cover.file_info.path);
-        cover.file_info.folder_path   = path.parent_path().wstring();
-        cover.file_info.filename      = path.filename()   .wstring();
-        cover.file_info.filename_utf8 = SK_WideCharToUTF8 (cover.file_info.filename);
+        std::filesystem::path path       = SKIF_Util_NormalizeFullPath (cover.file_info.path);
+        cover.file_info.folder_path      = path.parent_path().wstring();
+        cover.file_info.folder_path_utf8 = SK_WideCharToUTF8 (cover.file_info.folder_path);
+        cover.file_info.filename         = path.filename()   .wstring();
+        cover.file_info.filename_utf8    = SK_WideCharToUTF8 (cover.file_info.filename);
 
         extern ImVec2 SKIV_ResizeApp;
         SKIV_ResizeApp.x = cover.width;
