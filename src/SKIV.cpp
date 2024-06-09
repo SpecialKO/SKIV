@@ -1207,17 +1207,19 @@ wWinMain ( _In_     HINSTANCE hInstance,
          hotkeyF11   = (              ImGui::GetKeyData (ImGuiKey_F11   )->DownDuration == 0.0f), // Toggle Fullscreen Mode
          hotkeyEsc   = (              ImGui::GetKeyData (ImGuiKey_Escape)->DownDuration == 0.0f), // Close the app
          hotkeyCtrlQ = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_Q     )->DownDuration == 0.0f), // Close the app
-         hotkeyCtrlW = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_W     )->DownDuration == 0.0f), // Close the app
          hotkeyCtrlR = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_R     )->DownDuration == 0.0f), // Library/About: Refresh data
          hotkeyCtrlO = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_O     )->DownDuration == 0.0f), // Viewer: Open File
          hotkeyCtrlA = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_A     )->DownDuration == 0.0f), // Viewer: Open File
          hotkeyCtrlD = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_D     )->DownDuration == 0.0f), // Viewer: Toggle Image Details
          hotkeyCtrlF = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_F     )->DownDuration == 0.0f), // Toggle Fullscreen Mode
          hotkeyCtrlV = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_V     )->DownDuration == 0.0f), // Paste data through the clipboard
-         hotkeyCtrlN = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_N     )->DownDuration == 0.0f), // Minimize app
-         hotkeyCtrl1 = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_1     )->DownDuration == 0.0f), // Switch to Viewer
-         hotkeyCtrl2 = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_2     )->DownDuration == 0.0f), // Switch to Settings
-         hotkeyCtrl3 = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_3     )->DownDuration == 0.0f); // Switch to About
+         hotkeyCtrlN = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_N     )->DownDuration == 0.0f); // Minimize app
+
+    // Handled in viewer.cpp
+       //hotkeyCtrl1 = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_1     )->DownDuration == 0.0f), // Viewer -> Image Scaling: View actual size (1:1 / None)
+       //hotkeyCtrl2 = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_2     )->DownDuration == 0.0f), // Viewer -> Image Scaling: Zoom to fit (Fit)
+       //hotkeyCtrl3 = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_3     )->DownDuration == 0.0f); // Viewer -> Image Scaling: Fill the window (Fill)
+       //hotkeyCtrlW = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_W     )->DownDuration == 0.0f), // Close the app
 
     auto _TranslateAndDispatch = [&](void) -> bool
     {
@@ -1665,19 +1667,19 @@ wWinMain ( _In_     HINSTANCE hInstance,
       // Only allow navigational hotkeys when in Large Mode and as long as no popups are opened
       if (! SKIF_ImGui_IsAnyPopupOpen ( ))
       {
-        if (hotkeyF1 || hotkeyCtrl1)
+        if (hotkeyF1)
         {
           if (SKIF_Tab_Selected != UITab_Viewer)
               SKIF_Tab_ChangeTo  = UITab_Viewer;
         }
 
-        if (hotkeyF2 || hotkeyCtrl2)
+        if (hotkeyF2)
         {
           if (SKIF_Tab_Selected != UITab_Settings)
               SKIF_Tab_ChangeTo  = UITab_Settings;
         }
 
-        if (hotkeyF3 || hotkeyCtrl3)
+        if (hotkeyF3)
         {
           if (SKIF_Tab_Selected != UITab_About)
               SKIF_Tab_ChangeTo  = UITab_About;
@@ -2045,7 +2047,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
       if (hotkeyCtrlN)
         ShowWindow (SKIF_ImGui_hWnd, SW_MINIMIZE);
 
-      if (hotkeyCtrlQ || hotkeyCtrlW || bKeepWindowAlive == false) // HotkeyEsc is situational
+      if (hotkeyCtrlQ || bKeepWindowAlive == false) // HotkeyEsc is situational
         bKeepProcessAlive = false;
 
 #pragma endregion

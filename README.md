@@ -40,16 +40,21 @@ New versions will probably be distributed through their own packaged installer.
 
 | Shortcut&ensp;&ensp;&ensp;&ensp;&ensp;&ensp;&ensp;&ensp; | What it does |
 | ------------------------: | -------------- |
-| `Ctrl+O` *or* `Ctrl+A`    | Open a new image.                                       |
+| `Ctrl+A` *or* `Ctrl+O`    | Open a new image.                                       |
 | `Ctrl+D`                  | Toggle image details.                                   |
-| `F1` *or* `Ctrl+1`        | Switch to the Viewer tab.                               |
-| `F2` *or* `Ctrl+2`        | Switch to the Settings tab.                             |
+| `Ctrl+1`                  | Image Scaling: View actual size (None / 1:1)            |
+| `Ctrl+2`*or* `Ctrl+0`     | Image Scaling: Zoom to fit (Fit)                        |
+| `Ctrl+3`                  | Image Scaling: Fill the window (Fill)                   |
+| `Ctrl+W`                  | Close the currently opened image                        |
+| `Ctrl+E`                  | Browse folder / Open in File Explorer                   |
+| `F1`                      | Switch to the Viewer tab.                               |
+| `F2`                      | Switch to the Settings tab.                             |
 | `F6`                      | Appearance: Toggles DPI scaling.                        |
 | `F7`                      | Appearance: Cycles between available color themes.      |
 | `F8`                      | Appearance: Toggles borders.                            |
 | `F9`                      | Appearance: Toggles color depth.                        |
 | `F11` *or* `Ctrl+F`       | Toggle fullscreen mode.                                 |
-| `Esc` *or* `Ctrl+Q` *or* `Ctrl+W` | Closes the app.                                 |
+| `Esc` *or* `Ctrl+Q`       | Closes the app.                                         |
 | `Ctrl+N`                  | Minimizes the app.                                      |
 
 ## Third-party code

@@ -156,6 +156,14 @@ const float fTintMin     = 0.75f;
 PopupState OpenFileDialog  = PopupState_Closed;
 PopupState ContextMenu     = PopupState_Closed;
 
+enum ImageScaling {
+  ImageScaling_Auto,
+  ImageScaling_None,
+  ImageScaling_Fit,
+  ImageScaling_Fill
+//ImageScaling_Stretch
+};
+
 struct image_s {
   struct file_s {
     std::wstring filename         = { }; // Image filename
@@ -170,7 +178,7 @@ struct image_s {
   float        width       = 0.0f;
   float        height      = 0.0f;
   float        zoom        = 1.0f;
-  int          scaling     = -1;
+  ImageScaling scaling     = ImageScaling_Auto;
   ImVec2       uv0 = ImVec2 (0, 0);
   ImVec2       uv1 = ImVec2 (1, 1);
   ImVec2       avail_size;        // Holds the frame size used (affected by the scaling method)
@@ -239,7 +247,7 @@ struct image_s {
     width               = 0.0f;
     height              = 0.0f;
     zoom                = 1.0f;
-    scaling             = -1;
+    scaling             = ImageScaling_Auto;
     uv0                 = ImVec2 (0, 0);
     uv1                 = ImVec2 (1, 1);
     avail_size          = { };
@@ -1171,7 +1179,7 @@ ImVec2
 GetCurrentAspectRatio (image_s& image)
 {
   static SKIF_RegistrySettings& _registry   = SKIF_RegistrySettings::GetInstance ( );
-  static int last_scaling = 0;
+  static ImageScaling last_scaling = ImageScaling_Auto;
 
   ImVec2 avail_size = ImGui::GetContentRegionAvail ( ) / SKIF_ImGui_GlobalDPIScale;
 
@@ -1197,29 +1205,38 @@ GetCurrentAspectRatio (image_s& image)
   image.uv0 = ImVec2 (0, 0);
   image.uv1 = ImVec2 (1, 1);
 
-  int _appliedScaling = image.scaling;
+  ImageScaling _appliedScaling = image.scaling;
 
   // Attempt to find best scaling method on load
-  if (_appliedScaling == -1)
+  if (_appliedScaling == ImageScaling_Auto)
   {
     // None: if smaller than window size
     if (avail_width > image.width && avail_height > image.height)
-      _appliedScaling = 0;
+      _appliedScaling = ImageScaling_None;
 
     // Fit: all other scenarios
     else
-      _appliedScaling = 2;
+      _appliedScaling = ImageScaling_Fit;
   }
 
-  // None / "View actual size"
-  if (_appliedScaling == 0)
+  // None / 1:1 / "View actual size"
+  if (_appliedScaling == ImageScaling_None)
   {
     avail_width  = image.width;
     avail_height = image.height;
   }
 
+  // Fit / "Zoom to fit"
+  else if (_appliedScaling == ImageScaling_Fit)
+  {
+    if (contentAspectRatio > frameAspectRatio)
+      avail_height = avail_width / contentAspectRatio;
+    else
+      avail_width  = avail_height * contentAspectRatio;
+  }
+
   // Fill / "Fill window"
-  else if (_appliedScaling == 1)
+  else if (_appliedScaling == ImageScaling_Fill)
   {
     // Workaround to prevent content/frame fighting one another
     if (ImGui::GetScrollMaxY() == 0.0f)
@@ -1233,50 +1250,15 @@ GetCurrentAspectRatio (image_s& image)
       avail_width  = avail_height * contentAspectRatio;
     else // if (contentAspectRatio < frameAspectRatio)
       avail_height = avail_width / contentAspectRatio;
-
-    /* Original (SKIF) implementation that changes the coordinates
-     *  This results in a lack of scrollbars, preventing scrolling
-    
-    // Crop wider aspect ratios by their width
-    if (contentAspectRatio > frameAspectRatio)
-    {
-      float newWidth = avail_height * contentAspectRatio;
-      diff.x = (avail_width / newWidth);
-      diff.x -= 1.0f;
-      diff.x /= 2;
-
-      image.uv0.x = 0.f - diff.x;
-      image.uv1.x = 1.f + diff.x;
-    }
-
-    // Crop thinner aspect ratios by their height
-    else // if (contentAspectRatio < frameAspectRatio)
-    {
-      float newHeight = avail_width / contentAspectRatio; // image.height / image.width * avail_width
-      diff.y = (avail_height / newHeight);
-      diff.y -= 1.0f;
-      diff.y /= 2;
-      
-      image.uv0.y = 0.f - diff.y;
-      image.uv1.y = 1.f + diff.y;
-    }
-    */
   }
 
-  // Fit / "Zoom to fit"
-  else if (_appliedScaling == 2)
-  {
-    if (contentAspectRatio > frameAspectRatio)
-      avail_height = avail_width / contentAspectRatio;
-    else
-      avail_width  = avail_height * contentAspectRatio;
-  }
-
+#if 0
   // Stretch
-  else if (_appliedScaling == 3)
+  else if (_appliedScaling == ImageScaling_Stretch)
   {
     // Do nothing -- this cases the image to be stretched
   }
+#endif
 
   // Cache the current image scaling _and_ reset the scroll center
   if (last_scaling != image.scaling)
@@ -1606,11 +1588,32 @@ SKIF_UI_Tab_DrawViewer (void)
     }
   }
 
+  // Only apply changes to the scaling method if we actually have an image loaded
+  if (cover.pRawTexSRV.p != nullptr)
+  {
+    // These keybindings requires Ctrl to be held down
+    if (ImGui::GetIO().KeyCtrl)
+    {
+      if      (ImGui::GetKeyData (ImGuiKey_1)->DownDuration == 0.0f)   // Ctrl+1 - Image Scaling: View actual size (None / 1:1)
+        cover.scaling = (cover.scaling != ImageScaling_None) ? ImageScaling_None : ImageScaling_Auto;
+      else if (ImGui::GetKeyData (ImGuiKey_2)->DownDuration == 0.0f || // Ctrl+2 - Image Scaling: Zoom to fit (Fit)
+               ImGui::GetKeyData (ImGuiKey_0)->DownDuration == 0.0f)   // Ctrl+0 - Alternate hotkey
+        cover.scaling = (cover.scaling != ImageScaling_Fit ) ? ImageScaling_Fit  : ImageScaling_Auto;
+      else if (ImGui::GetKeyData (ImGuiKey_3)->DownDuration == 0.0f)   // Ctrl+3 - Image Scaling: Fill the window (Fill)
+        cover.scaling = (cover.scaling != ImageScaling_Fill) ? ImageScaling_Fill : ImageScaling_Auto;
+      else if (ImGui::GetKeyData (ImGuiKey_W)->DownDuration == 0.0f)   // Ctrl+W - Close the opened image
+        _SwapOutCover ();
+      else if (! cover.file_info.path.empty() &&
+               ImGui::GetKeyData (ImGuiKey_E)->DownDuration == 0.0f)   // Ctrl+E - Browse folder
+        SKIF_Util_FileExplorer_SelectFile (cover.file_info.path.c_str());
+    }
+  }
+
 #pragma endregion
 
   // This allows images to be DPI-scaled on HiDPI displays up until the user uses "View actual size" to force them to appear as 100%
-  ImVec2 sizeCover     = GetCurrentAspectRatio (cover)     * ((cover    .scaling == 0) ? 1 : SKIF_ImGui_GlobalDPIScale) * cover    .zoom;
-  ImVec2 sizeCover_old = GetCurrentAspectRatio (cover_old) * ((cover_old.scaling == 0) ? 1 : SKIF_ImGui_GlobalDPIScale) * cover_old.zoom;
+  ImVec2 sizeCover     = GetCurrentAspectRatio (cover)     * ((cover    .scaling == ImageScaling_None) ? 1 : SKIF_ImGui_GlobalDPIScale) * cover    .zoom;
+  ImVec2 sizeCover_old = GetCurrentAspectRatio (cover_old) * ((cover_old.scaling == ImageScaling_None) ? 1 : SKIF_ImGui_GlobalDPIScale) * cover_old.zoom;
 
   // From now on ImGui UI calls starts being made...
 
@@ -1990,7 +1993,7 @@ SKIF_UI_Tab_DrawViewer (void)
 
     ImGui::PushStyleColor (ImGuiCol_NavHighlight, ImVec4(0,0,0,0));
 
-    if (SKIF_ImGui_MenuItemEx2 ("Open", ICON_FA_EYE))
+    if (SKIF_ImGui_MenuItemEx2 ("Open", ICON_FA_EYE, ImGui::GetStyleColorVec4(ImGuiCol_Text), "Ctrl+A"))
       OpenFileDialog = PopupState_Open;
 
     if (tryingToDownImage)
@@ -2009,7 +2012,7 @@ SKIF_UI_Tab_DrawViewer (void)
 
     else if (cover.pRawTexSRV.p != nullptr)
     {
-      if (SKIF_ImGui_MenuItemEx2 ("Close", 0, ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info)))
+      if (SKIF_ImGui_MenuItemEx2 ("Close", 0, ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info), "Ctrl+W"))
         _SwapOutCover ();
 
       // Image scaling
@@ -2020,22 +2023,22 @@ SKIF_UI_Tab_DrawViewer (void)
 
       if (SKIF_ImGui_BeginMenuEx2 ("Scaling", ICON_FA_PANORAMA))
       {
-        auto _CreateMenuItem = [&](int image_scaling, const char* label) {
+        auto _CreateMenuItem = [&](ImageScaling image_scaling, const char* label, const char* shortcut) {
           bool bEnabled = (cover.scaling == image_scaling);
 
           if (bEnabled)
             ImGui::PushStyleColor (ImGuiCol_Text, ImGui::GetStyleColorVec4 (ImGuiCol_TextDisabled));
 
-          if (ImGui::MenuItem (label, spaces, (cover.scaling == image_scaling)))
-            cover.scaling = (cover.scaling == image_scaling) ? -1 : image_scaling;
+          if (ImGui::MenuItem (label, shortcut, (cover.scaling == image_scaling)))
+            cover.scaling = (cover.scaling != image_scaling) ? image_scaling : ImageScaling_Auto;
 
           if (bEnabled)
             ImGui::PopStyleColor  ( );
         };
 
-        _CreateMenuItem (0, "View actual size");
-        _CreateMenuItem (1, "Fill window");
-        _CreateMenuItem (2, "Zoom to fit");
+        _CreateMenuItem (ImageScaling_None, "View actual size", "Ctrl+1");
+        _CreateMenuItem (ImageScaling_Fit,  "Zoom to fit",      "Ctrl+2");
+        _CreateMenuItem (ImageScaling_Fill, "Fill window",      "Ctrl+3");
 
 #if _DEBUG
         _CreateMenuItem (3, "Stretch");
@@ -2097,12 +2100,12 @@ SKIF_UI_Tab_DrawViewer (void)
         ImGui::PopID ( ); // #HDRVisualization
       }
       
-      if (SKIF_ImGui_MenuItemEx2 ("Details", ICON_FA_BARCODE, ImGui::GetStyleColorVec4 (ImGuiCol_Text), spaces, &_registry.bImageDetails))
+      if (SKIF_ImGui_MenuItemEx2 ("Details", ICON_FA_BARCODE, ImGui::GetStyleColorVec4 (ImGuiCol_Text), "Ctrl+D", &_registry.bImageDetails))
         _registry.regKVImageDetails.putData (_registry.bImageDetails);
 
       ImGui::Separator       ( );
 
-      if (! cover.file_info.path.empty() && SKIF_ImGui_MenuItemEx2 ("Open in File Explorer", ICON_FA_FOLDER_OPEN, ImColor(255, 207, 72)))
+      if (! cover.file_info.path.empty() && SKIF_ImGui_MenuItemEx2 ("Browse Folder", ICON_FA_FOLDER_OPEN, ImColor(255, 207, 72), "Ctrl+E"))
         SKIF_Util_FileExplorer_SelectFile (cover.file_info.path.c_str());
     }
 
@@ -2113,14 +2116,14 @@ SKIF_UI_Tab_DrawViewer (void)
 
     ImGui::Separator ( );
 
-    if (SKIF_ImGui_MenuItemEx2 ("Fullscreen", SKIF_ImGui_IsFullscreen () ? ICON_FA_DOWN_LEFT_AND_UP_RIGHT_TO_CENTER : ICON_FA_UP_RIGHT_AND_DOWN_LEFT_FROM_CENTER))
+    if (SKIF_ImGui_MenuItemEx2 ("Fullscreen", SKIF_ImGui_IsFullscreen () ? ICON_FA_DOWN_LEFT_AND_UP_RIGHT_TO_CENTER : ICON_FA_UP_RIGHT_AND_DOWN_LEFT_FROM_CENTER, ImGui::GetStyleColorVec4 (ImGuiCol_Text), "Ctrl+F"))
     {
       SKIF_ImGui_SetFullscreen (! SKIF_ImGui_IsFullscreen( ));
     }
 
     ImGui::Separator ( );
 
-    if (SKIF_ImGui_MenuItemEx2 ("Exit", 0, ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Info)))
+    if (SKIF_ImGui_MenuItemEx2 ("Exit", 0, ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Info), "Esc"))
     {
       extern bool bKeepWindowAlive;
       bKeepWindowAlive = false;
