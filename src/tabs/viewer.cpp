@@ -180,7 +180,7 @@ struct image_s {
 
   float        width       = 0.0f;
   float        height      = 0.0f;
-  float        zoom        = 1.0f;
+  float        zoom        = 1.0f; // 1.0f = 100%; max: 5.0f; min: 0.05f
   ImageScaling scaling     = ImageScaling_Auto;
   ImVec2       uv0 = ImVec2 (0, 0);
   ImVec2       uv1 = ImVec2 (1, 1);
@@ -1650,17 +1650,23 @@ SKIF_UI_Tab_DrawViewer (void)
     // These keybindings requires Ctrl to be held down
     if (ImGui::GetIO().KeyCtrl)
     {
-      if      (ImGui::GetKeyData (ImGuiKey_1)->DownDuration == 0.0f)   // Ctrl+1 - Image Scaling: View actual size (None / 1:1)
-        cover.scaling = (cover.scaling != ImageScaling_None) ? ImageScaling_None : ImageScaling_Auto;
-      else if (ImGui::GetKeyData (ImGuiKey_2)->DownDuration == 0.0f || // Ctrl+2 - Image Scaling: Zoom to fit (Fit)
-               ImGui::GetKeyData (ImGuiKey_0)->DownDuration == 0.0f)   // Ctrl+0 - Alternate hotkey
-        cover.scaling = (cover.scaling != ImageScaling_Fit ) ? ImageScaling_Fit  : ImageScaling_Auto;
-      else if (ImGui::GetKeyData (ImGuiKey_3)->DownDuration == 0.0f)   // Ctrl+3 - Image Scaling: Fill the window (Fill)
-        cover.scaling = (cover.scaling != ImageScaling_Fill) ? ImageScaling_Fill : ImageScaling_Auto;
-      else if (ImGui::GetKeyData (ImGuiKey_W)->DownDuration == 0.0f)   // Ctrl+W - Close the opened image
+      auto _IsHotKeyClicked = [](ImGuiKey key, ImageScaling image_scaling) {
+        if (ImGui::GetKeyData (key)->DownDuration == 0.0f)
+        {
+          cover.scaling = (cover.scaling != image_scaling) ? image_scaling : ImageScaling_Auto;
+          cover.zoom    = 1.0f;
+        }
+      };
+
+      _IsHotKeyClicked (ImGuiKey_1, ImageScaling_None); // Ctrl+1 - Image Scaling: View actual size (None / 1:1)
+      _IsHotKeyClicked (ImGuiKey_2, ImageScaling_Fit ); // Ctrl+2 - Image Scaling: Zoom to fit (Fit)
+      _IsHotKeyClicked (ImGuiKey_0, ImageScaling_Fit ); // Ctrl+0 - Alternate hotkey
+      _IsHotKeyClicked (ImGuiKey_3, ImageScaling_Fill); // Ctrl+3 - Image Scaling: Fill the window (Fill)
+
+      if (ImGui::GetKeyData (ImGuiKey_W)->DownDuration == 0.0f) // Ctrl+W - Close the opened image
         _SwapOutCover ();
-      else if (! cover.file_info.path.empty() &&
-               ImGui::GetKeyData (ImGuiKey_E)->DownDuration == 0.0f)   // Ctrl+E - Browse folder
+      else if (! cover.file_info.path.empty() && // Ctrl+E - Browse folder
+               ImGui::GetKeyData (ImGuiKey_E)->DownDuration == 0.0f)
         SKIF_Util_FileExplorer_SelectFile (cover.file_info.path.c_str());
     }
   }
@@ -2086,7 +2092,10 @@ SKIF_UI_Tab_DrawViewer (void)
             ImGui::PushStyleColor (ImGuiCol_Text, ImGui::GetStyleColorVec4 (ImGuiCol_TextDisabled));
 
           if (ImGui::MenuItem (label, shortcut, (cover.scaling == image_scaling)))
+          {
             cover.scaling = (cover.scaling != image_scaling) ? image_scaling : ImageScaling_Auto;
+            cover.zoom    = 1.0f;
+          }
 
           if (bEnabled)
             ImGui::PopStyleColor  ( );
