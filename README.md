@@ -7,18 +7,34 @@ New versions will probably be distributed through their own packaged installer.
 
 ## Features
 
-- Basic image viewer
+- Quick and simple image viewer
 - HDR support
-- Drag-n-drop support
+- HDR visualization
+- Drag-n-drop support of both local and internet image links
+- Copy/paste support
+
+## Format support
+
+* JXR
+* AVIF (Windows 11 only)
+* Radiance HDR (.hdr)
+* PNG
+* JPEG (JPG)
+* WebP
+* PSD
+* GIF
+* BMP
+* TIFF
 
 ## Command line arguments
 
 | Argument&ensp;&ensp;&ensp;&ensp;&ensp;&ensp;&ensp;&ensp; | What it does |
-| -----------------------------: | -------------- |
-| `<empty>`                      | Launches the app. |
-| `Exit`                         | Closes all running instances of the app. |
-| `Minimize`                     | Launches SKIV minimized *or* minimizes any running instances of SKIV. |
-| `"<path-to-local-image-file>"` | Opens the provided image in the app. |
+| ------------------------------: | -------------- |
+| `<empty>`                       | Launches the app. |
+| `"<path-to-local-image-file>"`  | Opens the provided image path in the app. |
+| `"<link-to-online-image-file>"` | Opens the provided image link in the app. |
+| `/OpenFileDialog`               | Open the file dialog of the app. |
+| `/Exit`                         | Closes all running instances of the app. |
 
 ## Keyboard shortcuts
 
