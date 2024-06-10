@@ -436,7 +436,10 @@ SaveTempImage (std::wstring_view source, std::wstring_view filename)
       }
     }
 
-    PLOG_ERROR_IF(! success) << "Failed to process the new cover image!";
+    else {
+      PostMessage (SKIF_Notify_hWnd, WM_SKIF_IMAGE, 0x0, static_cast<LPARAM> (success));
+      PLOG_ERROR << "Failed to process the new cover image!";
+    }
 
     PLOG_INFO  << "Finished downloading web image asynchronously...";
     
@@ -909,7 +912,7 @@ LoadLibraryTexture (image_s& image)
         meta = img.GetMetadata ( );
       }
 
-      meta.format = DirectX::MakeSRGB (DirectX::MakeTypeless (meta.format));
+      //meta.format = DirectX::MakeSRGB (DirectX::MakeTypeless (meta.format));
     }
   }
 
@@ -1824,12 +1827,15 @@ SKIF_UI_Tab_DrawViewer (void)
     ImGui::SetScrollHereX ( );
   }
 
-  // Using 4.975f and 0.075f to work around some floating point shenanigans
-  if (     ImGui::GetIO().MouseWheel > 0 && cover.zoom < 4.975f)
-    cover.zoom += 0.05f;
+  if (cover.pRawTexSRV.p != nullptr)
+  {
+    // Using 4.975f and 0.075f to work around some floating point shenanigans
+    if (     ImGui::GetIO().MouseWheel > 0 && cover.zoom < 4.975f)
+      cover.zoom += 0.05f;
 
-  else if (ImGui::GetIO().MouseWheel < 0 && cover.zoom > 0.075f)
-    cover.zoom -= 0.05f;
+    else if (ImGui::GetIO().MouseWheel < 0 && cover.zoom > 0.075f)
+      cover.zoom -= 0.05f;
+  }
 
 #pragma endregion
 

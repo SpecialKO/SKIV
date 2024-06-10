@@ -2547,23 +2547,127 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
       //OutputDebugString((L"Hidden frames: " + std::to_wstring(ImGui::GetCurrentWindow()->HiddenFramesCannotSkipItems) + L"\n").c_str());
 
+#pragma region ClipboardReader
+
       // Read the clipboard
       // Optionally we'd filter out the data here too, but it would just
       //   duplicate the same processing we're already doing in viewer.cpp
       if (hotkeyCtrlV && ! ImGui::IsAnyItemActive ( )) // && ! ImGui::IsAnyItemFocused ( )
       {
-        auto img = SKIF_Util_GetClipboardBitmapData ();
 
-        if (img.format != DXGI_FORMAT_UNKNOWN)
-        {
-          //MessageBox (nullptr, L"There's image data!", L"Cool", MB_OK);
+        static bool
+            iniHTMLformat = true;
+        if (iniHTMLformat)
+        {   iniHTMLformat = false;
+          CF_HTML = RegisterClipboardFormatW (L"HTML Format");
+          PLOG_VERBOSE << "Clipboard registered format for 'HTML Format' is... " << CF_HTML;
         }
 
-        else
+        if (OpenClipboard (SKIF_ImGui_hWnd))
         {
-          dragDroppedFilePath = SKIF_Util_GetClipboardTextData ( );
+          ClipboardData cbd = ClipboardData_None;
+
+          // Enumerate the supported clipboard formats
+          UINT format = 0;
+          while ((format = EnumClipboardFormats (format)) != 0)
+          {
+            cbd |= ((format == CF_TEXT       ) ? ClipboardData_TextANSI    :
+                    (format == CF_UNICODETEXT) ? ClipboardData_TextUnicode :
+                    (format == CF_HTML       ) ? ClipboardData_HTML        :
+                    (format == CF_BITMAP     ) ? ClipboardData_Bitmap      :
+                                                 ClipboardData_None       );
+//#ifdef _DEBUG
+            wchar_t wzFormatName[256];
+            GetClipboardFormatNameW (format, wzFormatName, 256);
+            PLOG_VERBOSE << "Supported clipboard format: " << format << " - " << std::wstring(wzFormatName);
+//#endif
+          }
+
+          if (ClipboardData_TextUnicode == (cbd & ClipboardData_TextUnicode))
+          {
+            PLOG_VERBOSE << "Received a CF_UNICODETEXT paste!";
+
+            std::wstring unicode = SKIF_Util_GetClipboardTextDataW ( );
+
+            if (! unicode.empty())
+              dragDroppedFilePath = unicode;
+          }
+
+          else if (ClipboardData_TextANSI == (cbd & ClipboardData_TextANSI))
+          {
+            PLOG_VERBOSE << "Received a CF_TEXT paste!";
+
+            std::string ansi = SKIF_Util_GetClipboardTextData ( );
+
+            if (! ansi.empty())
+              dragDroppedFilePath = SK_UTF8ToWideChar (ansi);
+          }
+
+          else if (ClipboardData_HTML == (cbd & ClipboardData_HTML))
+          {
+            PLOG_VERBOSE << "Received a CF_HTML paste!";
+
+            std::string html      = SKIF_Util_GetClipboardHTMLData ( );
+            std::string htmlLower = SKIF_Util_ToLower (html);
+            std::string split1    = R"(<img )"; // Split first at '<img '
+            std::string split2    = R"(src=")"; // Split next  at 'src="'
+            std::string split3    = R"(")";     // Split last  at '"'
+
+            // Split 1 (trim before IMG element)
+            if (htmlLower.find (split1) != std::wstring::npos)
+            {
+              html = html.substr (htmlLower.find (split1) + split1.length());
+
+#ifdef _DEBUG
+              PLOG_VERBOSE << "html: " << html;
+#endif
+
+              // Update lower (trim before SRC attribute)
+              htmlLower = SKIF_Util_ToLower (html);
+
+              // Split 2
+              if (htmlLower.find (split2) != std::wstring::npos)
+              {
+                html = html.substr (htmlLower.find (split2) + split2.length());
+
+#ifdef _DEBUG
+                PLOG_VERBOSE << "html: " << html;
+#endif
+
+                // Update lower
+                htmlLower = SKIF_Util_ToLower (html);
+
+                // Split 3 (trim everything after SRC value)
+                if (htmlLower.find (split3) != std::wstring::npos)
+                {
+                  html = html.substr (0, htmlLower.find (split3));
+
+#ifdef _DEBUG
+                  PLOG_VERBOSE << "html: " << html;
+#endif
+
+                  if (! html.empty())
+                  {
+                    PLOG_VERBOSE << "Extracted image URL path: " << html;
+                    dragDroppedFilePath = SK_UTF8ToWideChar (html);
+                  }
+                }
+              }
+            }
+          }
+
+          else if (ClipboardData_Bitmap == (cbd & ClipboardData_Bitmap))
+          {
+            PLOG_VERBOSE << "Received a CF_BITMAP paste!";
+
+            SKIF_Util_GetClipboardBitmapData ( );
+          }
+
+          CloseClipboard ( );
         }
       }
+
+#pragma endregion
 
       // End the main ImGui window
       ImGui::End ( );
@@ -3479,6 +3583,9 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
         extern bool newImageLoaded;
         extern bool newImageFailed;
+        extern bool tryingToDownImage;
+
+        tryingToDownImage = false;
 
         if (success)
           newImageLoaded = true;
