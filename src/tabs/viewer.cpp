@@ -436,7 +436,10 @@ SaveTempImage (std::wstring_view source, std::wstring_view filename)
       }
     }
 
-    PLOG_ERROR_IF(! success) << "Failed to process the new cover image!";
+    else {
+      PostMessage (SKIF_Notify_hWnd, WM_SKIF_IMAGE, 0x0, static_cast<LPARAM> (success));
+      PLOG_ERROR << "Failed to process the new cover image!";
+    }
 
     PLOG_INFO  << "Finished downloading web image asynchronously...";
     
@@ -848,7 +851,7 @@ LoadLibraryTexture (image_s& image)
         size_t   imageSize = width * height * desired_channels * sizeof (pixel_size);
         uint8_t* pDest     = img.GetImage(0, 0, 0)->pixels;
         memcpy  (pDest, pixels, imageSize);
-      
+
         succeeded = true;
       }
 
@@ -876,8 +879,8 @@ LoadLibraryTexture (image_s& image)
             DirectX::DDS_FLAGS_PERMISSIVE,
               &meta, img)))
     {
-      const DXGI_FORMAT final_format  = DXGI_FORMAT_R8G8B8A8_UNORM;
-      DirectX::ScratchImage temp_img  = { };
+      const DXGI_FORMAT final_format = DXGI_FORMAT_R8G8B8A8_UNORM;
+      DirectX::ScratchImage temp_img = { };
 
       succeeded = true;
 
@@ -908,6 +911,8 @@ LoadLibraryTexture (image_s& image)
         std::swap (img, temp_img);
         meta = img.GetMetadata ( );
       }
+
+      //meta.format = DirectX::MakeSRGB (DirectX::MakeTypeless (meta.format));
     }
   }
 
@@ -992,6 +997,8 @@ LoadLibraryTexture (image_s& image)
     XMVECTOR vMaxCLL = g_XMZero;
     XMVECTOR vMaxLum = g_XMZero;
     XMVECTOR vMinLum = g_XMOne;
+
+    double dLumAccum = 0.0;
 
     static constexpr float FLT16_MIN = 0.0000000894069671630859375f;
 
@@ -1094,6 +1101,9 @@ LoadLibraryTexture (image_s& image)
         vMinLum =
           XMVectorMin (vMinLum, vColorXYZ);
 
+        dLumAccum +=
+          XMVectorGetY (v);
+
         //lumTotal +=
         //  logf ( std::max (0.000001f, 0.000001f + XMVectorGetY (v)) ),
         //++N;
@@ -1145,13 +1155,15 @@ LoadLibraryTexture (image_s& image)
       fMinLum = 0.0f;
     }
 
-    // Not implemented yet, need to implement histogram
-    image.light_info.avg_nits = std::numeric_limits <float>::infinity ();
-
     image.light_info.max_cll      = fMaxCLL;
     image.light_info.max_cll_name = cMaxChannel;
     image.light_info.max_nits     = fMaxLum * 80.0f; // scRGB
     image.light_info.min_nits     = fMinLum * 80.0f; // scRGB
+
+    // Not a great measure of average, but it's sufficient for now
+    image.light_info.avg_nits     = 80.0f * static_cast <float> (
+      dLumAccum / static_cast <double> (meta.width * meta.height)
+    );
   }
 
   HRESULT hr =
@@ -1815,12 +1827,15 @@ SKIF_UI_Tab_DrawViewer (void)
     ImGui::SetScrollHereX ( );
   }
 
-  // Using 4.975f and 0.075f to work around some floating point shenanigans
-  if (     ImGui::GetIO().MouseWheel > 0 && cover.zoom < 4.975f)
-    cover.zoom += 0.05f;
+  if (cover.pRawTexSRV.p != nullptr)
+  {
+    // Using 4.975f and 0.075f to work around some floating point shenanigans
+    if (     ImGui::GetIO().MouseWheel > 0 && cover.zoom < 4.975f)
+      cover.zoom += 0.05f;
 
-  else if (ImGui::GetIO().MouseWheel < 0 && cover.zoom > 0.075f)
-    cover.zoom -= 0.05f;
+    else if (ImGui::GetIO().MouseWheel < 0 && cover.zoom > 0.075f)
+      cover.zoom -= 0.05f;
+  }
 
 #pragma endregion
 
@@ -1901,6 +1916,7 @@ SKIF_UI_Tab_DrawViewer (void)
 
       static const char szLightLabels [] = "MaxCLL (scRGB): \n"
                                            "Max Luminance: \n"
+                                           "Avg Luminance: \n"
                                            "Min Luminance: ";
       char     szLightUnits  [512] = { };
       char     szLightLevels [512] = { };
@@ -1908,11 +1924,14 @@ SKIF_UI_Tab_DrawViewer (void)
       sprintf (szLightUnits, (const char*)
                            u8"(%c)\n"
                            u8"cd / m\u00b2\n" // Unicode: Superscript Two
+                           u8"cd / m\u00b2\n"
                            u8"cd / m\u00b2", cover.light_info.max_cll_name);
       sprintf (szLightLevels, "%.3f \n"
-                              "%.2f \n"
-                              "%.2f ",  cover.light_info.max_cll,
+                              "%.3f \n"
+                              "%.3f \n"
+                              "%.3f ",  cover.light_info.max_cll,
                                         cover.light_info.max_nits,
+                                        cover.light_info.avg_nits,
                                         cover.light_info.min_nits);
 
       auto orig_pos =

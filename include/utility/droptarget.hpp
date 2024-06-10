@@ -97,7 +97,7 @@ public:
 
 #ifdef _DEBUG
           TCHAR szFormatName[256];
-          GetClipboardFormatName (s_fmtSupported.cfFormat, szFormatName, 256);
+          GetClipboardFormatNameW (s_fmtSupported.cfFormat, szFormatName, 256);
           PLOG_VERBOSE << "Supported format: " << s_fmtSupported.cfFormat << " - " << szFormatName;
 #endif
 

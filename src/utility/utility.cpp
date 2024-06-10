@@ -28,6 +28,8 @@
 #include <utility/registry.h>
 #include <HybridDetect.h>
 
+UINT CF_HTML = NULL;
+
 std::vector<HANDLE> vWatchHandles[UITab_ALL];
 INT64               SKIF_TimeInMilliseconds = 0;
 
@@ -2327,12 +2329,38 @@ SKIF_Util_SetClipboardData (const std::wstring_view& data)
   return result;
 }
 
+std::string
+SKIF_Util_GetClipboardTextData (void)
+{
+  std::string result = { };
+
+  if (true) // OpenClipboard (SKIF_ImGui_hWnd)
+  {
+    HGLOBAL hGlobal = GetClipboardData (CF_TEXT);
+
+    if (hGlobal)
+    {
+      const char* pszSource = static_cast<const char*> (GlobalLock (hGlobal));
+
+      if (pszSource != nullptr)
+      {
+        result = std::string (pszSource);
+        GlobalUnlock (hGlobal);
+      }
+    }
+
+    //CloseClipboard ( );
+  }
+
+  return result;
+}
+
 std::wstring
-SKIF_Util_GetClipboardData (void)
+SKIF_Util_GetClipboardTextDataW (void)
 {
   std::wstring result = { };
 
-  if (OpenClipboard (SKIF_ImGui_hWnd))
+  if (true) // OpenClipboard (SKIF_ImGui_hWnd)
   {
     HGLOBAL hGlobal = GetClipboardData (CF_UNICODETEXT);
 
@@ -2347,10 +2375,119 @@ SKIF_Util_GetClipboardData (void)
       }
     }
 
-    CloseClipboard ( );
+    //CloseClipboard ( );
   }
 
   return result;
+}
+
+std::string
+SKIF_Util_GetClipboardHTMLData (void)
+{
+  std::string result = { };
+
+  if (true) // OpenClipboard (SKIF_ImGui_hWnd)
+  {
+    HGLOBAL hGlobal = GetClipboardData (CF_HTML);
+
+    if (hGlobal)
+    {
+      const char* pszSource = static_cast<const char*> (GlobalLock (hGlobal));
+
+      if (pszSource != nullptr)
+      {
+        result = std::string (pszSource);
+        GlobalUnlock (hGlobal);
+      }
+    }
+
+    //CloseClipboard ( );
+  }
+
+  return result;
+}
+
+
+#include <wincodec.h>
+
+DirectX::Image
+SKIF_Util_GetClipboardBitmapData (void)
+{
+  DirectX::Image img = { };
+
+  if (true) // OpenClipboard (SKIF_ImGui_hWnd)
+  {
+    HGLOBAL hGlobal = GetClipboardData (CF_DIBV5);
+
+    if (hGlobal)
+    {
+      BITMAPV5HEADER* bmp5hdr =
+        static_cast <BITMAPV5HEADER *> (GlobalLock (hGlobal));
+
+      if (bmp5hdr != nullptr)
+      {
+        int offset =
+          bmp5hdr->bV5Size + bmp5hdr->bV5ClrUsed * sizeof (RGBQUAD);
+
+        PLOG_VERBOSE << "bmp5hdr->bV5Compression: " <<
+             ((bmp5hdr->bV5Compression == BI_JPEG)      ? "JPEG"         :
+              (bmp5hdr->bV5Compression == BI_PNG)       ? "BI_PNG"       :
+              (bmp5hdr->bV5Compression == BI_RGB)       ? "BI_RGB"       :
+              (bmp5hdr->bV5Compression == BI_RLE4)      ? "BI_RLE4"      :
+              (bmp5hdr->bV5Compression == BI_RLE8)      ? "BI_RLE8"      :
+              (bmp5hdr->bV5Compression == BI_BITFIELDS) ? "BI_BITFIELDS" :
+                                                          "Unknown"     );
+
+        if (bmp5hdr->bV5Compression == BI_BITFIELDS ||
+            bmp5hdr->bV5Compression == BI_RGB)
+        {
+          offset += 12;
+
+          if (bmp5hdr->bV5BitCount == 24)
+            img.format = DXGI_FORMAT_B8G8R8X8_UNORM;
+          else if (bmp5hdr->bV5BitCount == 32)
+            img.format = DXGI_FORMAT_B8G8R8A8_UNORM;
+
+          if (img.format == DXGI_FORMAT_B8G8R8A8_UNORM)
+          {
+            img.pixels     = (BYTE *)bmp5hdr + offset;
+            img.width      = bmp5hdr->bV5Width;
+            img.height     = bmp5hdr->bV5Height;
+            img.slicePitch = 4 * bmp5hdr->bV5Width * bmp5hdr->bV5Height;
+            img.rowPitch   = 4 * bmp5hdr->bV5Width;
+            DirectX::TexMetadata
+              meta           = { };
+              meta.width     = img.width;
+              meta.height    = img.height;
+              meta.format    = img.format;
+              meta.depth     = 1;
+              meta.arraySize = 1;
+              meta.mipLevels = 1;
+              meta.dimension = DirectX::TEX_DIMENSION_TEXTURE2D;
+
+            // DIBs are upside down :)
+            DirectX::ScratchImage
+              flipped;
+              flipped.Initialize (meta);
+
+            if (SUCCEEDED (DirectX::FlipRotate    (&img, 1, meta,             DirectX::TEX_FR_FLIP_VERTICAL, flipped)) &&
+                SUCCEEDED (DirectX::SaveToWICFile (*flipped.GetImage (0,0,0), DirectX::WIC_FLAGS_FORCE_SRGB, GUID_ContainerFormatTiff, L"clipboard.tiff")))
+            {
+              extern std::wstring dragDroppedFilePath;
+              dragDroppedFilePath = L"clipboard.tiff";
+              PLOG_VERBOSE << "Successfully received and saved image data from the clipboard!";
+            }
+          }
+        }
+
+        GlobalUnlock (hGlobal);
+      }
+    }
+
+    //CloseClipboard ( );
+  }
+
+  return img;
 }
 
 // Adds/removes environment variables in a given environment block
