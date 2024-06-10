@@ -2551,7 +2551,19 @@ wWinMain ( _In_     HINSTANCE hInstance,
       // Optionally we'd filter out the data here too, but it would just
       //   duplicate the same processing we're already doing in viewer.cpp
       if (hotkeyCtrlV && ! ImGui::IsAnyItemActive ( )) // && ! ImGui::IsAnyItemFocused ( )
-        dragDroppedFilePath = SKIF_Util_GetClipboardData ( );
+      {
+        auto img = SKIF_Util_GetClipboardBitmapData ();
+
+        if (img.format != DXGI_FORMAT_UNKNOWN)
+        {
+          //MessageBox (nullptr, L"There's image data!", L"Cool", MB_OK);
+        }
+
+        else
+        {
+          dragDroppedFilePath = SKIF_Util_GetClipboardTextData ( );
+        }
+      }
 
       // End the main ImGui window
       ImGui::End ( );
