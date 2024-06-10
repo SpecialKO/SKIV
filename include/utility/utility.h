@@ -34,6 +34,19 @@
 
 // Stuff
 
+
+extern UINT          CF_HTML;        // Registered clipboard format for the "HTML Format"
+typedef unsigned int ClipboardData;  // -> enum ClipboardData_
+
+enum ClipboardData_
+{
+  ClipboardData_None        = 0,
+  ClipboardData_TextANSI    = 1 << 0, // Text        (ANSI)
+  ClipboardData_TextUnicode = 1 << 1, // Text        (Unicode)
+  ClipboardData_HTML        = 1 << 2, // HTML Format (ANSI)
+  ClipboardData_Bitmap      = 1 << 3, // Bitmap
+};
+
 enum UITab {
   UITab_None,
   UITab_Viewer,
@@ -185,7 +198,9 @@ int             SKIF_Util_RegisterApp                 (bool force   = false);
 bool            SKIF_Util_IsMPOsDisabledInRegistry    (bool refresh = false);
 void            SKIF_Util_GetMonitorHzPeriod          (HWND hwnd, DWORD dwFlags, DWORD& dwPeriod);
 bool            SKIF_Util_SetClipboardData            (const std::wstring_view& data);
-std::wstring    SKIF_Util_GetClipboardTextData        (void);
+std::string     SKIF_Util_GetClipboardTextData        (void);
+std::wstring    SKIF_Util_GetClipboardTextDataW       (void);
+std::string     SKIF_Util_GetClipboardHTMLData        (void);
 DirectX::Image  SKIF_Util_GetClipboardBitmapData      (void);
 std::wstring    SKIF_Util_AddEnvironmentBlock         (const void* pEnvBlock, const std::wstring& varName, const std::wstring& varValue);
 void            SKIF_Util_FileExplorer_SelectFile     (PCWSTR filePath);

@@ -28,6 +28,8 @@
 #include <utility/registry.h>
 #include <HybridDetect.h>
 
+UINT CF_HTML = NULL;
+
 std::vector<HANDLE> vWatchHandles[UITab_ALL];
 INT64               SKIF_TimeInMilliseconds = 0;
 
@@ -2327,12 +2329,38 @@ SKIF_Util_SetClipboardData (const std::wstring_view& data)
   return result;
 }
 
-std::wstring
+std::string
 SKIF_Util_GetClipboardTextData (void)
+{
+  std::string result = { };
+
+  if (true) // OpenClipboard (SKIF_ImGui_hWnd)
+  {
+    HGLOBAL hGlobal = GetClipboardData (CF_TEXT);
+
+    if (hGlobal)
+    {
+      const char* pszSource = static_cast<const char*> (GlobalLock (hGlobal));
+
+      if (pszSource != nullptr)
+      {
+        result = std::string (pszSource);
+        GlobalUnlock (hGlobal);
+      }
+    }
+
+    //CloseClipboard ( );
+  }
+
+  return result;
+}
+
+std::wstring
+SKIF_Util_GetClipboardTextDataW (void)
 {
   std::wstring result = { };
 
-  if (OpenClipboard (SKIF_ImGui_hWnd))
+  if (true) // OpenClipboard (SKIF_ImGui_hWnd)
   {
     HGLOBAL hGlobal = GetClipboardData (CF_UNICODETEXT);
 
@@ -2347,11 +2375,38 @@ SKIF_Util_GetClipboardTextData (void)
       }
     }
 
-    CloseClipboard ( );
+    //CloseClipboard ( );
   }
 
   return result;
 }
+
+std::string
+SKIF_Util_GetClipboardHTMLData (void)
+{
+  std::string result = { };
+
+  if (true) // OpenClipboard (SKIF_ImGui_hWnd)
+  {
+    HGLOBAL hGlobal = GetClipboardData (CF_HTML);
+
+    if (hGlobal)
+    {
+      const char* pszSource = static_cast<const char*> (GlobalLock (hGlobal));
+
+      if (pszSource != nullptr)
+      {
+        result = std::string (pszSource);
+        GlobalUnlock (hGlobal);
+      }
+    }
+
+    //CloseClipboard ( );
+  }
+
+  return result;
+}
+
 
 #include <wincodec.h>
 
@@ -2360,7 +2415,7 @@ SKIF_Util_GetClipboardBitmapData (void)
 {
   DirectX::Image img = { };
 
-  if (OpenClipboard (SKIF_ImGui_hWnd))
+  if (true) // OpenClipboard (SKIF_ImGui_hWnd)
   {
     HGLOBAL hGlobal = GetClipboardData (CF_DIBV5);
 
@@ -2374,7 +2429,17 @@ SKIF_Util_GetClipboardBitmapData (void)
         int offset =
           bmp5hdr->bV5Size + bmp5hdr->bV5ClrUsed * sizeof (RGBQUAD);
 
-        if (bmp5hdr->bV5Compression == BI_BITFIELDS)
+        PLOG_VERBOSE << "bmp5hdr->bV5Compression: " <<
+             ((bmp5hdr->bV5Compression == BI_JPEG)      ? "JPEG"         :
+              (bmp5hdr->bV5Compression == BI_PNG)       ? "BI_PNG"       :
+              (bmp5hdr->bV5Compression == BI_RGB)       ? "BI_RGB"       :
+              (bmp5hdr->bV5Compression == BI_RLE4)      ? "BI_RLE4"      :
+              (bmp5hdr->bV5Compression == BI_RLE8)      ? "BI_RLE8"      :
+              (bmp5hdr->bV5Compression == BI_BITFIELDS) ? "BI_BITFIELDS" :
+                                                          "Unknown"     );
+
+        if (bmp5hdr->bV5Compression == BI_BITFIELDS ||
+            bmp5hdr->bV5Compression == BI_RGB)
         {
           offset += 12;
 
@@ -2410,6 +2475,7 @@ SKIF_Util_GetClipboardBitmapData (void)
             {
               extern std::wstring dragDroppedFilePath;
               dragDroppedFilePath = L"clipboard.tiff";
+              PLOG_VERBOSE << "Successfully received and saved image data from the clipboard!";
             }
           }
         }
@@ -2418,7 +2484,7 @@ SKIF_Util_GetClipboardBitmapData (void)
       }
     }
 
-    CloseClipboard ( );
+    //CloseClipboard ( );
   }
 
   return img;
