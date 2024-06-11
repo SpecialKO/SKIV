@@ -74,6 +74,7 @@
 #include <knownfolders.h>
 #include <shlobj.h>
 #include <netlistmgr.h>
+#include <html_coder.hpp>
 
 const int SKIF_STEAM_APPID      = 1157970;
 bool  RecreateSwapChains        = false;
@@ -2648,6 +2649,9 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
                   if (! html.empty())
                   {
+                    fb::HtmlCoder html_decoder;
+                    html_decoder.decode(html);
+
                     PLOG_VERBOSE << "Extracted image URL path: " << html;
                     dragDroppedFilePath = SK_UTF8ToWideChar (html);
                   }
