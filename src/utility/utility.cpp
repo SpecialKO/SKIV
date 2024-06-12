@@ -2407,6 +2407,40 @@ SKIF_Util_GetClipboardHTMLData (void)
   return result;
 }
 
+std::wstring
+SKIF_Util_GetClipboardHDROP (void)
+{
+  std::wstring result = { };
+
+  if (true) // OpenClipboard (SKIF_ImGui_hWnd)
+  {
+    HGLOBAL hGlobal = GetClipboardData (CF_HDROP);
+
+    if (hGlobal)
+    {
+      HDROP hDrop = static_cast<HDROP> (GlobalLock (hGlobal));
+
+      if (hDrop != nullptr)
+      {
+        UINT numFiles = DragQueryFile (hDrop, 0xFFFFFFFF, nullptr, 0);
+
+        if (numFiles > 0)
+        {
+          TCHAR filePath [MAX_PATH];
+          DragQueryFile (hDrop, 0, filePath, MAX_PATH);
+          result = std::wstring(filePath);
+        }
+
+        GlobalUnlock (hGlobal);
+      }
+    }
+
+    //CloseClipboard ( );
+  }
+
+  return result;
+}
+
 
 #include <wincodec.h>
 

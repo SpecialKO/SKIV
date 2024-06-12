@@ -45,6 +45,7 @@ enum ClipboardData_
   ClipboardData_TextUnicode = 1 << 1, // Text        (Unicode)
   ClipboardData_HTML        = 1 << 2, // HTML Format (ANSI)
   ClipboardData_Bitmap      = 1 << 3, // Bitmap
+  ClipboardData_HDROP       = 1 << 4, // A list of files
 };
 
 enum UITab {
@@ -201,6 +202,7 @@ bool            SKIF_Util_SetClipboardData            (const std::wstring_view& 
 std::string     SKIF_Util_GetClipboardTextData        (void);
 std::wstring    SKIF_Util_GetClipboardTextDataW       (void);
 std::string     SKIF_Util_GetClipboardHTMLData        (void);
+std::wstring    SKIF_Util_GetClipboardHDROP           (void);
 DirectX::Image  SKIF_Util_GetClipboardBitmapData      (void);
 std::wstring    SKIF_Util_AddEnvironmentBlock         (const void* pEnvBlock, const std::wstring& varName, const std::wstring& varValue);
 void            SKIF_Util_FileExplorer_SelectFile     (PCWSTR filePath);
