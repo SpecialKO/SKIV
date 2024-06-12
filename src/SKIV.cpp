@@ -45,9 +45,10 @@
 #include <imgui/imgui_impl_win32.h>
 #include "imgui/imgui_impl_dx11.h"
 #include <imgui/imgui_internal.h>
-#include <xinput.h>
+#include <ImGuiNotify.hpp>
 
 #include <utility/fsutil.h>
+#include <xinput.h>
 
 #include <filesystem>
 #include <concurrent_queue.h>
@@ -1162,6 +1163,10 @@ wWinMain ( _In_     HINSTANCE hInstance,
     //SKIF_Util_RegisterHotKeySVCTemp   ( );
   }
 
+  // Register the HTML Format for the clipboard
+  CF_HTML = RegisterClipboardFormatW (L"HTML Format");
+  PLOG_VERBOSE << "Clipboard registered format for 'HTML Format' is... " << CF_HTML;
+
   PLOG_INFO << "Initializing updater...";
   // Initialize the updater
   static SKIF_Updater& _updater = 
@@ -2056,48 +2061,6 @@ wWinMain ( _In_     HINSTANCE hInstance,
 #pragma endregion
 
 
-
-      // Font warning
-      if (failedLoadFontsPrompt && ! HiddenFramesContinueProcessing)
-      {
-        failedLoadFontsPrompt = false;
-
-        ImGui::OpenPopup ("###FailedFontsPopup");
-      }
-      
-
-      float fFailedLoadFontsWidth = 400.0f * SKIF_ImGui_GlobalDPIScale;
-      ImGui::SetNextWindowSize (ImVec2 (fFailedLoadFontsWidth, 0.0f));
-      ImGui::SetNextWindowPos  (ImGui::GetCurrentWindowRead()->Viewport->GetMainRect().GetCenter(), ImGuiCond_Always, ImVec2 (0.5f, 0.5f));
-
-      if (ImGui::BeginPopupModal ("Fonts failed to load###FailedFontsPopup", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize))
-      {
-        ImGui::TreePush    ("FailedFontsTreePush");
-
-        SKIF_ImGui_Spacing ( );
-
-        ImGui::TextWrapped ("The selected character sets failed to load due to system limitations and have been reset.");
-        ImGui::NewLine     ( );
-        ImGui::TextWrapped ("Please limit the selection to only the most essential.");
-
-        SKIF_ImGui_Spacing ( );
-        SKIF_ImGui_Spacing ( );
-
-        ImVec2 vButtonSize = ImVec2(80.0f * SKIF_ImGui_GlobalDPIScale, 0.0f);
-
-        ImGui::SetCursorPosX (fFailedLoadFontsWidth / 2 - vButtonSize.x / 2);
-
-        if (ImGui::Button  ("OK", vButtonSize))
-          ImGui::CloseCurrentPopup ( );
-
-        SKIF_ImGui_Spacing ( );
-
-        ImGui::TreePop     ( );
-
-        ImGui::EndPopup ( );
-      }
-
-
       // Process any existing message popups
       extern void
         SKIF_ImGui_InfoMessage_Process (void);
@@ -2132,8 +2095,13 @@ wWinMain ( _In_     HINSTANCE hInstance,
       // 715px    - Release Notes width
       //  15px    - Approx. scrollbar width
       //   7.78px - Approx. character width (700px / 90 characters)
-      ImGui::SetNextWindowSize (ImVec2 (UpdateAvailableWidth * SKIF_ImGui_GlobalDPIScale, 0.0f));
-      ImGui::SetNextWindowPos  (ImGui::GetCurrentWindowRead()->Viewport->GetMainRect().GetCenter(), ImGuiCond_Always, ImVec2 (0.5f, 0.5f));
+
+      if (UpdatePromptPopup == PopupState_Open ||
+          UpdatePromptPopup == PopupState_Opened)
+      {
+        ImGui::SetNextWindowSize (ImVec2 (UpdateAvailableWidth * SKIF_ImGui_GlobalDPIScale, 0.0f));
+        ImGui::SetNextWindowPos  (ImGui::GetCurrentWindowRead()->Viewport->GetMainRect().GetCenter(), ImGuiCond_Always, ImVec2 (0.5f, 0.5f));
+      }
 
       if (ImGui::BeginPopupModal ( "Version Available###UpdatePrompt", nullptr,
                                      ImGuiWindowFlags_NoResize         |
@@ -2337,10 +2305,15 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
         ImGui::OpenPopup ("###History");
       
+      }
+
+      if (HistoryPopup == PopupState_Open ||
+          HistoryPopup == PopupState_Opened)
+      {
         ImGui::SetNextWindowSize (ImVec2 (HistoryPopupWidth * SKIF_ImGui_GlobalDPIScale, 0.0f));
+        ImGui::SetNextWindowPos  (ImGui::GetCurrentWindowRead()->Viewport->GetMainRect().GetCenter(), ImGuiCond_Always, ImVec2 (0.5f, 0.5f));
       }
       
-      ImGui::SetNextWindowPos  (ImGui::GetCurrentWindowRead()->Viewport->GetMainRect().GetCenter(), ImGuiCond_Always, ImVec2 (0.5f, 0.5f));
       if (ImGui::BeginPopupModal (HistoryPopupTitle.c_str(), nullptr,
                                   ImGuiWindowFlags_NoResize |
                                   ImGuiWindowFlags_NoMove |
@@ -2439,11 +2412,15 @@ wWinMain ( _In_     HINSTANCE hInstance,
         AutoUpdatePopupTitle = "An update was installed automatically###AutoUpdater";
 
         ImGui::OpenPopup ("###AutoUpdater");
-      
+      }
+
+      if (AutoUpdatePopup == PopupState_Open ||
+          AutoUpdatePopup == PopupState_Opened)
+      {
         ImGui::SetNextWindowSize (ImVec2 (AutoUpdatePopupWidth* SKIF_ImGui_GlobalDPIScale, 0.0f));
+        ImGui::SetNextWindowPos  (ImGui::GetCurrentWindowRead()->Viewport->GetMainRect().GetCenter(), ImGuiCond_Always, ImVec2 (0.5f, 0.5f));
       }
       
-      ImGui::SetNextWindowPos  (ImGui::GetCurrentWindowRead()->Viewport->GetMainRect().GetCenter(), ImGuiCond_Always, ImVec2 (0.5f, 0.5f));
       if (ImGui::BeginPopupModal (AutoUpdatePopupTitle.c_str(), nullptr,
                                   ImGuiWindowFlags_NoResize |
                                   ImGuiWindowFlags_NoMove |
@@ -2555,15 +2532,6 @@ wWinMain ( _In_     HINSTANCE hInstance,
       //   duplicate the same processing we're already doing in viewer.cpp
       if (hotkeyCtrlV && ! ImGui::IsAnyItemActive ( )) // && ! ImGui::IsAnyItemFocused ( )
       {
-
-        static bool
-            iniHTMLformat = true;
-        if (iniHTMLformat)
-        {   iniHTMLformat = false;
-          CF_HTML = RegisterClipboardFormatW (L"HTML Format");
-          PLOG_VERBOSE << "Clipboard registered format for 'HTML Format' is... " << CF_HTML;
-        }
-
         if (OpenClipboard (SKIF_ImGui_hWnd))
         {
           ClipboardData cbd = ClipboardData_None;
@@ -2576,6 +2544,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
                     (format == CF_UNICODETEXT) ? ClipboardData_TextUnicode :
                     (format == CF_HTML       ) ? ClipboardData_HTML        :
                     (format == CF_BITMAP     ) ? ClipboardData_Bitmap      :
+                    (format == CF_HDROP      ) ? ClipboardData_HDROP       :
                                                  ClipboardData_None       );
 //#ifdef _DEBUG
             wchar_t wzFormatName[256];
@@ -2584,27 +2553,35 @@ wWinMain ( _In_     HINSTANCE hInstance,
 //#endif
           }
 
-          if (ClipboardData_TextUnicode == (cbd & ClipboardData_TextUnicode))
+          if (cbd & ClipboardData_TextUnicode)
           {
             PLOG_VERBOSE << "Received a CF_UNICODETEXT paste!";
 
             std::wstring unicode = SKIF_Util_GetClipboardTextDataW ( );
 
             if (! unicode.empty())
+            {
               dragDroppedFilePath = unicode;
+
+              ImGui::InsertNotification({ ImGuiToastType::Success, 3000, "%s", SK_WideCharToUTF8 (dragDroppedFilePath).c_str()});
+            }
           }
 
-          else if (ClipboardData_TextANSI == (cbd & ClipboardData_TextANSI))
+          else if (cbd & ClipboardData_TextANSI)
           {
             PLOG_VERBOSE << "Received a CF_TEXT paste!";
 
             std::string ansi = SKIF_Util_GetClipboardTextData ( );
 
             if (! ansi.empty())
+            {
               dragDroppedFilePath = SK_UTF8ToWideChar (ansi);
+
+              ImGui::InsertNotification({ ImGuiToastType::Success, 3000, "%s", SK_WideCharToUTF8 (dragDroppedFilePath).c_str()});
+            }
           }
 
-          else if (ClipboardData_HTML == (cbd & ClipboardData_HTML))
+          else if (cbd & ClipboardData_HTML)
           {
             PLOG_VERBOSE << "Received a CF_HTML paste!";
 
@@ -2654,17 +2631,31 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
                     PLOG_VERBOSE << "Extracted image URL path: " << html;
                     dragDroppedFilePath = SK_UTF8ToWideChar (html);
+
+                    ImGui::InsertNotification({ ImGuiToastType::Success, 3000, "%s", "Derp"});
                   }
                 }
               }
             }
           }
 
-          else if (ClipboardData_Bitmap == (cbd & ClipboardData_Bitmap))
+          else if (cbd & ClipboardData_Bitmap)
           {
             PLOG_VERBOSE << "Received a CF_BITMAP paste!";
 
             SKIF_Util_GetClipboardBitmapData ( );
+          }
+
+          else if ((cbd & ClipboardData_HDROP))
+          {
+            PLOG_VERBOSE << "Detected a drop of type CF_HDROP";
+
+            std::wstring unicode = SKIF_Util_GetClipboardHDROP ( );
+
+            if (! unicode.empty())
+            {
+              dragDroppedFilePath = unicode;
+            }
           }
 
           CloseClipboard ( );
@@ -2672,6 +2663,9 @@ wWinMain ( _In_     HINSTANCE hInstance,
       }
 
 #pragma endregion
+
+      // Main rendering function
+      ImGui::RenderNotifications ( );
 
       // End the main ImGui window
       ImGui::End ( );
