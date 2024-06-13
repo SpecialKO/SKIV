@@ -175,6 +175,7 @@ struct image_s {
     std:: string folder_path_utf8 = { };
     std::wstring path             = { }; // Image path (full)
     std:: string path_utf8        = { };
+    size_t       size             = 0;
     file_s ( ) { };
   } file_info;
 
@@ -1867,21 +1868,39 @@ SKIF_UI_Tab_DrawViewer (void)
       {
         sprintf (szLabels,     "Image:\n"
                                "Folder:\n"
-                               "Zoom Level:");
+                               "File Size:");
         sprintf (szLabelsData, "%s\n"
                                "%s\n"
-                               "%3.0f %%", cover.file_info.filename_utf8.c_str(),
+                               "%4.2f %s", cover.file_info.filename_utf8.c_str(),
                                            cover.file_info.folder_path_utf8.c_str(),
-                                           cover.zoom * 100);
+                                           cover.file_info.size > 1024             ?
+                                           cover.file_info.size > 1024*1024        ?
+                      static_cast <float> (cover.file_info.size)/(1024.0f*1024.0f) :
+                      static_cast <float> (cover.file_info.size)/(1024.0f)         :
+                      static_cast <float> (cover.file_info.size),
+                                           cover.file_info.size > 1024             ?
+                                           cover.file_info.size > 1024*1024        ?
+                                                                             "MiB" :
+                                                                             "KiB" :
+                                                                             "Bytes");
       }
 
       // Basic
       else {
         sprintf (szLabels,     "Image:\n"
-                               "Zoom Level:");
+                               "File Size:");
         sprintf (szLabelsData, "%s\n"
-                               "%3.0f %%", cover.file_info.filename_utf8.c_str(),
-                                           cover.zoom * 100);
+                               "%4.2f %s", cover.file_info.filename_utf8.c_str(),
+                                           cover.file_info.size > 1024             ?
+                                           cover.file_info.size > 1024*1024        ?
+                      static_cast <float> (cover.file_info.size)/(1024.0f*1024.0f) :
+                      static_cast <float> (cover.file_info.size)/(1024.0f)         :
+                      static_cast <float> (cover.file_info.size),
+                                           cover.file_info.size > 1024             ?
+                                           cover.file_info.size > 1024*1024        ?
+                                                                             "MiB" :
+                                                                             "KiB" :
+                                                                             "Bytes");
       }
 
       ImGui::TextUnformatted (szLabels);
@@ -1895,13 +1914,17 @@ SKIF_UI_Tab_DrawViewer (void)
     // Basic Image Details
     {
       static const char szLabels [] = "Resolution:\n"
-                                      "Dynamic Range:";
+                                      "Zoom Level:\n"
+                                      "Dynamic Range:\n";
       
       char     szLabelsData  [512] = { };
 
       sprintf (szLabelsData, "%.0fx%.0f\n"
-                             "%s",    cover.width,
+                             "%3.0f %%\n"
+                             "%s\n",
+                                      cover.width,
                                       cover.height,
+                                      cover.zoom * 100,
                                      (cover.is_hdr) ? "HDR" : "SDR");
 
       ImGui::TextUnformatted (szLabels);
@@ -2247,6 +2270,7 @@ SKIF_UI_Tab_DrawViewer (void)
 
     data->image.file_info.path      = new_path;
     data->image.file_info.path_utf8 = SK_WideCharToUTF8 (new_path);
+    data->image.file_info.size      = SK_File_GetSize   (new_path.c_str ());
     new_path.clear();
 
     // We're going to stream the cover in asynchronously on this thread
@@ -2300,6 +2324,7 @@ SKIF_UI_Tab_DrawViewer (void)
         cover.file_info.folder_path_utf8 = SK_WideCharToUTF8 (cover.file_info.folder_path);
         cover.file_info.filename         = path.filename()   .wstring();
         cover.file_info.filename_utf8    = SK_WideCharToUTF8 (cover.file_info.filename);
+        cover.file_info.size             = SK_File_GetSize   (cover.file_info.filename.c_str ());
 
         extern ImVec2 SKIV_ResizeApp;
         SKIV_ResizeApp.x = cover.width;
