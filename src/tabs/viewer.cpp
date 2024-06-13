@@ -2324,7 +2324,7 @@ SKIF_UI_Tab_DrawViewer (void)
         cover.file_info.folder_path_utf8 = SK_WideCharToUTF8 (cover.file_info.folder_path);
         cover.file_info.filename         = path.filename()   .wstring();
         cover.file_info.filename_utf8    = SK_WideCharToUTF8 (cover.file_info.filename);
-        cover.file_info.size             = SK_File_GetSize   (cover.file_info.filename.c_str ());
+        cover.file_info.size             = SK_File_GetSize   (cover.file_info.path.c_str ());
 
         extern ImVec2 SKIV_ResizeApp;
         SKIV_ResizeApp.x = cover.width;
