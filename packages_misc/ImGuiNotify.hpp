@@ -25,6 +25,7 @@
 #include <fonts/fa_621.h>
 
 
+extern float SKIF_ImGui_GlobalDPIScale;
 
 
 
@@ -159,10 +160,10 @@ public:
 	 * 
 	 * @param type The type of the toast notification.
 	 */
-	inline void setType(const ImGuiToastType& type)
+	inline void setType(const ImGuiToastType& type_)
 	{
-		IM_ASSERT(type < ImGuiToastType::COUNT);
-		this->type = type;
+		IM_ASSERT(type_ < ImGuiToastType::COUNT);
+		this->type = type_;
 	};
 
 	/**
@@ -170,9 +171,9 @@ public:
 	 * 
 	 * @param flags ImGui window flags to set.
 	*/
-	inline void setWindowFlags(const ImGuiWindowFlags& flags)
+	inline void setWindowFlags(const ImGuiWindowFlags& flags_)
 	{
-		this->flags = flags;
+		this->flags = flags_;
 	}
 
 	/**
@@ -180,9 +181,9 @@ public:
 	 * 
 	 * @param onButtonPress std::fuction or lambda expression, which contains the code for execution.
 	*/
-	inline void setOnButtonPress(const std::function<void()>& onButtonPress)
+	inline void setOnButtonPress(const std::function<void()>& onButtonPress_)
 	{
-		this->onButtonPress = onButtonPress;
+		this->onButtonPress = onButtonPress_;
 	}
 
 	/**
@@ -512,7 +513,7 @@ namespace ImGui
 
 		float height = 0.f;
 
-		for (size_t i = 0; i < notifications.size(); ++i)
+		for (int i = 0; i < notifications.size(); ++i)
 		{
 			ImGuiToast* currentToast = &notifications[i];
 
