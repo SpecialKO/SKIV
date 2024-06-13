@@ -1599,8 +1599,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
                          ImGuiWindowFlags_NoCollapse        |
                          ImGuiWindowFlags_NoTitleBar        |
                          ImGuiWindowFlags_NoScrollbar       | // Hide the scrollbar for the main window
-                         ImGuiWindowFlags_NoScrollWithMouse   // Prevent scrolling with the mouse as well
-                      // ImGuiWindowFlags_NoMove              // This was added in #8bf06af, but I am unsure why.
+                         ImGuiWindowFlags_NoScrollWithMouse | // Prevent scrolling with the mouse as well
+           (io.KeyCtrl ? ImGuiWindowFlags_NoMove : ImGuiWindowFlags_None)              // This was added in #8bf06af, but I am unsure why.
                       // The only comment is that it was DPI related? This prevents Ctrl+Tab from moving the window so must not be used
       );
       ImGui::PopStyleVar ( );
@@ -1800,7 +1800,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
           SKIF_ImGui_AutoScroll  (true, SKIF_ImGuiAxis_Both);
           SKIF_ImGui_UpdateScrollbarState ( );
 
-          ImGui::EndChild ( );
+          ImGui::EndChild        ( );
         }
 
         if (SKIF_Tab_ChangeTo == UITab_Settings)
@@ -2570,7 +2570,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
             {
               dragDroppedFilePath = unicode;
 
-              ImGui::InsertNotification({ ImGuiToastType::Info, 3000, "Received Unicode paste", "%s", SK_WideCharToUTF8 (dragDroppedFilePath).c_str()});
+              ImGui::InsertNotification({ ImGuiToastType::Info, 3000, "Received a Unicode paste", "%s", SK_WideCharToUTF8 (dragDroppedFilePath).c_str()});
             }
           }
 
@@ -2584,7 +2584,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
             {
               dragDroppedFilePath = SK_UTF8ToWideChar (ansi);
 
-              ImGui::InsertNotification({ ImGuiToastType::Info, 3000, "Received ANSI paste", "%s", SK_WideCharToUTF8 (dragDroppedFilePath).c_str()});
+              ImGui::InsertNotification({ ImGuiToastType::Info, 3000, "Received a ANSI paste", "%s", SK_WideCharToUTF8 (dragDroppedFilePath).c_str()});
             }
           }
 
@@ -2639,7 +2639,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
                     PLOG_VERBOSE << "Extracted image URL path: " << html;
                     dragDroppedFilePath = SK_UTF8ToWideChar (html);
 
-                    ImGui::InsertNotification({ ImGuiToastType::Info, 3000, "Received HTML paste", "%s", SK_WideCharToUTF8(dragDroppedFilePath).c_str()});
+                    ImGui::InsertNotification({ ImGuiToastType::Info, 3000, "Received a HTML paste", "%s", SK_WideCharToUTF8(dragDroppedFilePath).c_str()});
                   }
                 }
               }
@@ -2652,7 +2652,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
             SKIF_Util_GetClipboardBitmapData ( );
 
-            ImGui::InsertNotification({ ImGuiToastType::Info, 3000, "Received a CF_BITMAP paste" });
+            ImGui::InsertNotification({ ImGuiToastType::Info, 3000, "Received a bitmap paste" });
           }
 
           else if ((cbd & ClipboardData_HDROP))

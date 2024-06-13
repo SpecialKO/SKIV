@@ -28,6 +28,7 @@
 #include <SKIV.h>
 #include <utility/utility.h>
 #include <utility/skif_imgui.h>
+#include <ImGuiNotify.hpp>
 
 #include "DirectXTex.h"
 
@@ -1804,6 +1805,8 @@ SKIF_UI_Tab_DrawViewer (void)
   if (_registry._RendererHDREnabled)
     SKIV_HDR_MaxCLL = 1.0f;
 
+  ImVec2 image_pos = ImGui::GetCursorPos ( );
+
   // Display game cover image
   SKIF_ImGui_OptImage  ((_registry._RendererHDREnabled || SKIV_HDR_VisualizationId != SKIV_HDR_VISUALIZTION_NONE || (! cover.light_info.isHDR)) ? cover.pRawTexSRV.p :
                                                                         cover.pTonemappedTexSRV.p,
@@ -1836,6 +1839,24 @@ SKIF_UI_Tab_DrawViewer (void)
 
     else if (ImGui::GetIO().MouseWheel < 0 && cover.zoom > 0.075f)
       cover.zoom -= 0.05f;
+
+    static ImVec2 start, end;
+    if (isImageHovered &&
+        SKIF_ImGui_SelectionRect (&start, &end))
+    {
+      // On release, do something
+      ImGui::InsertNotification (
+        {
+          ImGuiToastType::Info,
+          3000,
+          "Selected area", "%.fx%.f -> %.fx%.f",
+          start.x - image_pos.x,
+          start.y - image_pos.y,
+            end.x - image_pos.x,
+            end.y - image_pos.y
+        }
+      );
+    }
   }
 
 #pragma endregion

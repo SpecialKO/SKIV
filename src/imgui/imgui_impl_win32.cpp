@@ -1852,7 +1852,7 @@ static LRESULT CALLBACK ImGui_ImplWin32_WndProcHandler_PlatformWindow(HWND hWnd,
         case WM_NCHITTEST:
         {
           // Let mouse pass-through the window. This will allow the back-end to set io.MouseHoveredViewport properly (which is OPTIONAL).
-          // The ImGuiViewportFlags_NoInputs flag is set while dragging a viewport, as want to detect the window behind the one we are dragging.
+          // The ImGuiViewportFlags_NoInputs flag is set while dragging a viewport, as wan   t to detect the window behind the one we are dragging.
           // If you cannot easily access those viewport flags from your windowing/event code: you may manually synchronize its state e.g. in
           // your main loop after calling UpdatePlatformWindows(). Iterate all viewports/platform windows and pass the flag to your windowing system.
           if (viewport->Flags & ImGuiViewportFlags_NoInputs)
@@ -1864,7 +1864,8 @@ static LRESULT CALLBACK ImGui_ImplWin32_WndProcHandler_PlatformWindow(HWND hWnd,
           // Note that the touch input mode never uses the OS native move modal !
           extern bool
               SKIF_ImGui_CanMouseDragMove (void);
-          if (SKIF_ImGui_CanMouseDragMove (    ))
+          if (! ImGui::GetIO().KeyCtrl &&
+              SKIF_ImGui_CanMouseDragMove (    ))
           {
             // Necessary to allow OS provided drag-mouse functionality
             if (hitTest == HTCLIENT)
