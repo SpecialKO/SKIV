@@ -491,6 +491,25 @@ SKIF_ImGui_IsAnyPopupOpen (void)
   return ImGui::IsPopupOpen ("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
 }
 
+bool
+SKIF_ImGui_SelectionRect (ImVec2* start_pos, ImVec2* end_pos, ImGuiMouseButton mouse_button)
+{
+  IM_ASSERT(start_pos != NULL);
+  IM_ASSERT(end_pos   != NULL);
+
+  if (ImGui::IsMouseClicked (mouse_button))
+    *start_pos = ImGui::GetMousePos ( );
+
+  if (ImGui::IsMouseDown (mouse_button))
+  {
+    *end_pos              = ImGui::GetMousePos           ( );
+    ImDrawList* draw_list = ImGui::GetForegroundDrawList ( ); //ImGui::GetWindowDrawList ( );
+    draw_list->AddRect       (*start_pos, *end_pos, ImGui::GetColorU32 (IM_COL32(0, 130, 216, 255))); // Border
+    draw_list->AddRectFilled (*start_pos, *end_pos, ImGui::GetColorU32 (IM_COL32(0, 130, 216, 50)));  // Background
+  }
+  return ImGui::IsMouseReleased (mouse_button);
+}
+
 void
 SKIF_ImGui_SetMouseCursorHand (void)
 {
