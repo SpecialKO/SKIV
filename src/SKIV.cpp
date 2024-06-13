@@ -1099,6 +1099,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
   // This prevents the main window from ever being merged into the implicit Debug##Default fallback window...
   // ... which works around a pesky bug that occurs on OS snapping/resizing...
   SKIF_AppWindow.ViewportFlagsOverrideSet |= ImGuiViewportFlags_NoAutoMerge;
+  SKIF_AppWindow.ViewportFlagsOverrideSet |= ImGuiViewportFlags_CanHostOtherWindows;
 
   // Enable ImGui's debug logging output
   ImGui::GetCurrentContext()->DebugLogFlags = ImGuiDebugLogFlags_OutputToTTY | ((_registry.isDevLogging())
@@ -1320,31 +1321,6 @@ wWinMain ( _In_     HINSTANCE hInstance,
         : false;                                             // and false if OS prerequisites are disabled
     }
 #endif
-
-    // Escape does situational stuff
-    if (hotkeyEsc)
-    {
-      switch (SKIF_Tab_Selected)
-      {
-      case UITab_None:
-        break;
-      case UITab_Viewer:
-        if (SKIF_ImGui_IsFullscreen ( ))
-          SKIF_ImGui_SetFullscreen (false);
-        else
-          bKeepWindowAlive = false;
-        break;
-      case UITab_Settings:
-        SKIF_Tab_ChangeTo = UITab_Viewer;
-        break;
-      case UITab_About:
-        break;
-      case UITab_ALL:
-        break;
-      default:
-        break;
-      }
-    }
 
     // F6 to toggle DPI scaling
     if (changedHiDPIScaling || hotkeyF6)
@@ -1704,15 +1680,46 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
       allowShortcutCtrlA = true;
 
-      if (ImGui::IsKeyPressed (ImGuiKey_Escape))
+
+
+      // Escape does situational stuff
+      if (hotkeyEsc)
       {
-        if (UpdatePromptPopup != PopupState_Closed ||
-            HistoryPopup      != PopupState_Closed  )
+        if (PopupMessageInfo != PopupState_Closed)
+          SKIF_ImGui_PopBackInfoPopup ( );
+
+        else if
+          (UpdatePromptPopup != PopupState_Closed ||
+           HistoryPopup      != PopupState_Closed  )
         {
-          UpdatePromptPopup    = PopupState_Closed;
-          HistoryPopup         = PopupState_Closed;
+          UpdatePromptPopup   = PopupState_Closed;
+          HistoryPopup        = PopupState_Closed;
 
           ImGui::ClosePopupsOverWindow (ImGui::GetCurrentWindowRead ( ), false);
+        }
+
+        else
+        {
+          switch (SKIF_Tab_Selected)
+          {
+          case UITab_None:
+            break;
+          case UITab_Viewer:
+            if (SKIF_ImGui_IsFullscreen())
+              SKIF_ImGui_SetFullscreen(false);
+            else
+              bKeepWindowAlive = false;
+            break;
+          case UITab_Settings:
+            SKIF_Tab_ChangeTo = UITab_Viewer;
+            break;
+          case UITab_About:
+            break;
+          case UITab_ALL:
+            break;
+          default:
+            break;
+          }
         }
       }
 
@@ -2563,7 +2570,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
             {
               dragDroppedFilePath = unicode;
 
-              ImGui::InsertNotification({ ImGuiToastType::Success, 3000, "%s", SK_WideCharToUTF8 (dragDroppedFilePath).c_str()});
+              ImGui::InsertNotification({ ImGuiToastType::Info, 3000, "Received Unicode paste", "%s", SK_WideCharToUTF8 (dragDroppedFilePath).c_str()});
             }
           }
 
@@ -2577,7 +2584,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
             {
               dragDroppedFilePath = SK_UTF8ToWideChar (ansi);
 
-              ImGui::InsertNotification({ ImGuiToastType::Success, 3000, "%s", SK_WideCharToUTF8 (dragDroppedFilePath).c_str()});
+              ImGui::InsertNotification({ ImGuiToastType::Info, 3000, "Received ANSI paste", "%s", SK_WideCharToUTF8 (dragDroppedFilePath).c_str()});
             }
           }
 
@@ -2632,7 +2639,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
                     PLOG_VERBOSE << "Extracted image URL path: " << html;
                     dragDroppedFilePath = SK_UTF8ToWideChar (html);
 
-                    ImGui::InsertNotification({ ImGuiToastType::Success, 3000, "%s", "Derp"});
+                    ImGui::InsertNotification({ ImGuiToastType::Info, 3000, "Received HTML paste", "%s", SK_WideCharToUTF8(dragDroppedFilePath).c_str()});
                   }
                 }
               }
@@ -2644,6 +2651,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
             PLOG_VERBOSE << "Received a CF_BITMAP paste!";
 
             SKIF_Util_GetClipboardBitmapData ( );
+
+            ImGui::InsertNotification({ ImGuiToastType::Info, 3000, "Received a CF_BITMAP paste" });
           }
 
           else if ((cbd & ClipboardData_HDROP))
@@ -2655,6 +2664,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
             if (! unicode.empty())
             {
               dragDroppedFilePath = unicode;
+
+              ImGui::InsertNotification({ ImGuiToastType::Info, 3000, "Received a file path drop", "%s", SK_WideCharToUTF8 (dragDroppedFilePath).c_str()});
             }
           }
 
@@ -2883,6 +2894,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
       processAdditionalFrames = ImGui::GetFrameCount ( ) + 3; // If the background is currently currently undergoing a fade effect
     else if (SKIF_Tab_Selected == UITab_Viewer && imageFadeActive)
       processAdditionalFrames = ImGui::GetFrameCount ( ) + 3; // If the cover is currently undergoing a fade effect
+    else if (ImGui::notifications.size() > 0)
+      processAdditionalFrames = ImGui::GetFrameCount ( ) + 3; // If we have any visible notifications
     else if (addAdditionalFrames > 0)
       processAdditionalFrames = ImGui::GetFrameCount ( ) + addAdditionalFrames; // Used when the cover is currently loading in, or the update check just completed
     /*
