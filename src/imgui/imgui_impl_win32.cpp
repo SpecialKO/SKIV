@@ -1147,7 +1147,7 @@ static void ImGui_ImplWin32_GetWin32StyleFromViewportFlags(ImGuiViewportFlags fl
   // Main platform window must respect nCmdShow and add
   // WS_EX_NOACTIVATE if we start in a minimized state
   extern int SKIF_nCmdShow;
-  if (owner == nullptr && SKIF_nCmdShow != -1)
+  if (owner == NULL && SKIF_nCmdShow != -1)
   {
     //if (SKIF_nCmdShow == SW_SHOWMAXIMIZED)
     //  *out_style |= WS_MAXIMIZE;
@@ -1630,7 +1630,6 @@ static LRESULT CALLBACK ImGui_ImplWin32_WndProcHandler_PlatformWindow(HWND hWnd,
     extern ImVec2 SKIF_vecRegularModeAdjusted; // Adjusted for status bar and tooltips
     extern ImVec2 SKIF_vecCurrentMode;
     extern ImVec2 SKIF_vecCurrentModeNext;
-    extern HWND   SKIF_Notify_hWnd;
 
     extern bool msgDontRedraw;
 
@@ -1703,112 +1702,14 @@ static LRESULT CALLBACK ImGui_ImplWin32_WndProcHandler_PlatformWindow(HWND hWnd,
     {
       switch (msg)
       {
-
-//#define SKIF_Win32_GetDPIScaledSize
-#ifdef SKIF_Win32_GetDPIScaledSize
-      // Calculate the new suggested size of the viewport on DPI changes
-      case WM_GETDPISCALEDSIZE:
-      {
-        SIZE* size = reinterpret_cast<SIZE*> (lParam);
-
-        // If we have disabled DPI scaling, use our existing size (scale non-linearly)
-        if (! _registry.bDPIScaling)
-        {
-          size->cx = (LONG)viewport->Size.x;
-          size->cy = (LONG)viewport->Size.y;
-
-          // We have computed a new size
-          return 1;
-        }
-
-        // Apply the default linear DPI scaling to the window
-        return 0;
-      }
-#endif
-
-//#define SKIF_Win32_Snapping
-#ifdef SKIF_Win32_Snapping
-
-        // Gets fired on window creation, and screws up the positioning
-        case WM_WINDOWPOSCHANGING:
-        {
-          // Do not run this if any mouse button is being held down
-          if (ImGui::IsAnyMouseDown ( ))
-            break;
-
-          // Do not run this within the first 5 frames, as this prevent screwing up restoring the original position of the window
-          if (ImGui::GetFrameCount  ( ) < 5)
-            break;
-
-          // Do not manipulate the pos/change of the Ctrl+Tab window (not actually used)
-          //if (ImGui::FindWindowByName("###NavWindowingList") != nullptr &&
-          //    ImGui::FindWindowByName("###NavWindowingList")->Viewport == viewport)
-          //  break;
-        
-          //LRESULT def =  DefWindowProc (hWnd, msg, wParam, lParam);
-          WINDOWPOS* wp = reinterpret_cast<WINDOWPOS*> (lParam);
-        
-          POINT ptLeftTop  = {
-            wp->x,
-            wp->y
-          };
-        
-          for (int monitor_n = 0; monitor_n < ImGui::GetPlatformIO().Monitors.Size; monitor_n++)
-          {
-            const ImGuiPlatformMonitor& targetMonitor = ImGui::GetPlatformIO().Monitors[monitor_n];
-          
-            ImVec2 MaxWorkSize    = ImVec2 (targetMonitor.WorkPos.x + targetMonitor.WorkSize.x,
-                                            targetMonitor.WorkPos.y + targetMonitor.WorkSize.y);
-            ImRect targetWorkArea = ImRect (targetMonitor.WorkPos, MaxWorkSize);
-
-            // Find the intended display
-            if (targetWorkArea.Contains (ImVec2 (static_cast<float> (wp->x), static_cast<float> (wp->y))))
-            {
-              // If we are being maximized...
-              if (wp->flags == (SWP_STATECHANGED | SWP_FRAMECHANGED) &&
-                  wp->x - targetWorkArea.Min.x == SKIF_MAXIMIZE_POS  &&
-                  wp->y - targetWorkArea.Min.y == SKIF_MAXIMIZE_POS)
-              {
-                ImVec2 tmpExpectedSize = ImVec2 (0.0f, 0.0f);
-                ImVec2 tmpAlteredSize  = ImVec2 (0.0f, 0.0f);
-                ImVec2 tmpCurrentSize  = (_registry.bMiniMode) ? SKIF_vecServiceModeDefault  :
-                                         (_registry.bHorizonMode) ? SKIF_vecHorizonModeAdjusted :
-                                                                    SKIF_vecRegularModeAdjusted ;
-
-                float targetDPI = (_registry.bDPIScaling) ? targetMonitor.DpiScale : 1.0f;
-                tmpExpectedSize = tmpCurrentSize * targetDPI;
-
-                if (! _registry.bMiniMode)
-                {
-                  // Needed to account for an altered size on the target display
-                  if (tmpCurrentSize.y * targetDPI > targetWorkArea.Max.y)
-                    tmpAlteredSize.y = (tmpCurrentSize.y * targetDPI - targetWorkArea.Max.y); // Crop the regular mode(s)
-
-                  tmpExpectedSize.y -= tmpAlteredSize.y;
-                }
-
-                // Change the intended position to the actual center of the display
-                wp->x = static_cast<int> (targetWorkArea.GetCenter().x - (tmpExpectedSize.x * 0.5f));
-                wp->y = static_cast<int> (targetWorkArea.GetCenter().y - (tmpExpectedSize.y * 0.5f));
-
-                return 0;
-              }
-            }
-          }
-
-          wp->cx = static_cast<int> (viewport->Size.x); // / viewport->DpiScale * targetMonitor.DpiScale
-          wp->cy = static_cast<int> (viewport->Size.y); // / viewport->DpiScale * targetMonitor.DpiScale;
-
-          return 0;
-          break;
-        }
-
-#endif
-
         // This is used to inform Windows of the min/max size of the viewport, so
         //   that features such as Aero Snap takes the enforced size into account
         case WM_GETMINMAXINFO:
         {
+          // Only apply a minimum size for the main window
+          if (hWnd != SKIF_ImGui_hWnd )
+            break;
+
           MINMAXINFO* mmi = reinterpret_cast<MINMAXINFO*>(lParam);
 
           // The minimum tracking size is the smallest window size that can be produced by using the borders to size the window.
@@ -1816,37 +1717,6 @@ static LRESULT CALLBACK ImGui_ImplWin32_WndProcHandler_PlatformWindow(HWND hWnd,
           mmi->ptMinTrackSize.x = static_cast<long> (200.0f * SKIF_ImGui_GlobalDPIScale);
           mmi->ptMinTrackSize.y = static_cast<long> (200.0f * SKIF_ImGui_GlobalDPIScale);
 
-//#define SKIF_Win32_CenterMaximize
-#ifdef SKIF_Win32_CenterMaximize
-          static POINT sizeMin, sizeMax, pos;
-
-          // For systems with multiple monitors, the ptMaxSize and ptMaxPosition members describe the maximized size and position of the window on the primary monitor,
-          // even if the window ultimately maximizes onto a secondary monitor. In that case, the window manager adjusts these values to compensate for differences between
-          // the primary monitor and the monitor that displays the window.
-          // 
-          // ImGui_ImplWin32_UpdateMonitors_EnumFunc() always pushes the primary monitor to the front of ImGui::GetPlatformIO().Monitors
-
-          sizeMax.x = static_cast<long> (viewport->Size.x);
-          sizeMax.y = static_cast<long> (viewport->Size.y);
-
-          // To ensure that a "maximized" window is centered on the display, we are
-          // using a custom position to detect maximized state later down the line
-          pos.x = SKIF_MAXIMIZE_POS;
-          pos.y = SKIF_MAXIMIZE_POS;
-
-          // The position of the left side of the maximized window (x member) and the position of the top of the maximized window (y member).
-          // For top-level windows, this value is based on the position of the primary monitor.
-          mmi->ptMaxPosition  = pos;
-           
-          // The maximized width (x member) and the maximized height (y member) of the window.
-          // For top-level windows, this value is based on the width of the primary monitor.
-          mmi->ptMaxSize      = sizeMax; // Maximized size
-       
-          // Informs Windows of the window sizes, so it doesn't try to resize the window when docking it to the left or right sides
-          mmi->ptMinTrackSize = sizeMax; // Minimum tracking size
-          mmi->ptMaxTrackSize = sizeMax; // Maximum tracking size
-
-#endif
           //return 0; // We don't return 0 to allow DefWindowProc() the opportunity to also process the message
           break;
         }
