@@ -357,10 +357,24 @@ SKIF_ImGui_AdjustAppModeSize (HMONITOR monitor)
 }
 
 void
-SKIF_ImGui_InfoMessage (const std::string szTitle, const std::string szLabel)
+SKIF_ImGui_InfoMessage (std::string szTitle, const std::string szLabel)
 {
+  szTitle = "(" + std::to_string (vInfoMessage_Titles.size() + 1) + ") " + szTitle;
   vInfoMessage_Titles.push_back (szTitle);
   vInfoMessage_Labels.push_back (szLabel);
+}
+
+void
+SKIF_ImGui_PopBackInfoPopup (void)
+{
+  if (! vInfoMessage_Labels.empty())
+  {
+    vInfoMessage_Titles.pop_back();
+    vInfoMessage_Labels.pop_back();
+  }
+
+  if (vInfoMessage_Labels.empty())
+    PopupMessageInfo = PopupState_Closed;
 }
 
 // Internal; processes any existing info messages
@@ -403,8 +417,8 @@ SKIF_ImGui_InfoMessage_Process (void)
 
       if (ImGui::Button  ("OK", vButtonSize))
       {
-        vInfoMessage_Labels.pop_back();
         vInfoMessage_Titles.pop_back();
+        vInfoMessage_Labels.pop_back();
 
         if (vInfoMessage_Labels.empty())
           PopupMessageInfo = PopupState_Closed;
