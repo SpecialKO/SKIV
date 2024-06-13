@@ -7,6 +7,7 @@
 #include <vector>
 #include <filesystem>
 #include <utility/sk_utility.h>
+#include <ImGuiNotify.hpp>
 
 class DropTarget : public IDropTarget {
 public:
@@ -204,6 +205,27 @@ public:
           dragDroppedFilePath = std::wstring (pszSource);
 
           GlobalUnlock (medium.hGlobal);
+
+          ImGui::InsertNotification({ ImGuiToastType::Info, 3000, "Received a Unicode drop", "%s", SK_WideCharToUTF8 (dragDroppedFilePath).c_str()});
+        }
+
+        ReturnAndCleanUp ( );
+      }
+
+      // ANSI text to e.g. URL to images from a Chromium web browser
+      else if (m_fmtDropping->cfFormat == CF_TEXT && SUCCEEDED (pDataObj->GetData (m_fmtDropping, &medium)))
+      {
+        PLOG_VERBOSE << "Detected a drop of type CF_TEXT";
+
+        const char* pszSource = static_cast<const char *> (GlobalLock (medium.hGlobal));
+
+        if (pszSource != nullptr)
+        {
+          dragDroppedFilePath = SK_UTF8ToWideChar (pszSource);
+
+          GlobalUnlock (medium.hGlobal);
+
+          ImGui::InsertNotification({ ImGuiToastType::Info, 3000, "Received a ANSI drop", "%s", SK_WideCharToUTF8 (dragDroppedFilePath).c_str()});
         }
 
         ReturnAndCleanUp ( );
@@ -225,24 +247,9 @@ public:
             TCHAR filePath [MAX_PATH];
             DragQueryFile (hDrop, 0, filePath, MAX_PATH);
             dragDroppedFilePath = std::wstring(filePath);
+
+            ImGui::InsertNotification({ ImGuiToastType::Info, 3000, "Received a file path drop", "%s", SK_WideCharToUTF8 (dragDroppedFilePath).c_str()});
           }
-
-          GlobalUnlock (medium.hGlobal);
-        }
-
-        ReturnAndCleanUp ( );
-      }
-
-      // ANSI text to e.g. URL to images from a Chromium web browser
-      else if (m_fmtDropping->cfFormat == CF_TEXT && SUCCEEDED (pDataObj->GetData (m_fmtDropping, &medium)))
-      {
-        PLOG_VERBOSE << "Detected a drop of type CF_TEXT";
-
-        const char* pszSource = static_cast<const char *> (GlobalLock (medium.hGlobal));
-
-        if (pszSource != nullptr)
-        {
-          dragDroppedFilePath = SK_UTF8ToWideChar (pszSource);
 
           GlobalUnlock (medium.hGlobal);
         }
