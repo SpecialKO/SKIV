@@ -2196,8 +2196,8 @@ SKIF_ImGui_ImplWin32_SetFullscreen (int fullscreen)
         rect = mi.rcMonitor;
 
         // Seems to be required to account for the border of the window
-        rect.right  += 1;
-        rect.bottom += 1;
+        //rect.right  += 1;
+        //rect.bottom += 1;
 
         SKIF_ImGui_ImplWin32_SetDWMBorders (hwnd, DWMWCP_DONOTROUND);
       }
