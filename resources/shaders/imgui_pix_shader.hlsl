@@ -626,11 +626,16 @@ float4 main (PS_INPUT input) : SV_Target
         case SKIV_TONEMAP_TYPE_NORMALIZE_TO_CLL:   Y_out = TonemapSDR  (Y_in, cML, 1.0f); break;
         case SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY: Y_out = TonemapHDR  (Y_in, cML, dML);  break;
       }
-      
-      if (Y_out > 0.0)
+
+      if (Y_out > 0.0 && Y_in > 0.0)
       {
-        out_col.rgb *= (Y_out / Y_in);
+        xyz.xyz *= (Y_out / Y_in);
       }
+
+      else
+        xyz.xyz = (0.0).xxx;
+
+      out_col.rgb = XYZtoRec709 (xyz);
     }
 
     // Manipulate the alpha channel a bit...

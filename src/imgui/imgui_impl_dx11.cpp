@@ -944,7 +944,7 @@ static void ImGui_ImplDX11_CreateFontsTexture()
   // Create texture sampler
   D3D11_SAMPLER_DESC
     sampler_desc                    = { };
-    sampler_desc.Filter             = D3D11_FILTER_MIN_MAG_MIP_POINT;
+    sampler_desc.Filter             = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
     sampler_desc.AddressU           = D3D11_TEXTURE_ADDRESS_CLAMP;
     sampler_desc.AddressV           = D3D11_TEXTURE_ADDRESS_CLAMP;
     sampler_desc.AddressW           = D3D11_TEXTURE_ADDRESS_CLAMP;
@@ -1994,9 +1994,6 @@ ImGui_ImplDX11_CreateWindow (ImGuiViewport *viewport)
     
           vd->SDRWhiteLevel = SKIF_Util_GetSDRWhiteLevelForHMONITOR (vd->DXGIDesc.Monitor);
           vd->HDRLuma       = vd->DXGIDesc.MaxLuminance;
-
-          extern float SKIV_HDR_DisplayMaxLuminance;
-                       SKIV_HDR_DisplayMaxLuminance = vd->HDRLuma;
 
   #pragma region Enable HDR
           // DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709    - SDR display with no Advanced Color capabilities

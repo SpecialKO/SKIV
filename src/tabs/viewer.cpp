@@ -2088,17 +2088,12 @@ SKIF_UI_Tab_DrawViewer (void)
       }
 
       // We need to get the luminance capabilities for the current viewport from DXGI
-      //
-      //  However, this does not seem to actually get the viewport for the window we are
-      //    currently drawing into...?!
-      //
       ImGui_ImplDX11_ViewportData* vd =
         (ImGui_ImplDX11_ViewportData *)ImGui::GetWindowViewport ()->RendererUserData;
 
       ImGui::BeginDisabled ();
-      // If vd were correct, this would be assigned here, but it's not!
-      /////SKIV_HDR_DisplayMaxLuminance = vd->HDRLuma * 80.0f;
-      ImGui::SliderFloat   ("Display Luminance", &vd->HDRLuma, 200.0f, 2000.0f, "%.1f %%");
+      SKIV_HDR_DisplayMaxLuminance = vd->HDRLuma;
+      ImGui::SliderFloat   ("Display Luminance", &vd->HDRLuma, 200.0f, 2000.0f, (const char *)u8"%.1f cd / m\u00b2");
       ImGui::EndDisabled   ();
 
       if ((SKIV_HDR_BrightnessScale / 100.0f) * SKIV_HDR_MaxLuminance > SKIV_HDR_DisplayMaxLuminance)
