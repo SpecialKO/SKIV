@@ -30,4 +30,32 @@ IMGUI_IMPL_API void     ImGui_ImplDX11_RenderDrawData(ImDrawData* draw_data);
 IMGUI_IMPL_API void     ImGui_ImplDX11_InvalidateDeviceObjects();
 IMGUI_IMPL_API bool     ImGui_ImplDX11_CreateDeviceObjects();
 
+
+#ifndef SKIF_CUSTOM_IMGUI_DX11_VIEWPORT_STRUCT
+#define SKIF_CUSTOM_IMGUI_DX11_VIEWPORT_STRUCT
+#include <dxgi1_2.h>
+#include <dxgi1_6.h>
+#include <d3d11.h>
+
+struct ImGui_ImplDX11_ViewportData
+{
+    IDXGISwapChain1*        SwapChain;
+    ID3D11RenderTargetView* RTView;
+    UINT                    PresentCount;
+    HANDLE                  WaitHandle;
+    int                     SDRMode;       // 0 = 8 bpc,   1 = 10 bpc,      2 = 16 bpc scRGB
+    FLOAT                   SDRWhiteLevel; // SDR white level in nits for the display
+    int                     HDRMode;       // 0 = No HDR,  1 = 10 bpc HDR,  2 = 16 bpc scRGB HDR
+    bool                    HDR;
+    FLOAT                   HDRLuma;
+    FLOAT                   HDRMinLuma;
+    DXGI_OUTPUT_DESC1       DXGIDesc;
+    DXGI_FORMAT             DXGIFormat;
+
+     ImGui_ImplDX11_ViewportData (void) {            SwapChain  = nullptr;   RTView  = nullptr;   WaitHandle  = 0;  PresentCount = 0; SDRMode = 0; SDRWhiteLevel = 80.0f; HDRMode = 0; HDR = false; HDRLuma = 0.0f; HDRMinLuma = 0.0f; DXGIDesc = {   }; DXGIFormat = DXGI_FORMAT_UNKNOWN; }
+    ~ImGui_ImplDX11_ViewportData (void) { IM_ASSERT (SwapChain == nullptr && RTView == nullptr && WaitHandle == 0); }
+};
+#endif
+
+
 #endif // #ifndef IMGUI_DISABLE

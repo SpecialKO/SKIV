@@ -1593,6 +1593,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
         ImGui::SetNextWindowSizeConstraints (wnd_minimum_size, ImVec2 (FLT_MAX, FLT_MAX));
 
       ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2());
+      ImGui::PushStyleVar (ImGuiStyleVar_WindowBorderSize, 0.0f); // Disable ImGui's 1 px window border
       ImGui::Begin (SKIV_WINDOW_TITLE_HASH,
                        nullptr,
                        //ImGuiWindowFlags_NoResize          |
@@ -1603,7 +1604,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
            (io.KeyCtrl ? ImGuiWindowFlags_NoMove : ImGuiWindowFlags_None)              // This was added in #8bf06af, but I am unsure why.
                       // The only comment is that it was DPI related? This prevents Ctrl+Tab from moving the window so must not be used
       );
-      ImGui::PopStyleVar ( );
+      ImGui::PopStyleVar (2);
 
       SK_RunOnce (ImGui::GetCurrentWindow()->HiddenFramesCannotSkipItems += 2);
 
@@ -1728,12 +1729,12 @@ wWinMain ( _In_     HINSTANCE hInstance,
       // Begin Large Mode
 #pragma region UI: Large Mode
 
-      // TAB: Library
+      // TAB: Viewer
       if (SKIF_Tab_Selected == UITab_Viewer ||
           SKIF_Tab_ChangeTo == UITab_Viewer)
       {
         ImGui::PushStyleVar (ImGuiStyleVar_FramePadding, ImVec2());
-        bool show = SKIF_ImGui_BeginMainChildFrame (ImGuiWindowFlags_NoScrollWithMouse);
+        bool show = SKIF_ImGui_BeginMainChildFrame (ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoScrollbar);
         ImGui::PopStyleVar  ( );
 
         /*
