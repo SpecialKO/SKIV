@@ -30,6 +30,12 @@ float4 main(PS_INPUT input) : SV_Target
 #define SKIV_VIZ_FLAG_SDR_CONSIDER_GAMUT      0x2
 #define SKIV_VIZ_FLAG_SDR_CONSIDER_OVERBRIGHT 0x4
 
+#define SKIV_TONEMAP_TYPE_NONE               0x0
+#define SKIV_TONEMAP_TYPE_CLIP               0x1
+#define SKIV_TONEMAP_TYPE_INFINITE_ROLLOFF   0x2
+#define SKIV_TONEMAP_TYPE_NORMALIZE_TO_CLL   0x4
+#define SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY 0x8
+
 struct PS_INPUT
 {
   float4 pos     : SV_POSITION;
@@ -42,18 +48,23 @@ struct PS_INPUT
 cbuffer imgui_cbuffer : register (b0)
 {
   float4 font_dims;
+
   uint4  hdr_visualization_flags;
   uint   hdr_visualization;
+
   float  hdr_max_luminance;
   float  sdr_reference_white;
-  float  padding0;
+  float  display_max_luminance;
+  float  user_brightness_scale;
+  uint   tonemap_type;
+  float2 content_max_cll;
+
   float4 rec709_gamut_hue;
   float4 dcip3_gamut_hue;
   float4 rec2020_gamut_hue;
   float4 ap1_gamut_hue;
   float4 ap0_gamut_hue;
   float4 invalid_gamut_hue;
-  
 };
 
 sampler   sampler0 : register (s0);
@@ -250,21 +261,34 @@ float3 Rec709toXYZ (float3 linearRec709)
     mul (ConvMat, linearRec709);
 }
 
+float3 XYZtoRec709 (float3 linearXYZ)
+{
+  static const float3x3 ConvMat =
+  {
+     3.240969896316528320312500000f, -1.5373831987380981445312500f, -0.4986107647418975830078125000f,
+    -0.969243645668029785156250000f,  1.8759675025939941406250000f,  0.0415550582110881805419921875f,
+     0.055630080401897430419921875f, -0.2039769589900970458984375f,  1.0569715499877929687500000000f
+  };
+
+  return
+    mul (ConvMat, linearXYZ);
+}
+
 bool   IsNan (float  x) { return (asuint (x) & 0x7fffffff)  > 0x7f800000; } // Scalar NaN checker
 float2 IsNan (float2 v) { return float2 ( IsNan (v.x), IsNan (v.y) );                           }
 float3 IsNan (float3 v) { return float3 ( IsNan (v.x), IsNan (v.y), IsNan (v.z) );              }
 float4 IsNan (float4 v) { return float4 ( IsNan (v.x), IsNan (v.y), IsNan (v.z), IsNan (v.w) ); }
 
-bool   IsInf (float  x) { return (asuint (x) & 0x7f800000) == 0x7f800000; } // Scalar Infinity checker
+bool   IsInf (float  x) { return (asuint (x) & 0x7f8fffff) == 0x7f800000; } // Scalar Infinity checker
 float2 IsInf (float2 v) { return float2 ( IsInf (v.x), IsInf (v.y) );                           }
 float3 IsInf (float3 v) { return float3 ( IsInf (v.x), IsInf (v.y), IsInf (v.z) );              }
 float4 IsInf (float4 v) { return float4 ( IsInf (v.x), IsInf (v.y), IsInf (v.z), IsInf (v.w) ); }
 
 // Vectorized versions
 bool AnyIsInf (float  x)    { return        IsInf (x);                                 }
-bool AnyIsInf (float2 xy)   { return any ((asuint (xy)   & 0x7f800000) == 0x7f800000); }
-bool AnyIsInf (float3 xyz)  { return any ((asuint (xyz)  & 0x7f800000) == 0x7f800000); }
-bool AnyIsInf (float4 xyzw) { return any ((asuint (xyzw) & 0x7f800000) == 0x7f800000); }
+bool AnyIsInf (float2 xy)   { return any ((asuint (xy)   & 0x7f8fffff) == 0x7f800000); }
+bool AnyIsInf (float3 xyz)  { return any ((asuint (xyz)  & 0x7f8fffff) == 0x7f800000); }
+bool AnyIsInf (float4 xyzw) { return any ((asuint (xyzw) & 0x7f8fffff) == 0x7f800000); }
 
 bool AnyIsNan (float  x)    { return        IsNan (x);                                 }
 bool AnyIsNan (float2 xy)   { return any ((asuint (xy)   & 0x7fffffff)  > 0x7f800000); }
@@ -280,22 +304,30 @@ bool isnormal (float4 xyzw) { return (! (any ((asuint (xyzw) & 0x7fffffff) >= 0x
 // Remove special floating-point bit patterns, clamping is the
 //   final step before output and outputting NaN or Infinity would
 //     break color blending!
-#define SanitizeFP(c) ((! isnormal ((c))) ? (! IsNan ((c))) * (IsInf ((c)) ? sign ((c)) * float_MAX : (c)) : (c))
+#define SanitizeFP(c) ((! isnormal ((c))) ? (IsInf ((c)) ? sign ((c)) * float_MAX : (! IsNan ((c))) * (c)) : (c))
 
 #define float_MAX 65504.0 // (2 - 2^-10) * 2^15
-#define FP16_MIN 0.0000000894069671630859375f
+#define FP16_MIN  asfloat (0x33C00000)
+
+float3 AP0_D65toRec709 (float3 linearAP0)
+{
+  static const float3x3 ConvMat =
+  {
+     2.552483081817626953125f,         -1.12950992584228515625f,       -0.422973215579986572265625f,
+    -0.2773441374301910400390625f,      1.3782665729522705078125f,     -0.1009224355220794677734375f,
+    -0.01713105104863643646240234375f, -0.14986114203929901123046875f,  1.1669921875f
+  };
+
+  return mul (ConvMat, linearAP0);
+}
 
 float3 Clamp_scRGB (float3 c)
 {
-  if (any (c < 0.0f) || (! isnormal (c)))
-  {
-    // Clamp to Rec 2020
-    return
-      Rec2020toRec709 (
-        max (Rec709toRec2020 (c), 0.0f)
-      );
-  }
+  c = SanitizeFP (c);
 
+  c =
+    clamp (c, -float_MAX, float_MAX);
+  
   return c;
 }
 
@@ -475,6 +507,32 @@ float4 ApplyHDRVisualization (uint type, float4 hdr_color)
   }
 }
 
+float TonemapNone (float L)
+{
+  return L;
+}
+
+float TonemapClip (float L, float Ld)
+{
+  return
+    min (L, Ld);
+}
+
+float TonemapSDR (float L, float Lc, float Ld)
+{
+  return
+    (L + (1.0f / pow (Lc, 2.0f)) * pow (L, 2.0f)) / (1.0f + L);
+}
+
+float TonemapHDR (float L, float Lc, float Ld)
+{
+  float a = (  Ld / pow (Lc, 2.0f));
+  float b = (1.0f / Ld);
+
+  return
+    L * (1 + a * L) / (1 + b * L);
+}
+
 float4 main (PS_INPUT input) : SV_Target
 {
   float4 input_col = input.col;
@@ -497,8 +555,8 @@ float4 main (PS_INPUT input) : SV_Target
   // When sampling FP textures, special FP bit patterns like NaN or Infinity
   //   may be returned. The same image represented using UNORM would replace
   //     these special values with 0.0, and that is the behavior we want...
-  out_col =
-    SanitizeFP (out_col);
+  ////out_col =
+  ////  SanitizeFP (out_col);
 
   // Input is an alpha-only font texture if these are non-zero
   if (font_dims.x + font_dims.y > 0.0f)
@@ -545,6 +603,35 @@ float4 main (PS_INPUT input) : SV_Target
 
     if (abs (orig_col.r + orig_col.g + orig_col.b) <= 0.000013)
       out_col.rgb = 0.0f;
+
+    if (input.hdr_img)
+    {
+      out_col.rgb *= user_brightness_scale;
+
+      float dML = display_max_luminance;
+      float cML = hdr_max_luminance;
+
+      float3 xyz   = Rec709toXYZ (out_col.rgb);
+      float  Y_in  = max (xyz.y, 0.0f);
+      float  Y_out = 1.0f;
+
+      switch (tonemap_type)
+      {
+        // This tonemap type is not necessary, we always know content range
+        //SKIV_TONEMAP_TYPE_INFINITE_ROLLOFF
+
+        default:
+        case SKIV_TONEMAP_TYPE_NONE:               Y_out = TonemapNone (Y_in);            break;
+        case SKIV_TONEMAP_TYPE_CLIP:               Y_out = TonemapClip (Y_in, dML);       break;
+        case SKIV_TONEMAP_TYPE_NORMALIZE_TO_CLL:   Y_out = TonemapSDR  (Y_in, cML, 1.0f); break;
+        case SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY: Y_out = TonemapHDR  (Y_in, cML, dML);  break;
+      }
+      
+      if (Y_out > 0.0)
+      {
+        out_col.rgb *= (Y_out / Y_in);
+      }
+    }
 
     // Manipulate the alpha channel a bit...
   //out_col.a = 1.0f - RemoveSRGBCurve (1.0f - out_col.a); // Sort of perfect alpha transparency handling, but worsens fonts (more haloing), in particular for bright fonts on dark backgrounds

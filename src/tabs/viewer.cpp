@@ -1,5 +1,5 @@
 //
-// Copyright 2020 Andon "Kaldaien" Coleman
+// Copyright 2024 Andon "Kaldaien" Coleman
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to
@@ -53,6 +53,8 @@
 #include <utility/updater.h>
 #include <utility/sk_utility.h>
 
+#include <imgui/imgui_impl_dx11.h>
+
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_WINDOWS_UTF8
 #define STBI_ONLY_JPEG
@@ -84,6 +86,15 @@ enum SKIV_HDR_VisualizationFlags
   SKIV_VIZ_FLAG_SDR_CONSIDER_OVERBRIGHT = 0x4
 };
 
+enum SKIV_HDR_TonemapType
+{
+  SKIV_TONEMAP_TYPE_NONE               = 0x0, // Let the display figure it out
+  SKIV_TONEMAP_TYPE_CLIP               = 0x1, // Truncate the image before display
+  SKIV_TONEMAP_TYPE_INFINITE_ROLLOFF   = 0x2, // Reduce to finite range (i.e. x/(1+x))
+  SKIV_TONEMAP_TYPE_NORMALIZE_TO_CLL   = 0x4, // Content range mapped to [0,1]
+  SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY = 0x8  // Content range mapped to display range
+};
+
 float SKIV_HDR_SDRWhite = 80.0f;
 
 float SKIV_HDR_GamutHue_Rec709    [4] = { 1.0f, 1.0f, 1.0f, 1.0f }; // White
@@ -97,6 +108,9 @@ uint32_t SKIV_HDR_VisualizationId       = SKIV_HDR_VISUALIZTION_NONE;
 uint32_t SKIV_HDR_VisualizationFlagsSDR = 0xFFFFFFFFU;
 float    SKIV_HDR_MaxCLL                = 1.0f;
 float    SKIV_HDR_MaxLuminance          = 80.0f;
+float    SKIV_HDR_DisplayMaxLuminance   = 426.0f;
+float    SKIV_HDR_BrightnessScale       = 100.0f;
+int      SKIV_HDR_TonemapType           = SKIV_HDR_TonemapType::SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY;
 
 CComPtr <ID3D11UnorderedAccessView>
          SKIV_HDR_GamutCoverageUAV      = nullptr;
@@ -999,7 +1013,7 @@ LoadLibraryTexture (image_s& image)
     XMVECTOR vMaxLum = g_XMZero;
     XMVECTOR vMinLum = g_XMOne;
 
-    double dLumAccum = 0.0;
+    float fLumAccum = 0.0f;
 
     static constexpr float FLT16_MIN = 0.0000000894069671630859375f;
 
@@ -1018,6 +1032,8 @@ LoadLibraryTexture (image_s& image)
       XMVECTOR v;
 
       uint32_t xm_test_all = 0x0;
+
+      float fScanlineLum = 0.0f;
 
       for (size_t j = 0; j < width; ++j)
       {
@@ -1102,15 +1118,14 @@ LoadLibraryTexture (image_s& image)
         vMinLum =
           XMVectorMin (vMinLum, vColorXYZ);
 
-        dLumAccum +=
+        fScanlineLum +=
           XMVectorGetY (v);
-
-        //lumTotal +=
-        //  logf ( std::max (0.000001f, 0.000001f + XMVectorGetY (v)) ),
-        //++N;
 
         pixels++;
       }
+
+      fLumAccum +=
+        (fScanlineLum / static_cast <float> (width));
     } );
 
     const float fMaxCLL =
@@ -1161,10 +1176,9 @@ LoadLibraryTexture (image_s& image)
     image.light_info.max_nits     = fMaxLum * 80.0f; // scRGB
     image.light_info.min_nits     = fMinLum * 80.0f; // scRGB
 
-    // Not a great measure of average, but it's sufficient for now
-    image.light_info.avg_nits     = 80.0f * static_cast <float> (
-      dLumAccum / static_cast <double> (meta.width * meta.height)
-    );
+    // We use the sum of averages per-scanline to help avoid overflow
+    image.light_info.avg_nits     = 80.0f *
+      (fLumAccum / static_cast <float> (meta.height));
   }
 
   HRESULT hr =
@@ -2038,6 +2052,52 @@ SKIF_UI_Tab_DrawViewer (void)
                              cover.uv1, // Bottom Right coordinates
                              ImVec4 (1.0f, 1.0f, 1.0f, 1.0f)
       );
+
+      ImGui::PopFont ();
+
+      ImGui::TextUnformatted ("\n");
+      ImGui::SliderFloat ("Brightness", &SKIV_HDR_BrightnessScale, 1.0f, 2000.0f, "%.3f %%", ImGuiSliderFlags_Logarithmic);
+
+      if (SKIV_HDR_BrightnessScale != 100.0f)
+      {
+        ImGui::SameLine ();
+        if (ImGui::Button (ICON_FA_ROTATE_LEFT "###Brightness_Reset")) SKIV_HDR_BrightnessScale = 100.0f;
+      }
+
+      // We need to get the luminance capabilities for the current viewport from DXGI
+      //
+      //  However, this does not seem to actually get the viewport for the window we are
+      //    currently drawing into...?!
+      //
+      ImGui_ImplDX11_ViewportData* vd =
+        (ImGui_ImplDX11_ViewportData *)ImGui::GetWindowViewport ()->PlatformUserData;
+
+      ImGui::BeginDisabled ();
+      // If vd were correct, this would be assigned here, but it's not!
+      /////SKIV_HDR_DisplayMaxLuminance = vd->HDRLuma * 80.0f;
+      ImGui::SliderFloat   ("Display Luminance", &SKIV_HDR_DisplayMaxLuminance, 200.0f, 2000.0f);
+      ImGui::EndDisabled   ();
+
+      if ((SKIV_HDR_BrightnessScale / 100.0f) * SKIV_HDR_MaxLuminance > SKIV_HDR_DisplayMaxLuminance)
+      {
+        ImGui::TextUnformatted ("\n");
+        ImGui::TextColored (ImColor (0xff0099ff), ICON_FA_TRIANGLE_EXCLAMATION);
+        ImGui::SameLine    ();
+        ImGui::TextUnformatted ("Content Exceeds Display Capabilities");
+
+        ImGui::RadioButton ("Do Nothing",      &SKIV_HDR_TonemapType, SKIV_TONEMAP_TYPE_NONE);
+        ImGui::SameLine ();
+        ImGui::RadioButton ("Clip to Display", &SKIV_HDR_TonemapType, SKIV_TONEMAP_TYPE_CLIP);
+        ImGui::SameLine ();
+        // SDR tonemapping needs more testing
+#if 0
+        ImGui::RadioButton ("Map to SDR",      &SKIV_HDR_TonemapType, SKIV_TONEMAP_TYPE_NORMALIZE_TO_CLL);
+        ImGui::SameLine ();
+#endif
+        ImGui::RadioButton ("Map to Display",  &SKIV_HDR_TonemapType, SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY);
+      }
+
+      ImGui::PushFont (fontConsolas);
 
       if (SKIV_HDR_VisualizationId == SKIV_HDR_VISUALIZTION_SDR)
       {

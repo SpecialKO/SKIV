@@ -127,8 +127,11 @@ struct PIXEL_CONSTANT_BUFFER_DX11 {
   uint32_t hdr_visualization_flags [4];
   uint32_t hdr_visualization;
   float    hdr_max_luminance;
-  float    hdr_max_cll;
   float    sdr_reference_white = 80.0f;
+  float    display_max_luminance;
+  float    brightness          = 1.0f;
+  uint32_t tonemap_type        = 0;
+  float    content_max_cll_rgb [2];
   float    rec709_gamut_hue    [4];
   float    dcip3_gamut_hue     [4];
   float    rec2020_gamut_hue   [4];
@@ -585,11 +588,21 @@ void ImGui_ImplDX11_RenderDrawData (ImDrawData *draw_data)
     extern float SKIV_HDR_GamutHue_Ap0       [4];
     extern float SKIV_HDR_GamutHue_Undefined [4];
 
+    extern float SKIV_HDR_DisplayMaxLuminance;
+    extern float SKIV_HDR_BrightnessScale;
+    extern int   SKIV_HDR_TonemapType;
+
     *pix_constant_buffer = PIXEL_CONSTANT_BUFFER_DX11 ();
     pix_constant_buffer->font_dims [0]               = (float)ImGui::GetIO ().Fonts->TexWidth;
     pix_constant_buffer->font_dims [1]               = (float)ImGui::GetIO ().Fonts->TexHeight;
-    pix_constant_buffer->hdr_max_luminance           = SKIV_HDR_MaxLuminance;
-    pix_constant_buffer->hdr_max_cll                 = SKIV_HDR_MaxCLL;
+    pix_constant_buffer->hdr_max_luminance           = SKIV_HDR_MaxLuminance        / 80.0f;
+    pix_constant_buffer->display_max_luminance       = SKIV_HDR_DisplayMaxLuminance / 80.0f;//5.25f; // 420 nits
+    pix_constant_buffer->brightness                  = SKIV_HDR_BrightnessScale / 100.0f;
+    if ((SKIV_HDR_BrightnessScale / 100.0f) * SKIV_HDR_MaxLuminance > SKIV_HDR_DisplayMaxLuminance)
+      pix_constant_buffer->tonemap_type              = SKIV_HDR_TonemapType;
+    else
+      pix_constant_buffer->tonemap_type              = 0;
+    //pix_constant_buffer->hdr_max_cll                 = SKIV_HDR_MaxCLL;
     pix_constant_buffer->hdr_visualization           = SKIV_HDR_VisualizationId;
     pix_constant_buffer->sdr_reference_white         = SKIV_HDR_SDRWhite;
     pix_constant_buffer->hdr_visualization_flags [3] = SKIV_HDR_VisualizationFlagsSDR;
@@ -617,8 +630,14 @@ void ImGui_ImplDX11_RenderDrawData (ImDrawData *draw_data)
     *pix_constant_buffer = PIXEL_CONSTANT_BUFFER_DX11 ();
     pix_constant_buffer->font_dims [0]               = 0.0f;
     pix_constant_buffer->font_dims [1]               = 0.0f;
-    pix_constant_buffer->hdr_max_luminance           = SKIV_HDR_MaxLuminance;
-    pix_constant_buffer->hdr_max_cll                 = SKIV_HDR_MaxCLL;
+    pix_constant_buffer->hdr_max_luminance           = SKIV_HDR_MaxLuminance        / 80.0f;
+    pix_constant_buffer->display_max_luminance       = SKIV_HDR_DisplayMaxLuminance / 80.0f;//5.25f; // 420 nits
+    pix_constant_buffer->brightness                  = SKIV_HDR_BrightnessScale / 100.0f;
+    if ((SKIV_HDR_BrightnessScale / 100.0f) * SKIV_HDR_MaxLuminance > SKIV_HDR_DisplayMaxLuminance)
+      pix_constant_buffer->tonemap_type              = SKIV_HDR_TonemapType;
+    else
+      pix_constant_buffer->tonemap_type              = 0;
+  //pix_constant_buffer->hdr_max_cll                 = SKIV_HDR_MaxCLL;
     pix_constant_buffer->hdr_visualization           = SKIV_HDR_VisualizationId;
     pix_constant_buffer->sdr_reference_white         = SKIV_HDR_SDRWhite;
     pix_constant_buffer->hdr_visualization_flags [3] = SKIV_HDR_VisualizationFlagsSDR;
@@ -925,7 +944,7 @@ static void ImGui_ImplDX11_CreateFontsTexture()
   // Create texture sampler
   D3D11_SAMPLER_DESC
     sampler_desc                    = { };
-    sampler_desc.Filter             = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+    sampler_desc.Filter             = D3D11_FILTER_MIN_MAG_MIP_POINT;
     sampler_desc.AddressU           = D3D11_TEXTURE_ADDRESS_CLAMP;
     sampler_desc.AddressV           = D3D11_TEXTURE_ADDRESS_CLAMP;
     sampler_desc.AddressW           = D3D11_TEXTURE_ADDRESS_CLAMP;
@@ -1424,6 +1443,8 @@ struct ImGui_ImplDX11_ViewportData
     ~ImGui_ImplDX11_ViewportData()  { IM_ASSERT(SwapChain == nullptr && RTView == nullptr); }
 };
 #else
+#ifndef SKIF_CUSTOM_IMGUI_DX11_VIEWPORT_STRUCT
+#define SKIF_CUSTOM_IMGUI_DX11_VIEWPORT_STRUCT
 struct ImGui_ImplDX11_ViewportData
 {
     IDXGISwapChain1*        SwapChain;
@@ -1442,6 +1463,7 @@ struct ImGui_ImplDX11_ViewportData
      ImGui_ImplDX11_ViewportData (void) {            SwapChain  = nullptr;   RTView  = nullptr;   WaitHandle  = 0;  PresentCount = 0; SDRMode = 0; SDRWhiteLevel = 80.0f; HDRMode = 0; HDR = false; HDRLuma = 0.0f; HDRMinLuma = 0.0f; DXGIDesc = {   }; DXGIFormat = DXGI_FORMAT_UNKNOWN; }
     ~ImGui_ImplDX11_ViewportData (void) { IM_ASSERT (SwapChain == nullptr && RTView == nullptr && WaitHandle == 0); }
 };
+#endif
 #endif
 
 #ifndef SKIF_D3D11
@@ -1971,6 +1993,10 @@ ImGui_ImplDX11_CreateWindow (ImGuiViewport *viewport)
           pOutput6->GetDesc1 (&vd->DXGIDesc);
     
           vd->SDRWhiteLevel = SKIF_Util_GetSDRWhiteLevelForHMONITOR (vd->DXGIDesc.Monitor);
+          vd->HDRLuma       = vd->DXGIDesc.MaxLuminance;
+
+          extern float SKIV_HDR_DisplayMaxLuminance;
+                       SKIV_HDR_DisplayMaxLuminance = vd->HDRLuma;
 
   #pragma region Enable HDR
           // DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709    - SDR display with no Advanced Color capabilities
@@ -1991,8 +2017,6 @@ ImGui_ImplDX11_CreateWindow (ImGuiViewport *viewport)
                   ( uiHdrFlags & DXGI_SWAP_CHAIN_COLOR_SPACE_SUPPORT_FLAG_PRESENT )
                 )
             {
-              pOutput6->GetDesc1 (&vd->DXGIDesc);
-
               // Is the output display in HDR mode?
               if (vd->DXGIDesc.ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020)
               {
@@ -2000,8 +2024,6 @@ ImGui_ImplDX11_CreateWindow (ImGuiViewport *viewport)
                 vd->HDRMode = _registry.iHDRMode;
 
                 pSwapChain3->SetColorSpace1 (dxgi_cst);
-
-                pOutput6->GetDesc1 (&vd->DXGIDesc);
 
                 _registry._RendererHDREnabled = true;
               }
