@@ -1925,6 +1925,26 @@ SKIF_UI_Tab_DrawViewer (void)
         ImGui::TextUnformatted ("\n");
     }
 
+    // Pure additional Developer Mode debug data
+    if (_registry.bDeveloperMode)
+    {
+      char     szLabels      [512] = { };
+      char     szLabelsData  [512] = { };
+
+      sprintf (szLabels,     "Viewport Size:\n"
+                             "Frame Size:\n");
+      sprintf (szLabelsData, "%.0fx%.0f\n"
+                             "%.0fx%.0f\n", 
+                              ImGui::GetMainViewport ( )->Size.x,
+                              ImGui::GetMainViewport ( )->Size.y,
+                              cover.avail_size.x,
+                              cover.avail_size.y);
+
+      ImGui::TextUnformatted (szLabels);
+      ImGui::SameLine        (posXvalues);
+      ImGui::TextUnformatted (szLabelsData);
+    }
+
     // Basic Image Details
     {
       static const char szLabels [] = "Resolution:\n"
