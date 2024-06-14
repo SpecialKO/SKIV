@@ -1321,12 +1321,15 @@ GetCurrentAspectRatio (image_s& image)
   // Fill / "Fill window"
   else if (_appliedScaling == ImageScaling_Fill)
   {
+    /* We shouldn't have visible scrollbars since
+       no other image viewer cares about that anyway...
     // Workaround to prevent content/frame fighting one another
     if (ImGui::GetScrollMaxY() == 0.0f)
       avail_width -= ImGui::GetStyle().ScrollbarSize;
 
     if (ImGui::GetScrollMaxX() == 0.0f)
       avail_height -= ImGui::GetStyle().ScrollbarSize;
+    */
 
     // Fill the content area
     if (contentAspectRatio > frameAspectRatio)
