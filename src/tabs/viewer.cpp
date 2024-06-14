@@ -2090,7 +2090,7 @@ SKIF_UI_Tab_DrawViewer (void)
       //    currently drawing into...?!
       //
       ImGui_ImplDX11_ViewportData* vd =
-        (ImGui_ImplDX11_ViewportData *)ImGui::GetWindowViewport ()->PlatformUserData;
+        (ImGui_ImplDX11_ViewportData *)ImGui::GetMainViewport ()->PlatformUserData;
 
       ImGui::BeginDisabled ();
       // If vd were correct, this would be assigned here, but it's not!
