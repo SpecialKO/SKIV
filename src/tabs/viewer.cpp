@@ -69,6 +69,7 @@
 //#define STBI_ONLY_PNM
 
 #include <stb_image.h>
+#include <html_coder.hpp>
 
 thread_local stbi__context::cicp_s SKIV_STBI_CICP;
 
@@ -2598,25 +2599,76 @@ SKIF_UI_Tab_DrawViewer (void)
     if (dragDroppedFilePath.find(L"\"") == 0)
       dragDroppedFilePath = dragDroppedFilePath.substr(1, dragDroppedFilePath.find(L"\"", 1) - 1) + dragDroppedFilePath.substr(dragDroppedFilePath.find(L"\"", 1) + 1, std::wstring::npos);
 
-    std::wstring filename = dragDroppedFilePath;
-    bool isURL = PathIsURL (dragDroppedFilePath.data());
+    bool         isURL = false;
+    std::wstring filename;
+    std::wstring file_ext;
 
-    if (isURL)
+    auto _ProcessPath = [&](const std::wstring& inFilePath)
     {
-      skif_get_web_uri_t cracked = SKIF_Util_CrackWebUrl (dragDroppedFilePath);
+      isURL    = PathIsURL (inFilePath.c_str());
+      filename = inFilePath;
 
-      if (cracked.wszHostPath[0] != '\0')
-        filename = std::wstring (cracked.wszHostPath);
+      if (isURL)
+      {
+        skif_get_web_uri_t cracked = SKIF_Util_CrackWebUrl (filename);
+
+        if (cracked.wszHostPath[0] != '\0')
+          filename = std::wstring (cracked.wszHostPath);
+      }
+
+      const std::filesystem::path p = std::filesystem::path(filename.data());
+      filename = p.filename().wstring();
+      file_ext = p.extension().wstring();
+    };
+
+    // First round
+    _ProcessPath (dragDroppedFilePath);
+
+    // .URL files
+    if (SKIF_Util_ToLowerW (file_ext) == L".url" && PathFileExists (dragDroppedFilePath.c_str()))
+    {
+      PLOG_VERBOSE << "Parsing .url file...";
+
+      std::ifstream fs (dragDroppedFilePath, std::ios::in | std::ios::binary);
+
+      if (fs.is_open())
+      {
+        std::string html;
+
+        while (std::getline (fs, html))
+        {
+          std::string htmlLower = SKIF_Util_ToLower (html);
+          std::string split1    = R"(url=)";  // Split at 'url='
+
+          // Split 1 (trim before URL= element)
+          if (htmlLower.find (split1) != std::wstring::npos)
+          {
+            html = html.substr (htmlLower.find (split1) + split1.length());
+
+            if (! html.empty())
+            {
+              fb::HtmlCoder html_decoder;
+              html_decoder.decode(html);
+
+              PLOG_VERBOSE << "Extracted link: " << html;
+              dragDroppedFilePath = SK_UTF8ToWideChar (html);
+
+              break;
+            }
+          }
+        }
+
+        fs.close();
+      }
     }
 
-    const std::filesystem::path p = std::filesystem::path(filename.data());
-    const std::wstring ext        = p.extension().wstring();
-    filename                      = p.filename().wstring();
+    // Second round
+    _ProcessPath (dragDroppedFilePath);
 
-    PLOG_VERBOSE << "New " << ((isURL) ? "URL" : "file") << " drop was given; extension: " << ext << ", path: " << dragDroppedFilePath;
+    PLOG_VERBOSE << "New " << ((isURL) ? "URL" : "file") << " drop was given; extension: " << file_ext << ", path: " << dragDroppedFilePath;
 
     // Images + URLs
-    if (isExtensionSupported (ext))
+    if (isExtensionSupported (file_ext))
     {
       if (isURL)
         tryingToDownImage = SaveTempImage (dragDroppedFilePath, filename);
