@@ -1769,7 +1769,8 @@ SKIF_UI_Tab_DrawViewer (void)
   if (_registry._RendererHDREnabled)
     SKIV_HDR_MaxCLL = 1.0f;
 
-  ImVec2 image_pos = ImGui::GetCursorPos ( );
+  ImVec2 image_pos  = ImGui::GetCursorScreenPos ( ); // NOTE! Actual screen position (since that's what ImGui::Image uses)
+  ImRect image_rect = ImRect (image_pos, image_pos + sizeCover);
 
   // Display game cover image
   SKIF_ImGui_OptImage  (cover.pRawTexSRV.p,
@@ -1803,20 +1804,31 @@ SKIF_UI_Tab_DrawViewer (void)
     else if (ImGui::GetIO().MouseWheel < 0 && cover.zoom > 0.075f)
       cover.zoom -= 0.05f;
 
-    static ImVec2 start, end;
-    if (isImageHovered &&
-        SKIF_ImGui_SelectionRect (&start, &end))
+    static ImRect selection_rect;
+    if (ImGui::GetIO().KeyCtrl && SKIF_ImGui_SelectionRect (&selection_rect, image_rect))
     {
+      // Flip an inverted rectangle
+      if (selection_rect.IsInverted ( ))
+        selection_rect = ImRect (selection_rect.Max, selection_rect.Min);
+
+      // Adjust for image position
+      selection_rect.Min -= image_pos;
+      selection_rect.Max -= image_pos;
+
+      // At this point we sort of have the proper selection rect,
+      //   however the rectangle still needs to be adjusted for the
+      //     full-sized image and its currently applied scaling...
+
       // On release, do something
       ImGui::InsertNotification (
         {
           ImGuiToastType::Info,
           3000,
           "Selected area", "%.fx%.f -> %.fx%.f",
-          start.x - image_pos.x,
-          start.y - image_pos.y,
-            end.x - image_pos.x,
-            end.y - image_pos.y
+          selection_rect.Min.x,
+          selection_rect.Min.y,
+          selection_rect.Max.x,
+          selection_rect.Max.y
         }
       );
     }
