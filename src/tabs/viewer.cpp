@@ -1342,6 +1342,7 @@ SKIF_UI_Tab_DrawViewer (void)
 {
   extern bool imageFadeActive;
   extern bool wantCopyToClipboard;
+  extern ImRect copyRect;
 
   static SKIF_CommonPathsCache& _path_cache = SKIF_CommonPathsCache::GetInstance ( );
   static SKIF_RegistrySettings& _registry   = SKIF_RegistrySettings::GetInstance ( );
@@ -1374,11 +1375,30 @@ SKIF_UI_Tab_DrawViewer (void)
         DirectX::ScratchImage                                                     captured_img;
         if (SUCCEEDED (DirectX::CaptureTexture (pDevice, pDevCtx, pTexResource.p, captured_img)))
         {
-          extern bool
-              SKIV_Image_CopyToClipboard (const DirectX::Image* pImage);
-          if (SKIV_Image_CopyToClipboard (captured_img.GetImages ()))
+          DirectX::ScratchImage subrect;
+
+          if (copyRect.GetArea () != 0)
           {
-            std::exchange (wantCopyToClipboard, false);
+            DirectX::Rect src_rect (copyRect.Min.x, copyRect.Min.y, copyRect.GetWidth (), copyRect.GetHeight ());
+            subrect.Initialize2D (   captured_img.GetMetadata ().format, copyRect.GetWidth (), copyRect.GetHeight (), 1, 1);
+            DirectX::CopyRectangle (*captured_img.GetImage (0,0,0), src_rect, *subrect.GetImage (0,0,0), DirectX::TEX_FILTER_DEFAULT, 0, 0);
+            extern bool
+                SKIV_Image_CopyToClipboard (const DirectX::Image* pImage);
+            if (SKIV_Image_CopyToClipboard (subrect.GetImages ()))
+            {
+              std::exchange (wantCopyToClipboard, false);
+              copyRect = { 0,0,0,0 };
+            }
+          }
+
+          else
+          {
+            extern bool
+                SKIV_Image_CopyToClipboard (const DirectX::Image* pImage);
+            if (SKIV_Image_CopyToClipboard (captured_img.GetImages ()))
+            {
+              std::exchange (wantCopyToClipboard, false);
+            }
           }
         }
       }
@@ -1874,6 +1894,9 @@ SKIF_UI_Tab_DrawViewer (void)
           translated.Max.y
         }
       );
+
+      wantCopyToClipboard = true;
+      copyRect            = translated;
     }
   }
 
@@ -3599,10 +3622,14 @@ SKIV_HDR_SavePNGToDisk (const wchar_t* wszPNGPath, const DirectX::Image* png_ima
   return false;
 }
 
+// The parameters are screwy here because currently the only successful way
+//   of doing this copy involves passing the path to a file, but the intention
+//     is actually to pass raw image data and transfer it using OLE.
 bool
 SKIV_PNG_CopyToClipboard (const DirectX::Image& image, const void *pData, size_t data_size)
 {
   std::ignore = image;
+  std::ignore = data_size; // It's a string, we can compute the size trivially
 
   if (OpenClipboard (nullptr))
   {
@@ -3633,6 +3660,8 @@ SKIV_PNG_CopyToClipboard (const DirectX::Image& image, const void *pData, size_t
   return false;
 }
 
+
+ImRect copyRect = { 0,0,0,0 };
 bool wantCopyToClipboard = false;
 void SKIV_HandleCopyShortcut (void)
 {
