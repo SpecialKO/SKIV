@@ -1815,20 +1815,26 @@ SKIF_UI_Tab_DrawViewer (void)
       selection_rect.Min -= image_pos;
       selection_rect.Max -= image_pos;
 
-      // At this point we sort of have the proper selection rect,
-      //   however the rectangle still needs to be adjusted for the
-      //     full-sized image and its currently applied scaling...
+      // Translate to image coordinates
+      ImRect translated = selection_rect;
+      float scale     = (sizeCover.x != cover.width) ? cover.width / sizeCover.x : 1.0f;
+      translated.Min *= scale;
+      translated.Max *= scale;
 
       // On release, do something
       ImGui::InsertNotification (
         {
           ImGuiToastType::Info,
           3000,
-          "Selected area", "%.fx%.f -> %.fx%.f",
+          "Selection", "Mouse: %.fx%.f -> %.fx%.f\nImage: %.fx%.f -> %.fx%.f",
           selection_rect.Min.x,
           selection_rect.Min.y,
           selection_rect.Max.x,
-          selection_rect.Max.y
+          selection_rect.Max.y,
+          translated.Min.x,
+          translated.Min.y,
+          translated.Max.x,
+          translated.Max.y
         }
       );
     }
