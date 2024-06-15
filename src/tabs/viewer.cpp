@@ -207,7 +207,6 @@ struct image_s {
   bool         is_hdr      = false;
 
   CComPtr <ID3D11ShaderResourceView>  pRawTexSRV;
-  CComPtr <ID3D11ShaderResourceView>  pTonemappedTexSRV;
   CComPtr <ID3D11UnorderedAccessView> pGamutCoverageUAV;
   CComPtr <ID3D11ShaderResourceView>  pGamutCoverageSRV;
 
@@ -252,7 +251,6 @@ struct image_s {
     avail_size          = other.avail_size;
     avail_size_cache    = other.avail_size_cache;
     pRawTexSRV.p        = other.pRawTexSRV.p;
-    pTonemappedTexSRV.p = other.pTonemappedTexSRV.p;
     pGamutCoverageSRV.p = other.pGamutCoverageSRV.p;
     pGamutCoverageUAV.p = other.pGamutCoverageUAV.p;
     is_hdr              = other.is_hdr;
@@ -273,7 +271,6 @@ struct image_s {
     avail_size          = { };
     avail_size_cache    = { };
     pRawTexSRV.p        = nullptr;
-    pTonemappedTexSRV.p = nullptr;
     pGamutCoverageSRV.p = nullptr;
     pGamutCoverageUAV.p = nullptr;
     is_hdr              = false;
@@ -644,7 +641,6 @@ LoadLibraryTexture (image_s& image)
   static SKIF_CommonPathsCache& _path_cache = SKIF_CommonPathsCache::GetInstance ( );
 
   CComPtr <ID3D11Texture2D> pRawTex2D;
-  CComPtr <ID3D11Texture2D> pTonemappedTex2D;
   CComPtr <ID3D11Texture2D> pGamutCoverageTex2D;
   DirectX::TexMetadata        meta = { };
   DirectX::ScratchImage        img = { };
@@ -943,14 +939,6 @@ LoadLibraryTexture (image_s& image)
     image.pRawTexSRV.p = nullptr;
   }
 
-  if (image.pTonemappedTexSRV.p != nullptr)
-  {
-    extern concurrency::concurrent_queue <IUnknown *> SKIF_ResourcesToFree;
-    PLOG_VERBOSE << "SKIF_ResourcesToFree: Pushing " << image.pTonemappedTexSRV.p << " to be released";;
-    SKIF_ResourcesToFree.push (image.pTonemappedTexSRV.p);
-    image.pTonemappedTexSRV.p = nullptr;
-  }
-
   if (! succeeded)
     return false;
 
@@ -998,11 +986,8 @@ LoadLibraryTexture (image_s& image)
     return false;
 
   pRawTex2D        = nullptr;
-  pTonemappedTex2D = nullptr;
 
   succeeded = false;
-
-  DirectX::ScratchImage normalized_hdr;
 
   if (image.is_hdr)
   {
@@ -1140,22 +1125,6 @@ LoadLibraryTexture (image_s& image)
     XMVECTOR vMaxCLLReplicated =
       XMVectorReplicate (fMaxCLL);
 
-    TransformImage ( pImg->GetImages     (),
-                     pImg->GetImageCount (),
-                     pImg->GetMetadata   (),
-    [&](XMVECTOR* outPixels, const XMVECTOR* inPixels, size_t width, size_t y)
-    {
-      UNREFERENCED_PARAMETER(y);
-
-      for (size_t j = 0; j < width; ++j)
-      {
-        XMVECTOR value = inPixels [j];
-
-        outPixels [j] =
-          XMVectorDivide (value, vMaxCLLReplicated);
-      }
-    }, normalized_hdr );
-
     char cMaxChannel =
       fMaxCLL == XMVectorGetX (vMaxCLL) ? 'R' :
       fMaxCLL == XMVectorGetY (vMaxCLL) ? 'G' :
@@ -1190,8 +1159,6 @@ LoadLibraryTexture (image_s& image)
   {
     if (image.is_hdr)
     {
-      DirectX::CreateTexture (pDevice, normalized_hdr.GetImages (), normalized_hdr.GetImageCount (), normalized_hdr.GetMetadata (), (ID3D11Resource **)&pTonemappedTex2D.p);
-
       D3D11_TEXTURE2D_DESC
         texDesc            = { };
         texDesc.BindFlags  = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
@@ -1232,11 +1199,6 @@ LoadLibraryTexture (image_s& image)
 
     if (pRawTex2D.p != nullptr && SUCCEEDED (pDevice->CreateShaderResourceView (pRawTex2D.p, &srv_desc, &image.pRawTexSRV.p)))
     {
-      if (pTonemappedTex2D.p != nullptr)
-      {
-        pDevice->CreateShaderResourceView (pTonemappedTex2D.p, &srv_desc, &image.pTonemappedTexSRV.p);
-      }
-
       DWORD post = SKIF_Util_timeGetTime1 ( );
       PLOG_INFO << "[Image Processing] Processed image in " << (post - pre) << " ms.";
 
@@ -1249,7 +1211,6 @@ LoadLibraryTexture (image_s& image)
 
     // SRV is holding a reference, this is not needed anymore.
     pRawTex2D           = nullptr;
-    pTonemappedTex2D    = nullptr;
     pGamutCoverageTex2D = nullptr;
   }
 
@@ -1401,13 +1362,6 @@ SKIF_UI_Tab_DrawViewer (void)
         cover_old.pRawTexSRV.p = nullptr;
       }
 
-      if (cover_old.pTonemappedTexSRV.p != nullptr)
-      {
-        PLOG_VERBOSE << "SKIF_ResourcesToFree: Pushing " << cover_old.pTonemappedTexSRV.p << " to be released";;
-        SKIF_ResourcesToFree.push(cover_old.pTonemappedTexSRV.p);
-        cover_old.pTonemappedTexSRV.p = nullptr;
-      }
-
       if (cover_old.pGamutCoverageSRV.p != nullptr)
       {
         PLOG_VERBOSE << "SKIF_ResourcesToFree: Pushing " << cover_old.pGamutCoverageSRV.p << " to be released";;
@@ -1459,13 +1413,6 @@ SKIF_UI_Tab_DrawViewer (void)
       PLOG_VERBOSE << "SKIF_ResourcesToFree: Pushing " << cover_old.pRawTexSRV.p << " to be released";;
       SKIF_ResourcesToFree.push(cover_old.pRawTexSRV.p);
       cover_old.pRawTexSRV.p = nullptr;
-    }
-
-    if (cover_old.pTonemappedTexSRV.p != nullptr)
-    {
-      PLOG_VERBOSE << "SKIF_ResourcesToFree: Pushing " << cover_old.pTonemappedTexSRV.p << " to be released";;
-      SKIF_ResourcesToFree.push(cover_old.pTonemappedTexSRV.p);
-      cover_old.pTonemappedTexSRV.p = nullptr;
     }
 
     if (cover_old.pGamutCoverageSRV.p != nullptr)
@@ -1783,8 +1730,7 @@ SKIF_UI_Tab_DrawViewer (void)
     if (sizeCover_old.y < ImGui::GetContentRegionAvail().y)
       ImGui::SetCursorPosY ((ImGui::GetContentRegionAvail().y - sizeCover_old.y) * 0.5f);
   
-    SKIF_ImGui_OptImage  ((_registry._RendererHDREnabled || (! cover_old.light_info.isHDR)) ? cover_old.pRawTexSRV.p :
-                                                                                              cover_old.pTonemappedTexSRV,
+    SKIF_ImGui_OptImage  (cover_old.pRawTexSRV.p,
                                                       ImVec2 (sizeCover_old.x,
                                                               sizeCover_old.y),
                                     cover_old.light_info.isHDR ? hdr_uv : cover_old.uv0, // Top Left coordinates
@@ -1826,8 +1772,7 @@ SKIF_UI_Tab_DrawViewer (void)
   ImVec2 image_pos = ImGui::GetCursorPos ( );
 
   // Display game cover image
-  SKIF_ImGui_OptImage  ((_registry._RendererHDREnabled || SKIV_HDR_VisualizationId != SKIV_HDR_VISUALIZTION_NONE || (! cover.light_info.isHDR)) ? cover.pRawTexSRV.p :
-                                                                        cover.pTonemappedTexSRV.p,
+  SKIF_ImGui_OptImage  (cover.pRawTexSRV.p,
                                                     ImVec2 (sizeCover.x,
                                                             sizeCover.y),
                                   cover.light_info.isHDR ? hdr_uv : cover.uv0, // Top Left coordinates
@@ -1992,7 +1937,7 @@ SKIF_UI_Tab_DrawViewer (void)
     }
 
     // HDR Light Levels
-    if (cover.light_info.isHDR && cover.pTonemappedTexSRV.p != nullptr)
+    if (cover.light_info.isHDR)
     {
       ImGui::TextUnformatted ("\n");
 
@@ -2109,32 +2054,30 @@ SKIF_UI_Tab_DrawViewer (void)
         if (ImGui::Button (ICON_FA_ROTATE_LEFT "###Brightness_Reset")) SKIV_HDR_BrightnessScale = 100.0f;
       }
 
-      // We need to get the luminance capabilities for the current viewport from DXGI
-      ImGui_ImplDX11_ViewportData* vd =
-        (ImGui_ImplDX11_ViewportData *)ImGui::GetWindowViewport ()->RendererUserData;
-
-      ImGui::BeginDisabled ();
-      SKIV_HDR_DisplayMaxLuminance = vd->HDRLuma;
-      ImGui::SliderFloat   ("Display Luminance", &vd->HDRLuma, 200.0f, 2000.0f, (const char *)u8"%.1f cd / m\u00b2");
-      ImGui::EndDisabled   ();
-
-      if ((SKIV_HDR_BrightnessScale / 100.0f) * SKIV_HDR_MaxLuminance > SKIV_HDR_DisplayMaxLuminance)
+      if (_registry._RendererHDREnabled && _registry.iHDRMode == 2)
       {
-        ImGui::TextUnformatted ("\n");
-        ImGui::TextColored (ImColor (0xff0099ff), ICON_FA_TRIANGLE_EXCLAMATION);
-        ImGui::SameLine    ();
-        ImGui::TextUnformatted ("Content Exceeds Display Capabilities");
+        // We need to get the luminance capabilities for the current viewport from DXGI
+        ImGui_ImplDX11_ViewportData* vd =
+          (ImGui_ImplDX11_ViewportData *)ImGui::GetWindowViewport ()->RendererUserData;
 
-        ImGui::RadioButton ("Do Nothing",      &SKIV_HDR_TonemapType, SKIV_TONEMAP_TYPE_NONE);
-        ImGui::SameLine ();
-        ImGui::RadioButton ("Clip to Display", &SKIV_HDR_TonemapType, SKIV_TONEMAP_TYPE_CLIP);
-        ImGui::SameLine ();
-        // SDR tonemapping needs more testing
-#if 0
-        ImGui::RadioButton ("Map to SDR",      &SKIV_HDR_TonemapType, SKIV_TONEMAP_TYPE_NORMALIZE_TO_CLL);
-        ImGui::SameLine ();
-#endif
-        ImGui::RadioButton ("Map to Display",  &SKIV_HDR_TonemapType, SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY);
+        ImGui::BeginDisabled ();
+        SKIV_HDR_DisplayMaxLuminance = vd->HDRLuma;
+        ImGui::SliderFloat   ("Display Luminance", &vd->HDRLuma, 200.0f, 2000.0f, (const char *)u8"%.1f cd / m\u00b2");
+        ImGui::EndDisabled   ();
+
+        if ((SKIV_HDR_BrightnessScale / 100.0f) * SKIV_HDR_MaxLuminance > SKIV_HDR_DisplayMaxLuminance)
+        {
+          ImGui::TextUnformatted ("\n");
+          ImGui::TextColored (ImColor (0xff0099ff), ICON_FA_TRIANGLE_EXCLAMATION);
+          ImGui::SameLine    ();
+          ImGui::TextUnformatted ("Content Exceeds Display Capabilities");
+
+          ImGui::RadioButton ("Do Nothing",      &SKIV_HDR_TonemapType, SKIV_TONEMAP_TYPE_NONE);
+          ImGui::SameLine ();
+          ImGui::RadioButton ("Clip to Display", &SKIV_HDR_TonemapType, SKIV_TONEMAP_TYPE_CLIP);
+          ImGui::SameLine ();
+          ImGui::RadioButton ("Map to Display",  &SKIV_HDR_TonemapType, SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY);
+        }
       }
 
       ImGui::PushFont (fontConsolas);
@@ -2393,7 +2336,6 @@ SKIF_UI_Tab_DrawViewer (void)
       bool success = LoadLibraryTexture ( _data->image );
 
       PLOG_VERBOSE << "_pRawTexSRV = "        << _data->image.pRawTexSRV;
-      PLOG_VERBOSE << "_pTonemappedTexSRV = " << _data->image.pTonemappedTexSRV;
 
       int currentQueueLength = textureLoadQueueLength.load();
 
@@ -2411,7 +2353,6 @@ SKIF_UI_Tab_DrawViewer (void)
         cover.uv0               = _data->image.uv0;
         cover.uv1               = _data->image.uv1;
         cover.pRawTexSRV        = _data->image.pRawTexSRV;
-        cover.pTonemappedTexSRV = _data->image.pTonemappedTexSRV;
         cover.pGamutCoverageSRV = _data->image.pGamutCoverageSRV;
         cover.pGamutCoverageUAV = _data->image.pGamutCoverageUAV;
         cover.light_info        = _data->image.light_info;
@@ -2438,7 +2379,6 @@ SKIF_UI_Tab_DrawViewer (void)
       }
 
       else if (_data->image.pRawTexSRV.p        != nullptr ||
-               _data->image.pTonemappedTexSRV.p != nullptr ||
                _data->image.pGamutCoverageSRV.p != nullptr ||
                _data->image.pGamutCoverageUAV.p != nullptr)
       {
@@ -2448,14 +2388,6 @@ SKIF_UI_Tab_DrawViewer (void)
           PLOG_VERBOSE << "SKIF_ResourcesToFree: Pushing " << _data->image.pRawTexSRV.p << " to be released";;
           SKIF_ResourcesToFree.push(_data->image.pRawTexSRV.p);
           _data->image.pRawTexSRV.p = nullptr;
-        }
-
-        if (_data->image.pTonemappedTexSRV.p != nullptr)
-        {
-          PLOG_DEBUG << "Texture is late! (" << queuePos << " vs " << currentQueueLength << ")";
-          PLOG_VERBOSE << "SKIF_ResourcesToFree: Pushing " << _data->image.pTonemappedTexSRV.p << " to be released";;
-          SKIF_ResourcesToFree.push(_data->image.pTonemappedTexSRV.p);
-          _data->image.pTonemappedTexSRV.p = nullptr;
         }
 
         if (_data->image.pGamutCoverageSRV.p != nullptr)
@@ -2788,24 +2720,12 @@ SKIF_UI_Tab_DrawViewer (void)
     {
       SKIF_ResourcesToFree.push(cover.pRawTexSRV.p);
       cover.pRawTexSRV.p = nullptr;
-
-      if (cover.pTonemappedTexSRV.p != nullptr)
-      {
-        SKIF_ResourcesToFree.push(cover.pTonemappedTexSRV.p);
-        cover.pTonemappedTexSRV.p = nullptr;
-      }
     }
 
     if (cover_old.pRawTexSRV.p != nullptr)
     {
       SKIF_ResourcesToFree.push(cover_old.pRawTexSRV.p);
       cover_old.pRawTexSRV.p = nullptr;
-
-      if (cover_old.pTonemappedTexSRV.p != nullptr)
-      {
-        SKIF_ResourcesToFree.push(cover_old.pTonemappedTexSRV.p);
-        cover_old.pTonemappedTexSRV.p = nullptr;
-      }
 
       if (cover_old.pGamutCoverageSRV.p != nullptr)
       {
