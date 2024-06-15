@@ -1575,6 +1575,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
         ImGui::SetNextWindowSizeConstraints (wnd_minimum_size * 2.0f, ImVec2 (FLT_MAX, FLT_MAX));
 
       // On the second frame, limit the initial window size to only 80% of the monitor size
+      /*
       else if (resizeAppWindow || ImGui::GetFrameCount() == 2)
       {
         ImVec2 size_current = windowRect.GetSize();
@@ -1587,6 +1588,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
         if (size_current.x > size_maximum.x || size_current.y > size_maximum.y)
           repositionToCenter = true;
       }
+      */
 
       // The rest of the frames are uncapped
       else
