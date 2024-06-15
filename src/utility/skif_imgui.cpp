@@ -492,21 +492,30 @@ SKIF_ImGui_IsAnyPopupOpen (void)
 }
 
 bool
-SKIF_ImGui_SelectionRect (ImVec2* start_pos, ImVec2* end_pos, ImGuiMouseButton mouse_button)
+SKIF_ImGui_SelectionRect (ImRect* selection, ImRect allowed, ImGuiMouseButton mouse_button)
 {
   IM_ASSERT(start_pos != NULL);
   IM_ASSERT(end_pos   != NULL);
 
+  // Update start position on click
   if (ImGui::IsMouseClicked (mouse_button))
-    *start_pos = ImGui::GetMousePos ( );
+    selection->Min = ImGui::GetMousePos ( );
 
+  // Update end position while being held down
+  if (ImGui::IsMouseDown (mouse_button))
+    selection->Max = ImGui::GetMousePos ( );
+
+  // Keep the selection within the allowed rectangle
+  selection->ClipWithFull (allowed);
+
+  // Draw the selection rectangle
   if (ImGui::IsMouseDown (mouse_button))
   {
-    *end_pos              = ImGui::GetMousePos           ( );
     ImDrawList* draw_list = ImGui::GetForegroundDrawList ( ); //ImGui::GetWindowDrawList ( );
-    draw_list->AddRect       (*start_pos, *end_pos, ImGui::GetColorU32 (IM_COL32(0, 130, 216, 255))); // Border
-    draw_list->AddRectFilled (*start_pos, *end_pos, ImGui::GetColorU32 (IM_COL32(0, 130, 216, 50)));  // Background
+    draw_list->AddRect       (selection->Min, selection->Max, ImGui::GetColorU32 (IM_COL32(0, 130, 216, 255))); // Border
+    draw_list->AddRectFilled (selection->Min, selection->Max, ImGui::GetColorU32 (IM_COL32(0, 130, 216, 50)));  // Background
   }
+
   return ImGui::IsMouseReleased (mouse_button);
 }
 
