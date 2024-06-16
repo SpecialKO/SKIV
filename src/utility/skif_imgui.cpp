@@ -492,31 +492,59 @@ SKIF_ImGui_IsAnyPopupOpen (void)
 }
 
 bool
-SKIF_ImGui_SelectionRect (ImRect* selection, ImRect allowed, ImGuiMouseButton mouse_button)
+SKIF_ImGui_SelectionRect (ImRect*          selection,
+                          ImRect           allowed,
+                          ImGuiMouseButton mouse_button,
+                          SelectionFlag    flags)
 {
-  IM_ASSERT(start_pos != NULL);
-  IM_ASSERT(end_pos   != NULL);
+  const bool single_click =
+    (flags & SelectionFlag_SingleClick);
+
+  const bool min_is_zero =
+    (selection->Min.x == selection->Min.y && selection->Min.y == 0.0f);
 
   // Update start position on click
-  if (ImGui::IsMouseClicked (mouse_button))
-    selection->Min = ImGui::GetMousePos ( );
+  if ((ImGui::IsMouseClicked (mouse_button) && (! single_click)) ||
+                                  (min_is_zero && single_click))
+    selection->Min = ImGui::GetMousePos ();
 
   // Update end position while being held down
-  if (ImGui::IsMouseDown (mouse_button))
-    selection->Max = ImGui::GetMousePos ( );
+  if (ImGui::IsMouseDown (mouse_button) || single_click)
+    selection->Max = ImGui::GetMousePos ();
 
   // Keep the selection within the allowed rectangle
   selection->ClipWithFull (allowed);
 
+  static const auto
+    inset = ImVec2 (0.0f, 0.0f);
+
   // Draw the selection rectangle
-  if (ImGui::IsMouseDown (mouse_button))
+  if (ImGui::IsMouseDown (mouse_button) || single_click)
   {
-    ImDrawList* draw_list = ImGui::GetForegroundDrawList ( ); //ImGui::GetWindowDrawList ( );
-    draw_list->AddRect       (selection->Min, selection->Max, ImGui::GetColorU32 (IM_COL32(0, 130, 216, 255))); // Border
-    draw_list->AddRectFilled (selection->Min, selection->Max, ImGui::GetColorU32 (IM_COL32(0, 130, 216, 50)));  // Background
+    ImDrawList* draw_list =
+      ImGui::GetForegroundDrawList ();
+
+      draw_list->AddRect       (selection->Min-inset, selection->Max+inset, ImGui::GetColorU32 (IM_COL32(0,130,216,255))); // Border
+
+    if (flags & SelectionFlag_Filled)
+      draw_list->AddRectFilled (selection->Min,       selection->Max,       ImGui::GetColorU32 (IM_COL32(0,130,216,50)));  // Background
   }
 
-  return ImGui::IsMouseReleased (mouse_button);
+  const bool complete =
+    (single_click && ImGui::IsMouseClicked  (mouse_button)) ||
+                     ImGui::IsMouseReleased (mouse_button);
+
+  const bool allow_inversion =
+    (flags & SelectionFlag_AllowInverted);
+
+  if (complete)
+  {
+    if (selection->IsInverted () && (! allow_inversion))
+       *selection = ImRect (selection->Max, selection->Min);
+  }
+
+  return
+    complete;
 }
 
 void
