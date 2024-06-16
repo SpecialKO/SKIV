@@ -847,10 +847,10 @@ LoadLibraryTexture (image_s& image)
           size_t   imageSize = width * height * desired_channels * sizeof (pixel_size);
           uint8_t* pDest     = raw_fp32_img.GetImage (0, 0, 0)->pixels;
           memcpy  (pDest, pixels, imageSize);
-        
+
           // Still overkill for SDR, but we're saving some VRAM...
           const DXGI_FORMAT final_format = DXGI_FORMAT_R16G16B16A16_FLOAT;
-        
+
           if (SUCCEEDED (DirectX::Convert (*raw_fp32_img.GetImages (), final_format, DirectX::TEX_FILTER_DEFAULT, 0.0f, img)))
           {
             meta.format = final_format;
@@ -1188,7 +1188,8 @@ LoadLibraryTexture (image_s& image)
     }
 
     // Remember HDR images read using the WIC encoder
-    if (meta.format == DXGI_FORMAT_R16G16B16A16_FLOAT && decoder == ImageDecoder_WIC)
+    if ((meta.format == DXGI_FORMAT_R16G16B16A16_FLOAT  ||
+         meta.format == DXGI_FORMAT_R32G32B32A32_FLOAT) && decoder == ImageDecoder_WIC)
       image.light_info.isHDR = true;
 
     D3D11_SHADER_RESOURCE_VIEW_DESC
@@ -1375,19 +1376,31 @@ SKIF_UI_Tab_DrawViewer (void)
         DirectX::ScratchImage                                                     captured_img;
         if (SUCCEEDED (DirectX::CaptureTexture (pDevice, pDevCtx, pTexResource.p, captured_img)))
         {
-          DirectX::ScratchImage subrect;
-
           if (copyRect.GetArea () != 0)
           {
-            DirectX::Rect src_rect (copyRect.Min.x, copyRect.Min.y, copyRect.GetWidth (), copyRect.GetHeight ());
-            subrect.Initialize2D (   captured_img.GetMetadata ().format, copyRect.GetWidth (), copyRect.GetHeight (), 1, 1);
-            DirectX::CopyRectangle (*captured_img.GetImage (0,0,0), src_rect, *subrect.GetImage (0,0,0), DirectX::TEX_FILTER_DEFAULT, 0, 0);
-            extern bool
-                SKIV_Image_CopyToClipboard (const DirectX::Image* pImage);
-            if (SKIV_Image_CopyToClipboard (subrect.GetImages ()))
+            const size_t
+              x      = static_cast <size_t> (std::max (0.0f, copyRect.Min.x)),
+              y      = static_cast <size_t> (std::max (0.0f, copyRect.Min.y)),
+              width  = static_cast <size_t> (std::max (0.0f, copyRect.GetWidth  ())),
+              height = static_cast <size_t> (std::max (0.0f, copyRect.GetHeight ()));
+
+            const DirectX::Rect
+              src_rect (x,y, width,height);
+
+            DirectX::ScratchImage
+                           subrect;
+            if (SUCCEEDED (subrect.Initialize2D   ( captured_img.GetMetadata ().format, width, height, 1, 1)) &&
+                SUCCEEDED (DirectX::CopyRectangle (*captured_img.GetImages   (), src_rect,
+                                                                                 *subrect.GetImages (), DirectX::TEX_FILTER_DEFAULT, 0, 0)))
             {
-              std::exchange (wantCopyToClipboard, false);
-              copyRect = { 0,0,0,0 };
+              extern bool
+                  SKIV_Image_CopyToClipboard (const DirectX::Image* pImage);
+              if (SKIV_Image_CopyToClipboard (subrect.GetImages ()))
+              {
+                std::exchange (wantCopyToClipboard, false);
+
+                copyRect = { 0,0,0,0 };
+              }
             }
           }
 
@@ -1847,7 +1860,7 @@ SKIF_UI_Tab_DrawViewer (void)
     PLOG_VERBOSE << "Attempted to reset scroll...";
 
     resetScrollCenter = false;
-    
+
     ImGui::SetScrollHereY ( );
     ImGui::SetScrollHereX ( );
   }
@@ -2025,7 +2038,7 @@ SKIF_UI_Tab_DrawViewer (void)
                                            "Min Luminance: ";
       char     szLightUnits  [512] = { };
       char     szLightLevels [512] = { };
-      
+
       sprintf (szLightUnits, (const char*)
                            u8"(%c)\n"
                            u8"cd / m\u00b2\n" // Unicode: Superscript Two
@@ -2303,7 +2316,6 @@ SKIF_UI_Tab_DrawViewer (void)
             SKIV_HDR_VisualizationId = SKIV_HDR_VISUALIZTION_NONE;
           }
 
-      
           if (SKIF_ImGui_MenuItemEx2 ("Luminance Heatmap", ICON_FA_CIRCLE_RADIATION, ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Yellow), spaces, &bHeatmap))
           {
             _ResetSelection (bHeatmap);
