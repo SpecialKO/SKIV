@@ -237,17 +237,6 @@ float3 Rec709toAP0_D65 (float3 linearRec709)
   return mul (ConvMat, linearRec709);
 }
 
-float3 Rec2020toRec709 (float3 linearRec2020)
-{
-  static const float3x3 ConvMat =
-  {
-     1.66049621914783,   -0.587656444131135, -0.0728397750166941,
-    -0.124547095586012,   1.13289510924730,  -0.00834801366128445,
-    -0.0181536813870718, -0.100597371685743,  1.11875105307281
-  };
-  return mul (ConvMat, linearRec2020);
-}
-
 float3 Rec709toXYZ (float3 linearRec709)
 {
   static const float3x3 ConvMat =
@@ -327,7 +316,7 @@ float3 Clamp_scRGB (float3 c)
 
   c =
     clamp (c, -float_MAX, float_MAX);
-  
+
   return c;
 }
 
@@ -634,70 +623,15 @@ float4 main (PS_INPUT input) : SV_Target
     if (abs (orig_col.r + orig_col.g + orig_col.b) <= 0.000013)
       out_col.rgb = 0.0f;
 
-
-    if (input.hdr_img)
-    {
-      int implied_tonemap_type =
-        (hdr_visualization == SKIV_VISUALIZATION_GAMUT) ? SKIV_TONEMAP_TYPE_NONE
-                                                        :      tonemap_type;
-
-      out_col.rgb *=
-        (hdr_visualization != SKIV_VISUALIZATION_NONE) ? 1.0f
-                                                       : user_brightness_scale;
-
-
-      float dML = display_max_luminance;
-      float cML = hdr_max_luminance;
-
-      float3 xyz   = Rec709toXYZ (out_col.rgb);
-      float  Y_in  = max (xyz.y, 0.0f);
-      float  Y_out = 1.0f;
-
-      switch (implied_tonemap_type)
-      {
-        // This tonemap type is not necessary, we always know content range
-        //SKIV_TONEMAP_TYPE_INFINITE_ROLLOFF
-
-        default:
-        case SKIV_TONEMAP_TYPE_NONE:               Y_out = TonemapNone (Y_in);            break;
-        case SKIV_TONEMAP_TYPE_CLIP:               Y_out = TonemapClip (Y_in, dML);       break;
-        case SKIV_TONEMAP_TYPE_NORMALIZE_TO_CLL:   Y_out = TonemapSDR  (Y_in, cML, 1.0f); break;
-        case SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY: Y_out = TonemapHDR  (Y_in, cML, dML);  break;
-      }
-
-      if (Y_out + Y_in > 0.0)
-      {
-        xyz.xyz *= max ((Y_out / Y_in), 0.0f);
-      }
-
-      else
-        xyz.xyz = (0.0).xxx;
-
-      out_col.rgb = XYZtoRec709 (xyz);
-
-
-      // Scale the input to visualize the heat, then undo the scale so that the
-      //   visualization has constant luminance.
-      if (hdr_visualization == SKIV_VISUALIZATION_HEATMAP)
-      {
-        prescale_luminance  =        user_brightness_scale;
-        postscale_luminance = 1.0f / user_brightness_scale;
-      }
-
-      out_col =
-        ApplyHDRVisualization (hdr_visualization, out_col * prescale_luminance, true)
-                                                          * postscale_luminance;
-    }
-
     // Manipulate the alpha channel a bit...
   //out_col.a = 1.0f - RemoveSRGBCurve (1.0f - out_col.a); // Sort of perfect alpha transparency handling, but worsens fonts (more haloing), in particular for bright fonts on dark backgrounds
   //out_col.a = out_col.a;                                 // Worse alpha transparency handling, but improves fonts (less haloing)
   //out_col.a = 1.0f - ApplySRGBCurve  (1.0f - out_col.a); // Unusable alpha transparency, and worsens dark fonts on bright backgrounds
     // No perfect solution for various reasons (ImGui not having proper subpixel font rendering or doing linear colors for example)
-
-    out_col.rgb *= out_col.a;
   }
-  
+
+
+#if 0
   // HDR10 (pending potential removal)
   // ColSpace:  DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020
   // Gamma:     2084
@@ -710,9 +644,9 @@ float4 main (PS_INPUT input) : SV_Target
                                   saturate (  out_col.a)  *
                                   saturate (input_col.a)
               );
-    
+
     float hdr_scale = (-input.lum.x / 10000.0);
-    
+
     out_col.rgb =
         LinearToST2084 (
           Rec709toRec2020 ( saturate (out_col.rgb) ) * hdr_scale);
@@ -723,6 +657,7 @@ float4 main (PS_INPUT input) : SV_Target
     
     out_col.rgb *= out_col.a;
   }
+#endif
 
   // 10 bpc SDR
   // ColSpace:  DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709
@@ -738,8 +673,6 @@ float4 main (PS_INPUT input) : SV_Target
                                     saturate (  out_col.a)  *
                                     saturate (input_col.a)
                 );
-
-      out_col.rgb = ApplySRGBCurve (out_col.rgb);
     }
 
     else
@@ -756,57 +689,7 @@ float4 main (PS_INPUT input) : SV_Target
       if (abs (orig_col.r + orig_col.g + orig_col.b) <= 0.000013)
         out_col.rgb = 0.0f;
     }
-
-
-    if (input.hdr_img)
-    {
-      int implied_tonemap_type =
-        (hdr_visualization == SKIV_VISUALIZATION_GAMUT) ? SKIV_TONEMAP_TYPE_NONE
-                                                        :      tonemap_type;
-
-      out_col.rgb *=
-        (hdr_visualization != SKIV_VISUALIZATION_NONE) ? 1.0f
-                                                       : user_brightness_scale * 0.25;
-
-
-      float dML = display_max_luminance;
-      float cML = hdr_max_luminance;
-
-      float3 xyz   = Rec709toXYZ (out_col.rgb);
-      float  Y_in  = max (xyz.y, 0.0f);
-      float  Y_out = 1.0f;
-
-      Y_out = TonemapSDR (Y_in, cML, 2.5375f);
-
-      if (Y_out + Y_in > 0.0)
-      {
-        xyz.xyz *= max ((Y_out / Y_in), 0.0f);
-      }
-
-      else
-        xyz.xyz = (0.0).xxx;
-
-      out_col.rgb = XYZtoRec709 (xyz);
-
-
-      // Scale the input to visualize the heat, then undo the scale so that the
-      //   visualization has constant luminance.
-      if (hdr_visualization == SKIV_VISUALIZATION_HEATMAP)
-      {
-        prescale_luminance  =        (user_brightness_scale * 0.25f);
-        postscale_luminance = 1.0f / (user_brightness_scale * 0.25f);
-      }
-
-      out_col =
-        ApplyHDRVisualization (hdr_visualization, out_col * prescale_luminance, true)
-                                                          * postscale_luminance;
-
-      out_col.rgb =
-        ApplySRGBCurve (saturate (out_col.rgb));
-    }
-
-    out_col.rgb *= out_col.a;
-
+    
     // Manipulate the alpha channel a bit...
   //out_col.a = 1.0f - RemoveSRGBCurve (1.0f - out_col.a); // Sort of perfect alpha transparency handling, but worsens fonts (more haloing), in particular for bright fonts on dark backgrounds
   //out_col.a = out_col.a;                                 // Worse alpha transparency handling, but improves fonts (less haloing)
@@ -840,8 +723,6 @@ float4 main (PS_INPUT input) : SV_Target
                                     saturate (  out_col.a)  *
                                     saturate (input_col.a)
                 );
-
-      out_col.rgb = ApplySRGBCurve (out_col.rgb);
     }
 
     else
@@ -858,61 +739,79 @@ float4 main (PS_INPUT input) : SV_Target
       if (abs (orig_col.r + orig_col.g + orig_col.b) <= 0.000013)
         out_col.rgb = 0.0f;
     }
-
-
-    if (input.hdr_img)
-    {
-      int implied_tonemap_type =
-        (hdr_visualization == SKIV_VISUALIZATION_GAMUT) ? SKIV_TONEMAP_TYPE_NONE
-                                                        :      tonemap_type;
-
-      out_col.rgb *=
-        (hdr_visualization != SKIV_VISUALIZATION_NONE) ? 1.0f
-                                                       : user_brightness_scale * 0.25;
-
-
-      float dML = display_max_luminance;
-      float cML = hdr_max_luminance;
-
-      float3 xyz   = Rec709toXYZ (out_col.rgb);
-      float  Y_in  = max (xyz.y, 0.0f);
-      float  Y_out = 1.0f;
-
-      Y_out = TonemapSDR (Y_in, cML, 2.5375f);
-
-      if (Y_out + Y_in > 0.0)
-      {
-        xyz.xyz *= max ((Y_out / Y_in), 0.0f);
-      }
-
-      else
-        xyz.xyz = (0.0).xxx;
-
-      out_col.rgb = XYZtoRec709 (xyz);
-
-
-      // Scale the input to visualize the heat, then undo the scale so that the
-      //   visualization has constant luminance.
-      if (hdr_visualization == SKIV_VISUALIZATION_HEATMAP)
-      {
-        prescale_luminance  =        (user_brightness_scale * 0.25f);
-        postscale_luminance = 1.0f / (user_brightness_scale * 0.25f);
-      }
-
-      out_col =
-        ApplyHDRVisualization (hdr_visualization, out_col * prescale_luminance, true)
-                                                          * postscale_luminance;
-
-      out_col.rgb =
-        ApplySRGBCurve (saturate (out_col.rgb));
-    }
-
 #endif
-
-    out_col.rgb *= out_col.a;
   }
 
-  return out_col;
+  
+  if (input.hdr_img)
+  {
+    int implied_tonemap_type =
+      (hdr_visualization == SKIV_VISUALIZATION_GAMUT) ? SKIV_TONEMAP_TYPE_NONE
+                                                      :      tonemap_type;
+
+    out_col.rgb *=
+      (hdr_visualization != SKIV_VISUALIZATION_NONE) ? 1.0f
+                                                     : isHDR ? user_brightness_scale : max (user_brightness_scale / 3.333f, 0.001f);
+
+
+    float dML = display_max_luminance;
+    float cML = hdr_max_luminance;
+
+    float3 xyz   = Rec709toXYZ (out_col.rgb);
+    float  Y_in  = max (xyz.y, 0.0f);
+    float  Y_out = 1.0f;
+
+    if (implied_tonemap_type != SKIV_TONEMAP_TYPE_NONE && (! isHDR))
+    {   implied_tonemap_type  = SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY;
+        dML = 1.25f;
+    }
+
+    switch (implied_tonemap_type)
+    {
+      // This tonemap type is not necessary, we always know content range
+      //SKIV_TONEMAP_TYPE_INFINITE_ROLLOFF
+
+      default:
+      case SKIV_TONEMAP_TYPE_NONE:               Y_out = TonemapNone (Y_in);            break;
+      case SKIV_TONEMAP_TYPE_CLIP:               Y_out = TonemapClip (Y_in, dML);       break;
+      case SKIV_TONEMAP_TYPE_NORMALIZE_TO_CLL:   Y_out = TonemapSDR  (Y_in, cML, 1.0f); break;
+      case SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY: Y_out = TonemapHDR  (Y_in, cML, dML);  break;
+    }
+  
+    if (Y_out + Y_in > 0.0)
+    {
+      xyz.xyz *= max ((Y_out / Y_in), 0.0f);
+    }
+
+    else
+      xyz.xyz = (0.0).xxx;
+
+    out_col.rgb = XYZtoRec709 (xyz);
+
+
+    // Scale the input to visualize the heat, then undo the scale so that the
+    //   visualization has constant luminance.
+    if (hdr_visualization == SKIV_VISUALIZATION_HEATMAP)
+    {
+      prescale_luminance  =        user_brightness_scale;
+      postscale_luminance = 1.0f / user_brightness_scale;
+    }
+
+    out_col =
+      ApplyHDRVisualization (hdr_visualization, out_col * prescale_luminance, true)
+                                                        * postscale_luminance;
+  }
+
+  if (! is16bpc)
+  {
+    out_col.rgb =
+      ApplySRGBCurve (saturate (out_col.rgb));
+  }
+
+  out_col.rgb *= out_col.a;
+
+  return
+    SanitizeFP (out_col);
 };
 
 #endif

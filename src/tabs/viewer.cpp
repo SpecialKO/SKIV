@@ -72,6 +72,8 @@
 #include <stb_image.h>
 #include <html_coder.hpp>
 
+#pragma comment (lib, "dxguid.lib")
+
 thread_local stbi__context::cicp_s SKIV_STBI_CICP;
 
 enum SKIV_HDR_Visualizations
@@ -114,6 +116,116 @@ float    SKIV_HDR_MaxLuminance          = 80.0f;
 float    SKIV_HDR_DisplayMaxLuminance   = 426.0f;
 float    SKIV_HDR_BrightnessScale       = 100.0f;
 int      SKIV_HDR_TonemapType           = SKIV_HDR_TonemapType::SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY;
+
+static const DirectX::XMMATRIX c_from709to2020 = // Transposed
+{
+  { 0.627403914928436279296875f,     0.069097287952899932861328125f,    0.01639143936336040496826171875f, 0.0f },
+  { 0.3292830288410186767578125f,    0.9195404052734375f,               0.08801330626010894775390625f,    0.0f },
+  { 0.0433130674064159393310546875f, 0.011362315155565738677978515625f, 0.895595252513885498046875f,      0.0f },
+  { 0.0f,                            0.0f,                              0.0f,                             1.0f }
+};
+
+static const DirectX::XMMATRIX c_from2020toXYZ = // Transposed
+{
+  { 0.636958062648773193359375f,  0.26270020008087158203125f,      0.0f,                           0.0f },
+  { 0.144616901874542236328125f,  0.677998065948486328125f,        0.028072692453861236572265625f, 0.0f },
+  { 0.1688809692859649658203125f, 0.0593017153441905975341796875f, 1.060985088348388671875f,       0.0f },
+  { 0.0f,                         0.0f,                            0.0f,                           1.0f }
+};
+
+static const DirectX::XMMATRIX c_from709toXYZ = // Transposed
+{
+  { 0.4123907983303070068359375f,  0.2126390039920806884765625f,   0.0193308182060718536376953125f, 0.0f },
+  { 0.3575843274593353271484375f,  0.715168654918670654296875f,    0.119194783270359039306640625f,  0.0f },
+  { 0.18048079311847686767578125f, 0.072192318737506866455078125f, 0.950532138347625732421875f,     0.0f },
+  { 0.0f,                          0.0f,                           0.0f,                            1.0f }
+};
+
+static const DirectX::XMMATRIX c_from709toDCIP3 = // Transposed
+{
+  { 0.82246196269989013671875f,    0.03319419920444488525390625f, 0.017082631587982177734375f,  0.0f },
+  { 0.17753803730010986328125f,    0.96680581569671630859375f,    0.0723974406719207763671875f, 0.0f },
+  { 0.0f,                          0.0f,                          0.91051995754241943359375f,   0.0f },
+  { 0.0f,                          0.0f,                          0.0f,                         1.0f }
+};
+
+static const DirectX::XMMATRIX c_from709toAP0 = // Transposed
+{
+  { 0.4339316189289093017578125f, 0.088618390262126922607421875f, 0.01775003969669342041015625f,  0.0f },
+  { 0.3762523829936981201171875f, 0.809275329113006591796875f,    0.109447620809078216552734375f, 0.0f },
+  { 0.1898159682750701904296875f, 0.10210628807544708251953125f,  0.872802317142486572265625f,    0.0f },
+  { 0.0f,                         0.0f,                           0.0f,                           1.0f }
+};
+
+static const DirectX::XMMATRIX c_from709toAP1 = // Transposed
+{
+  { 0.61702883243560791015625f,       0.333867609500885009765625f,    0.04910354316234588623046875f,     0.0f },
+  { 0.069922320544719696044921875f,   0.91734969615936279296875f,     0.012727967463433742523193359375f, 0.0f },
+  { 0.02054978720843791961669921875f, 0.107552029192447662353515625f, 0.871898174285888671875f,          0.0f },
+  { 0.0f,                             0.0f,                           0.0f,                              1.0f }
+};
+
+static const DirectX::XMMATRIX c_fromXYZto709 = // Transposed
+{
+  {  3.2409698963165283203125f,    -0.96924364566802978515625f,       0.055630080401897430419921875f, 0.0f },
+  { -1.53738319873809814453125f,    1.875967502593994140625f,        -0.2039769589900970458984375f,   0.0f },
+  { -0.4986107647418975830078125f,  0.0415550582110881805419921875f,  1.05697154998779296875f,        0.0f },
+  {  0.0f,                          0.0f,                             0.0f,                           1.0f }
+};
+
+struct ParamsPQ
+{
+  DirectX::XMVECTOR N, M;
+  DirectX::XMVECTOR C1, C2, C3;
+};
+
+static const ParamsPQ PQ =
+{
+  DirectX::XMVectorReplicate (2610.0 / 4096.0 / 4.0),   // N
+  DirectX::XMVectorReplicate (2523.0 / 4096.0 * 128.0), // M
+  DirectX::XMVectorReplicate (3424.0 / 4096.0),         // C1
+  DirectX::XMVectorReplicate (2413.0 / 4096.0 * 32.0),  // C2
+  DirectX::XMVectorReplicate (2392.0 / 4096.0 * 32.0),  // C3
+};
+
+auto PQToLinear = [](DirectX::XMVECTOR N)
+{
+using namespace DirectX;
+
+  XMVECTOR ret;
+
+  ret =
+    XMVectorPow (N, XMVectorDivide (g_XMOne, PQ.M));
+
+  XMVECTOR nd;
+
+  nd =
+    XMVectorDivide (
+      XMVectorMax (XMVectorSubtract (ret, PQ.C1), g_XMZero),
+                   XMVectorSubtract (     PQ.C2,
+            XMVectorMultiply (PQ.C3, ret)));
+
+  ret =
+    XMVectorPow (nd, XMVectorDivide (g_XMOne, PQ.N));
+
+  return ret;
+};
+
+static const DirectX::XMMATRIX c_scRGBtoBt2100 = // Transposed
+{
+  { 2939026994.L /  585553224375.L,   76515593.L / 138420033750.L,    12225392.L /   93230009375.L, 0.0 },
+  { 9255011753.L / 3513319346250.L, 6109575001.L / 830520202500.L,  1772384008.L / 2517210253125.L, 0.0 },
+  {  173911579.L /  501902763750.L,   75493061.L / 830520202500.L, 18035212433.L / 2517210253125.L, 0.0 },
+  {                            0.0,                           0.0,                             0.0, 1.0 }
+};
+
+static const DirectX::XMMATRIX c_Bt2100toscRGB = // Transposed
+{
+  {  348196442125.L / 1677558947.L, -579752563250.L / 37238079773.L,  -12183628000.L /  5369968309.L, 0.0f },
+  { -123225331250.L / 1677558947.L, 5273377093000.L / 37238079773.L, -472592308000.L / 37589778163.L, 0.0f },
+  {  -15276242500.L / 1677558947.L,  -38864558125.L / 37238079773.L, 5256599974375.L / 37589778163.L, 0.0f },
+  {                           0.0f,                            0.0f,                            0.0f, 1.0f }
+};
 
 CComPtr <ID3D11UnorderedAccessView>
          SKIV_HDR_GamutCoverageUAV      = nullptr;
@@ -159,6 +271,7 @@ bool                   resetScrollCenter = false;
 bool                   newImageLoaded    = false; // Set by the window msg handler when a new image has been loaded
 bool                   newImageFailed    = false; // Set by the window msg handler when a new image failed to load
 bool                   imageFailWarning  = false; // Set to true to warn about a failed image load
+bool                   activateSnipping  = false; // Set to true when a desktop capture is complete and ready to snip
 
 bool                   coverRefresh      = false; // This just triggers a refresh of the cover
 std::wstring           coverRefreshPath  = L"";
@@ -481,148 +594,6 @@ SaveTempImage (std::wstring_view source, std::wstring_view filename)
 #pragma endregion
 
 
-
-
-static const DirectX::XMVECTORF32 s_luminance_AP1 =
-  { 0.272229f, 0.674082f, 0.0536895f, 0.f };
-
-static const DirectX::XMVECTORF32 s_luminance_2020 =
-  { 0.2627f,   0.678f,    0.0593f,   0.f };
-
-static const DirectX::XMVECTORF32 s_luminance =
-  { 0.2126729f, 0.7151522f, 0.0721750f, 0.f };
-
-static const DirectX::XMMATRIX c_from2020to709 = // Transposed
-{
-  {  1.66096379471340f,   -0.124477196529907f,   -0.0181571579858552f, 0.0f },
-  { -0.588112737547978f,   1.13281946828499f,    -0.100666415661988f,  0.0f },
-  { -0.0728510571654192f, -0.00834227175508652f,  1.11882357364784f,   0.0f },
-  {  0.0f,                 0.0f,                  0.0f,                1.0f }
-};
-
-static const DirectX::XMMATRIX c_from709to2020 = // Transposed
-{
-  { 0.627225305694944f,  0.0690418812810714f, 0.0163911702607078f, 0.0f },
-  { 0.329476882715808f,  0.919605681354755f,  0.0880887513437058f, 0.0f },
-  { 0.0432978115892484f, 0.0113524373641739f, 0.895520078395586f,  0.0f },
-  { 0.0f,                0.0f,                0.0f,                1.0f }
-};
-
-static const DirectX::XMMATRIX c_fromXYZtoDCIP3 = // Transposed
-{
-  {  2.7253940305, -0.7951680258,  0.0412418914, 0.0f },
-  { -1.0180030062,  1.6897320548, -0.0876390192, 0.0f },
-  { -0.4401631952,  0.0226471906,  1.1009293786, 0.0f },
-  {  0.0f,          0.0f,          0.0f,         1.0f }
-};
-
-static const DirectX::XMMATRIX c_fromXYZtoAP1 = // Transposed
-{
-  {  1.6410233797, -0.6636628587,  0.0117218943, 0.0f },
-  { -0.3248032942,  1.6153315917, -0.0082844420, 0.0f },
-  { -0.2364246952,  0.0167563477,  0.9883948585, 0.0f },
-  {  0.0f,          0.0f,          0.0f,         1.0f }
-};
-
-static const DirectX::XMMATRIX c_from709toXYZ = // Transposed
-{
-  { 0.4123907983303070068359375f,  0.2126390039920806884765625f,   0.0193308182060718536376953125f, 0.0f },
-  { 0.3575843274593353271484375f,  0.715168654918670654296875f,    0.119194783270359039306640625f,  0.0f },
-  { 0.18048079311847686767578125f, 0.072192318737506866455078125f, 0.950532138347625732421875f,     0.0f },
-  { 0.0f,                          0.0f,                           0.0f,                            1.0f }
-};
-
-static const DirectX::XMMATRIX c_from709toDCIP3 = // Transposed
-{
-  { 0.82246196269989013671875f,    0.03319419920444488525390625f, 0.017082631587982177734375f,  0.0f },
-  { 0.17753803730010986328125f,    0.96680581569671630859375f,    0.0723974406719207763671875f, 0.0f },
-  { 0.0f,                          0.0f,                          0.91051995754241943359375f,   0.0f },
-  { 0.0f,                          0.0f,                          0.0f,                         1.0f }
-};
-
-static const DirectX::XMMATRIX c_from709toAP0 = // Transposed
-{
-  { 0.4339316189289093017578125f, 0.088618390262126922607421875f, 0.01775003969669342041015625f,  0.0f },
-  { 0.3762523829936981201171875f, 0.809275329113006591796875f,    0.109447620809078216552734375f, 0.0f },
-  { 0.1898159682750701904296875f, 0.10210628807544708251953125f,  0.872802317142486572265625f,    0.0f },
-  { 0.0f,                         0.0f,                           0.0f,                           1.0f }
-};
-
-static const DirectX::XMMATRIX c_from709toAP1 = // Transposed
-{
-  { 0.61702883243560791015625f,       0.333867609500885009765625f,    0.04910354316234588623046875f,     0.0f },
-  { 0.069922320544719696044921875f,   0.91734969615936279296875f,     0.012727967463433742523193359375f, 0.0f },
-  { 0.02054978720843791961669921875f, 0.107552029192447662353515625f, 0.871898174285888671875f,          0.0f },
-  { 0.0f,                             0.0f,                           0.0f,                              1.0f }
-};
-
-static const DirectX::XMMATRIX c_fromAP1to709 = // Transposed
-{
-  {  1.70505f, -0.13026f, -0.02400f, 0.0f },
-  { -0.62179f,  1.14080f, -0.12897f, 0.0f },
-  { -0.08326f, -0.01055f,  1.15297f, 0.0f },
-  {  0.0f,      0.0f,      0.0f,     1.0f }
-};
-
-static const DirectX::XMMATRIX c_fromAP1toXYZ = // Transposed
-{
-  { 0.647507190704345703125f,      0.266086399555206298828125f,   -0.00544886849820613861083984375f,  0.0f },
-  { 0.13437913358211517333984375f, 0.67596781253814697265625f,     0.004072095267474651336669921875f, 0.0f },
-  { 0.1685695946216583251953125f,  0.057945795357227325439453125f, 1.090434551239013671875f,          0.0f },
-  { 0.0f,                          0.0f,                           0.0f,                              1.0f }
-};
-
-static const DirectX::XMMATRIX c_fromXYZto709 = // Transposed
-{
-  {  3.2409698963165283203125f,    -0.96924364566802978515625f,       0.055630080401897430419921875f, 0.0f },
-  { -1.53738319873809814453125f,    1.875967502593994140625f,        -0.2039769589900970458984375f,   0.0f },
-  { -0.4986107647418975830078125f,  0.0415550582110881805419921875f,  1.05697154998779296875f,        0.0f },
-  {  0.0f,                          0.0f,                             0.0f,                           1.0f }
-};
-
-struct ParamsPQ
-{
-  DirectX::XMVECTOR N, M;
-  DirectX::XMVECTOR C1, C2, C3;
-  DirectX::XMVECTOR MaxPQ;
-};
-                  
-static const ParamsPQ PQ =
-{
-  DirectX::XMVectorReplicate (2610.0 / 4096.0 / 4.0),   // N
-  DirectX::XMVectorReplicate (2523.0 / 4096.0 * 128.0), // M
-  DirectX::XMVectorReplicate (3424.0 / 4096.0),         // C1
-  DirectX::XMVectorReplicate (2413.0 / 4096.0 * 32.0),  // C2
-  DirectX::XMVectorReplicate (2392.0 / 4096.0 * 32.0),  // C3
-  DirectX::XMVectorReplicate (125.0),
-};
-
-auto PQToLinear = [](DirectX::XMVECTOR N)
-{
-using namespace DirectX;
-
-  XMVECTOR ret;
-
-  ret =
-    XMVectorPow (N, XMVectorDivide (g_XMOne, PQ.M));
-
-  XMVECTOR nd;
-
-  nd =
-    XMVectorDivide (
-      XMVectorMax (XMVectorSubtract (ret, PQ.C1), g_XMZero),
-                   XMVectorSubtract (     PQ.C2,
-            XMVectorMultiply (PQ.C3, ret)));
-
-  ret =
-    XMVectorMultiply (
-      XMVectorPow (nd, XMVectorDivide (g_XMOne, PQ.N)), PQ.MaxPQ
-    );
-
-  return ret;
-};
-
-
 #pragma region LoadTexture
 
 extern CComPtr <ID3D11Device> SKIF_D3D11_GetDevice (bool bWait = true);
@@ -830,7 +801,7 @@ LoadLibraryTexture (image_s& image)
                   XMVECTOR v = inPixels [j];
 
                   outPixels [j] =
-                    XMVector3Transform (PQToLinear (v), c_from2020to709);
+                    XMVector3Transform (PQToLinear (v), c_Bt2100toscRGB);
                 }
               }, img );
 
@@ -1849,7 +1820,7 @@ SKIF_UI_Tab_DrawViewer (void)
                                   cover.light_info.isHDR ? hdr_uv : cover.uv0, // Top Left coordinates
                                   cover.light_info.isHDR ? hdr_uv : cover.uv1, // Bottom Right coordinates
                                   (_registry._StyleLightMode) ? ImVec4 (1.0f, 1.0f, 1.0f, fGammaCorrectedTint * AdjustAlpha (fAlpha))  :
-                                                                ImVec4 (fTint, fTint, fTint, fAlpha) // Alpha transparency (2024-01-01, removed fGammaCorrectedTint * fAlpha for the light style)
+                                                                ImVec4 (1.f, 1.f, 1.f, 1.f) // Alpha transparency (2024-01-01, removed fGammaCorrectedTint * fAlpha for the light style)
   );
 
   isImageHovered = ImGui::IsItemHovered();
@@ -2502,6 +2473,11 @@ SKIF_UI_Tab_DrawViewer (void)
       PLOG_INFO  << "Finished streaming image asynchronously...";
       PLOG_DEBUG << "SKIV_ImageWorker thread stopped!";
 
+      if (std::exchange (activateSnipping, false))
+      {
+        SetForegroundWindow (SKIF_ImGui_hWnd);
+      }
+
       return 0;
     }, data, 0x0, nullptr);
 
@@ -2741,6 +2717,7 @@ SKIF_UI_Tab_DrawViewer (void)
 
   // Fade in/out transition
 
+#if 0
   if (_registry.bFadeCovers)
   {
     // Fade in the new cover
@@ -2795,6 +2772,7 @@ SKIF_UI_Tab_DrawViewer (void)
       imageFadeActive = true;
     }
   }
+#endif
 
   // Increment the tick
   if (incTick)
@@ -2841,43 +2819,6 @@ SKIF_UI_Tab_DrawViewer (void)
   {
     extern void SKIV_HandleCopyShortcut (void);
                 SKIV_HandleCopyShortcut ();
-  }
-
-  extern HRESULT
-  SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, int flags = 0x0);
-
-  if (ImGui::GetIO ().KeyCtrl && ImGui::GetKeyData (ImGuiKey_P)->DownDuration == 0.0f)
-  {
-    DirectX::ScratchImage                     captured_img;
-    if (SUCCEEDED (SKIV_Image_CaptureDesktop (captured_img)))
-    {
-      extern bool
-      SKIV_HDR_ConvertImageToPNG (const DirectX::Image& raw_hdr_img, DirectX::ScratchImage& png_img);
-      extern bool
-      SKIV_HDR_SavePNGToDisk (const wchar_t* wszPNGPath, const DirectX::Image* png_image,
-                                                         const DirectX::Image* raw_image,
-                                 const char* szUtf8MetadataTitle);
-      extern bool
-      SKIV_PNG_CopyToClipboard (const DirectX::Image& image, const void *pData, size_t data_size);
-
-      DirectX::ScratchImage                                       hdr_img;
-      if (SKIV_HDR_ConvertImageToPNG (*captured_img.GetImages (), hdr_img))
-      {
-        wchar_t                         wszPNGPath [MAX_PATH + 2] = { };
-        GetCurrentDirectoryW (MAX_PATH, wszPNGPath);
-
-        PathAppendW       (wszPNGPath, L"SKIV_HDR_Clipboard");
-        PathAddExtensionW (wszPNGPath, L".png");
-
-        if (SKIV_HDR_SavePNGToDisk (wszPNGPath, hdr_img.GetImages (), captured_img.GetImages (), nullptr))
-        {
-          if (SKIV_PNG_CopyToClipboard (*hdr_img.GetImages (), wszPNGPath, 0))
-          {
-            dragDroppedFilePath = wszPNGPath;
-          }
-        }
-      }
-    }
   }
 }
 
@@ -3254,14 +3195,6 @@ SKIV_HDR_CalculateContentLightInfo (const DirectX::Image& img)
 
   SK_PNG_HDR_cLLi_Payload clli;
 
-  static const XMMATRIX c_from2020toXYZ =
-  {
-    { 0.636958062f, 0.2627002000f, 0.0000000000f, 0.0f },
-    { 0.144616901f, 0.6779980650f, 0.0280726924f, 0.0f },
-    { 0.168880969f, 0.0593017153f, 1.0609850800f, 0.0f },
-    { 0.0f,         0.0f,          0.0f,          1.0f }
-  };
-
   float N         = 0.0f;
   float fLumAccum = 0.0f;
   XMVECTOR vMaxLum = g_XMZero;
@@ -3418,10 +3351,7 @@ SKIV_HDR_ConvertImageToPNG (const DirectX::Image& raw_hdr_img, DirectX::ScratchI
         if (typeless_fmt == DXGI_FORMAT_R16G16B16A16_TYPELESS ||
             typeless_fmt == DXGI_FORMAT_R32G32B32A32_TYPELESS)
         {
-          XMVECTOR  value = XMVector3Transform (v, c_from709to2020);
-          XMVECTOR nvalue = XMVectorDivide     ( XMVectorMax (g_XMZero,
-                                                   XMVectorMin (value, PQ.MaxPQ)),
-                                                                       PQ.MaxPQ );
+          XMVECTOR nvalue = XMVector3Transform (v, c_scRGBtoBt2100);
                         v = LinearToPQ (nvalue);
         }
 
@@ -3777,15 +3707,49 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, int flags = 0x0)
   if (! pDevice)
     return res;
 
-  ImGui_ImplDX11_ViewportData* vd =
-    (ImGui_ImplDX11_ViewportData *)ImGui::GetWindowViewport ()->RendererUserData;
+  CComPtr <IDXGIFactory> pFactory;
+  CreateDXGIFactory (IID_IDXGIFactory, (void **)&pFactory.p);
 
-  if (! (vd && vd->SwapChain))
-    return res;
+  if (! pFactory)
+    return E_NOTIMPL;
 
-  CComPtr <IDXGIOutput>                pOutput;
-  vd->SwapChain->GetContainingOutput (&pOutput.p);
-  CComQIPtr <IDXGIOutput5>             pOutput5 (pOutput);
+  CComPtr <IDXGIAdapter> pAdapter;
+  UINT                  uiAdapter = 0;
+
+  POINT          cursor_pos;
+  GetCursorPos (&cursor_pos);
+
+  CComPtr <IDXGIOutput> pCursorOutput;
+
+  while (SUCCEEDED (pFactory->EnumAdapters (uiAdapter++, &pAdapter.p)))
+  {
+    CComPtr <IDXGIOutput> pOutput;
+    UINT                 uiOutput = 0;
+
+    while (SUCCEEDED (pAdapter->EnumOutputs (uiOutput, &pOutput)))
+    {
+      DXGI_OUTPUT_DESC   out_desc;
+      pOutput->GetDesc (&out_desc);
+
+      if (out_desc.AttachedToDesktop && PtInRect (&out_desc.DesktopCoordinates, cursor_pos))
+      {
+        pCursorOutput = pOutput;
+        break;
+      }
+    }
+
+    if (pCursorOutput != nullptr)
+      break;
+
+    pAdapter = nullptr;
+  }
+
+  if (! pCursorOutput)
+  {
+    return E_UNEXPECTED;
+  }
+
+  CComQIPtr <IDXGIOutput5> pOutput5 (pCursorOutput);
 
   // Down-level interfaces support duplication, but for HDR we want Output5
   if (! pOutput5)
@@ -3814,14 +3778,12 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, int flags = 0x0)
   CComPtr <IDXGIResource> pDuplicatedResource;
 
   int    tries = 0;
-  while (tries++ < 100)
+  while (tries++ < 20)
   {
-    pDuplicator->AcquireNextFrame (0, &frame_info, &pDuplicatedResource.p);
+    pDuplicator->AcquireNextFrame (5, &frame_info, &pDuplicatedResource.p);
 
     if (frame_info.LastPresentTime.QuadPart)
       break;
-
-    Sleep (5UL);
 
     pDuplicator->ReleaseFrame ();
   }
