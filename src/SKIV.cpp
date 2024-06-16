@@ -1164,6 +1164,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
     //SKIF_Util_RegisterHotKeySVCTemp   ( );
   }
 
+  SKIF_Util_RegisterHotKeySnip ( );
+
   // Register the HTML Format for the clipboard
   CF_HTML = RegisterClipboardFormatW (L"HTML Format");
   PLOG_VERBOSE << "Clipboard registered format for 'HTML Format' is... " << CF_HTML;
@@ -3480,7 +3482,48 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
     case WM_HOTKEY:
       if (wParam == SKIF_HotKey_HDR)
         SKIF_Util_EnableHDROutput ( );
-        
+      if (wParam == SKIV_HotKey_Snip)
+      {
+        extern HRESULT
+        SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, int flags = 0x0);
+
+        DirectX::ScratchImage                     captured_img;
+        if (SUCCEEDED (SKIV_Image_CaptureDesktop (captured_img)))
+        {
+          extern bool
+          SKIV_HDR_ConvertImageToPNG (const DirectX::Image& raw_hdr_img, DirectX::ScratchImage& png_img);
+          extern bool
+          SKIV_HDR_SavePNGToDisk (const wchar_t* wszPNGPath, const DirectX::Image* png_image,
+                                                             const DirectX::Image* raw_image,
+                                     const char* szUtf8MetadataTitle);
+          extern bool
+          SKIV_PNG_CopyToClipboard (const DirectX::Image& image, const void *pData, size_t data_size);
+
+          DirectX::ScratchImage                                       hdr_img;
+          if (SKIV_HDR_ConvertImageToPNG (*captured_img.GetImages (), hdr_img))
+          {
+            wchar_t                         wszPNGPath [MAX_PATH + 2] = { };
+            GetCurrentDirectoryW (MAX_PATH, wszPNGPath);
+
+            PathAppendW       (wszPNGPath, L"SKIV_HDR_Clipboard");
+            PathAddExtensionW (wszPNGPath, L".png");
+
+            if (SKIV_HDR_SavePNGToDisk (wszPNGPath, hdr_img.GetImages (), captured_img.GetImages (), nullptr))
+            {
+              if (SKIV_PNG_CopyToClipboard (*hdr_img.GetImages (), wszPNGPath, 0))
+              {
+                extern std::wstring dragDroppedFilePath;
+                extern bool         activateSnipping;
+                dragDroppedFilePath = wszPNGPath;
+
+                activateSnipping = true;
+              }
+            }
+          }
+        }
+
+      }
+
     break;
 
     // System wants to shut down and is asking if we can allow it
