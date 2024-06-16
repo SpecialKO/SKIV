@@ -17,6 +17,19 @@ enum SKIF_ImGuiAxis {
      SKIF_ImGuiAxis_X | SKIF_ImGuiAxis_Y
 };
 
+typedef unsigned int SelectionFlag;  // -> enum SelectionFlag_
+enum SelectionFlag_
+{
+  SelectionFlag_None          = 0,
+  SelectionFlag_SingleClick   = 1 << 0, // Select on a single click
+  SelectionFlag_AllowInverted = 1 << 1, // Allow an inverted selection rectangle?
+  SelectionFlag_Filled        = 1 << 2, // Fill out the selection rectangle
+
+  // Multi-flags
+  SelectionFlag_Default       =         // Default flags: SelectionFlag_Filled
+    SelectionFlag_Filled
+};
+
 float    SKIF_ImGui_LinearTosRGB          (float col_lin);
 ImVec4   SKIF_ImGui_LinearTosRGB          (ImVec4 col);
 float    SKIF_ImGui_sRGBtoLinear          (float col_srgb);
@@ -31,7 +44,7 @@ bool     SKIF_ImGui_IsFocused             (void);
 bool     SKIF_ImGui_IsMouseHovered        (void);
 bool     SKIF_ImGui_IsAnyInputDown        (void);
 bool     SKIF_ImGui_IsAnyPopupOpen        (void);
-bool     SKIF_ImGui_SelectionRect         (ImRect* selection, ImRect allowed, ImGuiMouseButton mouse_button = ImGuiMouseButton_Left);
+bool     SKIF_ImGui_SelectionRect         (ImRect* selection, ImRect allowed, ImGuiMouseButton mouse_button = ImGuiMouseButton_Left, SelectionFlag flags = SelectionFlag_Default);
 void     SKIF_ImGui_SetMouseCursorHand    (void);
 void     SKIF_ImGui_SetHoverTip           (const std::string_view& szText, bool ignoreDisabledTooltips = false);
 void     SKIF_ImGui_SetHoverText          (const std::string_view& szText, bool overrideExistingText = false);

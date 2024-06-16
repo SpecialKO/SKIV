@@ -1877,10 +1877,6 @@ SKIF_UI_Tab_DrawViewer (void)
     static ImRect selection_rect;
     if (ImGui::GetIO().KeyCtrl && SKIF_ImGui_SelectionRect (&selection_rect, image_rect))
     {
-      // Flip an inverted rectangle
-      if (selection_rect.IsInverted ( ))
-        selection_rect = ImRect (selection_rect.Max, selection_rect.Min);
-
       // Adjust for image position
       selection_rect.Min -= image_pos;
       selection_rect.Max -= image_pos;
