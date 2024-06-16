@@ -78,20 +78,20 @@
     <LinkIncremental>true</LinkIncremental>
     <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);.\resources\;.\packages_misc\;.\packages_misc\gsl\</IncludePath>
     <TargetName>$(ProjectName)32</TargetName>
-    <OutDir>Builds\</OutDir>
+    <OutDir>C:\Users\amcol\Documents\My Mods\SpecialK\</OutDir>
     <IntDir>Builds\$(Platform)-$(Configuration)\</IntDir>
     <PreBuildEventUseInBuild>false</PreBuildEventUseInBuild>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <LinkIncremental>true</LinkIncremental>
     <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);.\resources\;.\packages_misc\;.\packages_misc\gsl\</IncludePath>
-    <OutDir>Builds\</OutDir>
+    <OutDir>C:\Users\amcol\Documents\My Mods\SpecialK\</OutDir>
     <IntDir>Builds\$(Platform)-$(Configuration)\</IntDir>
     <PreBuildEventUseInBuild>false</PreBuildEventUseInBuild>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <LinkIncremental>false</LinkIncremental>
-    <OutDir>Builds\</OutDir>
+    <OutDir>C:\Users\amcol\Documents\My Mods\SpecialK\</OutDir>
     <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);.\resources\;.\packages_misc\;.\packages_misc\gsl\</IncludePath>
     <TargetName>$(ProjectName)32</TargetName>
     <RunCodeAnalysis>false</RunCodeAnalysis>
@@ -104,7 +104,7 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <LinkIncremental>false</LinkIncremental>
     <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);.\resources\;.\packages_misc\;.\packages_misc\gsl\</IncludePath>
-    <OutDir>Builds\</OutDir>
+    <OutDir>C:\Users\amcol\Documents\My Mods\SpecialK\</OutDir>
     <RunCodeAnalysis>false</RunCodeAnalysis>
     <EnableClangTidyCodeAnalysis>false</EnableClangTidyCodeAnalysis>
     <EnableMicrosoftCodeAnalysis>false</EnableMicrosoftCodeAnalysis>

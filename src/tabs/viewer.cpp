@@ -2842,6 +2842,43 @@ SKIF_UI_Tab_DrawViewer (void)
     extern void SKIV_HandleCopyShortcut (void);
                 SKIV_HandleCopyShortcut ();
   }
+
+  extern HRESULT
+  SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, int flags = 0x0);
+
+  if (ImGui::GetIO ().KeyCtrl && ImGui::GetKeyData (ImGuiKey_P)->DownDuration == 0.0f)
+  {
+    DirectX::ScratchImage                     captured_img;
+    if (SUCCEEDED (SKIV_Image_CaptureDesktop (captured_img)))
+    {
+      extern bool
+      SKIV_HDR_ConvertImageToPNG (const DirectX::Image& raw_hdr_img, DirectX::ScratchImage& png_img);
+      extern bool
+      SKIV_HDR_SavePNGToDisk (const wchar_t* wszPNGPath, const DirectX::Image* png_image,
+                                                         const DirectX::Image* raw_image,
+                                 const char* szUtf8MetadataTitle);
+      extern bool
+      SKIV_PNG_CopyToClipboard (const DirectX::Image& image, const void *pData, size_t data_size);
+
+      DirectX::ScratchImage                                       hdr_img;
+      if (SKIV_HDR_ConvertImageToPNG (*captured_img.GetImages (), hdr_img))
+      {
+        wchar_t                         wszPNGPath [MAX_PATH + 2] = { };
+        GetCurrentDirectoryW (MAX_PATH, wszPNGPath);
+
+        PathAppendW       (wszPNGPath, L"SKIV_HDR_Clipboard");
+        PathAddExtensionW (wszPNGPath, L".png");
+
+        if (SKIV_HDR_SavePNGToDisk (wszPNGPath, hdr_img.GetImages (), captured_img.GetImages (), nullptr))
+        {
+          if (SKIV_PNG_CopyToClipboard (*hdr_img.GetImages (), wszPNGPath, 0))
+          {
+            dragDroppedFilePath = wszPNGPath;
+          }
+        }
+      }
+    }
+  }
 }
 
 
@@ -3725,4 +3762,149 @@ bool SKIV_Image_CopyToClipboard (const DirectX::Image* pImage)
   }
 
   return false;
+}
+
+#include <dxgi1_5.h>
+
+HRESULT
+SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, int flags = 0x0)
+{
+  HRESULT res = E_NOT_VALID_STATE;
+
+  auto pDevice =
+    SKIF_D3D11_GetDevice ();
+
+  if (! pDevice)
+    return res;
+
+  ImGui_ImplDX11_ViewportData* vd =
+    (ImGui_ImplDX11_ViewportData *)ImGui::GetWindowViewport ()->RendererUserData;
+
+  if (! (vd && vd->SwapChain))
+    return res;
+
+  CComPtr <IDXGIOutput>                pOutput;
+  vd->SwapChain->GetContainingOutput (&pOutput.p);
+  CComQIPtr <IDXGIOutput5>             pOutput5 (pOutput);
+
+  // Down-level interfaces support duplication, but for HDR we want Output5
+  if (! pOutput5)
+  {
+    return E_NOTIMPL;
+  }
+
+  DXGI_FORMAT capture_formats [5] = {
+    DXGI_FORMAT_R8G8B8A8_UNORM, // Not HDR...
+    DXGI_FORMAT_B8G8R8X8_UNORM, // Not HDR...
+    DXGI_FORMAT_R10G10B10A2_UNORM,
+    DXGI_FORMAT_R16G16B16A16_FLOAT,
+    DXGI_FORMAT_R32G32B32A32_FLOAT
+  };
+
+  CComPtr <IDXGIOutputDuplication> pDuplicator;
+  pOutput5->DuplicateOutput1 (pDevice, 0x0, _ARRAYSIZE (capture_formats),
+                                                        capture_formats, &pDuplicator.p);
+
+  if (! pDuplicator)
+  {
+    return E_NOTIMPL;
+  }
+
+  DXGI_OUTDUPL_FRAME_INFO frame_info;
+  CComPtr <IDXGIResource> pDuplicatedResource;
+
+  int    tries = 0;
+  while (tries++ < 100)
+  {
+    pDuplicator->AcquireNextFrame (0, &frame_info, &pDuplicatedResource.p);
+
+    if (frame_info.LastPresentTime.QuadPart)
+      break;
+
+    Sleep (5UL);
+
+    pDuplicator->ReleaseFrame ();
+  }
+
+  if (! pDuplicatedResource)
+  {
+    return E_UNEXPECTED;
+  }
+
+  CComQIPtr <IDXGISurface>    pSurface       (pDuplicatedResource);
+  CComQIPtr <ID3D11Texture2D> pDuplicatedTex (pSurface);
+
+  if (! pDuplicatedTex)
+  {
+    return E_NOTIMPL;
+  }
+
+  DXGI_SURFACE_DESC   surfDesc;
+  pSurface->GetDesc (&surfDesc);
+
+  CComPtr <ID3D11Texture2D> pStagingTex;
+
+  D3D11_TEXTURE2D_DESC
+    texDesc                = { };
+    texDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    texDesc.Usage          = D3D11_USAGE_STAGING;
+    texDesc.ArraySize      = 1;
+    texDesc.MipLevels      = 1;
+    texDesc.SampleDesc     = { .Count = 1, .Quality = 0 };
+    texDesc.Format         = surfDesc.Format;
+    texDesc.Width          = surfDesc.Width;
+    texDesc.Height         = surfDesc.Height;
+
+  CComPtr <ID3D11DeviceContext>  pDevCtx;
+  pDevice->GetImmediateContext (&pDevCtx);
+
+  if (pDevCtx == nullptr)
+    return E_UNEXPECTED;
+
+  if (FAILED (pDevice->CreateTexture2D (&texDesc, nullptr, &pStagingTex.p)))
+  {
+    return E_UNEXPECTED;
+  }
+
+  pDevCtx->CopyResource (pStagingTex, pDuplicatedTex);
+
+  D3D11_MAPPED_SUBRESOURCE mapped;
+
+  if (SUCCEEDED (pDevCtx->Map (pStagingTex, 0, D3D11_MAP_READ, 0x0, &mapped)))
+  {
+    image.Initialize2D (surfDesc.Format,
+                        surfDesc.Width,
+                        surfDesc.Height, 1, 1
+    );
+
+    if (! image.GetPixels ())
+    {
+      pSurface->Unmap ();
+      return E_POINTER;
+    }
+
+    auto pImg =
+      image.GetImages ();
+
+    const uint8_t* src = (const uint8_t *)mapped.pData;
+          uint8_t* dst = pImg->pixels;
+
+    for (size_t h = 0; h < surfDesc.Height; ++h)
+    {
+      size_t msize =
+        std::min <size_t> (pImg->rowPitch, mapped.RowPitch);
+
+      memcpy_s (dst, pImg->rowPitch, src, msize);
+
+      src += mapped.RowPitch;
+      dst += pImg->rowPitch;
+    }
+
+    if (FAILED (pSurface->Unmap ()))
+    {
+      return E_UNEXPECTED;
+    }
+  }
+
+  return S_OK;
 }
