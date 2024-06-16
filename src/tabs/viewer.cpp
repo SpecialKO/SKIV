@@ -3385,13 +3385,10 @@ SKIV_HDR_ConvertImageToPNG (const DirectX::Image& raw_hdr_img, DirectX::ScratchI
                             pq_range_16bpc = XMVectorReplicate (65535.0f),
                             pq_range_32bpc = XMVectorReplicate (4294967295.0f);
 
-      auto pq_range_out =
+      const auto pq_range_out =
         (typeless_fmt == DXGI_FORMAT_R10G10B10A2_TYPELESS)  ? pq_range_10bpc :
         (typeless_fmt == DXGI_FORMAT_R16G16B16A16_TYPELESS) ? pq_range_12bpc :
                                                               pq_range_12bpc;//pq_range_16bpc;
-
-      pq_range_out = pq_range_16bpc;
-
       const auto pq_range_in  =
         (typeless_fmt == DXGI_FORMAT_R10G10B10A2_TYPELESS)  ? pq_range_10bpc :
         (typeless_fmt == DXGI_FORMAT_R16G16B16A16_TYPELESS) ? pq_range_16bpc :
@@ -3402,8 +3399,6 @@ SKIV_HDR_ConvertImageToPNG (const DirectX::Image& raw_hdr_img, DirectX::ScratchI
         (typeless_fmt == DXGI_FORMAT_R10G10B10A2_TYPELESS)  ? 10 :
         (typeless_fmt == DXGI_FORMAT_R16G16B16A16_TYPELESS) ? 12 :
                                                               12;//16;
-
-      output_bits = 16;
 
       for (size_t j = 0; j < width; ++j)
       {
@@ -3550,9 +3545,9 @@ SKIV_PNG_MakeHDR ( const wchar_t*        wszFilePath,
       };
 
       // If using compression optimization, max bits = 12
-      sbit_data.red_bits   = 16;//std::min (sbit_data.red_bits,   12ui8);
-      sbit_data.green_bits = 16;//std::min (sbit_data.green_bits, 12ui8);
-      sbit_data.blue_bits  = 16;//std::min (sbit_data.blue_bits,  12ui8);
+      sbit_data.red_bits   = std::min (sbit_data.red_bits,   12ui8);
+      sbit_data.green_bits = std::min (sbit_data.green_bits, 12ui8);
+      sbit_data.blue_bits  = std::min (sbit_data.blue_bits,  12ui8);
 
       // We don't actually know the mastering display, but some effort should be made
       //   to read this metadata and preserve it if it exists when SKIV originally
@@ -3638,22 +3633,6 @@ SKIV_PNG_MakeHDR ( const wchar_t*        wszFilePath,
   return false;
 }
 
-void
-SK_WIC_SetMaximumQuality (IPropertyBag2 *props)
-{
-  if (props == nullptr)
-    return;
-
-  PROPBAG2 opt = {   .pstrName = L"ImageQuality"   };
-  VARIANT  var = { VT_R4,0,0,0, { .fltVal = 1.0f } };
-
-  PROPBAG2 opt2 = { .pstrName = L"FilterOption"                    };
-  VARIANT  var2 = { VT_UI1,0,0,0, { .bVal = WICPngFilterAdaptive } };
-
-  props->Write (1, &opt,  &var);
-  props->Write (1, &opt2, &var2);
-}
-
 bool
 SKIV_HDR_SavePNGToDisk (const wchar_t* wszPNGPath, const DirectX::Image* png_image,
                                                    const DirectX::Image* raw_image,
@@ -3674,8 +3653,8 @@ SKIV_HDR_SavePNGToDisk (const wchar_t* wszPNGPath, const DirectX::Image* png_ima
   if (SUCCEEDED (
     DirectX::SaveToWICFile (*png_image, DirectX::WIC_FLAGS_NONE,
                            GetWICCodec (DirectX::WIC_CODEC_PNG),
-                               wszPNGPath, &GUID_WICPixelFormat48bppRGB,
-                                              SK_WIC_SetMaximumQuality/*,
+                               wszPNGPath, &GUID_WICPixelFormat48bppRGB/*,
+                                              SK_WIC_SetMaximumQuality,
                                             [&](IWICMetadataQueryWriter *pMQW)
                                             {
                                               SK_WIC_SetMetadataTitle (pMQW, metadata_title);
