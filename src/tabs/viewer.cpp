@@ -293,7 +293,11 @@ bool                   resetScrollCenter = false;
 bool                   newImageLoaded    = false; // Set by the window msg handler when a new image has been loaded
 bool                   newImageFailed    = false; // Set by the window msg handler when a new image failed to load
 bool                   imageFailWarning  = false; // Set to true to warn about a failed image load
+
 bool                   activateSnipping  = false; // Set to true when a desktop capture is complete and ready to snip
+bool                   isSnippingActive  = false; // When true, the selection rectangle uses single-click mode
+HWND                   hwndBeforeSnip    =  0;
+ImRect                 selection_rect    = { };
 
 bool                   coverRefresh      = false; // This just triggers a refresh of the cover
 std::wstring           coverRefreshPath  = L"";
@@ -1392,8 +1396,8 @@ SKIF_UI_Tab_DrawViewer (void)
                                                                                  *subrect.GetImages (), DirectX::TEX_FILTER_DEFAULT, 0, 0)))
             {
               extern bool
-                  SKIV_Image_CopyToClipboard (const DirectX::Image* pImage);
-              if (SKIV_Image_CopyToClipboard (subrect.GetImages ()))
+                  SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped);
+              if (SKIV_Image_CopyToClipboard (subrect.GetImages (), true))
               {
                 std::exchange (wantCopyToClipboard, false);
 
@@ -1405,8 +1409,8 @@ SKIF_UI_Tab_DrawViewer (void)
           else
           {
             extern bool
-                SKIV_Image_CopyToClipboard (const DirectX::Image* pImage);
-            if (SKIV_Image_CopyToClipboard (captured_img.GetImages ()))
+                SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped);
+            if (SKIV_Image_CopyToClipboard (captured_img.GetImages (), false))
             {
               std::exchange (wantCopyToClipboard, false);
             }
@@ -1872,8 +1876,8 @@ SKIF_UI_Tab_DrawViewer (void)
     else if (ImGui::GetIO().MouseWheel < 0 && cover.zoom > 0.075f)
       cover.zoom -= 0.05f;
 
-    static ImRect selection_rect;
-    if (ImGui::GetIO().KeyCtrl && SKIF_ImGui_SelectionRect (&selection_rect, image_rect))
+    if (      (isSnippingActive && SKIF_ImGui_SelectionRect (&selection_rect, image_rect, 0, SK_IMGUI_SELECT_FLAG_SINGLE_CLICK|SK_IMGUI_SELECT_FLAG_FILLED)) ||
+        (ImGui::GetIO().KeyCtrl && SKIF_ImGui_SelectionRect (&selection_rect, image_rect)))
     {
       // Flip an inverted rectangle
       if (selection_rect.IsInverted ( ))
@@ -1908,6 +1912,14 @@ SKIF_UI_Tab_DrawViewer (void)
 
       wantCopyToClipboard = true;
       copyRect            = translated;
+
+      if (isSnippingActive)
+      {   isSnippingActive = false;
+        if (                0 != hwndBeforeSnip &&
+            SetForegroundWindow (hwndBeforeSnip)) {
+                                 hwndBeforeSnip = 0;
+        }
+      }
     }
   }
 
@@ -2669,6 +2681,13 @@ SKIF_UI_Tab_DrawViewer (void)
 
       if (std::exchange (activateSnipping, false))
       {
+        hwndBeforeSnip = GetForegroundWindow ();
+
+        selection_rect.Min = ImVec2 (0.0f, 0.0f);
+        selection_rect.Max = ImVec2 (0.0f, 0.0f);
+
+        isSnippingActive = true;
+
         SetForegroundWindow (SKIF_ImGui_hWnd);
       }
 
@@ -4146,7 +4165,7 @@ void SKIV_HandleCopyShortcut (void)
   wantCopyToClipboard = true;
 }
 
-bool SKIV_Image_CopyToClipboard (const DirectX::Image* pImage)
+bool SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped)
 {
   if (pImage == nullptr)
     return false;
@@ -4157,7 +4176,8 @@ bool SKIV_Image_CopyToClipboard (const DirectX::Image* pImage)
     wchar_t                         wszPNGPath [MAX_PATH + 2] = { };
     GetCurrentDirectoryW (MAX_PATH, wszPNGPath);
 
-    PathAppendW       (wszPNGPath, L"SKIV_HDR_Clipboard");
+    PathAppendW       (wszPNGPath, snipped ? L"SKIV_HDR_Snip"
+                                           : L"SKIV_HDR_Clipboard");
     PathAddExtensionW (wszPNGPath, L".png");
 
     if (SKIV_HDR_SavePNGToDisk (wszPNGPath, hdr10_img.GetImages (), pImage, nullptr))

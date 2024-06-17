@@ -531,8 +531,8 @@ SKIF_ImGui_SelectionRect ( ImRect*          selection,
   }
 
   const bool complete =
-    (single_click && ImGui::IsMouseClicked  (mouse_button)) ||
-                     ImGui::IsMouseReleased (mouse_button);
+    (single_click && (ImGui::IsMouseClicked  (mouse_button) || GetAsyncKeyState (VK_LBUTTON))) ||
+                      ImGui::IsMouseReleased (mouse_button);
 
   const bool allow_inversion =
     (flags & SK_IMGUI_SELECT_FLAG_ALLOW_INVERTED);
