@@ -465,6 +465,9 @@ SK_FileSaveDialog (LPWSTR *pszPath, const COMDLG_FILTERSPEC* fileTypes, UINT cFi
       psiDefaultFolder->Release();
     }
 
+    // Users are forgetting to set extensions, establish a default
+    pFileSave->SetDefaultExtension (L".png");
+
     pFileSave->SetFileTypes (cFileTypes, fileTypes);
     pFileSave->SetOptions   (dialogOptions);
 

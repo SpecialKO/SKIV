@@ -2844,7 +2844,7 @@ SKIF_UI_Tab_DrawViewer (void)
 
     LPWSTR pwszFilePath = NULL;
     HRESULT hr          = // COMDLG_FILTERSPEC{ L"Images", L"*.png;*.jpg;*.jpeg;*.webp;*.psd;*.bmp;*.jxr;*.hdr;*.avif" }
-      SK_FileSaveDialog (&pwszFilePath, filters.filterSpec.data(), static_cast<UINT> (filters.filterSpec.size()), FOS_OVERWRITEPROMPT, FOLDERID_Pictures);
+      SK_FileSaveDialog (&pwszFilePath, filters.filterSpec.data(), static_cast<UINT> (filters.filterSpec.size()), FOS_STRICTFILETYPES|FOS_FILEMUSTEXIST, FOLDERID_Pictures);
           
     if (hr == HRESULT_FROM_WIN32(ERROR_CANCELLED))
     {
@@ -2978,7 +2978,7 @@ SKIF_UI_Tab_DrawViewer (void)
 
     LPWSTR pwszFilePath = NULL;
     HRESULT hr          = // COMDLG_FILTERSPEC{ L"Images", L"*.png;*.jpg;*.jpeg;*.webp;*.psd;*.bmp;*.jxr;*.hdr;*.avif" }
-      SK_FileSaveDialog (&pwszFilePath, filters.filterSpec.data(), static_cast<UINT> (filters.filterSpec.size()), FOS_OVERWRITEPROMPT, FOLDERID_Pictures);
+      SK_FileSaveDialog (&pwszFilePath, filters.filterSpec.data(), static_cast<UINT> (filters.filterSpec.size()), FOS_STRICTFILETYPES|FOS_FILEMUSTEXIST, FOLDERID_Pictures);
           
     if (hr == HRESULT_FROM_WIN32(ERROR_CANCELLED))
     {
@@ -4402,9 +4402,6 @@ SKIF_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
     //SK_LOGi0 ( L"Mean Luminance (arithmetic, geometric): %f, %f", 80.0 *      ( lumTotal    / N ),
     //                                                              80.0 * exp2 ( logLumTotal / N ) );
 
-    bool     bIsOverBright         = false;
-    uint32_t vectorized_overbright = 0;
-
     // After tonemapping, re-normalize the image to preserve peak white,
     //   this is important in cases where the maximum luminance was < 1000 nits
     XMVECTOR maxTonemappedRGB = g_XMZero;
@@ -4468,52 +4465,8 @@ SKIF_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
       }, tonemapped_hdr
     );
 
-    XMVectorGreaterR      (&vectorized_overbright, maxTonemappedRGB, g_XMOne);
-    bIsOverBright =
-      XMComparisonAnyTrue ( vectorized_overbright);
-
-    DirectX::ScratchImage tonemapped_copy;
-
-    if (bIsOverBright)
-    {
-      float fMaxR = XMVectorGetX (maxTonemappedRGB),
-            fMaxG = XMVectorGetY (maxTonemappedRGB),
-            fMaxB = XMVectorGetZ (maxTonemappedRGB);
-
-      //SK_LOGi0 (
-      //  L"After tone mapping, maximum RGB was %4.2fR %4.2fG %4.2fB -- SDR image will be normalized...",
-      //    fMaxR, fMaxG, fMaxB
-      //);
-
-      // Dim the image at most 5% in the pursuit of white balance, if any
-      //   more than that is necessary, gamut mapping would be better...
-      const XMVECTOR vNormalizationScale =
-        XMVectorReplicate (
-          std::clamp (std::max ({fMaxR,fMaxG,fMaxB}), 1.00f,
-                                                      1.05f)
-        );
-
-      TransformImage (*tonemapped_hdr.GetImages (),
-        [&]( _Out_writes_ (width)       XMVECTOR* outPixels,
-              _In_reads_  (width) const XMVECTOR* inPixels,
-                                        size_t    width,
-                                        size_t )
-        {
-          for (size_t j = 0; j < width; ++j)
-          {
-            XMVECTOR value =
-             inPixels [j];
-            outPixels [j] =
-              XMVectorDivide (value, vNormalizationScale);
-          }
-        }, tonemapped_copy
-      );
-
-      std::swap (tonemapped_hdr, tonemapped_copy);
-    }
-
-    if (FAILED (DirectX::Convert (*tonemapped_hdr.GetImages (), DXGI_FORMAT_R8G8B8A8_UNORM,
-                                  DirectX::TEX_FILTER_FORCE_WIC, 0.0f, final_sdr)))
+    if (FAILED (DirectX::Convert (*tonemapped_hdr.GetImages (), DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,
+                                  (TEX_FILTER_FLAGS)0x200000FF, 0.0f, final_sdr)))
     {
       return E_UNEXPECTED;
     }
@@ -4526,11 +4479,20 @@ SKIF_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
   wchar_t* wszExtension =
     PathFindExtensionW (wszFileName);
 
+  wchar_t wszImplicitFileName [MAX_PATH] = { };
+  wcscpy (wszImplicitFileName, wszFileName);
+
+  // For silly users who don't give us filenames...
   if (! wszExtension)
-    return E_INVALIDARG;
+  {
+    PathAddExtension (wszImplicitFileName, L"png");
+    wszExtension =
+      PathFindExtensionW (wszImplicitFileName);
+    //return E_INVALIDARG;
+  }
 
   GUID      wic_codec;
-  WIC_FLAGS wic_flags = WIC_FLAGS_NONE;
+  WIC_FLAGS wic_flags = WIC_FLAGS_DITHER_DIFFUSION;
 
   if (StrStrIW (wszExtension, L"jpg") ||
       StrStrIW (wszExtension, L"jpeg"))
@@ -4569,7 +4531,7 @@ SKIF_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
 
   return
     DirectX::SaveToWICFile (*pOutputImage, wic_flags, wic_codec,
-                              wszFileName, nullptr, SK_WIC_SetMaximumQuality);
+                      wszImplicitFileName, nullptr, SK_WIC_SetMaximumQuality);
 }
 
 HRESULT
@@ -4590,8 +4552,17 @@ SKIF_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
   wchar_t* wszExtension =
     PathFindExtensionW (wszFileName);
 
+  wchar_t wszImplicitFileName [MAX_PATH] = { };
+  wcscpy (wszImplicitFileName, wszFileName);
+
+  // For doofus users who don't give us filenames...
   if (! wszExtension)
-    return E_INVALIDARG;
+  {
+    PathAddExtension (wszImplicitFileName, L"png");
+    wszExtension =
+      PathFindExtensionW (wszImplicitFileName);
+    //return E_INVALIDARG;
+  }
 
   GUID wic_codec;
 
@@ -4605,7 +4576,7 @@ SKIF_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
     DirectX::ScratchImage                  png_img;
     if (SKIV_HDR_ConvertImageToPNG (image, png_img))
     {
-      if (SKIV_HDR_SavePNGToDisk (wszFileName, png_img.GetImages (), &image, nullptr))
+      if (SKIV_HDR_SavePNGToDisk (wszImplicitFileName, png_img.GetImages (), &image, nullptr))
       {
         return S_OK;
       }
@@ -4628,5 +4599,5 @@ SKIF_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
 
   return
     DirectX::SaveToWICFile (*pOutputImage, DirectX::WIC_FLAGS_NONE, wic_codec,
-                              wszFileName, nullptr, SK_WIC_SetMaximumQuality);
+                      wszImplicitFileName, nullptr, SK_WIC_SetMaximumQuality);
 }
