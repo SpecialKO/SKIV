@@ -256,9 +256,9 @@ const std::initializer_list<FileSignature> supported_formats =
 
 const std::initializer_list<FileSignature> supported_sdr_encode_formats =
 {
+  FileSignature { L"image/png",                 { L".png"  },          { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A } },
   FileSignature { L"image/jpeg",                { L".jpg", L".jpeg" }, { 0xFF, 0xD8, 0x00, 0x00 },   // JPEG (SOI; Start of Image)
                                                                        { 0xFF, 0xFF, 0x00, 0x00 } }, // JPEG App Markers are masked as they can be all over the place (e.g. 0xFF 0xD8 0xFF 0xED)
-  FileSignature { L"image/png",                 { L".png"  },          { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A } },
   FileSignature { L"image/bmp",                 { L".bmp"  },          { 0x42, 0x4D } },
   FileSignature { L"image/tiff",                { L".tiff", L".tif" }, { 0x49, 0x49, 0x2A, 0x00 } }, // TIFF: little-endian
   FileSignature { L"image/tiff",                { L".tiff", L".tif" }, { 0x4D, 0x4D, 0x00, 0x2A } }, // TIFF: big-endian
@@ -300,6 +300,9 @@ std::wstring           coverRefreshPath  = L"";
 int                    coverRefreshCount = 0;
 int                    numRegular        = 0;
 int                    numPinnedOnTop    = 0;
+
+std::wstring           defaultHDRFileExt = L".png";
+std::wstring           defaultSDRFileExt = L".png";
 
 const float fTintMin     = 0.75f;
       float fTint        = 1.0f;
@@ -2835,16 +2838,24 @@ SKIF_UI_Tab_DrawViewer (void)
       return _spec;
     };
 
-    static const filterspec_s filters = _CreateFILTERSPEC ( );
+    const filterspec_s filters = _CreateFILTERSPEC ( );
 
 #ifdef _DEBUG
     for (auto& filter : filters.filterSpec)
       PLOG_VERBOSE << std::wstring (filter.pszName) << ": " << std::wstring (filter.pszSpec);
 #endif
 
+    wchar_t               wszCoverName [MAX_PATH + 2] = { };
+    wcsncpy (             wszCoverName, cover.file_info.filename.c_str(), MAX_PATH);
+    PathRemoveExtensionW (wszCoverName);
+
+    const wchar_t *wszDefaultExtension =
+      cover.is_hdr ? defaultHDRFileExt.c_str ()
+                   : defaultSDRFileExt.c_str ();
+
     LPWSTR pwszFilePath = NULL;
     HRESULT hr          = // COMDLG_FILTERSPEC{ L"Images", L"*.png;*.jpg;*.jpeg;*.webp;*.psd;*.bmp;*.jxr;*.hdr;*.avif" }
-      SK_FileSaveDialog (&pwszFilePath, filters.filterSpec.data(), static_cast<UINT> (filters.filterSpec.size()), FOS_STRICTFILETYPES|FOS_FILEMUSTEXIST, FOLDERID_Pictures);
+      SK_FileSaveDialog (&pwszFilePath, wszCoverName, wszDefaultExtension, filters.filterSpec.data(), static_cast<UINT> (filters.filterSpec.size()), FOS_STRICTFILETYPES|FOS_FILEMUSTEXIST|FOS_OVERWRITEPROMPT|FOS_DONTADDTORECENT, FOLDERID_Pictures);
           
     if (hr == HRESULT_FROM_WIN32(ERROR_CANCELLED))
     {
@@ -2969,16 +2980,23 @@ SKIF_UI_Tab_DrawViewer (void)
       return _spec;
     };
 
-    static const filterspec_s filters = _CreateFILTERSPEC ( );
+    const filterspec_s filters = _CreateFILTERSPEC ( );
 
 #ifdef _DEBUG
     for (auto& filter : filters.filterSpec)
       PLOG_VERBOSE << std::wstring (filter.pszName) << ": " << std::wstring (filter.pszSpec);
 #endif
 
+    wchar_t               wszCoverName [MAX_PATH + 2] = { };
+    wcsncpy (             wszCoverName, cover.file_info.filename.c_str(), MAX_PATH);
+    PathRemoveExtensionW (wszCoverName);
+
+    const wchar_t *wszDefaultExtension =
+               defaultSDRFileExt.c_str ();
+
     LPWSTR pwszFilePath = NULL;
     HRESULT hr          = // COMDLG_FILTERSPEC{ L"Images", L"*.png;*.jpg;*.jpeg;*.webp;*.psd;*.bmp;*.jxr;*.hdr;*.avif" }
-      SK_FileSaveDialog (&pwszFilePath, filters.filterSpec.data(), static_cast<UINT> (filters.filterSpec.size()), FOS_STRICTFILETYPES|FOS_FILEMUSTEXIST, FOLDERID_Pictures);
+      SK_FileSaveDialog (&pwszFilePath, wszCoverName, wszDefaultExtension, filters.filterSpec.data(), static_cast<UINT> (filters.filterSpec.size()), FOS_STRICTFILETYPES|FOS_FILEMUSTEXIST, FOLDERID_Pictures);
           
     if (hr == HRESULT_FROM_WIN32(ERROR_CANCELLED))
     {
@@ -4485,10 +4503,9 @@ SKIF_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
   // For silly users who don't give us filenames...
   if (! wszExtension)
   {
-    PathAddExtension (wszImplicitFileName, L"png");
+    PathAddExtension (wszImplicitFileName, defaultSDRFileExt.c_str ());
     wszExtension =
       PathFindExtensionW (wszImplicitFileName);
-    //return E_INVALIDARG;
   }
 
   GUID      wic_codec;
@@ -4526,7 +4543,7 @@ SKIF_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
 
   else
   {
-    return E_NOTIMPL;
+    return E_UNEXPECTED;
   }
 
   return
@@ -4558,10 +4575,9 @@ SKIF_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
   // For doofus users who don't give us filenames...
   if (! wszExtension)
   {
-    PathAddExtension (wszImplicitFileName, L"png");
+    PathAddExtension (wszImplicitFileName, defaultHDRFileExt.c_str());
     wszExtension =
       PathFindExtensionW (wszImplicitFileName);
-    //return E_INVALIDARG;
   }
 
   GUID wic_codec;
@@ -4594,7 +4610,7 @@ SKIF_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
   else
   {
     // What the hell is this?
-    return E_NOTIMPL;
+    return E_UNEXPECTED;
   }
 
   return

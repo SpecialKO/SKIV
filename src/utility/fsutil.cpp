@@ -447,7 +447,7 @@ SK_FileOpenDialog (LPWSTR *pszPath, const COMDLG_FILTERSPEC* fileTypes, UINT cFi
 }
 
 HRESULT
-SK_FileSaveDialog (LPWSTR *pszPath, const COMDLG_FILTERSPEC* fileTypes, UINT cFileTypes, FILEOPENDIALOGOPTIONS dialogOptions, const GUID defaultFolder)
+SK_FileSaveDialog (LPWSTR *pszPath, LPCWSTR wszDefaultName, const wchar_t* wszDefaultExtension, const COMDLG_FILTERSPEC* fileTypes, UINT cFileTypes, FILEOPENDIALOGOPTIONS dialogOptions, const GUID defaultFolder)
 {
   IFileSaveDialog  *pFileSave = nullptr;
   HRESULT hr = E_UNEXPECTED;
@@ -466,7 +466,8 @@ SK_FileSaveDialog (LPWSTR *pszPath, const COMDLG_FILTERSPEC* fileTypes, UINT cFi
     }
 
     // Users are forgetting to set extensions, establish a default
-    pFileSave->SetDefaultExtension (L".png");
+    pFileSave->SetFileName         (wszDefaultName);
+    pFileSave->SetDefaultExtension (wszDefaultExtension);
 
     pFileSave->SetFileTypes (cFileTypes, fileTypes);
     pFileSave->SetOptions   (dialogOptions);
