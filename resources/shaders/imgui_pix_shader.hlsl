@@ -80,6 +80,7 @@ Texture2D texture0 : register (t0);
 #include "colorspaces.hlsli"
 #include "tone_mapping.hlsli"
 #include "visualization.hlsli"
+#include "calibration.hlsli"
 
 float4 main (PS_INPUT input) : SV_Target
 {
@@ -96,11 +97,18 @@ float4 main (PS_INPUT input) : SV_Target
     texture0.Sample (sampler0, input.uv);
 
 
+
   float prescale_luminance  = 1.0f;
   float postscale_luminance = 1.0f;
 
   if (input.hdr_img)
   {
+    if (display_max_luminance < 0)
+    {
+      return
+        DrawMaxClipPattern (-display_max_luminance, input.uv);
+    }
+
     if (hdr_visualization == SKIV_VISUALIZATION_HEATMAP) prescale_luminance  = user_brightness_scale;
     if (hdr_visualization == SKIV_VISUALIZATION_SDR)     postscale_luminance = user_brightness_scale;
 
