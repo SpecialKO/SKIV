@@ -394,6 +394,8 @@ struct SKIF_RegistrySettings {
   std::wstring wsPathViewer;
   std::wstring wsPathSpecialK;
   std::wstring wsAutoUpdateVersion; // Holds the version the auto-updater is trying to install
+  std::wstring wsDefaultHDRExt = L".png";
+  std::wstring wsDefaultSDRExt = L".png";
 
   // Windows stuff
   std::wstring wsAppRegistration;

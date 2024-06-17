@@ -129,6 +129,53 @@ SKIF_UI_Tab_DrawSettings (void)
     ImGui::TreePop         ( );
 
     ImGui::PopStyleColor();
+
+    // nb:  Prefernece needs implementation
+    // 
+#if 0
+    ImGui::TextColored     (ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info), ICON_FA_LIGHTBULB);
+    SKIF_ImGui_SetHoverTip ("Used for Export to SDR and Save As...");
+    ImGui::SameLine        ( );
+    ImGui::TextColored (
+      ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextCaption),
+        "Default File Formats:"
+    );
+    ImGui::TreePush        ("FileFormats");
+    const char* HDRFormats [] = { ".png",
+                                  ".jxr",//".avif",".jxl"
+                                };
+    const char* SDRFormats [] = { ".png",
+                                  ".jpg",
+                                  ".bmp",
+                                  ".tiff"
+                                  //".dds",
+                                };
+
+    static const char* LogSeverityCurrent = LogSeverity[_registry.iLogging];
+
+    if (ImGui::BeginCombo  (" HDR Format###_registry.wsDefaultHDRExt", LogSeverityCurrent))
+    {
+      for (int n = 0; n < IM_ARRAYSIZE (LogSeverity); n++)
+      {
+        bool is_selected = (LogSeverityCurrent == LogSeverity[n]);
+        if (ImGui::Selectable (LogSeverity[n], is_selected))
+        {
+          _registry.iLogging = n;
+          _registry.regKVLogging.putData  (_registry.iLogging);
+          LogSeverityCurrent = LogSeverity[_registry.iLogging];
+          plog::get()->setMaxSeverity((plog::Severity)_registry.iLogging);
+
+          ImGui::GetCurrentContext()->DebugLogFlags = ImGuiDebugLogFlags_OutputToTTY | ((_registry.isDevLogging())
+                                                    ? ImGuiDebugLogFlags_EventMask_
+                                                    : ImGuiDebugLogFlags_EventViewport);
+        }
+        if (is_selected)
+          ImGui::SetItemDefaultFocus ( );
+      }
+      ImGui::EndCombo  ( );
+    }
+#endif
+    ImGui::TreePop     ( );
   }
 
   ImGui::Spacing ();
