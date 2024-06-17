@@ -516,6 +516,10 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />
+    <None Include="resources\shaders\calibration.hlsli" />
+    <None Include="resources\shaders\colorspaces.hlsli" />
+    <None Include="resources\shaders\tone_mapping.hlsli" />
+    <None Include="resources\shaders\visualization.hlsli" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

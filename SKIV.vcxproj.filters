@@ -265,5 +265,8 @@
     <None Include="resources\shaders\visualization.hlsli">
       <Filter>Resource Files\Shaders</Filter>
     </None>
+    <None Include="resources\shaders\calibration.hlsli">
+      <Filter>Resource Files\Shaders</Filter>
+    </None>
   </ItemGroup>
 </Project>

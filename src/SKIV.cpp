@@ -166,7 +166,9 @@ PopupState HistoryPopup      = PopupState_Closed;
 PopupState AutoUpdatePopup   = PopupState_Closed;
 UITab SKIF_Tab_Selected      = UITab_Viewer,
       SKIF_Tab_ChangeTo      = UITab_None;
-extern PopupState  OpenFileDialog; // Viewer: open file dialog
+extern PopupState  OpenFileDialog;  // Viewer: open file dialog
+extern PopupState  SaveFileDialog;  // Viewer: save file dialog
+extern PopupState  ExportSDRDialog; // Viewer: export sdr dialog
 
 HMODULE hModSKIF     = nullptr;
 HMODULE hModSpecialK = nullptr;
@@ -1224,7 +1226,13 @@ wWinMain ( _In_     HINSTANCE hInstance,
          hotkeyCtrlD = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_D     )->DownDuration == 0.0f), // Viewer: Toggle Image Details
          hotkeyCtrlF = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_F     )->DownDuration == 0.0f), // Toggle Fullscreen Mode
          hotkeyCtrlV = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_V     )->DownDuration == 0.0f), // Paste data through the clipboard
-         hotkeyCtrlN = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_N     )->DownDuration == 0.0f); // Minimize app
+         hotkeyCtrlN = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_N     )->DownDuration == 0.0f), // Minimize app
+         hotkeyCtrlS = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_S     )->DownDuration == 0.0f), // Save Current Image (in same Dynamic Range)
+         hotkeyCtrlX = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_X     )->DownDuration == 0.0f); // Export Current Image (HDR -> SDR)
+
+    // No more compiler warnings dammit!
+    std::ignore = hotkeyF5;
+    std::ignore = hotkeyCtrlR;
 
     // Handled in viewer.cpp
        //hotkeyCtrl1 = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_1     )->DownDuration == 0.0f), // Viewer -> Image Scaling: View actual size (1:1 / None)
@@ -1680,6 +1688,17 @@ wWinMain ( _In_     HINSTANCE hInstance,
               SKIF_Tab_ChangeTo  = UITab_Viewer;
 
           OpenFileDialog = PopupState_Open;
+        }
+
+        if (allowShortcutCtrlA && (hotkeyCtrlX || hotkeyCtrlS))
+        {
+          if (SKIF_Tab_Selected != UITab_Viewer)
+              SKIF_Tab_ChangeTo  = UITab_Viewer;
+
+          if (hotkeyCtrlX)
+            ExportSDRDialog = PopupState_Open;
+          if (hotkeyCtrlS)
+            SaveFileDialog = PopupState_Open;
         }
       }
 

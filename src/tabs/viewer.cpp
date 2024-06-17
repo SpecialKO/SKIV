@@ -254,6 +254,28 @@ const std::initializer_list<FileSignature> supported_formats =
 //FileSignature { L"image/x-targa",             { L".tga"  },          { 0x00, } }, // TGA has no real unique header identifier, so just use the file extension on those
 };
 
+const std::initializer_list<FileSignature> supported_sdr_encode_formats =
+{
+  FileSignature { L"image/jpeg",                { L".jpg", L".jpeg" }, { 0xFF, 0xD8, 0x00, 0x00 },   // JPEG (SOI; Start of Image)
+                                                                       { 0xFF, 0xFF, 0x00, 0x00 } }, // JPEG App Markers are masked as they can be all over the place (e.g. 0xFF 0xD8 0xFF 0xED)
+  FileSignature { L"image/png",                 { L".png"  },          { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A } },
+  FileSignature { L"image/bmp",                 { L".bmp"  },          { 0x42, 0x4D } },
+  FileSignature { L"image/tiff",                { L".tiff", L".tif" }, { 0x49, 0x49, 0x2A, 0x00 } }, // TIFF: little-endian
+  FileSignature { L"image/tiff",                { L".tiff", L".tif" }, { 0x4D, 0x4D, 0x00, 0x2A } }, // TIFF: big-endian
+//FileSignature { L"image/vnd-ms.dds",          { L".dds"  },          { 0x44, 0x44, 0x53, 0x20 } },
+//FileSignature { L"image/x-targa",             { L".tga"  },          { 0x00, } }, // TGA has no real unique header identifier, so just use the file extension on those
+};
+
+const std::initializer_list<FileSignature> supported_hdr_encode_formats =
+{
+  FileSignature { L"image/png",                 { L".png"  },          { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A } },
+  FileSignature { L"image/vnd.ms-photo",        { L".jxr"  },          { 0x49, 0x49, 0xBC } },
+//FileSignature { L"image/avif",                { L".avif" },          { 0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x61, 0x76, 0x69, 0x66 },   // ftypavif
+//                                                                     { 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF } }, // ?? ?? ?? ?? 66 74 79 70 61 76 69 66
+//FileSignature { L"image/vnd.radiance",        { L".hdr"  },          { 0x23, 0x3F, 0x52, 0x41, 0x44, 0x49, 0x41, 0x4E, 0x43, 0x45, 0x0A } }, // Radiance High Dynamic Range image file
+//FileSignature { L"image/vnd-ms.dds",          { L".dds"  },          { 0x44, 0x44, 0x53, 0x20 } },
+};
+
 bool isExtensionSupported (const std::wstring extension)
 {
   for (auto& type : supported_formats)
@@ -285,6 +307,8 @@ const float fTintMin     = 0.75f;
       float fAlphaPrev   = 1.0f;
 
 PopupState OpenFileDialog  = PopupState_Closed;
+PopupState SaveFileDialog  = PopupState_Closed;
+PopupState ExportSDRDialog = PopupState_Closed;
 PopupState ContextMenu     = PopupState_Closed;
 
 enum ImageScaling {
@@ -2110,6 +2134,9 @@ SKIF_UI_Tab_DrawViewer (void)
       ImGui::TextUnformatted ("\n");
       ImGui::SliderFloat ("Brightness", &SKIV_HDR_BrightnessScale, 1.0f, 2000.0f, "%.3f %%", ImGuiSliderFlags_Logarithmic);
 
+      float slider_width =
+        ImGui::CalcItemWidth ();
+
       if (SKIV_HDR_BrightnessScale != 100.0f)
       {
         ImGui::SameLine ();
@@ -2122,23 +2149,180 @@ SKIF_UI_Tab_DrawViewer (void)
         ImGui_ImplDX11_ViewportData* vd =
           (ImGui_ImplDX11_ViewportData *)ImGui::GetWindowViewport ()->RendererUserData;
 
-        ImGui::BeginDisabled ();
-        SKIV_HDR_DisplayMaxLuminance = vd->HDRLuma;
-        ImGui::SliderFloat   ("Display Luminance", &vd->HDRLuma, 200.0f, 2000.0f, (const char *)u8"%.1f cd / m\u00b2");
-        ImGui::EndDisabled   ();
+        float fCursorX1 =
+          ImGui::GetCursorPosX ();
 
-        if ((SKIV_HDR_BrightnessScale / 100.0f) * SKIV_HDR_MaxLuminance > SKIV_HDR_DisplayMaxLuminance)
+        static bool  bLockCalibration     = true;
+        static float fCalibrationOverride = 0.0f;
+
+        if (ImGui::Button ( bLockCalibration ? ICON_FA_LOCK     "###LockCalibration"
+                                             : ICON_FA_UNLOCK "###UnlockCalibration" ))
         {
-          ImGui::TextUnformatted ("\n");
-          ImGui::TextColored (ImColor (0xff0099ff), ICON_FA_TRIANGLE_EXCLAMATION);
-          ImGui::SameLine    ();
-          ImGui::TextUnformatted ("Content Exceeds Display Capabilities");
+          bLockCalibration =
+             (! bLockCalibration);
+          if (! bLockCalibration)
+          {
+            if ( fCalibrationOverride >= 0.0f )
+                 fCalibrationOverride = std::min (-SKIV_HDR_DisplayMaxLuminance,
+                                                   SKIV_HDR_DisplayMaxLuminance);
+          }
 
-          ImGui::RadioButton ("Do Nothing",      &SKIV_HDR_TonemapType, SKIV_TONEMAP_TYPE_NONE);
+          else
+          {
+            fCalibrationOverride =
+              std::max (-fCalibrationOverride,
+                         fCalibrationOverride);
+          }
+        }
+
+        if (bLockCalibration) ImGui::BeginDisabled ();
+
+        ImGui::SameLine ();
+
+        float fCursorX2 =
+          ImGui::GetCursorPosX ();
+
+        if (fCalibrationOverride == 0.0f) SKIV_HDR_DisplayMaxLuminance = vd->HDRLuma;
+        else                              SKIV_HDR_DisplayMaxLuminance = bLockCalibration ? abs (fCalibrationOverride)
+                                                                                          :      fCalibrationOverride;
+
+        ImGui::SetNextItemWidth (
+          (slider_width - (fCursorX2 - fCursorX1))
+        );
+
+        static constexpr float _fMinStdHdrLuminance =  300.0f;
+        static constexpr float _fMaxStdHdrLuminance = 1500.0f;
+
+        if (fCalibrationOverride != 0.0f)
+        {
+          float override_slider =
+            abs (fCalibrationOverride);
+
+          if (ImGui::SliderFloat ( "Display Luminance", &override_slider,
+                              _fMinStdHdrLuminance, _fMaxStdHdrLuminance,
+                                   (const char *)u8"%.1f cd / m\u00b2", ImGuiSliderFlags_Logarithmic ))
+          {
+            SKIV_HDR_DisplayMaxLuminance = -override_slider;
+            fCalibrationOverride         = -override_slider;
+          }
+
+          if (ImGui::IsItemHovered ())
+          {
+            ImGui::BeginTooltip    ( );
+            ImGui::TextUnformatted ("Ctrl-Click to Manually Input Precise Values");
+            ImGui::Separator       ( );
+            ImGui::BulletText      ("Accurate maximum luminance is necessary to display content "
+                                    "brighter than your display supports.");
+            ImGui::Separator       ( );
+            ImGui::TextUnformatted (ICON_FA_LOCK " the slider to dismiss the test pattern.");
+            ImGui::EndTooltip      ( );
+          }
+        }
+
+        else if (ImGui::SliderFloat ( "Display Luminance", &SKIV_HDR_DisplayMaxLuminance,
+                                              _fMinStdHdrLuminance, _fMaxStdHdrLuminance,
+                                                   (const char *)u8"%.1f cd / m\u00b2", ImGuiSliderFlags_Logarithmic ))
+        {
+          fCalibrationOverride =
+            -SKIV_HDR_DisplayMaxLuminance;
+        }
+        if (ImGui::IsItemHovered (ImGuiHoveredFlags_AllowWhenDisabled) && bLockCalibration)
+        {
+          ImGui::BeginTooltip    (  );
+          ImGui::TextUnformatted ("Validate or Override EDID/ICC Profile Display Maximum Luminance");
+          ImGui::Separator       (  );
+          ImGui::Spacing         (  );
+          ImGui::PushStyleColor  (ImGuiCol_Text, ImVec4 (.55f, .55f, .55f, 1.f));
+          ImGui::BulletText      ("Many TVs do not supply actual luminance capabilities to Windows !!");
+          ImGui::BulletText      ("Do not trust SKIV's default values unless you have run Windows 11 HDR Calibration.");
+          ImGui::PopStyleColor   (  );
+          ImGui::Spacing         (  );
+          ImGui::Spacing         (  );
+          ImGui::TextUnformatted ("To validate display luminance clipping, " ICON_FA_UNLOCK " the slider and adjust"
+                                  " until the white checkerboard pattern appears solid white.");
+          ImGui::Spacing         (  );
+          ImGui::PushStyleColor  (ImGuiCol_Text, ImVec4 (.55f, .55f, .55f, 1.f));
+          ImGui::BulletText      ("Find the -smallest- value that causes the test pattern to disappear (clip).");
+          ImGui::PopStyleColor   (  );
+          ImGui::Spacing         (  );
+          ImGui::Spacing         (  );
+          ImGui::TextUnformatted ("If the default values fail to clip, run Windows HDR Calibration and/or disable "
+                                  "driver color management (i.e. Reference Mode).");
+          ImGui::Spacing         (  );
+          ImGui::Spacing         (  );
+          ImGui::Separator       (  );
+          ImGui::TextColored     (ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Info), "%hs", ICON_FA_CIRCLE_INFO); ImGui::SameLine ();
+          ImGui::TextUnformatted ("This test measures signal processing / driver color management bugs; it cannot measure "
+                                  "ABL or physical light output.");
+          ImGui::EndTooltip      (  );
+        }
+        if (bLockCalibration) ImGui::EndDisabled ();
+
+        if (fCalibrationOverride != 0.0f)
+        {
           ImGui::SameLine ();
-          ImGui::RadioButton ("Clip to Display", &SKIV_HDR_TonemapType, SKIV_TONEMAP_TYPE_CLIP);
-          ImGui::SameLine ();
-          ImGui::RadioButton ("Map to Display",  &SKIV_HDR_TonemapType, SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY);
+          if (ImGui::Button (ICON_FA_ROTATE_LEFT "###Calibration_Reset"))
+                                                    fCalibrationOverride = 0.0f;
+        }
+
+        // Do not show content range warnings while the override value is negative,
+        //   user is calibrating their screen...
+        if (bLockCalibration)
+        {
+          if ( (SKIV_HDR_BrightnessScale / 100.0f) * SKIV_HDR_MaxLuminance >
+                                                     SKIV_HDR_DisplayMaxLuminance )
+          {
+            ImGui::TextUnformatted ("\n");
+            ImGui::TextColored (ImColor (0xff0099ff), ICON_FA_TRIANGLE_EXCLAMATION);
+            ImGui::SameLine    ();
+            ImGui::TextUnformatted ("Content Exceeds Display Capabilities");
+
+            ImGui::RadioButton ("Do Nothing",      &SKIV_HDR_TonemapType, SKIV_TONEMAP_TYPE_NONE);
+            if (ImGui::IsItemHovered ())
+            {
+              ImGui::BeginTooltip    ( );
+              ImGui::TextUnformatted ("If Content Exceeds Display's Maximum Luminance:\t");
+              ImGui::SameLine        ( );
+              ImGui::TextColored     (ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Info), "Nasal Demons...?");
+              ImGui::Separator       ( );
+              ImGui::PushStyleColor  (ImGuiCol_Text, ImVec4 (.65f, .65f, .65f, 1.f));
+              ImGui::BulletText      ("You are going to need a pixel exorcist.");
+              ImGui::PopStyleColor   ( );
+              ImGui::EndTooltip      ( );
+            }
+            ImGui::SameLine    ();
+
+            ImGui::RadioButton ("Clip to Display", &SKIV_HDR_TonemapType, SKIV_TONEMAP_TYPE_CLIP);
+            if (ImGui::IsItemHovered ())
+            {
+              ImGui::BeginTooltip    ( );
+              ImGui::TextUnformatted ("If Content Exceeds Display's Maximum Luminance:\t");
+              ImGui::SameLine        ( );
+              ImGui::TextColored     (ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Yellow), "Clip Luminance at Display's Limit");
+              ImGui::Separator       ( );
+              ImGui::PushStyleColor  (ImGuiCol_Text, ImVec4 (.65f, .65f, .65f, 1.f));
+              ImGui::BulletText      ("Produces the brightest highlights possible, even if it means loss of image detail.");
+              ImGui::BulletText      ("Some HDR scenes are intentionally too bright, and clipping is intended behavior.");
+              ImGui::PopStyleColor   ( );
+              ImGui::EndTooltip      ( );
+            }
+            ImGui::SameLine          ( );
+
+            ImGui::RadioButton ("Map to Display",  &SKIV_HDR_TonemapType, SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY);
+            if (ImGui::IsItemHovered ())
+            {
+              ImGui::BeginTooltip    ( );
+              ImGui::TextUnformatted ("If Content Exceeds Display's Maximum Luminance:\t");
+              ImGui::SameLine        ( );
+              ImGui::TextColored     (ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Success), "Tone-map for Maximum Visibility");
+              ImGui::Separator       ( );
+              ImGui::PushStyleColor  (ImGuiCol_Text, ImVec4 (.65f, .65f, .65f, 1.f));
+              ImGui::BulletText      ("Causes some loss in white luminance on highlights.");
+              ImGui::BulletText      ("May expose details you were not intended to see (i.e. calibration test patterns).");
+              ImGui::PopStyleColor   ( );
+              ImGui::EndTooltip      ( );
+            }
+          }
         }
       }
 
@@ -2221,7 +2405,12 @@ SKIF_UI_Tab_DrawViewer (void)
 
     else if (cover.pRawTexSRV.p != nullptr)
     {
-      if (SKIF_ImGui_MenuItemEx2 ("Close", 0, ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info), "Ctrl+W"))
+      if (SKIF_ImGui_MenuItemEx2 ("Save As...", ICON_FA_FLOPPY_DISK,    ImGui::GetStyleColorVec4(ImGuiCol_Text),      "Ctrl+S"))
+        SaveFileDialog = PopupState_Open;
+      if (cover.is_hdr &&
+          SKIF_ImGui_MenuItemEx2 ("Export to SDR", ICON_FA_FILE_EXPORT, ImGui::GetStyleColorVec4(ImGuiCol_Text),      "Ctrl+X"))
+        ExportSDRDialog = PopupState_Open;
+      if (SKIF_ImGui_MenuItemEx2 ("Close", 0,                           ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info), "Ctrl+W"))
         _SwapOutCover ();
 
       // Image scaling
@@ -2580,6 +2769,278 @@ SKIF_UI_Tab_DrawViewer (void)
     OpenFileDialog = PopupState_Closed;
   }
 
+
+  if (SaveFileDialog == PopupState_Open)
+  {
+    SaveFileDialog = PopupState_Opened;
+
+    struct filterspec_s {
+      std::list<std::pair<std::wstring, std::wstring>> _raw_list  = { };
+      std::vector<COMDLG_FILTERSPEC>                   filterSpec = { };
+    };
+
+    auto _CreateFILTERSPEC = [](void) -> filterspec_s
+    {
+      filterspec_s _spec = { };
+
+      { // All supported formats
+        std::wstring ext_filter;
+
+        for (auto& type : cover.is_hdr ? supported_hdr_encode_formats
+                                       : supported_sdr_encode_formats)
+        {
+          static std::wstring prev_mime;
+          std::wstring mime = type.mime_type;
+
+          if (mime == prev_mime)
+            continue;
+          
+          for (auto& file_extension : type.file_extensions)
+            ext_filter += ((! ext_filter.empty()) ? L";*" : L"*") + file_extension;
+
+          prev_mime = mime;
+        }
+
+        _spec._raw_list.push_back ({ L"All supported formats", ext_filter });
+      }
+
+      for (auto& type : cover.is_hdr ? supported_hdr_encode_formats
+                                     : supported_sdr_encode_formats)
+      {
+        static std::wstring prev_mime;
+        std::wstring mime = type.mime_type;
+
+        if (mime == prev_mime)
+          continue;
+
+        std::wstring ext_filter;
+        for (auto& file_extension : type.file_extensions)
+          ext_filter += ((! ext_filter.empty()) ? L";*" : L"*") + file_extension;
+
+        _spec._raw_list.push_back ({ type.mime_type, ext_filter });
+
+        prev_mime = mime;
+      }
+
+      _spec.filterSpec       = std::vector<COMDLG_FILTERSPEC> (_spec._raw_list.size());
+      COMDLG_FILTERSPEC* ptr = _spec.filterSpec.data();
+
+      for (const auto& filter : _spec._raw_list)
+      {
+        ptr->pszName = filter.first.c_str();
+        ptr->pszSpec = filter.second.c_str();
+        ++ptr;
+      }
+
+      return _spec;
+    };
+
+    static const filterspec_s filters = _CreateFILTERSPEC ( );
+
+#ifdef _DEBUG
+    for (auto& filter : filters.filterSpec)
+      PLOG_VERBOSE << std::wstring (filter.pszName) << ": " << std::wstring (filter.pszSpec);
+#endif
+
+    LPWSTR pwszFilePath = NULL;
+    HRESULT hr          = // COMDLG_FILTERSPEC{ L"Images", L"*.png;*.jpg;*.jpeg;*.webp;*.psd;*.bmp;*.jxr;*.hdr;*.avif" }
+      SK_FileSaveDialog (&pwszFilePath, filters.filterSpec.data(), static_cast<UINT> (filters.filterSpec.size()), FOS_OVERWRITEPROMPT, FOLDERID_Pictures);
+          
+    if (hr == HRESULT_FROM_WIN32(ERROR_CANCELLED))
+    {
+      // If cancelled, do nothing
+    }
+
+    else if (SUCCEEDED(hr))
+    {
+      hr = E_UNEXPECTED;
+
+      auto pDevice =
+        SKIF_D3D11_GetDevice ();
+
+      if (pDevice && cover.pRawTexSRV.p != nullptr)
+      {
+        CComPtr <ID3D11DeviceContext>  pDevCtx;
+        pDevice->GetImmediateContext (&pDevCtx);
+
+        if (pDevCtx)
+        {
+          CComPtr <ID3D11Resource>        pCoverRes;
+          cover.pRawTexSRV->GetResource (&pCoverRes.p);
+
+          DirectX::ScratchImage                                                captured_img;
+          if (SUCCEEDED (DirectX::CaptureTexture (pDevice, pDevCtx, pCoverRes, captured_img)))
+          {
+            HRESULT SKIF_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileName);
+            HRESULT SKIF_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileName);
+
+            if (cover.is_hdr)
+            {
+              hr =
+                SKIF_Image_SaveToDisk_HDR (*captured_img.GetImages (), pwszFilePath);
+            }
+
+            else
+            {
+              hr =
+                SKIF_Image_SaveToDisk_SDR (*captured_img.GetImages (), pwszFilePath);
+            }
+          }
+        }
+      }
+
+      if (FAILED (hr))
+      {
+        // Crap...
+        ImGui::InsertNotification (
+        {
+          ImGuiToastType::Error,
+          15000,
+          "File Save", "Failed to Save '%ws', HRESULT=%x",
+          pwszFilePath, hr
+        });
+      }
+    }
+
+    SaveFileDialog = PopupState_Closed;
+  }
+
+
+  if (ExportSDRDialog == PopupState_Open)
+  {
+    ExportSDRDialog = PopupState_Opened;
+
+    struct filterspec_s {
+      std::list<std::pair<std::wstring, std::wstring>> _raw_list  = { };
+      std::vector<COMDLG_FILTERSPEC>                   filterSpec = { };
+    };
+
+    auto _CreateFILTERSPEC = [](void) -> filterspec_s
+    {
+      filterspec_s _spec = { };
+
+      { // All supported formats
+        std::wstring ext_filter;
+
+        for (auto& type : supported_sdr_encode_formats)
+        {
+          static std::wstring prev_mime;
+          std::wstring mime = type.mime_type;
+
+          if (mime == prev_mime)
+            continue;
+          
+          for (auto& file_extension : type.file_extensions)
+            ext_filter += ((! ext_filter.empty()) ? L";*" : L"*") + file_extension;
+
+          prev_mime = mime;
+        }
+
+        _spec._raw_list.push_back ({ L"All supported formats", ext_filter });
+      }
+
+      for (auto& type : supported_sdr_encode_formats)
+      {
+        static std::wstring prev_mime;
+        std::wstring mime = type.mime_type;
+
+        if (mime == prev_mime)
+          continue;
+
+        std::wstring ext_filter;
+        for (auto& file_extension : type.file_extensions)
+          ext_filter += ((! ext_filter.empty()) ? L";*" : L"*") + file_extension;
+
+        _spec._raw_list.push_back ({ type.mime_type, ext_filter });
+
+        prev_mime = mime;
+      }
+
+      _spec.filterSpec       = std::vector<COMDLG_FILTERSPEC> (_spec._raw_list.size());
+      COMDLG_FILTERSPEC* ptr = _spec.filterSpec.data();
+
+      for (const auto& filter : _spec._raw_list)
+      {
+        ptr->pszName = filter.first.c_str();
+        ptr->pszSpec = filter.second.c_str();
+        ++ptr;
+      }
+
+      return _spec;
+    };
+
+    static const filterspec_s filters = _CreateFILTERSPEC ( );
+
+#ifdef _DEBUG
+    for (auto& filter : filters.filterSpec)
+      PLOG_VERBOSE << std::wstring (filter.pszName) << ": " << std::wstring (filter.pszSpec);
+#endif
+
+    LPWSTR pwszFilePath = NULL;
+    HRESULT hr          = // COMDLG_FILTERSPEC{ L"Images", L"*.png;*.jpg;*.jpeg;*.webp;*.psd;*.bmp;*.jxr;*.hdr;*.avif" }
+      SK_FileSaveDialog (&pwszFilePath, filters.filterSpec.data(), static_cast<UINT> (filters.filterSpec.size()), FOS_OVERWRITEPROMPT, FOLDERID_Pictures);
+          
+    if (hr == HRESULT_FROM_WIN32(ERROR_CANCELLED))
+    {
+      // If cancelled, do nothing
+    }
+
+    else if (SUCCEEDED(hr))
+    {
+      hr = E_UNEXPECTED;
+
+      auto pDevice =
+        SKIF_D3D11_GetDevice ();
+
+      if (pDevice && cover.pRawTexSRV.p != nullptr)
+      {
+        CComPtr <ID3D11DeviceContext>  pDevCtx;
+        pDevice->GetImmediateContext (&pDevCtx);
+
+        if (pDevCtx)
+        {
+          CComPtr <ID3D11Resource>        pCoverRes;
+          cover.pRawTexSRV->GetResource (&pCoverRes.p);
+
+          DirectX::ScratchImage                                                captured_img;
+          if (SUCCEEDED (DirectX::CaptureTexture (pDevice, pDevCtx, pCoverRes, captured_img)))
+          {
+            HRESULT SKIF_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileName);
+            HRESULT SKIF_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileName);
+
+            if (cover.is_hdr)
+            {
+              hr =
+                SKIF_Image_SaveToDisk_SDR (*captured_img.GetImages (), pwszFilePath);
+            }
+
+            else
+            {
+              // WTF? It's already SDR... oh well, save it anyway
+              hr =
+                SKIF_Image_SaveToDisk_SDR (*captured_img.GetImages (), pwszFilePath);
+            }
+          }
+        }
+      }
+
+      if (FAILED (hr))
+      {
+        // Crap...
+        ImGui::InsertNotification (
+        {
+          ImGuiToastType::Error,
+          15000,
+          "SDR Export", "Failed to Export SDR copy to '%ws', HRESULT=%x",
+          pwszFilePath, hr
+        });
+      }
+    }
+
+    ExportSDRDialog = PopupState_Closed;
+  }
+
+
   if (! tryingToLoadImage && ! tryingToDownImage)
   {
     if (ImGui::IsKeyPressed (ImGuiKey_RightArrow))
@@ -2818,36 +3279,6 @@ SKIF_UI_Tab_DrawViewer (void)
   {
     extern void SKIV_HandleCopyShortcut (void);
                 SKIV_HandleCopyShortcut ();
-  }
-
-  if (ImGui::GetIO ().KeyCtrl && ImGui::GetKeyData (ImGuiKey_S)->DownDuration == 0.0f)
-  {
-    // JPG/JPEG, PNG, BMP...  (Add DDS?)
-    HRESULT
-    SKIF_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileName);
-
-    auto pDevice =
-      SKIF_D3D11_GetDevice ();
-
-    if (pDevice && cover.pRawTexSRV.p != nullptr)
-    {
-      CComPtr <ID3D11DeviceContext>  pDevCtx;
-      pDevice->GetImmediateContext (&pDevCtx);
-
-      if (pDevCtx)
-      {
-        CComPtr <ID3D11Resource>        pCoverRes;
-        cover.pRawTexSRV->GetResource (&pCoverRes.p);
-
-        DirectX::ScratchImage                                                captured_img;
-        if (SUCCEEDED (DirectX::CaptureTexture (pDevice, pDevCtx, pCoverRes, captured_img)))
-        {
-          SKIF_Image_SaveToDisk_SDR (
-            *captured_img.GetImages (), L"test.jpg"
-          );
-        }
-      }
-    }
   }
 }
 
@@ -4117,11 +4548,24 @@ SKIF_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
     wic_codec = GetWICCodec (WIC_CODEC_BMP);
   }
 
+  else if (StrStrIW (wszExtension, L"tiff"))
+  {
+    wic_codec = GetWICCodec (WIC_CODEC_TIFF);
+  }
+
+  // Probably ignore this
+  else if (StrStrIW (wszExtension, L"hdp"))
+  {
+    wic_codec = GetWICCodec (WIC_CODEC_WMP);
+  }
+
+  // AVIF technically works for SDR... do we want to support it?
+  //  If we do, WIC won't help us, however.
+
   else
   {
     return E_NOTIMPL;
   }
-
 
   return
     DirectX::SaveToWICFile (*pOutputImage, wic_flags, wic_codec,

@@ -445,3 +445,47 @@ SK_FileOpenDialog (LPWSTR *pszPath, const COMDLG_FILTERSPEC* fileTypes, UINT cFi
 
   return hr;
 }
+
+HRESULT
+SK_FileSaveDialog (LPWSTR *pszPath, const COMDLG_FILTERSPEC* fileTypes, UINT cFileTypes, FILEOPENDIALOGOPTIONS dialogOptions, const GUID defaultFolder)
+{
+  IFileSaveDialog  *pFileSave = nullptr;
+  HRESULT hr = E_UNEXPECTED;
+
+  hr = CoCreateInstance (CLSID_FileSaveDialog, NULL, CLSCTX_ALL,
+                          IID_IFileSaveDialog, reinterpret_cast<void**> (&pFileSave));
+
+  if (SUCCEEDED(hr))
+  {
+    IShellItem* psiDefaultFolder = nullptr;
+
+    if (S_OK == SHGetKnownFolderItem (defaultFolder, KF_FLAG_DEFAULT, NULL, IID_IShellItem, (void**)&psiDefaultFolder))
+    {
+      pFileSave->SetDefaultFolder (psiDefaultFolder);
+      psiDefaultFolder->Release();
+    }
+
+    pFileSave->SetFileTypes (cFileTypes, fileTypes);
+    pFileSave->SetOptions   (dialogOptions);
+
+    hr = pFileSave->Show(NULL);
+
+    if (S_OK == hr)
+    {
+      IShellItem *pItem = nullptr;
+
+      if (S_OK == pFileSave->GetResult (&pItem))
+      {
+        hr = pItem->GetDisplayName (SIGDN_FILESYSPATH, pszPath); // SIGDN_URL
+
+        pItem->Release();
+      }
+    }
+
+    pFileSave->Release();
+  }
+
+  PLOG_ERROR_IF(FAILED(hr)) << SKIF_Util_GetErrorAsWStr (HRESULT_CODE(hr));
+
+  return hr;
+}
