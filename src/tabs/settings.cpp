@@ -174,8 +174,8 @@ SKIF_UI_Tab_DrawSettings (void)
       }
       ImGui::EndCombo  ( );
     }
-#endif
     ImGui::TreePop     ( );
+#endif
   }
 
   ImGui::Spacing ();
