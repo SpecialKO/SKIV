@@ -972,7 +972,7 @@ LoadLibraryTexture (image_s& image)
     XMVECTOR vMaxLum = g_XMZero;
     XMVECTOR vMinLum = g_XMOne;
 
-    float fLumAccum = 0.0f;
+    double dLumAccum = 0.0;
 
     static constexpr float FLT16_MIN = 0.0000000894069671630859375f;
 
@@ -992,7 +992,7 @@ LoadLibraryTexture (image_s& image)
 
       uint32_t xm_test_all = 0x0;
 
-      float fScanlineLum = 0.0f;
+      double dScanlineLum = 0.0;
 
       for (size_t j = 0; j < width; ++j)
       {
@@ -1008,7 +1008,7 @@ LoadLibraryTexture (image_s& image)
 
         xm_test_all = 0x0;
 
-        #define FP16_MIN 0.0000000894069671630859375f
+        #define FP16_MIN 0.0005f
 
         if (XMVectorGreaterOrEqualR (&xm_test_all, v, g_XMZero);
             XMComparisonAllTrue     ( xm_test_all) || XMVectorGetY (vColorXYZ) < FP16_MIN)
@@ -1077,14 +1077,14 @@ LoadLibraryTexture (image_s& image)
         vMinLum =
           XMVectorMin (vMinLum, vColorXYZ);
 
-        fScanlineLum +=
-          XMVectorGetY (v);
+        dScanlineLum +=
+          std::max (0.0, static_cast <double> (XMVectorGetY (v)));
 
         pixels++;
       }
 
-      fLumAccum +=
-        (fScanlineLum / static_cast <float> (width));
+      dLumAccum +=
+        (dScanlineLum / static_cast <float> (width));
     } );
 
     const float fMaxCLL =
@@ -1116,12 +1116,12 @@ LoadLibraryTexture (image_s& image)
 
     image.light_info.max_cll      = fMaxCLL;
     image.light_info.max_cll_name = cMaxChannel;
-    image.light_info.max_nits     = fMaxLum * 80.0f; // scRGB
-    image.light_info.min_nits     = fMinLum * 80.0f; // scRGB
+    image.light_info.max_nits     = std::max (0.0f, fMaxLum * 80.0f); // scRGB
+    image.light_info.min_nits     = std::max (0.0f, fMinLum * 80.0f); // scRGB
 
     // We use the sum of averages per-scanline to help avoid overflow
-    image.light_info.avg_nits     = 80.0f *
-      (fLumAccum / static_cast <float> (meta.height));
+    image.light_info.avg_nits     = static_cast <float> (80.0 *
+      (dLumAccum / static_cast <double> (meta.height)));
   }
 
   HRESULT hr =
