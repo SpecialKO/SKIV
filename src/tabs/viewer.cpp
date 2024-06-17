@@ -2381,6 +2381,8 @@ SKIF_UI_Tab_DrawViewer (void)
     HANDLE hWorkerThread = (HANDLE)
     _beginthreadex (nullptr, 0x0, [](void* var) -> unsigned
     {
+      SetThreadPriority (GetCurrentThread (), THREAD_PRIORITY_TIME_CRITICAL);
+
       SKIF_Util_SetThreadDescription (GetCurrentThread (), L"SKIV_ImageWorker");
 
       thread_s* _data = static_cast<thread_s*>(var);
@@ -2816,6 +2818,36 @@ SKIF_UI_Tab_DrawViewer (void)
   {
     extern void SKIV_HandleCopyShortcut (void);
                 SKIV_HandleCopyShortcut ();
+  }
+
+  if (ImGui::GetIO ().KeyCtrl && ImGui::GetKeyData (ImGuiKey_S)->DownDuration == 0.0f)
+  {
+    // JPG/JPEG, PNG, BMP...  (Add DDS?)
+    HRESULT
+    SKIF_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileName);
+
+    auto pDevice =
+      SKIF_D3D11_GetDevice ();
+
+    if (pDevice && cover.pRawTexSRV.p != nullptr)
+    {
+      CComPtr <ID3D11DeviceContext>  pDevCtx;
+      pDevice->GetImmediateContext (&pDevCtx);
+
+      if (pDevCtx)
+      {
+        CComPtr <ID3D11Resource>        pCoverRes;
+        cover.pRawTexSRV->GetResource (&pCoverRes.p);
+
+        DirectX::ScratchImage                                                captured_img;
+        if (SUCCEEDED (DirectX::CaptureTexture (pDevice, pDevCtx, pCoverRes, captured_img)))
+        {
+          SKIF_Image_SaveToDisk_SDR (
+            *captured_img.GetImages (), L"test.jpg"
+          );
+        }
+      }
+    }
   }
 }
 
@@ -3868,4 +3900,289 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, int flags = 0x0)
   }
 
   return S_OK;
+}
+
+HRESULT
+SKIF_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileName)
+{
+  using namespace DirectX;
+
+  const Image* pOutputImage = &image;
+
+  XMVECTOR maxLum = XMVectorZero          (),
+           minLum = XMVectorSplatInfinity ();
+
+  double lumTotal    = 0.0;
+  double logLumTotal = 0.0;
+  double N           = 0.0;
+
+  bool is_hdr = false;
+
+  ScratchImage scrgb;
+  ScratchImage final_sdr;
+
+  if (image.format == DXGI_FORMAT_R16G16B16A16_FLOAT ||
+      image.format == DXGI_FORMAT_R32G32B32A32_FLOAT)
+  {
+    is_hdr = true;
+
+    if (FAILED (scrgb.InitializeFromImage (image)))
+      return E_INVALIDARG;
+  }
+
+  if (is_hdr)
+  {
+    ScratchImage tonemapped_hdr;
+
+    EvaluateImage ( scrgb.GetImages     (),
+                    scrgb.GetImageCount (),
+                    scrgb.GetMetadata   (),
+    [&](const XMVECTOR* pixels, size_t width, size_t y)
+    {
+      UNREFERENCED_PARAMETER(y);
+
+      for (size_t j = 0; j < width; ++j)
+      {
+        XMVECTOR v = *pixels;
+
+        v =
+          XMVector3Transform (v, c_from709toXYZ);
+
+        maxLum =
+          XMVectorReplicate (XMVectorGetY (XMVectorMax (v, maxLum)));
+
+        minLum =
+          XMVectorReplicate (XMVectorGetY (XMVectorMin (v, minLum)));
+
+        logLumTotal +=
+          log2 ( std::max (0.000001, static_cast <double> (std::max (0.0f, XMVectorGetY (v)))) );
+           lumTotal +=               static_cast <double> (std::max (0.0f, XMVectorGetY (v)));
+        ++N;
+
+        v = XMVectorMax (g_XMZero, v);
+  
+        pixels++;
+      }
+    });
+
+    //SK_LOGi0 ( L"Min Luminance: %f, Max Luminance: %f", std::max (0.0f, XMVectorGetY (minLum)) * 80.0f,
+    //                                                                    XMVectorGetY (maxLum)  * 80.0f );
+    //
+    //SK_LOGi0 ( L"Mean Luminance (arithmetic, geometric): %f, %f", 80.0 *      ( lumTotal    / N ),
+    //                                                              80.0 * exp2 ( logLumTotal / N ) );
+
+    bool     bIsOverBright         = false;
+    uint32_t vectorized_overbright = 0;
+
+    // After tonemapping, re-normalize the image to preserve peak white,
+    //   this is important in cases where the maximum luminance was < 1000 nits
+    XMVECTOR maxTonemappedRGB = g_XMZero;
+
+    TransformImage ( scrgb.GetImages     (),
+                     scrgb.GetImageCount (),
+                     scrgb.GetMetadata   (),
+      [&](XMVECTOR* outPixels, const XMVECTOR* inPixels, size_t width, size_t y)
+      {
+        UNREFERENCED_PARAMETER(y);
+    
+        auto TonemapHDR = [](float L, float Lc, float Ld) -> float
+        {
+          float a = (  Ld / pow (Lc, 2.0f));
+          float b = (1.0f / Ld);
+        
+          return
+            L * (1 + a * L) / (1 + b * L);
+        };
+    
+        static const XMVECTOR vLumaRescale =
+          XMVectorReplicate (1.0f/3.333f);
+
+        for (size_t j = 0; j < width; ++j)
+        {
+          XMVECTOR value = inPixels [j];
+
+          value =
+            XMVectorMultiply (value, vLumaRescale);
+
+          XMVECTOR xyz =
+            XMVector3Transform (value, c_from709toXYZ);
+
+          float Y_in  = std::max (XMVectorGetY (xyz), 0.0f);
+          float Y_out = 1.0f;
+
+          // If it's too bright, don't bother trying to tonemap the full range...
+          static float _maxNitsToTonemap = 10000.0f;
+
+          Y_out =
+            TonemapHDR (Y_in, std::min (_maxNitsToTonemap/80.0f, XMVectorGetY (maxLum)), 1.24f);
+
+          if (Y_out + Y_in > 0.0f)
+          {
+            xyz =
+              XMVectorMultiply ( xyz,
+                                   XMVectorReplicate (std::max ((Y_out / Y_in), 0.0f)) );
+          }
+
+          else
+            xyz = g_XMZero;
+
+          value =
+            XMVector3Transform (xyz, c_fromXYZto709);
+
+          maxTonemappedRGB =
+            XMVectorMax (maxTonemappedRGB, value);
+
+          outPixels [j] = value;
+        }
+      }, tonemapped_hdr
+    );
+
+    XMVectorGreaterR      (&vectorized_overbright, maxTonemappedRGB, g_XMOne);
+    bIsOverBright =
+      XMComparisonAnyTrue ( vectorized_overbright);
+
+    DirectX::ScratchImage tonemapped_copy;
+
+    if (bIsOverBright)
+    {
+      float fMaxR = XMVectorGetX (maxTonemappedRGB),
+            fMaxG = XMVectorGetY (maxTonemappedRGB),
+            fMaxB = XMVectorGetZ (maxTonemappedRGB);
+
+      //SK_LOGi0 (
+      //  L"After tone mapping, maximum RGB was %4.2fR %4.2fG %4.2fB -- SDR image will be normalized...",
+      //    fMaxR, fMaxG, fMaxB
+      //);
+
+      // Dim the image at most 5% in the pursuit of white balance, if any
+      //   more than that is necessary, gamut mapping would be better...
+      const XMVECTOR vNormalizationScale =
+        XMVectorReplicate (
+          std::clamp (std::max ({fMaxR,fMaxG,fMaxB}), 1.00f,
+                                                      1.05f)
+        );
+
+      TransformImage (*tonemapped_hdr.GetImages (),
+        [&]( _Out_writes_ (width)       XMVECTOR* outPixels,
+              _In_reads_  (width) const XMVECTOR* inPixels,
+                                        size_t    width,
+                                        size_t )
+        {
+          for (size_t j = 0; j < width; ++j)
+          {
+            XMVECTOR value =
+             inPixels [j];
+            outPixels [j] =
+              XMVectorDivide (value, vNormalizationScale);
+          }
+        }, tonemapped_copy
+      );
+
+      std::swap (tonemapped_hdr, tonemapped_copy);
+    }
+
+    if (FAILED (DirectX::Convert (*tonemapped_hdr.GetImages (), DXGI_FORMAT_R8G8B8A8_UNORM,
+                                  DirectX::TEX_FILTER_FORCE_WIC, 0.0f, final_sdr)))
+    {
+      return E_UNEXPECTED;
+    }
+
+    pOutputImage =
+      final_sdr.GetImages ();
+  }
+
+
+  wchar_t* wszExtension =
+    PathFindExtensionW (wszFileName);
+
+  if (! wszExtension)
+    return E_INVALIDARG;
+
+  GUID      wic_codec;
+  WIC_FLAGS wic_flags = WIC_FLAGS_NONE;
+
+  if (StrStrIW (wszExtension, L"jpg") ||
+      StrStrIW (wszExtension, L"jpeg"))
+  {
+    wic_codec = GetWICCodec (WIC_CODEC_JPEG);
+  }
+
+  else if (StrStrIW (wszExtension, L"png"))
+  {
+    wic_codec = GetWICCodec (WIC_CODEC_PNG);
+  }
+
+  else if (StrStrIW (wszExtension, L"bmp"))
+  {
+    wic_codec = GetWICCodec (WIC_CODEC_BMP);
+  }
+
+  else
+  {
+    return E_NOTIMPL;
+  }
+
+
+  return
+    DirectX::SaveToWICFile (*pOutputImage, wic_flags, wic_codec,
+                              wszFileName, nullptr, SK_WIC_SetMaximumQuality);
+}
+
+HRESULT
+SKIF_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileName)
+{
+  using namespace DirectX;
+
+  const Image* pOutputImage = &image;
+
+  if (image.format != DXGI_FORMAT_R16G16B16A16_FLOAT &&
+      image.format != DXGI_FORMAT_R32G32B32A32_FLOAT)
+  {
+    // SKIV always uses scRGB internally for HDR, any other format
+    //   can't be HDR...
+    return E_NOTIMPL;
+  }
+
+  wchar_t* wszExtension =
+    PathFindExtensionW (wszFileName);
+
+  if (! wszExtension)
+    return E_INVALIDARG;
+
+  GUID wic_codec;
+
+  if (StrStrIW (wszExtension, L"jxr"))
+  {
+    wic_codec = GetWICCodec (WIC_CODEC_WMP);
+  }
+
+  else if (StrStrIW (wszExtension, L"png"))
+  {
+    DirectX::ScratchImage                  png_img;
+    if (SKIV_HDR_ConvertImageToPNG (image, png_img))
+    {
+      if (SKIV_HDR_SavePNGToDisk (wszFileName, png_img.GetImages (), &image, nullptr))
+      {
+        return S_OK;
+      }
+    }
+  }
+
+  else if (StrStrIW (wszExtension, L"avif") ||
+           StrStrIW (wszExtension, L"hdr")  ||
+           StrStrIW (wszExtension, L"jxl"))
+  {
+    // Not yet, sorry...
+    return E_NOTIMPL;
+  }
+
+  else
+  {
+    // What the hell is this?
+    return E_NOTIMPL;
+  }
+
+  return
+    DirectX::SaveToWICFile (*pOutputImage, DirectX::WIC_FLAGS_NONE, wic_codec,
+                              wszFileName, nullptr, SK_WIC_SetMaximumQuality);
 }
