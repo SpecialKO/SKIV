@@ -265,14 +265,14 @@ float4 main (PS_INPUT input) : SV_Target
       (hdr_visualization != SKIV_VISUALIZATION_NONE) ? 1.0f
                                                      :
                        isHDR ? user_brightness_scale :
-                          max (user_brightness_scale / 3.333f, 0.001f);
+                          max (user_brightness_scale / 1.4545f, 0.001f);
 
 
     float dML = display_max_luminance;
     float cML = hdr_max_luminance;
 
-    float3 xyz   = Rec709toXYZ (out_col.rgb);
-    float  Y_in  = max (xyz.y, 0.0f);
+    float3 ICtCp = Rec709toICtCp (out_col.rgb);
+    float  Y_in  = max (ICtCp.x, 0.0f);
     float  Y_out = 1.0f;
 
     if (implied_tonemap_type != SKIV_TONEMAP_TYPE_NONE && (! isHDR))
@@ -294,15 +294,15 @@ float4 main (PS_INPUT input) : SV_Target
 
     if (Y_out + Y_in > 0.0)
     {
-      xyz.xyz *=
+      ICtCp.x *=
         max ((Y_out / Y_in), 0.0f);
     }
 
     else
-      xyz.xyz = (0.0).xxx;
+      ICtCp.x = 0.0;
 
     out_col.rgb =
-      XYZtoRec709 (xyz);
+      ICtCptoRec709 (ICtCp);
 
 
     // Scale the input to visualize the heat, then undo the scale so that the

@@ -173,6 +173,22 @@ static const DirectX::XMMATRIX c_fromXYZto709 = // Transposed
   {  0.0f,                          0.0f,                             0.0f,                           1.0f }
 };
 
+static const DirectX::XMMATRIX c_fromXYZtoLMS = // Transposed
+{
+  {  0.3592, -0.1922, 0.0070, 0.0 },
+  {  0.6976,  1.1004, 0.0749, 0.0 },
+  { -0.0358,  0.0755, 0.8434, 0.0 },
+  {  0.0,     0.0,    0.0,    1.0 }
+};
+
+static const DirectX::XMMATRIX c_fromLMStoXYZ = // Transposed
+{
+  {  2.070180056695613509600,  0.364988250032657479740, -0.049595542238932107896, 0.0 },
+  { -1.326456876103021025500,  0.680467362852235141020, -0.049421161186757487412, 0.0 },
+  {  0.206616006847855170810, -0.045421753075853231409,  1.187995941732803439400, 0.0 },
+  {  0.0,                      0.0,                      0.0,                     1.0 }
+};
+
 struct ParamsPQ
 {
   DirectX::XMVECTOR N, M;
@@ -188,7 +204,7 @@ static const ParamsPQ PQ =
   DirectX::XMVectorReplicate (2392.0 / 4096.0 * 32.0),  // C3
 };
 
-auto PQToLinear = [](DirectX::XMVECTOR N)
+auto PQToLinear = [](DirectX::XMVECTOR N, DirectX::XMVECTOR maxPQValue = DirectX::g_XMOne)
 {
 using namespace DirectX;
 
@@ -206,9 +222,76 @@ using namespace DirectX;
             XMVectorMultiply (PQ.C3, ret)));
 
   ret =
-    XMVectorPow (nd, XMVectorDivide (g_XMOne, PQ.N));
+    XMVectorMultiply (XMVectorPow (nd, XMVectorDivide (g_XMOne, PQ.N)), maxPQValue);
 
   return ret;
+};
+
+auto LinearToPQ = [](DirectX::XMVECTOR N, DirectX::XMVECTOR maxPQValue = DirectX::g_XMOne)
+{
+  using namespace DirectX;
+
+  XMVECTOR ret;
+
+  ret =
+    XMVectorPow (XMVectorDivide (N, maxPQValue), PQ.N);
+
+  XMVECTOR nd =
+    XMVectorDivide (
+       XMVectorAdd (  PQ.C1, XMVectorMultiply (PQ.C2, ret)),
+       XMVectorAdd (g_XMOne, XMVectorMultiply (PQ.C3, ret))
+    );
+
+  return
+    XMVectorPow (nd, PQ.M);
+};
+
+auto Rec709toICtCp = [](DirectX::XMVECTOR N)
+{
+  using namespace DirectX;
+
+  XMVECTOR ret = N;
+
+  ret = XMVector3Transform (ret, c_from709toXYZ);
+  ret = XMVector3Transform (ret, c_fromXYZtoLMS);
+
+  ret =
+    LinearToPQ (ret, XMVectorReplicate (125.0f));
+
+  static const DirectX::XMMATRIX ConvMat = // Transposed
+  {
+    { 0.5000,  1.6137,  4.3780, 0.0f },
+    { 0.5000, -3.3234, -4.2455, 0.0f },
+    { 0.0000,  1.7097, -0.1325, 0.0f },
+    { 0.0f,    0.0f,    0.0f,   1.0f }
+  };
+
+  return
+    XMVector3Transform (ret, ConvMat);
+};
+
+auto ICtCptoRec709 = [](DirectX::XMVECTOR N)
+{
+  using namespace DirectX;
+
+  XMVECTOR ret = N;
+
+  static const DirectX::XMMATRIX ConvMat = // Transposed
+  {
+    { 1.0,                  1.0,                  1.0,                 0.0f },
+    { 0.00860514569398152, -0.00860514569398152,  0.56004885956263900, 0.0f },
+    { 0.11103560447547328, -0.11103560447547328, -0.32063747023212210, 0.0f },
+    { 0.0f,                 0.0f,                 0.0f,                1.0f }
+  };
+
+  ret =
+    XMVector3Transform (ret, ConvMat);
+
+  ret = PQToLinear (ret, XMVectorReplicate (125.0f));
+  ret = XMVector3Transform (ret, c_fromLMStoXYZ);
+
+  return
+    XMVector3Transform (ret, c_fromXYZto709);
 };
 
 static const DirectX::XMMATRIX c_scRGBtoBt2100 = // Transposed
@@ -3792,23 +3875,6 @@ SKIV_HDR_ConvertImageToPNG (const DirectX::Image& raw_hdr_img, DirectX::ScratchI
     if (rgb16_pixels == nullptr)
       return false;
 
-    auto LinearToPQ = [](XMVECTOR N)
-    {
-      XMVECTOR ret;
-
-      ret =
-        XMVectorPow (N, PQ.N);
-
-      XMVECTOR nd =
-        XMVectorDivide (
-           XMVectorAdd (  PQ.C1, XMVectorMultiply (PQ.C2, ret)),
-           XMVectorAdd (g_XMOne, XMVectorMultiply (PQ.C3, ret))
-        );
-
-      return
-        XMVectorPow (nd, PQ.M);
-    };
-
     EvaluateImage ( raw_hdr_img,
     [&](const XMVECTOR* pixels, size_t width, size_t y)
     {
@@ -4461,7 +4527,7 @@ SKIF_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
         };
     
         static const XMVECTOR vLumaRescale =
-          XMVectorReplicate (1.0f/3.333f);
+          XMVectorReplicate (1.0f/1.4545f);
 
         for (size_t j = 0; j < width; ++j)
         {
@@ -4470,30 +4536,32 @@ SKIF_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
           value =
             XMVectorMultiply (value, vLumaRescale);
 
-          XMVECTOR xyz =
-            XMVector3Transform (value, c_from709toXYZ);
+          XMVECTOR ICtCp =
+            Rec709toICtCp (value);
 
-          float Y_in  = std::max (XMVectorGetY (xyz), 0.0f);
+          float Y_in  = std::max (XMVectorGetX (ICtCp), 0.0f);
           float Y_out = 1.0f;
 
           // If it's too bright, don't bother trying to tonemap the full range...
-          static float _maxNitsToTonemap = 10000.0f;
+          static constexpr float _maxNitsToTonemap = 10000.0f;
 
           Y_out =
-            TonemapHDR (Y_in, std::min (_maxNitsToTonemap/80.0f, XMVectorGetY (maxLum)), 1.24f);
+            TonemapHDR (Y_in, XMVectorGetY (maxLum), 1.25f);
 
           if (Y_out + Y_in > 0.0f)
           {
-            xyz =
-              XMVectorMultiply ( xyz,
-                                   XMVectorReplicate (std::max ((Y_out / Y_in), 0.0f)) );
+            XMVECTOR                Y_scale = g_XMOne;
+            Y_scale = XMVectorSetX (Y_scale, std::max ((Y_out / Y_in), 0.0f));
+
+            ICtCp =
+              XMVectorMultiply (ICtCp, Y_scale);
           }
 
           else
-            xyz = g_XMZero;
+            ICtCp = g_XMZero;
 
           value =
-            XMVector3Transform (xyz, c_fromXYZto709);
+            ICtCptoRec709 (ICtCp);
 
           maxTonemappedRGB =
             XMVectorMax (maxTonemappedRGB, value);

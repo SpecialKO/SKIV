@@ -276,3 +276,148 @@ float Clamp_scRGB (float c, bool strip_nan = false)
   return clamp (c + sign (c) * FP16_MIN, -float_MAX,
                                           float_MAX);
 }
+
+
+
+
+float3 Rec709_to_XYZ (float3 linearRec709)
+{
+  static const float3x3 ConvMat =
+  {
+    0.4123907983303070068359375000f, 0.357584327459335327148437500f, 0.180480793118476867675781250f,
+    0.2126390039920806884765625000f, 0.715168654918670654296875000f, 0.072192318737506866455078125f,
+    0.0193308182060718536376953125f, 0.119194783270359039306640625f, 0.950532138347625732421875000f
+  };
+
+  return
+    mul (ConvMat, linearRec709);
+}
+
+float3 XYZ_to_Rec709 (float3 XYZ)
+{
+  static const float3x3 ConvMat =
+  {
+     3.240969896316528320312500000f, -1.5373831987380981445312500f, -0.4986107647418975830078125000f,
+    -0.969243645668029785156250000f,  1.8759675025939941406250000f,  0.0415550582110881805419921875f,
+     0.055630080401897430419921875f, -0.2039769589900970458984375f,  1.0569715499877929687500000000f
+  };
+
+  return
+    mul (ConvMat, XYZ);
+}
+
+float3 XYZ_to_LMS (float3 XYZ)
+{
+  static const float3x3 ConvMat =
+  {
+     0.3592, 0.6976, -0.0358,
+    -0.1922, 1.1004,  0.0755,
+     0.0070, 0.0749,  0.8434
+  };
+
+  return
+    mul (ConvMat, XYZ);
+}
+
+float3 LMS_to_XYZ (float3 LMS)
+{
+  static const float3x3 ConvMat =
+  {
+     2.070180056695613509600, -1.326456876103021025500,  0.206616006847855170810,
+     0.364988250032657479740,  0.680467362852235141020, -0.045421753075853231409,
+    -0.049595542238932107896, -0.049421161186757487412,  1.187995941732803439400
+  };
+
+  return
+    mul (ConvMat, LMS);
+}
+
+//
+// SMPTE ST.2084 (PQ) transfer functions
+// Used for HDR Lut storage, max range depends on the maxPQValue parameter
+//
+struct ParamsPQ
+{
+  float N, rcpN;
+  float M, rcpM;
+  float C1, C2, C3;
+};
+
+static const ParamsPQ PQ =
+{
+       2610.0 / 4096.0 / 4.0,    // N
+  rcp (2610.0 / 4096.0 / 4.0),   // rcp (N)
+       2523.0 / 4096.0 * 128.0,  // M
+  rcp (2523.0 / 4096.0 * 128.0), // rcp (M)
+       3424.0 / 4096.0,          // C1
+       2413.0 / 4096.0 * 32.0,   // C2
+       2392.0 / 4096.0 * 32.0,   // C3
+};
+
+#define PositivePow(x,y) pow (abs (x), y)
+#define DEFAULT_MAX_PQ 125.0f}
+
+float3 LinearToPQ (float3 x, float maxPQValue)
+{
+  x =
+    PositivePow ( x / maxPQValue,
+                         PQ.N );
+ 
+  float3 nd =
+    (PQ.C1 + PQ.C2 * x) /
+      (1.0 + PQ.C3 * x);
+
+  return
+    PositivePow (nd, PQ.M);
+}
+
+float3 PQToLinear (float3 x, float maxPQValue)
+{
+  x =
+    PositivePow (x, PQ.rcpM);
+
+  float3 nd =
+    max (x - PQ.C1, 0.0) /
+            (PQ.C2 - (PQ.C3 * x));
+
+  return
+    PositivePow (nd, PQ.rcpN) * maxPQValue;
+}
+
+float3 Rec709toICtCp (float3 c)
+{
+  c = Rec709_to_XYZ (c);
+  c = XYZ_to_LMS    (c);
+  
+  c =
+    LinearToPQ (c, 125.0f);
+
+  static const float3x3 ConvMat =
+  {
+    0.5000,  0.5000,  0.0000,
+    1.6137, -3.3234,  1.7097,
+    4.3780, -4.2455, -0.1325
+  };
+
+  return
+    mul (ConvMat, c);
+}
+
+float3 ICtCptoRec709 (float3 c)
+{
+  static const float3x3 ConvMat =
+  {
+    1.0,  0.00860514569398152,  0.11103560447547328,
+    1.0, -0.00860514569398152, -0.11103560447547328,
+    1.0,  0.56004885956263900, -0.32063747023212210
+  };
+  
+  c =
+    mul (ConvMat, c);
+  
+  c = PQToLinear (c, 125.0f);
+  c = LMS_to_XYZ (c);
+  
+  return
+    XYZ_to_Rec709 (c);
+}
