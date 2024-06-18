@@ -89,6 +89,7 @@
 #define SKIF_Win32
 
 #include "imgui/imgui_internal.h"
+#include "../version.h"
 #include "../resource.h"
 #include <utility/utility.h>
 #include <utility/registry.h>
@@ -1219,13 +1220,17 @@ static void ImGui_ImplWin32_CreateWindow(ImGuiViewport *viewport)
   ImGui_ImplWin32_Data* bd = ImGui_ImplWin32_GetBackendData();
   if (bd->hWnd == nullptr || SKIF_ImGui_hWnd == NULL)
   {
-    // Store the handle globally
     bd->hWnd        = vd->Hwnd;
-    SKIF_ImGui_hWnd = bd->hWnd;
 
-    // Update the main viewport as well, since that's apparently also required
-    //ImGuiViewport* main_viewport = ImGui::GetMainViewport();
-    //main_viewport->PlatformHandle = main_viewport->PlatformHandleRaw = (void*)bd->hWnd;
+    // Store the handle for our main window globally
+    ImGuiViewportP* vp = (ImGuiViewportP*)viewport;
+    if (ImGuiWindow* window = vp->Window)
+    {
+      if (window->ID == ImHashStr (SKIV_WINDOW_TITLE_HASH))
+      {
+        SKIF_ImGui_hWnd = bd->hWnd;
+      }
+    }
 
     // Retrieve the DPI scaling of the current display
     SKIF_ImGui_GlobalDPIScale = (_registry.bDPIScaling) ? ImGui_ImplWin32_GetDpiScaleForHwnd (vd->Hwnd) : 1.0f;
