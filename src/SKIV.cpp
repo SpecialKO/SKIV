@@ -1387,7 +1387,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
     // F11 / Ctrl+F toggles fullscreen mode
     if (hotkeyF11 || hotkeyCtrlF)
-      SKIF_ImGui_SetFullscreen (! SKIF_ImGui_IsFullscreen( ));
+      SKIF_ImGui_SetFullscreen (SKIF_ImGui_hWnd, ! SKIF_ImGui_IsFullscreen (SKIF_ImGui_hWnd));
 
     if (hotkeyCtrlD)
     {
@@ -1538,7 +1538,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
       // Resize app window based on the image resolution
       extern bool tryingToLoadImage;
-      bool resizeAppWindow = (_registry.bAdjustWindow && ! SKIF_ImGui_IsFullscreen ( ) && SKIF_ImGui_hWnd != NULL)
+      bool resizeAppWindow = (_registry.bAdjustWindow && SKIF_ImGui_hWnd != NULL && ! SKIF_ImGui_IsFullscreen (SKIF_ImGui_hWnd))
                            ? (! tryingToLoadImage && SKIV_ResizeApp.x != 0.0f && ! (GetWindowLongPtr (SKIF_ImGui_hWnd, GWL_STYLE) & WS_MAXIMIZE))
                            : false;
 
@@ -1568,7 +1568,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
         if (size_maximum.x < SKIV_ResizeApp.x || size_maximum.y < SKIV_ResizeApp.y)
         {
-          SKIF_ImGui_SetFullscreen (! SKIF_ImGui_IsFullscreen( ));
+          SKIF_ImGui_SetFullscreen (SKIF_ImGui_hWnd, ! SKIF_ImGui_IsFullscreen (SKIF_ImGui_hWnd));
           resizeAppWindow = false;
         }
 
@@ -1729,8 +1729,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
           case UITab_None:
             break;
           case UITab_Viewer:
-            if (SKIF_ImGui_IsFullscreen())
-              SKIF_ImGui_SetFullscreen(false);
+            if (SKIF_ImGui_IsFullscreen (SKIF_ImGui_hWnd))
+              SKIF_ImGui_SetFullscreen  (SKIF_ImGui_hWnd, false);
             else
               bKeepWindowAlive = false;
             break;

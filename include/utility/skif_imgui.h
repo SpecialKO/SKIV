@@ -65,8 +65,8 @@ void     SKIF_ImGui_AutoScroll            (bool touch_only_on_void, SKIF_ImGuiAx
 void     SKIF_ImGui_UpdateScrollbarState  (void); // Update the internal state tracking scrollbars
 bool     SKIF_ImGui_IsScrollbarX          (void); // Helper function returning true if a horizontal scrollbar is visible
 bool     SKIF_ImGui_IsScrollbarY          (void); // Helper function returning true if a vertical scrollbar is visible
-bool     SKIF_ImGui_IsFullscreen          (void);
-void     SKIF_ImGui_SetFullscreen         (bool fullscreen);
+bool     SKIF_ImGui_IsFullscreen          (HWND hWnd);
+void     SKIF_ImGui_SetFullscreen         (HWND hWnd, bool fullscreen);
 void     SKIF_ImGui_InvalidateFonts       (void);
 ImGuiKey SKIF_ImGui_CharToImGuiKey        (char c);
 
