@@ -2147,6 +2147,7 @@ SKIF_ImGui_ImplWin32_SetFullscreen (HWND hWnd, int fullscreen)
 {
   // Cached data structure to support tracking multiple windows
   struct fullscreen_s {
+      HWND   hWnd;           // Used to tracking
       bool   Fullscreen = 0; // Current fullscreen state
 
       // Previous window state (before entering fullscreen)
@@ -2154,9 +2155,6 @@ SKIF_ImGui_ImplWin32_SetFullscreen (HWND hWnd, int fullscreen)
       LONG   dwStyle;
       LONG   dwExStyle;
       RECT   rcWindow;
-
-      // Unique identifier used to track the state
-      HWND   hWnd;
 
       fullscreen_s (HWND _hWnd) : hWnd(_hWnd) { };
   };
@@ -2168,11 +2166,6 @@ SKIF_ImGui_ImplWin32_SetFullscreen (HWND hWnd, int fullscreen)
 
   if (ImGuiViewportP* viewport = (ImGuiViewportP*) ImGui::FindViewportByPlatformHandle (hWnd))
   {
-    HWND hwnd = (HWND)viewport->PlatformHandleRaw;
-
-    if (viewport->PlatformHandleRaw == NULL)
-      return false;
-
     ImGuiWindow* window = viewport->Window;
 
     if (window == nullptr)
@@ -2181,12 +2174,12 @@ SKIF_ImGui_ImplWin32_SetFullscreen (HWND hWnd, int fullscreen)
     fullscreen_s* _cached = nullptr;
 
     for (auto& cached : _cache)
-      if (cached.hWnd == hwnd)
+      if (cached.hWnd == hWnd)
         _cached = &cached;
 
     if (_cached == nullptr)
     {
-      _cache.push_back (fullscreen_s ((HWND)viewport->PlatformHandleRaw));
+      _cache.push_back (fullscreen_s (hWnd));
       _cached = &_cache.back();
     }
 
@@ -2199,14 +2192,14 @@ SKIF_ImGui_ImplWin32_SetFullscreen (HWND hWnd, int fullscreen)
     // Cache the current state if we are about to enter fullscreen
     if (! _cached->Fullscreen)
     {
-      _cached->Maximized = !!::IsZoomed (hwnd);
+      _cached->Maximized = !!::IsZoomed (hWnd);
 
       if (_cached->Maximized) // Apparently we need to restore from a maximized state to get the taskbar to hide itself
-        ::SendMessage (hwnd, WM_SYSCOMMAND, SC_RESTORE, 0);
+        ::SendMessage (hWnd, WM_SYSCOMMAND, SC_RESTORE, 0);
 
-      _cached->dwStyle   = GetWindowLong (hwnd, GWL_STYLE);
-      _cached->dwExStyle = GetWindowLong (hwnd, GWL_EXSTYLE);
-      GetWindowRect (hwnd, &_cached->rcWindow);
+      _cached->dwStyle   = GetWindowLong (hWnd, GWL_STYLE);
+      _cached->dwExStyle = GetWindowLong (hWnd, GWL_EXSTYLE);
+      GetWindowRect (hWnd, &_cached->rcWindow);
     }
 
     _cached->Fullscreen = static_cast<bool> (fullscreen);
@@ -2214,33 +2207,29 @@ SKIF_ImGui_ImplWin32_SetFullscreen (HWND hWnd, int fullscreen)
     // Entering fullscreen mode
     if (_cached->Fullscreen)
     {
-      SetWindowLong (hwnd, GWL_STYLE,   _cached->dwStyle   & ~(WS_CAPTION | WS_THICKFRAME));
-      SetWindowLong (hwnd, GWL_EXSTYLE, _cached->dwExStyle & ~(WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE | WS_EX_STATICEDGE));
+      SetWindowLong (hWnd, GWL_STYLE,   _cached->dwStyle   & ~(WS_CAPTION | WS_THICKFRAME));
+      SetWindowLong (hWnd, GWL_EXSTYLE, _cached->dwExStyle & ~(WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE | WS_EX_STATICEDGE));
 
       MONITORINFO mi = { };
       mi.cbSize = sizeof(mi);
-      GetMonitorInfo (MonitorFromWindow (hwnd, MONITOR_DEFAULTTONEAREST), &mi);
+      GetMonitorInfo (MonitorFromWindow (hWnd, MONITOR_DEFAULTTONEAREST), &mi);
       rect = mi.rcMonitor;
 
-      // Seems to be required to account for the border of the window
-      //rect.right  += 1;
-      //rect.bottom += 1;
-
-      SKIF_ImGui_ImplWin32_SetDWMBorders (hwnd, DWMWCP_DONOTROUND);
+      SKIF_ImGui_ImplWin32_SetDWMBorders (hWnd, DWMWCP_DONOTROUND);
     }
 
     // Exiting fullscreen mode
     else
     {
-      SetWindowLong (hwnd, GWL_STYLE,   _cached->dwStyle);
-      SetWindowLong (hwnd, GWL_EXSTYLE, _cached->dwExStyle);
+      SetWindowLong (hWnd, GWL_STYLE,   _cached->dwStyle);
+      SetWindowLong (hWnd, GWL_EXSTYLE, _cached->dwExStyle);
 
       rect = _cached->rcWindow;
 
       if (_cached->Maximized) // Restore maximized state (does not really work properly?)
-        ::SendMessage (hwnd, WM_SYSCOMMAND, SC_MAXIMIZE, 0);
+        ::SendMessage (hWnd, WM_SYSCOMMAND, SC_MAXIMIZE, 0);
 
-      SKIF_ImGui_ImplWin32_SetDWMBorders (hwnd);
+      SKIF_ImGui_ImplWin32_SetDWMBorders (hWnd);
     }
         
     float top    = static_cast<float> (rect.top);
