@@ -1100,8 +1100,9 @@ wWinMain ( _In_     HINSTANCE hInstance,
   ImGuiWindowClass SKIF_AppWindow;
   // This prevents the main window from ever being merged into the implicit Debug##Default fallback window...
   // ... which works around a pesky bug that occurs on OS snapping/resizing...
+  // ... and prevents the window from constantly being re-created infinitely...
   SKIF_AppWindow.ViewportFlagsOverrideSet |= ImGuiViewportFlags_NoAutoMerge;
-  SKIF_AppWindow.ViewportFlagsOverrideSet |= ImGuiViewportFlags_CanHostOtherWindows;
+//SKIF_AppWindow.ViewportFlagsOverrideSet |= ImGuiViewportFlags_CanHostOtherWindows;
 
   // Enable ImGui's debug logging output
   ImGui::GetCurrentContext()->DebugLogFlags = ImGuiDebugLogFlags_OutputToTTY | ((_registry.isDevLogging())
@@ -1426,31 +1427,6 @@ wWinMain ( _In_     HINSTANCE hInstance,
     //PLOG_INFO << "Operation took " << (temp_time - SKIF_Util_timeGetTime1()) << " ms.";
 
 #pragma region New UI Frame
-
-#if 0
-    if (RecreateSwapChains)
-    {
-      // If the device have been removed/reset/hung, we need to invalidate all resources
-      if (FAILED (SKIF_pd3dDevice->GetDeviceRemovedReason ( )))
-      {
-        // Invalidate resources
-        ImGui_ImplDX11_InvalidateDeviceObjects ( );
-        ImGui_ImplDX11_InvalidateDevice        ( );
-        CleanupDeviceD3D                       ( );
-
-        // Signal to ImGui_ImplDX11_NewFrame() that the swapchains needs recreating
-        RecreateSwapChains = true;
-
-        // Recreate
-        CreateDeviceD3D                        (SKIF_Notify_hWnd);
-        ImGui_ImplDX11_Init                    (SKIF_pd3dDevice, SKIF_pd3dDeviceContext);
-
-        // This is used to flag that rendering should not occur until
-        // any loaded textures and such also have been unloaded
-        invalidatedDevice = 1;
-      }
-    }
-#endif
     
     extern bool
       SKIF_ImGui_ImplWin32_WantUpdateMonitors (void);
@@ -1865,124 +1841,6 @@ wWinMain ( _In_     HINSTANCE hInstance,
 #pragma endregion
 
       ImGui::EndGroup             ( );
-
-#pragma region StatusBar
-
-      if (false)
-      {
-        // This counteracts math performed on SKIF_vecRegularMode.y at the beginning of the frame
-        if (_registry.bUIStatusBar)
-          ImGui::SetCursorPosY (ImGui::GetCursorPosY ( ) - 2.0f * SKIF_ImGui_GlobalDPIScale);
-        
-        // Status Bar at the bottom
-        if (_registry.bUIStatusBar)
-        {
-          ImGui::PushStyleVar (ImGuiStyleVar_FrameBorderSize, 0.0f);
-
-          // Begin Add Game
-          ImVec2 tmpPos = ImGui::GetCursorPos ( );
-
-          // Prevents selecting the Add Game or Filter button with a keyboard or gamepad (fixes awkward and annoying nav selection)
-          if (SKIF_Tab_Selected == UITab_Viewer)
-            ImGui::PushItemFlag   (ImGuiItemFlags_NoNav, true);
-
-          static bool btnHovered  = false;
-          ImGui::PushStyleColor (ImGuiCol_Button,        ImGui::GetStyleColorVec4 (ImGuiCol_WindowBg));
-          ImGui::PushStyleColor (ImGuiCol_ButtonHovered, ImGui::GetStyleColorVec4 (ImGuiCol_WindowBg)); //ImColor (64,  69,  82).Value);
-          ImGui::PushStyleColor (ImGuiCol_ButtonActive,  ImGui::GetStyleColorVec4 (ImGuiCol_WindowBg)); //ImColor (56, 60, 74).Value);
-
-          if (btnHovered)
-            ImGui::PushStyleColor (ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextCaption)); //ImVec4(1, 1, 1, 1));
-          else
-            ImGui::PushStyleColor (ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextBase)); //ImVec4(0.5f, 0.5f, 0.5f, 1.f));
-
-          if (ImGui::Button   (ICON_FA_SQUARE_PLUS " Add Game"))
-          {
-            //AddGamePopup = PopupState_Open;
-            if (SKIF_Tab_Selected != UITab_Viewer)
-              SKIF_Tab_ChangeTo = UITab_Viewer;
-          }
-
-          btnHovered = ImGui::IsItemHovered() || ImGui::IsItemActive();
-
-          ImGui::PopStyleColor   (4); // ImGuiCol_Text, ImGuiCol_ButtonActive, ImGuiCol_ButtonHovered, ImGuiCol_Button
-
-          if (SKIF_Tab_Selected == UITab_Viewer)
-            ImGui::PopItemFlag     ( );
-
-          ImGui::SetCursorPos    (tmpPos);
-          // End Add Game
-
-          // Begin Pulsating Refresh Icon
-          if (_updater.IsRunning ( ))
-          {
-            ImGui::SetCursorPosX (
-              ImGui::GetCursorPosX () +
-              ImGui::GetWindowSize ().x -
-                ( ImGui::CalcTextSize ( ICON_FA_ROTATE ).x ) -
-              ImGui::GetCursorPosX () -
-              ImGui::GetStyle   ().ItemSpacing.x * 2
-            );
-
-            ImGui::SetCursorPosY ( ImGui::GetCursorPosY () + ImGui::GetStyle ( ).FramePadding.y);
-
-            ImGui::TextColored ( ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextCaption) *
-                                  ImVec4 (0.75f, 0.75f, 0.75f, 0.50f + 0.5f * (float)sin (SKIF_Util_timeGetTime() * 1 * 3.14 * 2)
-                                 ), ICON_FA_ROTATE );
-          }
-
-          ImGui::SetCursorPos(tmpPos);
-          // End Refresh Icon
-
-          // Begin Status Bar Text
-          auto _StatusPartSize = [&](std::string& part) -> float
-          {
-            return
-              part.empty () ?
-                        0.0f : ImGui::CalcTextSize (
-                                              part.c_str ()
-                                                  ).x;
-          };
-
-          float fStatusWidth = _StatusPartSize (SKIF_StatusBarText),
-                fHelpWidth   = _StatusPartSize (SKIF_StatusBarHelp);
-
-          ImGui::SetCursorPosX (
-            ImGui::GetCursorPosX () +
-            ImGui::GetWindowSize ().x -
-              ( fStatusWidth +
-                fHelpWidth ) -
-            ImGui::GetCursorPosX () -
-            ImGui::GetStyle   ().ItemSpacing.x * 2
-          );
-
-          ImGui::SetCursorPosY ( ImGui::GetCursorPosY () + ImGui::GetStyle ( ).FramePadding.y);
-
-          ImGui::TextColored ( ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextCaption) * ImVec4 (0.75f, 0.75f, 0.75f, 1.00f),
-                                  "%s", SKIF_StatusBarText.c_str ()
-          );
-
-          if (! SKIF_StatusBarHelp.empty ())
-          {
-            ImGui::SameLine ();
-            ImGui::SetCursorPosX (
-              ImGui::GetCursorPosX () -
-              ImGui::GetStyle      ().ItemSpacing.x
-            );
-            ImGui::TextDisabled ("%s", SKIF_StatusBarHelp.c_str ());
-          }
-
-          // Clear the status every frame, it's mostly used for mouse hover tooltips.
-          SKIF_StatusBarText.clear ();
-          SKIF_StatusBarHelp.clear ();
-
-          // End Status Bar Text
-
-          ImGui::PopStyleVar ();
-        }
-      }
-
-#pragma endregion
 
 #pragma region Shelly the Ghost
 
