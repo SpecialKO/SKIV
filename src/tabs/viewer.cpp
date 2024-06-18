@@ -2619,6 +2619,11 @@ SKIF_UI_Tab_DrawViewer (void)
       SKIF_ImGui_SetFullscreen (SKIF_ImGui_hWnd, ! SKIF_ImGui_IsFullscreen (SKIF_ImGui_hWnd));
     }
 
+    if (SKIF_ImGui_MenuItemEx2 ("Snipping Mode", ICON_FA_SCISSORS, ImGui::GetStyleColorVec4 (ImGuiCol_Text), ""))
+    {
+      _registry._SnippingMode = ! _registry._SnippingMode;
+    }
+
     ImGui::Separator ( );
 
     if (SKIF_ImGui_MenuItemEx2 ("Exit", 0, ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Info), "Esc"))

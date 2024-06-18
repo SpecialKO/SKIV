@@ -1725,120 +1725,137 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
       ImGui::BeginGroup ();
 
+      // Begin Snipping Mode
+      if (_registry._SnippingMode)
+      {
+#pragma region UI: Snipping Mode
+
+        if (ImGui::Button ("turn off snipping mode"))
+        {
+          _registry._SnippingMode = ! _registry._SnippingMode;
+        }
+
+#pragma endregion
+
+      }
+
       // Begin Large Mode
+      else
+      {
 #pragma region UI: Large Mode
 
-      // TAB: Viewer
-      if (SKIF_Tab_Selected == UITab_Viewer ||
-          SKIF_Tab_ChangeTo == UITab_Viewer)
-      {
-        ImGui::PushStyleVar (ImGuiStyleVar_FramePadding, ImVec2());
-        bool show = SKIF_ImGui_BeginMainChildFrame (ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoScrollbar);
-        ImGui::PopStyleVar  ( );
-
-        /*
-        if (! _registry.bFirstLaunch)
+        // TAB: Viewer
+        if (SKIF_Tab_Selected == UITab_Viewer ||
+            SKIF_Tab_ChangeTo == UITab_Viewer)
         {
-          // Select the About tab on first launch
-          _registry.bFirstLaunch = ! _registry.bFirstLaunch;
-          SKIF_Tab_ChangeTo = UITab_About;
+          ImGui::PushStyleVar (ImGuiStyleVar_FramePadding, ImVec2());
+          bool show = SKIF_ImGui_BeginMainChildFrame (ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoScrollbar);
+          ImGui::PopStyleVar  ( );
 
-          // Store in the registry so this only occur once.
-          _registry.regKVFirstLaunch.putData(_registry.bFirstLaunch);
-        }
-        */
+          /*
+          if (! _registry.bFirstLaunch)
+          {
+            // Select the About tab on first launch
+            _registry.bFirstLaunch = ! _registry.bFirstLaunch;
+            SKIF_Tab_ChangeTo = UITab_About;
 
-        extern float fTint;
-        if (SKIF_Tab_ChangeTo == UITab_Viewer)
-        {
-          // Reset the dimmed cover when going back to the tab
-          if (_registry.iDarkenImages == 2)
-            fTint = 0.75f;
-        }
+            // Store in the registry so this only occur once.
+            _registry.regKVFirstLaunch.putData(_registry.bFirstLaunch);
+          }
+          */
 
-        if (show)
-        {
-          SKIF_UI_Tab_DrawViewer ( );
+          extern float fTint;
+          if (SKIF_Tab_ChangeTo == UITab_Viewer)
+          {
+            // Reset the dimmed cover when going back to the tab
+            if (_registry.iDarkenImages == 2)
+              fTint = 0.75f;
+          }
+
+          if (show)
+          {
+            SKIF_UI_Tab_DrawViewer ( );
           
-          SKIF_ImGui_AutoScroll  (true, SKIF_ImGuiAxis_Both);
-          SKIF_ImGui_UpdateScrollbarState ( );
+            SKIF_ImGui_AutoScroll  (true, SKIF_ImGuiAxis_Both);
+            SKIF_ImGui_UpdateScrollbarState ( );
 
-          ImGui::EndChild        ( );
+            ImGui::EndChild        ( );
+          }
+
+          if (SKIF_Tab_ChangeTo == UITab_Viewer)
+          {
+            PLOG_DEBUG << "Switched to tab: Library";
+            SKIF_Tab_Selected = UITab_Viewer;
+            SKIF_Tab_ChangeTo = UITab_None;
+          }
         }
 
-        if (SKIF_Tab_ChangeTo == UITab_Viewer)
+        // Change to Viewer tab on the next frame if a drop occurs on another tab
+        else if (! dragDroppedFilePath.empty()) {
+          SKIF_Tab_ChangeTo = UITab_Viewer;
+        }
+
+
+        // TAB: Settings
+        if (SKIF_Tab_Selected == UITab_Settings ||
+            SKIF_Tab_ChangeTo == UITab_Settings)
+
         {
-          PLOG_DEBUG << "Switched to tab: Library";
-          SKIF_Tab_Selected = UITab_Viewer;
-          SKIF_Tab_ChangeTo = UITab_None;
+          // Refresh things when visiting from another tab or when forced
+          if (SKIF_Tab_ChangeTo == UITab_Settings || RefreshSettingsTab)
+            SKIF_Util_IsHDRActive (true);
+
+          ImGui::PushStyleVar (ImGuiStyleVar_FramePadding, ImVec2 (15.0f, 15.0f) * SKIF_ImGui_GlobalDPIScale);
+          bool show = SKIF_ImGui_BeginMainChildFrame ( );
+          ImGui::PopStyleVar  ( );
+
+          if (show)
+          {
+            SKIF_UI_Tab_DrawSettings ( );
+
+            SKIF_ImGui_AutoScroll  (true, SKIF_ImGuiAxis_Both);
+            SKIF_ImGui_UpdateScrollbarState ( );
+
+            ImGui::EndChild        ( );
+          }
+
+          if (SKIF_Tab_ChangeTo == UITab_Settings)
+          {
+            PLOG_DEBUG << "Switched to tab: Settings";
+            SKIF_Tab_Selected  = UITab_Settings;
+            SKIF_Tab_ChangeTo  = UITab_None;
+            RefreshSettingsTab = false;
+
+          }
         }
-      }
-
-      // Change to Viewer tab on the next frame if a drop occurs on another tab
-      else if (! dragDroppedFilePath.empty()) {
-        SKIF_Tab_ChangeTo = UITab_Viewer;
-      }
-
-
-      // TAB: Settings
-      if (SKIF_Tab_Selected == UITab_Settings ||
-          SKIF_Tab_ChangeTo == UITab_Settings)
-
-      {
-        // Refresh things when visiting from another tab or when forced
-        if (SKIF_Tab_ChangeTo == UITab_Settings || RefreshSettingsTab)
-          SKIF_Util_IsHDRActive (true);
-
-        ImGui::PushStyleVar (ImGuiStyleVar_FramePadding, ImVec2 (15.0f, 15.0f) * SKIF_ImGui_GlobalDPIScale);
-        bool show = SKIF_ImGui_BeginMainChildFrame ( );
-        ImGui::PopStyleVar  ( );
-
-        if (show)
-        {
-          SKIF_UI_Tab_DrawSettings ( );
-
-          SKIF_ImGui_AutoScroll  (true, SKIF_ImGuiAxis_Both);
-          SKIF_ImGui_UpdateScrollbarState ( );
-
-          ImGui::EndChild        ( );
-        }
-
-        if (SKIF_Tab_ChangeTo == UITab_Settings)
-        {
-          PLOG_DEBUG << "Switched to tab: Settings";
-          SKIF_Tab_Selected  = UITab_Settings;
-          SKIF_Tab_ChangeTo  = UITab_None;
-          RefreshSettingsTab = false;
-
-        }
-      }
 
 
 #if 0
-      // TAB: About
-      if (SKIF_Tab_Selected == UITab_About ||
-          SKIF_Tab_ChangeTo == UITab_About)
-      {
-        SKIF_ImGui_BeginMainChildFrame ( );
-
-        SKIF_UI_Tab_DrawAbout( );
-
-        // Engages auto-scroll mode (left click drag on touch + middle click drag on non-touch)
-        SKIF_ImGui_AutoScroll  (true);
-
-        if (SKIF_Tab_ChangeTo == UITab_About)
+        // TAB: About
+        if (SKIF_Tab_Selected == UITab_About ||
+            SKIF_Tab_ChangeTo == UITab_About)
         {
-          PLOG_DEBUG << "Switched to tab: About";
-          SKIF_Tab_Selected = UITab_About;
-          SKIF_Tab_ChangeTo = UITab_None;
+          SKIF_ImGui_BeginMainChildFrame ( );
 
+          SKIF_UI_Tab_DrawAbout( );
+
+          // Engages auto-scroll mode (left click drag on touch + middle click drag on non-touch)
+          SKIF_ImGui_AutoScroll  (true);
+
+          if (SKIF_Tab_ChangeTo == UITab_About)
+          {
+            PLOG_DEBUG << "Switched to tab: About";
+            SKIF_Tab_Selected = UITab_About;
+            SKIF_Tab_ChangeTo = UITab_None;
+
+          }
+
+          ImGui::EndChild         ( );
         }
-
-        ImGui::EndChild         ( );
-      }
 #endif
 
 #pragma endregion
+      }
 
       ImGui::EndGroup             ( );
 
