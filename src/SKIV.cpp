@@ -1549,7 +1549,27 @@ wWinMain ( _In_     HINSTANCE hInstance,
         }
 
         else
+        {
           ImGui::SetNextWindowSize (SKIV_ResizeApp);
+
+          ImVec2 topLeft      = windowPos,
+                 bottomRight  = windowPos + SKIV_ResizeApp,
+                 newWindowPos = windowPos;
+
+          if (      topLeft.x < monitor_extent.Min.x )
+               newWindowPos.x = monitor_extent.Min.x;
+          if (      topLeft.y < monitor_extent.Min.y )
+               newWindowPos.y = monitor_extent.Min.y;
+
+          if (  bottomRight.x > monitor_extent.Max.x )
+               newWindowPos.x = monitor_extent.Max.x - SKIV_ResizeApp.x;
+          if (  bottomRight.y > monitor_extent.Max.y )
+               newWindowPos.y = monitor_extent.Max.y - SKIV_ResizeApp.y;
+
+          if ( newWindowPos.x != windowPos.x ||
+               newWindowPos.y != windowPos.y )
+            ImGui::SetNextWindowPos (newWindowPos);
+        }
 
         SKIV_ResizeApp = ImVec2 (0.0f, 0.0f);
       }
