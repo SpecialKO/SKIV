@@ -211,7 +211,7 @@ using namespace DirectX;
   XMVECTOR ret;
 
   ret =
-    XMVectorPow (N, XMVectorDivide (g_XMOne, PQ.M));
+    XMVectorPow (XMVectorAbs (N), XMVectorDivide (g_XMOne, PQ.M));
 
   XMVECTOR nd;
 
@@ -222,7 +222,7 @@ using namespace DirectX;
             XMVectorMultiply (PQ.C3, ret)));
 
   ret =
-    XMVectorMultiply (XMVectorPow (nd, XMVectorDivide (g_XMOne, PQ.N)), maxPQValue);
+    XMVectorMultiply (XMVectorPow (XMVectorAbs (nd), XMVectorDivide (g_XMOne, PQ.N)), maxPQValue);
 
   return ret;
 };
@@ -234,7 +234,7 @@ auto LinearToPQ = [](DirectX::XMVECTOR N, DirectX::XMVECTOR maxPQValue = DirectX
   XMVECTOR ret;
 
   ret =
-    XMVectorPow (XMVectorDivide (N, maxPQValue), PQ.N);
+    XMVectorPow (XMVectorAbs (XMVectorDivide (N, maxPQValue)), PQ.N);
 
   XMVECTOR nd =
     XMVectorDivide (
@@ -243,7 +243,7 @@ auto LinearToPQ = [](DirectX::XMVECTOR N, DirectX::XMVECTOR maxPQValue = DirectX
     );
 
   return
-    XMVectorPow (nd, PQ.M);
+    XMVectorPow (XMVectorAbs (nd), PQ.M);
 };
 
 auto Rec709toICtCp = [](DirectX::XMVECTOR N)
@@ -4527,7 +4527,7 @@ SKIF_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
         };
     
         static const XMVECTOR vLumaRescale =
-          XMVectorReplicate (1.0f/1.4545f);
+          XMVectorReplicate (1.0/2.1f);
 
         for (size_t j = 0; j < width; ++j)
         {
@@ -4541,24 +4541,17 @@ SKIF_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
 
           float Y_in  = std::max (XMVectorGetX (ICtCp), 0.0f);
           float Y_out = 1.0f;
-
+          
           // If it's too bright, don't bother trying to tonemap the full range...
           static constexpr float _maxNitsToTonemap = 10000.0f;
-
+          
           Y_out =
             TonemapHDR (Y_in, XMVectorGetY (maxLum), 1.25f);
-
+          
           if (Y_out + Y_in > 0.0f)
           {
-            XMVECTOR                Y_scale = g_XMOne;
-            Y_scale = XMVectorSetX (Y_scale, std::max ((Y_out / Y_in), 0.0f));
-
-            ICtCp =
-              XMVectorMultiply (ICtCp, Y_scale);
+            ICtCp.m128_f32 [0] *= std::max ((Y_out / Y_in), 0.0f);
           }
-
-          else
-            ICtCp = g_XMZero;
 
           value =
             ICtCptoRec709 (ICtCp);

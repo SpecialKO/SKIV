@@ -265,7 +265,7 @@ float4 main (PS_INPUT input) : SV_Target
       (hdr_visualization != SKIV_VISUALIZATION_NONE) ? 1.0f
                                                      :
                        isHDR ? user_brightness_scale :
-                          max (user_brightness_scale / 1.4545f, 0.001f);
+                          max (user_brightness_scale / 2.1f, 0.001f);
 
 
     float dML = display_max_luminance;
