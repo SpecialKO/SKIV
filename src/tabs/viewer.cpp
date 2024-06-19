@@ -394,7 +394,6 @@ bool                   newImageFailed    = false; // Set by the window msg handl
 bool                   imageFailWarning  = false; // Set to true to warn about a failed image load
 
 bool                   activateSnipping  = false; // Set to true when a desktop capture is complete and ready to snip
-bool                   isSnippingActive  = false; // When true, the selection rectangle uses single-click mode
 HWND                   hwndBeforeSnip    =  0;
 ImRect                 selection_rect    = { };
 
@@ -1975,12 +1974,11 @@ SKIF_UI_Tab_DrawViewer (void)
     else if (ImGui::GetIO().MouseWheel < 0 && cover.zoom > 0.075f)
       cover.zoom -= 0.05f;
 
-    if (      (isSnippingActive && SKIF_ImGui_SelectionRect (&selection_rect, image_rect, 0, SK_IMGUI_SELECT_FLAG_SINGLE_CLICK|SK_IMGUI_SELECT_FLAG_FILLED)) ||
-        (ImGui::GetIO().KeyCtrl && SKIF_ImGui_SelectionRect (&selection_rect, image_rect)))
+    if ((ImGui::GetIO().KeyCtrl && SKIF_ImGui_SelectionRect (&selection_rect, image_rect)))
     {
       // Flip an inverted rectangle
-      if (selection_rect.IsInverted ( ))
-        selection_rect = ImRect (selection_rect.Max, selection_rect.Min);
+      if (selection_rect.Min.x > selection_rect.Max.x) std::swap (selection_rect.Min.x, selection_rect.Max.x);
+      if (selection_rect.Min.y > selection_rect.Max.y) std::swap (selection_rect.Min.y, selection_rect.Max.y);
 
       // Adjust for image position
       selection_rect.Min -= image_pos;
@@ -2011,14 +2009,6 @@ SKIF_UI_Tab_DrawViewer (void)
 
       wantCopyToClipboard = true;
       copyRect            = translated;
-
-      if (isSnippingActive)
-      {   isSnippingActive = false;
-        if (                0 != hwndBeforeSnip &&
-            SetForegroundWindow (hwndBeforeSnip)) {
-                                 hwndBeforeSnip = 0;
-        }
-      }
     }
   }
 
