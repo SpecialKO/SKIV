@@ -1267,7 +1267,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
         DispatchMessage  (&msg);
 
         if (msg.hwnd == 0) // Don't redraw on thread messages
-          msgDontRedraw = true;
+          // Unless snipping
+          msgDontRedraw = (! _registry._SnippingMode);
 
         if (msg.message == WM_MOUSEMOVE)
         {
@@ -1752,6 +1753,9 @@ wWinMain ( _In_     HINSTANCE hInstance,
       {
         SKIF_MouseDragMoveAllowed = false;
 
+        ImGui::GetIO ().MouseDown         [0] = false;
+        ImGui::GetIO ().MouseDownDuration [0] = -1.0f;
+
 #pragma region UI: Snipping Mode
 
         ImVec2 vDesktopSize (0.0f, 0.0f);
@@ -1776,6 +1780,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
               vDesktopSize.y = static_cast <float> (texDesc.Height);
             }
           }
+
           SKIF_ImGui_OptImage (SKIV_DesktopImage, vDesktopSize);
         }
 
@@ -1792,10 +1797,10 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
           ImGui::SetWindowPos  (ImVec2 (0.0f, 0.0f)); // TODO
           ImGui::SetWindowSize (vDesktopSize);
-
-          ImGui::GetIO ().MouseDown         [0] = false;
-          ImGui::GetIO ().MouseDownDuration [0] = -1.0f;
         }
+
+        if (GetForegroundWindow () != SKIF_ImGui_hWnd)
+            SetForegroundWindow (     SKIF_ImGui_hWnd);
 
                           // Desktop Pos,      Desktop Pos + Desktop Size
         ImRect allowable (ImVec2 (0.0f, 0.0f), vDesktopSize);
@@ -3498,25 +3503,49 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         SKIF_Util_EnableHDROutput ( );
       if (wParam == SKIV_HotKey_Snip)
       {
-        extern HRESULT
-        SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, int flags = 0x0);
+        POINT              ptMainDisplay = { 1,1 };
+        POINT              ptCursor      = {     };
+        GetCursorPos     (&ptCursor);
 
-        DirectX::ScratchImage                     captured_img;
-        if (SUCCEEDED (SKIV_Image_CaptureDesktop (captured_img)))
+        //
+        // Only support snipping the primary monitor for now
+        //
+        if (MonitorFromPoint (ptCursor, 0x0) ==
+            MonitorFromPoint (ptMainDisplay, 0x0))
+        if (! std::exchange (_registry._SnippingMode, true))
         {
-          extern HWND hwndBeforeSnip;
-          extern HWND hwndTopBeforeSnip;
-        
-          extern ImRect selection_rect;
+          extern HRESULT
+          SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, int flags = 0x0);
 
-          hwndBeforeSnip    = GetForegroundWindow ();
-          hwndTopBeforeSnip = GetWindow (SKIF_ImGui_hWnd, GW_HWNDNEXT);
+          DirectX::ScratchImage        captured_img;
+          HRESULT hr =
+            SKIV_Image_CaptureDesktop (captured_img);
 
-          selection_rect.Min = ImVec2 (0.0f, 0.0f);
-          selection_rect.Max = ImVec2 (0.0f, 0.0f);
+          if (SUCCEEDED (hr))
+          {
+            extern HWND hwndBeforeSnip;
+            extern HWND hwndTopBeforeSnip;
 
-          _registry._SnippingMode = true;
+            extern ImRect selection_rect;
 
+            hwndBeforeSnip    = GetForegroundWindow ();
+            hwndTopBeforeSnip = GetWindow (SKIF_ImGui_hWnd, GW_HWNDNEXT);
+
+            selection_rect.Min = ImVec2 (0.0f, 0.0f);
+            selection_rect.Max = ImVec2 (0.0f, 0.0f);
+
+            _registry._SnippingMode = true;
+
+            ImGui::GetIO ().MouseDown         [0] = false;
+            ImGui::GetIO ().MouseDownDuration [0] = -1.0f;
+          }
+
+          else
+            MessageBox (nullptr, L"Uh oh", L"Uh oh", MB_OK);
+        }
+
+        else
+        {
           SetForegroundWindow (SKIF_ImGui_hWnd);
         }
       }

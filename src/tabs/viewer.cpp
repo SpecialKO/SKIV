@@ -4264,6 +4264,8 @@ bool SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped)
 HRESULT
 SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, int flags = 0x0)
 {
+  SKIV_DesktopImage = nullptr;
+
   std::ignore = flags;
 
   HRESULT res = E_NOT_VALID_STATE;
@@ -4345,9 +4347,9 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, int flags = 0x0)
   CComPtr <IDXGIResource> pDuplicatedResource;
 
   int    tries = 0;
-  while (tries++ < 250)
+  while (tries++ < 3)
   {
-    pDuplicator->AcquireNextFrame (1, &frame_info, &pDuplicatedResource.p);
+    pDuplicator->AcquireNextFrame (150, &frame_info, &pDuplicatedResource.p);
 
     if (frame_info.LastPresentTime.QuadPart)
       break;
@@ -4391,27 +4393,15 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, int flags = 0x0)
   if (pDevCtx == nullptr)
     return E_UNEXPECTED;
 
+#if 0
   if (FAILED (pDevice->CreateTexture2D (&texDesc, nullptr, &pStagingTex.p)))
   {
+    pDuplicator->ReleaseFrame ();
     return E_UNEXPECTED;
   }
 
-  texDesc.CPUAccessFlags = 0x0;
-  texDesc.Usage          = D3D11_USAGE_DEFAULT;
-  texDesc.BindFlags      = D3D11_BIND_SHADER_RESOURCE;
-
-  if (FAILED (pDevice->CreateTexture2D (&texDesc, nullptr, &pDesktopImage.p)))
-  {
-    return E_UNEXPECTED;
-  }
-
-  pDevCtx->CopyResource (pDesktopImage, pDuplicatedTex);
   pDevCtx->CopyResource (pStagingTex,   pDuplicatedTex);
 
-  SKIV_DesktopImage = nullptr;
-  pDevice->CreateShaderResourceView (pDesktopImage, nullptr, &SKIV_DesktopImage);
-
-#if 0
   D3D11_MAPPED_SUBRESOURCE mapped;
 
   if (SUCCEEDED (pDevCtx->Map (pStagingTex, 0, D3D11_MAP_READ, 0x0, &mapped)))
@@ -4450,7 +4440,22 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, int flags = 0x0)
     }
   }
 #else
+  texDesc.CPUAccessFlags = 0x0;
+  texDesc.Usage          = D3D11_USAGE_DEFAULT;
+  texDesc.BindFlags      = D3D11_BIND_SHADER_RESOURCE;
+
+  if (FAILED (pDevice->CreateTexture2D (&texDesc, nullptr, &pDesktopImage.p)))
+  {
+    pDuplicator->ReleaseFrame ();
+    return E_UNEXPECTED;
+  }
+
+  pDevice->CreateShaderResourceView (pDesktopImage, nullptr, &SKIV_DesktopImage);
+
+  pDevCtx->CopyResource (pDesktopImage, pDuplicatedTex);
   pDevCtx->Flush ();
+
+  pDuplicator->ReleaseFrame ();
 #endif
 
   return S_OK;
