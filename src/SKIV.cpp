@@ -1745,14 +1745,103 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
       ImGui::BeginGroup ();
 
+      static bool last_snip_state = false;
+
       // Begin Snipping Mode
       if (_registry._SnippingMode)
       {
 #pragma region UI: Snipping Mode
 
-        if (ImGui::Button ("turn off snipping mode"))
+        ImVec2 vDesktopSize (0.0f, 0.0f);
+
+        extern CComPtr <ID3D11ShaderResourceView> SKIV_DesktopImage;
+               CComPtr <ID3D11Resource>           pDesktopRes;
+
+        if (SKIV_DesktopImage != nullptr)
         {
-          _registry._SnippingMode = ! _registry._SnippingMode;
+          SKIV_DesktopImage->GetResource (&pDesktopRes.p);
+
+          if (pDesktopRes != nullptr)
+          {
+            CComQIPtr <ID3D11Texture2D>
+                pDesktopTex (pDesktopRes);
+            if (pDesktopTex != nullptr)
+            {
+              D3D11_TEXTURE2D_DESC   texDesc = { };
+              pDesktopTex->GetDesc (&texDesc);
+
+              vDesktopSize.x = static_cast <float> (texDesc.Width);
+              vDesktopSize.y = static_cast <float> (texDesc.Height);
+            }
+          }
+          SKIF_ImGui_OptImage (SKIV_DesktopImage, vDesktopSize);
+        }
+
+        static ImRect selection;
+
+        static ImVec2 last_non_snip_pos;
+        static ImVec2 last_non_snip_size;
+
+        if (last_snip_state != _registry._SnippingMode)
+        {
+          last_non_snip_size = ImGui::GetWindowSize ();
+          last_non_snip_pos  = ImGui::GetWindowPos  ();
+          selection.Min      = ImGui::GetMousePos   ();
+
+          ImGui::SetWindowPos  (ImVec2 (0.0f, 0.0f)); // TODO
+          ImGui::SetWindowSize (vDesktopSize);
+        }
+
+                          // Desktop Pos,      Desktop Pos + Desktop Size
+        ImRect allowable (ImVec2 (0.0f, 0.0f), vDesktopSize);
+
+        if (SKIF_ImGui_SelectionRect (&selection, allowable, 0, SK_IMGUI_SELECT_FLAG_SINGLE_CLICK|SK_IMGUI_SELECT_FLAG_FILLED|SK_IMGUI_SELECT_FLAG_ALLOW_INVERTED))
+        {
+          _registry._SnippingMode = false;
+
+          ImGui::SetWindowSize (last_non_snip_size);
+          ImGui::SetWindowPos  (last_non_snip_pos);
+
+          extern HWND hwndBeforeSnip;
+          SetForegroundWindow (hwndBeforeSnip);
+
+          if (selection.GetArea () != 0)
+          {
+            if (selection.Min.x > selection.Max.x) std::swap (selection.Min.x, selection.Max.x);
+            if (selection.Min.y > selection.Max.y) std::swap (selection.Min.y, selection.Max.y);
+
+            const size_t
+              x      = static_cast <size_t> (std::max (0.0f, selection.Min.x)),
+              y      = static_cast <size_t> (std::max (0.0f, selection.Min.y)),
+              width  = static_cast <size_t> (std::max (0.0f, selection.GetWidth  ())),
+              height = static_cast <size_t> (std::max (0.0f, selection.GetHeight ()));
+
+            const DirectX::Rect
+              src_rect (x,y, width,height);
+
+            auto pDevice = SKIF_pd3dDevice;
+
+            CComPtr <ID3D11DeviceContext>  pDevCtx;
+            pDevice->GetImmediateContext (&pDevCtx.p);
+
+            DirectX::ScratchImage                                                    captured_img;
+            if (SUCCEEDED (DirectX::CaptureTexture (pDevice, pDevCtx, pDesktopRes.p, captured_img)))
+            {
+              DirectX::ScratchImage
+                             subrect;
+              if (SUCCEEDED (subrect.Initialize2D   ( captured_img.GetMetadata ().format, width, height, 1, 1)) &&
+                  SUCCEEDED (DirectX::CopyRectangle (*captured_img.GetImages   (), src_rect,
+                                                                                   *subrect.GetImages (), DirectX::TEX_FILTER_DEFAULT, 0, 0)))
+              {
+                extern bool
+                    SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped);
+                if (SKIV_Image_CopyToClipboard (subrect.GetImages (), true))
+                {
+                  ImGui::InsertNotification ({ ImGuiToastType::Info, 3000, "Snip Success", "Foobar Jones", SK_WideCharToUTF8 (dragDroppedFilePath).c_str()});
+                }
+              }
+            }
+          }
         }
 
 #pragma endregion
@@ -1876,6 +1965,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
 #pragma endregion
       }
+
+      last_snip_state = _registry._SnippingMode;
 
       ImGui::EndGroup             ( );
 
@@ -3419,20 +3510,32 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             wchar_t                         wszPNGPath [MAX_PATH + 2] = { };
             GetCurrentDirectoryW (MAX_PATH, wszPNGPath);
 
-            PathAppendW       (wszPNGPath, L"SKIV_HDR_Clipboard");
-            PathAddExtensionW (wszPNGPath, L".png");
+            extern HWND hwndBeforeSnip;
+            extern ImRect selection_rect;
 
-            if (SKIV_HDR_SavePNGToDisk (wszPNGPath, hdr_img.GetImages (), captured_img.GetImages (), nullptr))
-            {
-              if (SKIV_PNG_CopyToClipboard (*hdr_img.GetImages (), wszPNGPath, 0))
-              {
-                extern std::wstring dragDroppedFilePath;
-                extern bool         activateSnipping;
-                dragDroppedFilePath = wszPNGPath;
+            hwndBeforeSnip = GetForegroundWindow ();
 
-                activateSnipping = true;
-              }
-            }
+            selection_rect.Min = ImVec2 (0.0f, 0.0f);
+            selection_rect.Max = ImVec2 (0.0f, 0.0f);
+
+            _registry._SnippingMode = true;
+
+            SetForegroundWindow (SKIF_ImGui_hWnd);
+
+            //PathAppendW       (wszPNGPath, L"SKIV_HDR_Clipboard");
+            //PathAddExtensionW (wszPNGPath, L".png");
+            //
+            //if (SKIV_HDR_SavePNGToDisk (wszPNGPath, hdr_img.GetImages (), captured_img.GetImages (), nullptr))
+            //{
+            //  if (SKIV_PNG_CopyToClipboard (*hdr_img.GetImages (), wszPNGPath, 0))
+            //  {
+            //    extern std::wstring dragDroppedFilePath;
+            //    extern bool         activateSnipping;
+            //    dragDroppedFilePath = wszPNGPath;
+            //
+            //    activateSnipping = true;
+            //  }
+            //}
           }
         }
 

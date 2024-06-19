@@ -246,6 +246,22 @@ auto LinearToPQ = [](DirectX::XMVECTOR N, DirectX::XMVECTOR maxPQValue = DirectX
     XMVectorPow (XMVectorAbs (nd), PQ.M);
 };
 
+float LinearToPQY (float N)
+{
+  const float fScaledN =
+    fabs (N * 0.008f); // 0.008 = 1/125.0
+
+  float ret =
+    pow (fScaledN, 0.1593017578125f);
+
+  float nd =
+    fabs ( (0.8359375f + (18.8515625f * ret)) /
+           (1.0f       + (18.6875f    * ret)) );
+
+  return
+    pow (nd, 78.84375f);
+};
+
 auto Rec709toICtCp = [](DirectX::XMVECTOR N)
 {
   using namespace DirectX;
@@ -2766,19 +2782,6 @@ SKIF_UI_Tab_DrawViewer (void)
 
       PLOG_INFO  << "Finished streaming image asynchronously...";
       PLOG_DEBUG << "SKIV_ImageWorker thread stopped!";
-
-      if (std::exchange (activateSnipping, false))
-      {
-        hwndBeforeSnip = GetForegroundWindow ();
-
-        selection_rect.Min = ImVec2 (0.0f, 0.0f);
-        selection_rect.Max = ImVec2 (0.0f, 0.0f);
-
-        isSnippingActive = true;
-
-        SetForegroundWindow (SKIF_ImGui_hWnd);
-      }
-
       return 0;
     }, data, 0x0, nullptr);
 
@@ -4236,6 +4239,8 @@ void SKIV_HandleCopyShortcut (void)
   wantCopyToClipboard = true;
 }
 
+CComPtr <ID3D11ShaderResourceView> SKIV_DesktopImage;
+
 bool SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped)
 {
   if (pImage == nullptr)
@@ -4345,13 +4350,13 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, int flags = 0x0)
     return E_NOTIMPL;
   }
 
-  DXGI_OUTDUPL_FRAME_INFO frame_info;
+  DXGI_OUTDUPL_FRAME_INFO frame_info = { };
   CComPtr <IDXGIResource> pDuplicatedResource;
 
   int    tries = 0;
-  while (tries++ < 20)
+  while (tries++ < 250)
   {
-    pDuplicator->AcquireNextFrame (5, &frame_info, &pDuplicatedResource.p);
+    pDuplicator->AcquireNextFrame (1, &frame_info, &pDuplicatedResource.p);
 
     if (frame_info.LastPresentTime.QuadPart)
       break;
@@ -4376,6 +4381,7 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, int flags = 0x0)
   pSurface->GetDesc (&surfDesc);
 
   CComPtr <ID3D11Texture2D> pStagingTex;
+  CComPtr <ID3D11Texture2D> pDesktopImage; // For rendering during snipping
 
   D3D11_TEXTURE2D_DESC
     texDesc                = { };
@@ -4399,7 +4405,20 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, int flags = 0x0)
     return E_UNEXPECTED;
   }
 
-  pDevCtx->CopyResource (pStagingTex, pDuplicatedTex);
+  texDesc.CPUAccessFlags = 0x0;
+  texDesc.Usage          = D3D11_USAGE_DEFAULT;
+  texDesc.BindFlags      = D3D11_BIND_SHADER_RESOURCE;
+
+  if (FAILED (pDevice->CreateTexture2D (&texDesc, nullptr, &pDesktopImage.p)))
+  {
+    return E_UNEXPECTED;
+  }
+
+  pDevCtx->CopyResource (pDesktopImage, pDuplicatedTex);
+  pDevCtx->CopyResource (pStagingTex,   pDuplicatedTex);
+
+  SKIV_DesktopImage = nullptr;
+  pDevice->CreateShaderResourceView (pDesktopImage, nullptr, &SKIV_DesktopImage);
 
   D3D11_MAPPED_SUBRESOURCE mapped;
 
@@ -4473,6 +4492,7 @@ SKIF_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
   if (is_hdr)
   {
     ScratchImage tonemapped_hdr;
+    ScratchImage tonemapped_copy;
 
     EvaluateImage ( scrgb.GetImages     (),
                     scrgb.GetImageCount (),
@@ -4515,24 +4535,32 @@ SKIF_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
     //   this is important in cases where the maximum luminance was < 1000 nits
     XMVECTOR maxTonemappedRGB = g_XMZero;
 
+    // If it's too bright, don't bother trying to tonemap the full range...
+    static constexpr float _maxNitsToTonemap = 10000.0f/80.0f;
+
+    const float maxYInPQ =
+      LinearToPQY (std::min (_maxNitsToTonemap, XMVectorGetY (maxLum))),
+               SDR_YInPQ =
+      LinearToPQY (                                              1.25f);
+
     TransformImage ( scrgb.GetImages     (),
                      scrgb.GetImageCount (),
                      scrgb.GetMetadata   (),
       [&](XMVECTOR* outPixels, const XMVECTOR* inPixels, size_t width, size_t y)
       {
         UNREFERENCED_PARAMETER(y);
-    
+
         auto TonemapHDR = [](float L, float Lc, float Ld) -> float
         {
           float a = (  Ld / pow (Lc, 2.0f));
           float b = (1.0f / Ld);
-        
+
           return
             L * (1 + a * L) / (1 + b * L);
         };
-    
+
         static const XMVECTOR vLumaRescale =
-          XMVectorReplicate (1.0/2.1f);
+          XMVectorReplicate (1.0/1.6f);
 
         for (size_t j = 0; j < width; ++j)
         {
@@ -4546,31 +4574,78 @@ SKIF_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
 
           float Y_in  = std::max (XMVectorGetX (ICtCp), 0.0f);
           float Y_out = 1.0f;
-          
-          // If it's too bright, don't bother trying to tonemap the full range...
-          static constexpr float _maxNitsToTonemap = 10000.0f;
-          
+
           Y_out =
-            TonemapHDR (Y_in, XMVectorGetY (maxLum), 1.25f);
-          
+            TonemapHDR (Y_in, maxYInPQ, SDR_YInPQ);
+
           if (Y_out + Y_in > 0.0f)
           {
-            ICtCp.m128_f32 [0] *= std::max ((Y_out / Y_in), 0.0f);
+            ICtCp.m128_f32 [0] *=
+              std::max ((Y_out / Y_in), 0.0f);
           }
 
           value =
             ICtCptoRec709 (ICtCp);
 
           maxTonemappedRGB =
-            XMVectorMax (maxTonemappedRGB, value);
+            XMVectorMax (maxTonemappedRGB, XMVectorMax (value, g_XMZero));
 
-          outPixels [j] = value;
+          outPixels [j] = XMVectorSaturate (value);
         }
       }, tonemapped_hdr
     );
 
+    float fMaxR = XMVectorGetX (maxTonemappedRGB);
+    float fMaxG = XMVectorGetY (maxTonemappedRGB);
+    float fMaxB = XMVectorGetZ (maxTonemappedRGB);
+
+    if (( fMaxR <  1.0f ||
+          fMaxG <  1.0f ||
+          fMaxB <  1.0f ) &&
+        ( fMaxR >= 1.0f ||
+          fMaxG >= 1.0f ||
+          fMaxB >= 1.0f ))
+    {
+#ifdef GAMUT_MAPPING_WARNING
+      SK_LOGi0 (
+        L"After tone mapping, maximum RGB was %4.2fR %4.2fG %4.2fB -- "
+        L"SDR image will be normalized to min (R|G|B) and clipped.",
+          fMaxR, fMaxG, fMaxB
+      );
+#endif
+
+      float fSmallestComp =
+        std::min ({fMaxR, fMaxG, fMaxB});
+
+      float fRescale =
+        (1.0f / fSmallestComp);
+
+      XMVECTOR vNormalizationScale =
+        XMVectorReplicate (fRescale);
+
+      TransformImage (*tonemapped_hdr.GetImages (),
+        [&]( _Out_writes_ (width)       XMVECTOR* outPixels,
+              _In_reads_  (width) const XMVECTOR* inPixels,
+                                        size_t    width,
+                                        size_t )
+        {
+          for (size_t j = 0; j < width; ++j)
+          {
+            XMVECTOR value =
+             inPixels [j];
+            outPixels [j] =
+              XMVectorSaturate (
+                XMVectorMultiply (value, vNormalizationScale)
+              );
+          }
+        }, tonemapped_copy
+      );
+
+      std::swap (tonemapped_hdr, tonemapped_copy);
+    }
+
     if (FAILED (DirectX::Convert (*tonemapped_hdr.GetImages (), DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,
-                                  (TEX_FILTER_FLAGS)0x200000FF, 0.0f, final_sdr)))
+                                  (TEX_FILTER_FLAGS)0x200000FF, 1.0f, final_sdr)))
     {
       return E_UNEXPECTED;
     }
@@ -4631,6 +4706,13 @@ SKIF_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
   {
     return E_UNEXPECTED;
   }
+
+  ///DirectX::TexMetadata              orig_tex_metadata;
+  ///CComPtr <IWICMetadataQueryReader> pQueryReader;
+  ///
+  ///DirectX::GetMetadataFromWICFile (wszOriginalFile, DirectX::WIC_FLAGS_NONE, orig_tex_metadata, [&](IWICMetadataQueryReader *pMQR){
+  ///  pQueryReader = pMQR;
+  ///});
 
   return
     DirectX::SaveToWICFile (*pOutputImage, wic_flags, wic_codec,
