@@ -355,7 +355,7 @@ static const ParamsPQ PQ =
 };
 
 #define PositivePow(x,y) pow (abs (x), y)
-#define DEFAULT_MAX_PQ 125.0f}
+#define DEFAULT_MAX_PQ 125.0f
 
 float3 LinearToPQ (float3 x, float maxPQValue)
 {
@@ -420,4 +420,24 @@ float3 ICtCptoRec709 (float3 c)
   
   return
     XYZ_to_Rec709 (c);
+}
+
+float LinearToPQY (float x, float maxPQValue)
+{
+  x =
+    PositivePow ( x / maxPQValue,
+                         PQ.N );
+  
+  float nd =
+    (PQ.C1 + PQ.C2 * x) /
+      (1.0 + PQ.C3 * x);
+
+  return
+    Clamp_scRGB (PositivePow (nd, PQ.M));
+}
+
+float LinearToPQY (float x)
+{
+  return
+    LinearToPQY (x, DEFAULT_MAX_PQ);
 }

@@ -265,11 +265,14 @@ float4 main (PS_INPUT input) : SV_Target
       (hdr_visualization != SKIV_VISUALIZATION_NONE) ? 1.0f
                                                      :
                        isHDR ? user_brightness_scale :
-                          max (user_brightness_scale / 2.1f, 0.001f);
+                          max (user_brightness_scale / 1.7f, 0.001f);
 
 
-    float dML = display_max_luminance;
-    float cML = hdr_max_luminance;
+    // If it's too bright, don't bother trying to tonemap the full range...
+    static const float _maxNitsToTonemap = 10000.0f;
+
+    float dML = LinearToPQY ( display_max_luminance);
+    float cML = LinearToPQY (min (hdr_max_luminance, _maxNitsToTonemap));
 
     float3 ICtCp = Rec709toICtCp (out_col.rgb);
     float  Y_in  = max (ICtCp.x, 0.0f);
@@ -277,7 +280,7 @@ float4 main (PS_INPUT input) : SV_Target
 
     if (implied_tonemap_type != SKIV_TONEMAP_TYPE_NONE && (! isHDR))
     {   implied_tonemap_type  = SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY;
-        dML = 1.25f;
+        dML = LinearToPQY (1.25f);
     }
 
     switch (implied_tonemap_type)
