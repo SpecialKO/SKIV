@@ -395,6 +395,7 @@ bool                   imageFailWarning  = false; // Set to true to warn about a
 
 bool                   activateSnipping  = false; // Set to true when a desktop capture is complete and ready to snip
 HWND                   hwndBeforeSnip    =  0;
+HWND                   hwndTopBeforeSnip =  0; // Window above SKIV in z-order
 ImRect                 selection_rect    = { };
 
 bool                   coverRefresh      = false; // This just triggers a refresh of the cover

@@ -1803,7 +1803,12 @@ wWinMain ( _In_     HINSTANCE hInstance,
           ImGui::SetWindowPos  (last_non_snip_pos);
 
           extern HWND hwndBeforeSnip;
+          extern HWND hwndTopBeforeSnip;
+
           SetForegroundWindow (hwndBeforeSnip);
+
+          // Put SKIV back in the correct Z-order
+          SetWindowPos (SKIF_ImGui_hWnd, hwndTopBeforeSnip, 0,0,0,0, SWP_NOSIZE|SWP_NOMOVE|SWP_NOACTIVATE);
 
           if (selection.GetArea () != 0)
           {
@@ -1837,7 +1842,6 @@ wWinMain ( _In_     HINSTANCE hInstance,
                     SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped);
                 if (SKIV_Image_CopyToClipboard (subrect.GetImages (), true))
                 {
-                  ImGui::InsertNotification ({ ImGuiToastType::Info, 3000, "Snip Success", "Foobar Jones", SK_WideCharToUTF8 (dragDroppedFilePath).c_str()});
                 }
               }
             }
@@ -3495,50 +3499,21 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         DirectX::ScratchImage                     captured_img;
         if (SUCCEEDED (SKIV_Image_CaptureDesktop (captured_img)))
         {
-          extern bool
-          SKIV_HDR_ConvertImageToPNG (const DirectX::Image& raw_hdr_img, DirectX::ScratchImage& png_img);
-          extern bool
-          SKIV_HDR_SavePNGToDisk (const wchar_t* wszPNGPath, const DirectX::Image* png_image,
-                                                             const DirectX::Image* raw_image,
-                                     const char* szUtf8MetadataTitle);
-          extern bool
-          SKIV_PNG_CopyToClipboard (const DirectX::Image& image, const void *pData, size_t data_size);
+          extern HWND hwndBeforeSnip;
+          extern HWND hwndTopBeforeSnip;
+        
+          extern ImRect selection_rect;
 
-          DirectX::ScratchImage                                       hdr_img;
-          if (SKIV_HDR_ConvertImageToPNG (*captured_img.GetImages (), hdr_img))
-          {
-            wchar_t                         wszPNGPath [MAX_PATH + 2] = { };
-            GetCurrentDirectoryW (MAX_PATH, wszPNGPath);
+          hwndBeforeSnip    = GetForegroundWindow ();
+          hwndTopBeforeSnip = GetWindow (SKIF_ImGui_hWnd, GW_HWNDNEXT);
 
-            extern HWND hwndBeforeSnip;
-            extern ImRect selection_rect;
+          selection_rect.Min = ImVec2 (0.0f, 0.0f);
+          selection_rect.Max = ImVec2 (0.0f, 0.0f);
 
-            hwndBeforeSnip = GetForegroundWindow ();
+          _registry._SnippingMode = true;
 
-            selection_rect.Min = ImVec2 (0.0f, 0.0f);
-            selection_rect.Max = ImVec2 (0.0f, 0.0f);
-
-            _registry._SnippingMode = true;
-
-            SetForegroundWindow (SKIF_ImGui_hWnd);
-
-            //PathAppendW       (wszPNGPath, L"SKIV_HDR_Clipboard");
-            //PathAddExtensionW (wszPNGPath, L".png");
-            //
-            //if (SKIV_HDR_SavePNGToDisk (wszPNGPath, hdr_img.GetImages (), captured_img.GetImages (), nullptr))
-            //{
-            //  if (SKIV_PNG_CopyToClipboard (*hdr_img.GetImages (), wszPNGPath, 0))
-            //  {
-            //    extern std::wstring dragDroppedFilePath;
-            //    extern bool         activateSnipping;
-            //    dragDroppedFilePath = wszPNGPath;
-            //
-            //    activateSnipping = true;
-            //  }
-            //}
-          }
+          SetForegroundWindow (SKIF_ImGui_hWnd);
         }
-
       }
 
     break;
