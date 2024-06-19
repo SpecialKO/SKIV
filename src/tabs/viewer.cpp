@@ -4411,6 +4411,7 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, int flags = 0x0)
   SKIV_DesktopImage = nullptr;
   pDevice->CreateShaderResourceView (pDesktopImage, nullptr, &SKIV_DesktopImage);
 
+#if 0
   D3D11_MAPPED_SUBRESOURCE mapped;
 
   if (SUCCEEDED (pDevCtx->Map (pStagingTex, 0, D3D11_MAP_READ, 0x0, &mapped)))
@@ -4448,6 +4449,9 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, int flags = 0x0)
       return E_UNEXPECTED;
     }
   }
+#else
+  pDevCtx->Flush ();
+#endif
 
   return S_OK;
 }
