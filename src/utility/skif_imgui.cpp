@@ -539,8 +539,11 @@ SKIF_ImGui_SelectionRect ( ImRect*          selection,
 
   if (complete)
   {
-    if (selection->IsInverted () && (! allow_inversion))
-       *selection = ImRect (selection->Max, selection->Min);
+    if (! allow_inversion)
+    {
+      if (selection->Min.x > selection->Max.x) std::swap (selection->Min.x, selection->Max.x);
+      if (selection->Min.y > selection->Max.y) std::swap (selection->Min.y, selection->Max.y);
+    }
   }
 
   return
