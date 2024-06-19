@@ -1750,6 +1750,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
       // Begin Snipping Mode
       if (_registry._SnippingMode)
       {
+        SKIF_MouseDragMoveAllowed = false;
+
 #pragma region UI: Snipping Mode
 
         ImVec2 vDesktopSize (0.0f, 0.0f);
@@ -1790,12 +1792,15 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
           ImGui::SetWindowPos  (ImVec2 (0.0f, 0.0f)); // TODO
           ImGui::SetWindowSize (vDesktopSize);
+
+          ImGui::GetIO ().MouseDown         [0] = false;
+          ImGui::GetIO ().MouseDownDuration [0] = -1.0f;
         }
 
                           // Desktop Pos,      Desktop Pos + Desktop Size
         ImRect allowable (ImVec2 (0.0f, 0.0f), vDesktopSize);
 
-        if (SKIF_ImGui_SelectionRect (&selection, allowable, 0, SK_IMGUI_SELECT_FLAG_SINGLE_CLICK|SK_IMGUI_SELECT_FLAG_FILLED|SK_IMGUI_SELECT_FLAG_ALLOW_INVERTED))
+        if (SKIF_ImGui_SelectionRect (&selection, allowable, 0, SK_IMGUI_SELECT_FLAG_SINGLE_CLICK|SK_IMGUI_SELECT_FLAG_FILLED))
         {
           _registry._SnippingMode = false;
 
@@ -1812,9 +1817,6 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
           if (selection.GetArea () != 0)
           {
-            if (selection.Min.x > selection.Max.x) std::swap (selection.Min.x, selection.Max.x);
-            if (selection.Min.y > selection.Max.y) std::swap (selection.Min.y, selection.Max.y);
-
             const size_t
               x      = static_cast <size_t> (std::max (0.0f, selection.Min.x)),
               y      = static_cast <size_t> (std::max (0.0f, selection.Min.y)),
@@ -1846,6 +1848,9 @@ wWinMain ( _In_     HINSTANCE hInstance,
               }
             }
           }
+
+          ImGui::GetIO ().MouseDown         [0] = false;
+          ImGui::GetIO ().MouseDownDuration [0] = -1.0f;
         }
 
 #pragma endregion
