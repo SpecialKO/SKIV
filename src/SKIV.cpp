@@ -1728,8 +1728,11 @@ wWinMain ( _In_     HINSTANCE hInstance,
           case UITab_Viewer:
             if (SKIF_ImGui_IsFullscreen (SKIF_ImGui_hWnd))
               SKIF_ImGui_SetFullscreen  (SKIF_ImGui_hWnd, false);
+// Make this a user preference
+#ifdef ALLOW_ESC_EXIT
             else
               bKeepWindowAlive = false;
+#endif
             break;
           case UITab_Settings:
             SKIF_Tab_ChangeTo = UITab_Viewer;

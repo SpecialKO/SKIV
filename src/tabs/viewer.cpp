@@ -76,30 +76,6 @@
 
 thread_local stbi__context::cicp_s SKIV_STBI_CICP;
 
-enum SKIV_HDR_Visualizations
-{
-  SKIV_HDR_VISUALIZTION_NONE    = 0,
-  SKIV_HDR_VISUALIZTION_HEATMAP = 1,
-  SKIV_HDR_VISUALIZTION_GAMUT   = 2,
-  SKIV_HDR_VISUALIZTION_SDR     = 3
-};
-
-enum SKIV_HDR_VisualizationFlags
-{
-  SKIV_VIZ_FLAG_SDR_CONSIDER_LUMINANCE  = 0x1,
-  SKIV_VIZ_FLAG_SDR_CONSIDER_GAMUT      = 0x2,
-  SKIV_VIZ_FLAG_SDR_CONSIDER_OVERBRIGHT = 0x4
-};
-
-enum SKIV_HDR_TonemapType
-{
-  SKIV_TONEMAP_TYPE_NONE               = 0x0, // Let the display figure it out
-  SKIV_TONEMAP_TYPE_CLIP               = 0x1, // Truncate the image before display
-  SKIV_TONEMAP_TYPE_INFINITE_ROLLOFF   = 0x2, // Reduce to finite range (i.e. x/(1+x))
-  SKIV_TONEMAP_TYPE_NORMALIZE_TO_CLL   = 0x4, // Content range mapped to [0,1]
-  SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY = 0x8  // Content range mapped to display range
-};
-
 float SKIV_HDR_SDRWhite = 80.0f;
 
 float SKIV_HDR_GamutHue_Rec709    [4] = { 1.0f, 1.0f, 1.0f, 1.0f }; // White
@@ -1969,14 +1945,17 @@ SKIF_UI_Tab_DrawViewer (void)
 
   if (cover.pRawTexSRV.p != nullptr)
   {
+    auto& io =
+      ImGui::GetIO ();
+
     // Using 4.975f and 0.075f to work around some floating point shenanigans
-    if (     ImGui::GetIO().MouseWheel > 0 && cover.zoom < 4.975f)
+    if (     io.MouseWheel > 0 && cover.zoom < 4.975f && io.KeyCtrl)
       cover.zoom += 0.05f;
 
-    else if (ImGui::GetIO().MouseWheel < 0 && cover.zoom > 0.075f)
+    else if (io.MouseWheel < 0 && cover.zoom > 0.075f && io.KeyCtrl)
       cover.zoom -= 0.05f;
 
-    if ((ImGui::GetIO().KeyCtrl && SKIF_ImGui_SelectionRect (&selection_rect, image_rect)))
+    if ((io.KeyCtrl && SKIF_ImGui_SelectionRect (&selection_rect, image_rect)))
     {
       // Flip an inverted rectangle
       if (selection_rect.Min.x > selection_rect.Max.x) std::swap (selection_rect.Min.x, selection_rect.Max.x);
@@ -2126,6 +2105,19 @@ SKIF_UI_Tab_DrawViewer (void)
       ImGui::TextUnformatted (szLabels);
       ImGui::SameLine        (posXvalues);
       ImGui::TextUnformatted (szLabelsData);
+
+      if (cover.zoom != 1.0f)
+      {
+        ImGui::SameLine             ();
+        ImGui::BeginGroup           ();
+        ImGui::PopFont              ();
+        ImGui::Spacing              ();
+        ImGui::Spacing              ();
+        if (ImGui::Button (ICON_FA_ROTATE_LEFT "###Zoom_Reset"))
+          cover.zoom = 1.0f;
+        ImGui::PushFont (fontConsolas);
+        ImGui::EndGroup             ();
+      }
     }
 
     // HDR Light Levels
@@ -2237,7 +2229,80 @@ SKIF_UI_Tab_DrawViewer (void)
 
       ImGui::PopFont ();
 
-      ImGui::TextUnformatted ("\n");
+      ImGui::SameLine   ();
+      ImGui::BeginGroup ();
+
+#if 0
+      ImGui::TextUnformatted ("Output Format");
+
+      extern bool RecreateSwapChains;
+      static int* ptrSDR = nullptr;
+
+      if ((_registry.iHDRMode > 0 && SKIF_Util_IsHDRActive ( )))
+      {
+        ptrSDR = &_registry.iHDRMode;
+      }
+      else
+        ptrSDR = &_registry.iSDRMode;
+
+      if (ImGui::RadioButton   (" 8 bpc SDR", ptrSDR, 0))
+      {
+        _registry.iHDRMode = 0;
+        _registry.iSDRMode = 0;
+        _registry.regKVSDRMode.putData (_registry.iSDRMode);
+        _registry.regKVHDRMode.putData (_registry.iHDRMode);
+
+        RecreateSwapChains = true;
+      }
+      // It seems that Windows 10 1709+ (Build 16299) is required to
+      // support 10 bpc (DXGI_FORMAT_R10G10B10A2_UNORM) for flip model
+      if (SKIF_Util_IsWindows10v1709OrGreater ( ))
+      {
+        if (ImGui::RadioButton ("10 bpc SDR", ptrSDR, 1))
+        {
+          _registry.iHDRMode = 0;
+          _registry.iSDRMode = 1;
+          _registry.regKVSDRMode.putData (_registry.iSDRMode);
+          _registry.regKVHDRMode.putData (_registry.iHDRMode);
+
+          RecreateSwapChains = true;
+        }
+      }
+      if (SKIF_Util_IsHDRActive ())
+      {
+        if (ImGui::RadioButton ("16 bpc HDR", &_registry.iHDRMode, 2))
+        {
+          _registry.iSDRMode = 0;
+          _registry.regKVSDRMode.putData (_registry.iSDRMode);
+          _registry.regKVHDRMode.putData (_registry.iHDRMode);
+
+          RecreateSwapChains = true;
+        }
+      }
+
+      ImGui::Spacing (); ImGui::Spacing (); ImGui::Spacing (); ImGui::Spacing ();
+      //ImGui::TextUnformatted ("");
+
+      if (ImGui::Button (ICON_FA_FLOPPY_DISK " Save As..."))
+        SaveFileDialog  = PopupState_Open;
+      if (ImGui::Button (ICON_FA_FILE_EXPORT "Export to SDR"))
+        ExportSDRDialog = PopupState_Open;
+
+      ImGui::Spacing (); ImGui::Spacing (); ImGui::Spacing (); ImGui::Spacing ();
+      //ImGui::TextUnformatted ("");
+
+      if (ImGui::Button (ICON_FA_COPY "Copy to Clipboard"))
+      {
+      }
+
+      static int clipboard_type = 0;
+      ImGui::RadioButton ("HDR (.png)", &clipboard_type, 0); ImGui::SameLine ();
+      ImGui::RadioButton ("SDR",        &clipboard_type, 1);
+#endif
+      ImGui::EndGroup ();
+
+      ImGui::Spacing (); ImGui::Spacing ();
+
       ImGui::SliderFloat ("Brightness", &SKIV_HDR_BrightnessScale, 1.0f, 2000.0f, "%.3f %%", ImGuiSliderFlags_Logarithmic);
 
       float slider_width =
@@ -2378,7 +2443,7 @@ SKIF_UI_Tab_DrawViewer (void)
           if ( (SKIV_HDR_BrightnessScale / 100.0f) * SKIV_HDR_MaxLuminance >
                                                      SKIV_HDR_DisplayMaxLuminance )
           {
-            ImGui::TextUnformatted ("\n");
+            ImGui::Spacing (); ImGui::Spacing ();
             ImGui::TextColored (ImColor (0xff0099ff), ICON_FA_TRIANGLE_EXCLAMATION);
             ImGui::SameLine    ();
             ImGui::TextUnformatted ("Content Exceeds Display Capabilities");
@@ -2516,6 +2581,12 @@ SKIF_UI_Tab_DrawViewer (void)
       if (cover.is_hdr &&
           SKIF_ImGui_MenuItemEx2 ("Export to SDR", ICON_FA_FILE_EXPORT, ImGui::GetStyleColorVec4(ImGuiCol_Text),      "Ctrl+X"))
         ExportSDRDialog = PopupState_Open;
+      if (cover.is_hdr &&
+          SKIF_ImGui_MenuItemEx2 ("Copy",          ICON_FA_CLIPBOARD,   ImGui::GetStyleColorVec4(ImGuiCol_Text),      "Ctrl+C"))
+      {
+        extern void SKIV_HandleCopyShortcut (void);
+                    SKIV_HandleCopyShortcut ();
+      }
       if (SKIF_ImGui_MenuItemEx2 ("Close", 0,                           ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info), "Ctrl+W"))
         _SwapOutCover ();
 
@@ -2634,7 +2705,7 @@ SKIF_UI_Tab_DrawViewer (void)
 
     ImGui::Separator ( );
 
-    if (SKIF_ImGui_MenuItemEx2 ("Exit", 0, ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Info), "Esc"))
+    if (SKIF_ImGui_MenuItemEx2 ("Exit", 0, ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Info), /*"Esc"*/"Alt+F4"))
     {
       extern bool bKeepWindowAlive;
       bKeepWindowAlive = false;

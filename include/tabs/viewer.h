@@ -23,3 +23,27 @@
 #pragma once
 
 void SKIF_UI_Tab_DrawViewer (void);
+
+enum SKIV_HDR_Visualizations
+{
+  SKIV_HDR_VISUALIZTION_NONE    = 0,
+  SKIV_HDR_VISUALIZTION_HEATMAP = 1,
+  SKIV_HDR_VISUALIZTION_GAMUT   = 2,
+  SKIV_HDR_VISUALIZTION_SDR     = 3
+};
+
+enum SKIV_HDR_VisualizationFlags
+{
+  SKIV_VIZ_FLAG_SDR_CONSIDER_LUMINANCE  = 0x1,
+  SKIV_VIZ_FLAG_SDR_CONSIDER_GAMUT      = 0x2,
+  SKIV_VIZ_FLAG_SDR_CONSIDER_OVERBRIGHT = 0x4
+};
+
+enum SKIV_HDR_TonemapType
+{
+  SKIV_TONEMAP_TYPE_NONE               = 0x0, // Let the display figure it out
+  SKIV_TONEMAP_TYPE_CLIP               = 0x1, // Truncate the image before display
+  SKIV_TONEMAP_TYPE_INFINITE_ROLLOFF   = 0x2, // Reduce to finite range (i.e. x/(1+x))
+  SKIV_TONEMAP_TYPE_NORMALIZE_TO_CLL   = 0x4, // Content range mapped to [0,1]
+  SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY = 0x8  // Content range mapped to display range
+};

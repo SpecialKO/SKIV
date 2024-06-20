@@ -466,7 +466,7 @@ SKIF_UI_Tab_DrawSettings (void)
     if (SKIF_Util_IsHDRSupported ( )  )
     {
       ImGui::TextColored     (ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info), ICON_FA_LIGHTBULB);
-      SKIF_ImGui_SetHoverTip ("Makes the app pop more on HDR displays.");
+      SKIF_ImGui_SetHoverTip ("Required to properly display HDR content.");
       ImGui::SameLine        ( );
       ImGui::TextColored (
         ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextCaption),
