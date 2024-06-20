@@ -1818,7 +1818,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
                           // Desktop Pos,      Desktop Pos + Desktop Size
         ImRect allowable (ImVec2 (0.0f, 0.0f), vDesktopSize);
 
-        if (SKIF_ImGui_SelectionRect (&selection, allowable, 0, SK_IMGUI_SELECT_FLAG_FILLED))
+        if (SKIF_ImGui_SelectionRect (&selection, allowable, 0, SelectionFlag_Filled))
         {
           _registry._SnippingMode = false;
 
