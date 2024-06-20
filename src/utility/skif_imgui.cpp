@@ -492,13 +492,13 @@ SKIF_ImGui_IsAnyPopupOpen (void)
 }
 
 bool
-SKIF_ImGui_SelectionRect ( ImRect*          selection,
-                           ImRect           allowed,
-                           ImGuiMouseButton mouse_button,
-                           int              flags )
+SKIF_ImGui_SelectionRect (ImRect*          selection,
+                          ImRect           allowed,
+                          ImGuiMouseButton mouse_button,
+                          SelectionFlag    flags)
 {
   const bool single_click =
-    (flags & SK_IMGUI_SELECT_FLAG_SINGLE_CLICK);
+    (flags & SelectionFlag_SingleClick);
 
   const bool min_is_zero =
     (selection->Min.x == selection->Min.y && selection->Min.y == 0.0f);
@@ -524,9 +524,9 @@ SKIF_ImGui_SelectionRect ( ImRect*          selection,
     ImDrawList* draw_list =
       ImGui::GetForegroundDrawList ();
 
-      draw_list->AddRect       (selection->Min-inset, selection->Max+inset, ImGui::GetColorU32 (IM_COL32(0,130,216,255)), 0.0f, 0, 5.0f); // Border
+    draw_list->AddRect       (selection->Min-inset, selection->Max+inset, ImGui::GetColorU32 (IM_COL32(0,130,216,255)), 0.0f, 0, 5.0f); // Border
 
-    if (flags & SK_IMGUI_SELECT_FLAG_FILLED)
+    if (flags & SelectionFlag_Filled)
       draw_list->AddRectFilled (selection->Min,       selection->Max,       ImGui::GetColorU32 (IM_COL32(0,130,216,50)));  // Background
   }
 
@@ -535,7 +535,7 @@ SKIF_ImGui_SelectionRect ( ImRect*          selection,
     (!single_click && ImGui::IsMouseReleased (mouse_button));
 
   const bool allow_inversion =
-    (flags & SK_IMGUI_SELECT_FLAG_ALLOW_INVERTED);
+    (flags & SelectionFlag_AllowInverted);
 
   if (complete)
   {
@@ -848,7 +848,7 @@ SK_ImGui_GetGlyphRangesDefaultEx (void)
     0x2500,  0x257F, // Box Drawing (needed for U+2514)
     0x2600,  0x26FF, // Misc. Characters
     0x2700,  0x27BF, // Dingbats
-    0xc2b1,  0xc2b3, // ²
+    0xc2b1,  0xc2b3, // Â²
     0
   };
   return &ranges [0];

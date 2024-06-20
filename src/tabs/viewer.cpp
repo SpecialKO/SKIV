@@ -1961,7 +1961,7 @@ SKIF_UI_Tab_DrawViewer (void)
       // Flip an inverted rectangle
       if (selection_rect.Min.x > selection_rect.Max.x) std::swap (selection_rect.Min.x, selection_rect.Max.x);
       if (selection_rect.Min.y > selection_rect.Max.y) std::swap (selection_rect.Min.y, selection_rect.Max.y);
-
+      
       // Adjust for image position
       selection_rect.Min -= image_pos;
       selection_rect.Max -= image_pos;
