@@ -524,7 +524,7 @@ SKIF_ImGui_SelectionRect ( ImRect*          selection,
     ImDrawList* draw_list =
       ImGui::GetForegroundDrawList ();
 
-      draw_list->AddRect       (selection->Min-inset, selection->Max+inset, ImGui::GetColorU32 (IM_COL32(0,130,216,255))); // Border
+      draw_list->AddRect       (selection->Min-inset, selection->Max+inset, ImGui::GetColorU32 (IM_COL32(0,130,216,255)), 0.0f, 0, 5.0f); // Border
 
     if (flags & SK_IMGUI_SELECT_FLAG_FILLED)
       draw_list->AddRectFilled (selection->Min,       selection->Max,       ImGui::GetColorU32 (IM_COL32(0,130,216,50)));  // Background

@@ -1185,7 +1185,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
   while (! SKIF_Shutdown.load() ) // && IsWindow (hWnd) )
   {
     // Reset on each frame
-    SKIF_MouseDragMoveAllowed = true;
+    SKIF_MouseDragMoveAllowed = (! _registry._SnippingMode);
     imageFadeActive           = false; // Assume there's no cover fade effect active
     msg                       = { };
     static UINT uiLastMsg     = 0x0;
@@ -1601,6 +1601,9 @@ wWinMain ( _In_     HINSTANCE hInstance,
       else
         ImGui::SetNextWindowSizeConstraints (wnd_minimum_size, ImVec2 (FLT_MAX, FLT_MAX));
 
+      const bool bNoMove =
+        (io.KeyCtrl || _registry._SnippingMode);
+
       ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2());
       ImGui::PushStyleVar (ImGuiStyleVar_WindowBorderSize, 0.0f); // Disable ImGui's 1 px window border
       ImGui::Begin (SKIV_WINDOW_TITLE_HASH,
@@ -1610,7 +1613,10 @@ wWinMain ( _In_     HINSTANCE hInstance,
                          ImGuiWindowFlags_NoTitleBar        |
                          ImGuiWindowFlags_NoScrollbar       | // Hide the scrollbar for the main window
                          ImGuiWindowFlags_NoScrollWithMouse | // Prevent scrolling with the mouse as well
-           (io.KeyCtrl ? ImGuiWindowFlags_NoMove : ImGuiWindowFlags_None)              // This was added in #8bf06af, but I am unsure why.
+              (bNoMove ? ImGuiWindowFlags_NoMove       |
+                         ImGuiWindowFlags_NoResize     |
+                         ImGuiWindowFlags_NoDecoration :
+                         ImGuiWindowFlags_None)
                       // The only comment is that it was DPI related? This prevents Ctrl+Tab from moving the window so must not be used
       );
       ImGui::PopStyleVar (2);
@@ -1754,10 +1760,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
       // Begin Snipping Mode
       if (_registry._SnippingMode)
       {
-        SKIF_MouseDragMoveAllowed = false;
-
-        ImGui::GetIO ().MouseDown         [0] = false;
-        ImGui::GetIO ().MouseDownDuration [0] = -1.0f;
+        //ImGui::GetIO ().MouseDown         [0] = false;
+        //ImGui::GetIO ().MouseDownDuration [0] = -1.0f;
 
 #pragma region UI: Snipping Mode
 
@@ -1784,7 +1788,13 @@ wWinMain ( _In_     HINSTANCE hInstance,
             }
           }
 
-          SKIF_ImGui_OptImage (SKIV_DesktopImage, vDesktopSize);
+          SKIF_ImGui_OptImage (SKIV_DesktopImage, vDesktopSize, ImVec2 (-1024.0f, -1024.0f),
+                                                                ImVec2 (-2048.0f, -2048.0f));
+
+          ImDrawList* draw_list =
+            ImGui::GetForegroundDrawList ();
+
+          draw_list->AddRectFilled (ImVec2 (0.0f, 0.0f), vDesktopSize, ImGui::GetColorU32 (IM_COL32(20,20,20,128))); // Background
         }
 
         static ImRect selection;
@@ -1808,7 +1818,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
                           // Desktop Pos,      Desktop Pos + Desktop Size
         ImRect allowable (ImVec2 (0.0f, 0.0f), vDesktopSize);
 
-        if (SKIF_ImGui_SelectionRect (&selection, allowable, 0, SK_IMGUI_SELECT_FLAG_SINGLE_CLICK|SK_IMGUI_SELECT_FLAG_FILLED))
+        if (SKIF_ImGui_SelectionRect (&selection, allowable, 0, SK_IMGUI_SELECT_FLAG_FILLED))
         {
           _registry._SnippingMode = false;
 

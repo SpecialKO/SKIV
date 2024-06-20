@@ -1808,7 +1808,8 @@ SKIF_UI_Tab_DrawViewer (void)
 
 #pragma region GameCover
 
-  static const ImVec2 hdr_uv (-2048.0f, -2048.0f);
+  static const ImVec2 hdr_uv0 (-1024.0f, -1024.0f);
+  static const ImVec2 hdr_uv1 (-2048.0f, -2048.0f);
   
   static int    queuePosGameCover  = 0;
   static char   cstrLabelDowning[] = "Downloading...";
@@ -1881,8 +1882,8 @@ SKIF_UI_Tab_DrawViewer (void)
     SKIF_ImGui_OptImage  (cover_old.pRawTexSRV.p,
                                                       ImVec2 (sizeCover_old.x,
                                                               sizeCover_old.y),
-                                    cover_old.light_info.isHDR ? hdr_uv : cover_old.uv0, // Top Left coordinates
-                                    cover_old.light_info.isHDR ? hdr_uv : cover_old.uv1, // Bottom Right coordinates
+                                    cover_old.light_info.isHDR ? hdr_uv0 : cover_old.uv0, // Top Left coordinates
+                                    cover_old.light_info.isHDR ? hdr_uv1 : cover_old.uv1, // Bottom Right coordinates
                                     (_registry._StyleLightMode) ? ImVec4 (1.0f, 1.0f, 1.0f, fGammaCorrectedTint * AdjustAlpha (fAlphaPrev))  : ImVec4 (fTint, fTint, fTint, fAlphaPrev) // Alpha transparency
     );
   
@@ -1924,8 +1925,8 @@ SKIF_UI_Tab_DrawViewer (void)
   SKIF_ImGui_OptImage  (cover.pRawTexSRV.p,
                                                     ImVec2 (sizeCover.x,
                                                             sizeCover.y),
-                                  cover.light_info.isHDR ? hdr_uv : cover.uv0, // Top Left coordinates
-                                  cover.light_info.isHDR ? hdr_uv : cover.uv1, // Bottom Right coordinates
+                                  cover.light_info.isHDR ? hdr_uv0 : cover.uv0, // Top Left coordinates
+                                  cover.light_info.isHDR ? hdr_uv1 : cover.uv1, // Bottom Right coordinates
                                   (_registry._StyleLightMode) ? ImVec4 (1.0f, 1.0f, 1.0f, fGammaCorrectedTint * AdjustAlpha (fAlpha))  :
                                                                 ImVec4 (1.f, 1.f, 1.f, 1.f) // Alpha transparency (2024-01-01, removed fGammaCorrectedTint * fAlpha for the light style)
   );
@@ -4521,9 +4522,16 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, int flags = 0x0)
     return E_UNEXPECTED;
   }
 
-  pDevice->CreateShaderResourceView (pDesktopImage, nullptr, &SKIV_DesktopImage);
+  D3D11_SHADER_RESOURCE_VIEW_DESC
+    srvDesc                           = { };
+    srvDesc.Format                    = texDesc.Format;
+    srvDesc.ViewDimension             = D3D11_SRV_DIMENSION_TEXTURE2D;
+    srvDesc.Texture2D.MipLevels       = 1;
+    srvDesc.Texture2D.MostDetailedMip = 0;
 
-  pDevCtx->CopyResource (pDesktopImage, pDuplicatedTex);
+  pDevCtx->CopyResource             (pDesktopImage, pDuplicatedTex);
+  pDevice->CreateShaderResourceView (pDesktopImage, &srvDesc, &SKIV_DesktopImage);
+
   pDevCtx->Flush ();
 
   pDuplicator->ReleaseFrame ();

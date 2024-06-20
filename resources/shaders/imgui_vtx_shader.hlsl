@@ -65,11 +65,11 @@ PS_INPUT main (VS_INPUT input)
   output.lum = Luminance.xyzw;
 
   // Reserved texcoords for HDR content passthrough
-  if (all (input.uv < -1024.0f))
+  if (all (input.uv <= -1024.0f))
   {
-    output.uv      = float2 (input.vI >= 1 &&
-                             input.vI <  3,
-                             input.vI >> 1);
+    output.uv.x = (input.uv.x == -1024.0f ? 0.0f : 1.0f);
+    output.uv.y = (input.uv.y == -1024.0f ? 0.0f : 1.0f);
+    
     output.col     = float4 (1.0f, 1.0f, 1.0f, 1.0f);
     output.hdr_img = 1.0f;
   }
