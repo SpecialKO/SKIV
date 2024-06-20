@@ -394,6 +394,7 @@ bool                   newImageFailed    = false; // Set by the window msg handl
 bool                   imageFailWarning  = false; // Set to true to warn about a failed image load
 
 bool                   activateSnipping  = false; // Set to true when a desktop capture is complete and ready to snip
+bool                   iconicBeforeSnip  = false;
 HWND                   hwndBeforeSnip    =  0;
 HWND                   hwndTopBeforeSnip =  0; // Window above SKIV in z-order
 ImRect                 selection_rect    = { };
@@ -2626,10 +2627,10 @@ SKIF_UI_Tab_DrawViewer (void)
       SKIF_ImGui_SetFullscreen (SKIF_ImGui_hWnd, ! SKIF_ImGui_IsFullscreen (SKIF_ImGui_hWnd));
     }
 
-    if (SKIF_ImGui_MenuItemEx2 ("Snipping Mode", ICON_FA_SCISSORS, ImGui::GetStyleColorVec4 (ImGuiCol_Text), ""))
-    {
-      _registry._SnippingMode = ! _registry._SnippingMode;
-    }
+    //if (SKIF_ImGui_MenuItemEx2 ("Snipping Mode", ICON_FA_SCISSORS, ImGui::GetStyleColorVec4 (ImGuiCol_Text), ""))
+    //{
+    //  _registry._SnippingMode = ! _registry._SnippingMode;
+    //}
 
     ImGui::Separator ( );
 

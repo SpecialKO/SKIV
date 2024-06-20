@@ -1814,6 +1814,12 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
           extern HWND hwndBeforeSnip;
           extern HWND hwndTopBeforeSnip;
+          extern bool iconicBeforeSnip;
+
+          if (iconicBeforeSnip)
+          {
+            ShowWindow (SKIF_ImGui_hWnd, SW_MINIMIZE);
+          }
 
           SetForegroundWindow (hwndBeforeSnip);
 
@@ -3525,11 +3531,20 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
           {
             extern HWND hwndBeforeSnip;
             extern HWND hwndTopBeforeSnip;
+            extern bool iconicBeforeSnip;
 
             extern ImRect selection_rect;
 
             hwndBeforeSnip    = GetForegroundWindow ();
             hwndTopBeforeSnip = GetWindow (SKIF_ImGui_hWnd, GW_HWNDNEXT);
+
+            iconicBeforeSnip =
+              IsIconic (SKIF_ImGui_hWnd);
+
+            if (iconicBeforeSnip)
+            {
+              ShowWindow (SKIF_ImGui_hWnd, SW_RESTORE);
+            }
 
             selection_rect.Min = ImVec2 (0.0f, 0.0f);
             selection_rect.Max = ImVec2 (0.0f, 0.0f);
