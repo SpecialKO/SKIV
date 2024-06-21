@@ -411,6 +411,7 @@ struct SKIF_RegistrySettings {
   bool _RendererHDREnabled          = false; // HDR Enabled
   bool _TouchDevice                 = false;
   bool _SnippingMode                = false;
+  bool _SnippingModeExit            = false;
 
   // Functions
   bool isDevLogging (void) const;

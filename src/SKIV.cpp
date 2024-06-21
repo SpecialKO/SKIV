@@ -1712,7 +1712,10 @@ wWinMain ( _In_     HINSTANCE hInstance,
       // Escape does situational stuff
       if (hotkeyEsc)
       {
-        if (PopupMessageInfo != PopupState_Closed)
+        if (_registry._SnippingMode)
+          _registry._SnippingModeExit = true;
+
+        else if (PopupMessageInfo != PopupState_Closed)
           SKIF_ImGui_PopBackInfoPopup ( );
 
         else if
@@ -1760,8 +1763,6 @@ wWinMain ( _In_     HINSTANCE hInstance,
       // Begin Snipping Mode
       if (_registry._SnippingMode)
       {
-        //ImGui::GetIO ().MouseDown         [0] = false;
-        //ImGui::GetIO ().MouseDownDuration [0] = -1.0f;
 
 #pragma region UI: Snipping Mode
 
@@ -1815,12 +1816,10 @@ wWinMain ( _In_     HINSTANCE hInstance,
         if (GetForegroundWindow () != SKIF_ImGui_hWnd)
             SetForegroundWindow (     SKIF_ImGui_hWnd);
 
-                          // Desktop Pos,      Desktop Pos + Desktop Size
-        ImRect allowable (ImVec2 (0.0f, 0.0f), vDesktopSize);
-
-        if (SKIF_ImGui_SelectionRect (&selection, allowable, 0, SelectionFlag_Filled))
+        auto _RestoreWindow = [&](void) -> void
         {
-          _registry._SnippingMode = false;
+          _registry._SnippingMode     = false;
+          _registry._SnippingModeExit = false;
 
           ImGui::SetWindowSize (last_non_snip_size);
           ImGui::SetWindowPos  (last_non_snip_pos);
@@ -1838,6 +1837,17 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
           // Put SKIV back in the correct Z-order
           SetWindowPos (SKIF_ImGui_hWnd, hwndTopBeforeSnip, 0,0,0,0, SWP_NOSIZE|SWP_NOMOVE|SWP_NOACTIVATE);
+
+          ImGui::GetIO ().MouseDown         [0] = false;
+          ImGui::GetIO ().MouseDownDuration [0] = -1.0f;
+        };
+
+                          // Desktop Pos,      Desktop Pos + Desktop Size
+        ImRect allowable (ImVec2 (0.0f, 0.0f), vDesktopSize);
+
+        if (SKIF_ImGui_SelectionRect (&selection, allowable, 0, SelectionFlag_Filled))
+        {
+          _registry._SnippingModeExit = true;
 
           if (selection.GetArea () != 0)
           {
@@ -1872,10 +1882,10 @@ wWinMain ( _In_     HINSTANCE hInstance,
               }
             }
           }
-
-          ImGui::GetIO ().MouseDown         [0] = false;
-          ImGui::GetIO ().MouseDownDuration [0] = -1.0f;
         }
+
+        if (_registry._SnippingModeExit)
+          _RestoreWindow ( );
 
 #pragma endregion
 
