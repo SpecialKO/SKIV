@@ -1856,7 +1856,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
           {
             L"Progman",                   // Program Manager
             L"Button",                    // Start button?
-            L"ApplicationFrameWindow",    // UWP stuff
+          //L"ApplicationFrameWindow",    // UWP stuff (ignores HDR + WCG Image Viewer)
             L"Windows.UI.Core.CoreWindow" // UWP stuff
           };
 
@@ -2006,7 +2006,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
               ImGui::GetForegroundDrawList ();
 
             draw_list->AddRect       (selection_auto.Min, selection_auto.Max, ImGui::GetColorU32 (IM_COL32(0,130,216,255)), 0.0f, 0, 5.0f); // Border
-            draw_list->AddRectFilled (selection_auto.Min, selection_auto.Max, ImGui::GetColorU32 (IM_COL32(0,130,216,50)));                 // Background
+          //draw_list->AddRectFilled (selection_auto.Min, selection_auto.Max, ImGui::GetColorU32 (IM_COL32(0,130,216,50)));                 // Background
           }
         }
 
