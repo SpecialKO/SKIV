@@ -1799,6 +1799,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
         }
 
         static ImRect selection;
+        static ImRect selection_auto;
 
         static ImVec2 last_non_snip_pos;
         static ImVec2 last_non_snip_size;
@@ -1842,43 +1843,207 @@ wWinMain ( _In_     HINSTANCE hInstance,
           ImGui::GetIO ().MouseDownDuration [0] = -1.0f;
         };
 
+        // Let us store all ignored windows in a vector for quick reuse
+        static std::vector<HWND> ignoredWindows = { };
+
+        auto _IgnoreWindow = [&](HWND hWnd) -> bool
+        {
+          if (std::find (ignoredWindows.begin(), ignoredWindows.end(), hWnd) != ignoredWindows.end())
+            return true;
+
+          // Window class names to ignore
+          static const std::vector<std::wstring> ignoreClassNames =
+          {
+            L"Progman",                   // Program Manager
+            L"Button",                    // Start button?
+            L"ApplicationFrameWindow",    // UWP stuff
+            L"Windows.UI.Core.CoreWindow" // UWP stuff
+          };
+
+          wchar_t wszWindowTextBuffer [64] = { };
+
+          // Ignore windows of various characteristics
+          if (
+               SKIF_ImGui_hWnd  ==   hWnd
+            ||    ! IsWindowVisible (hWnd)
+            || (RealGetWindowClassW (hWnd, wszWindowTextBuffer, 64) && std::find (ignoreClassNames.begin(), ignoreClassNames.end(), wszWindowTextBuffer) != ignoreClassNames.end())
+            ||     ! GetWindowTextW (hWnd, wszWindowTextBuffer, 64)
+          //|| (GetWindowLongPtr (hWnd, GWL_EXSTYLE) & WS_EX_TOOLWINDOW)
+          //|| (GetWindowLongPtr (hWnd, GWL_STYLE)   & WS_POPUP)  // Ignores some games, but allows some invisible stupid windows (UWP)
+            )
+          {
+            ignoredWindows.push_back (hWnd);
+            return true;
+          }
+
+          return false;
+        };
+
+        auto _GetRectBelowCursor = [&](void) -> void
+        {
+          std::vector<HWND> vHWNDs;
+
+          // Retrieve the RECT of the window below the cursor
+          EnumWindows ( []( HWND   hWnd,
+                            LPARAM lParam ) -> BOOL
+          {
+            auto pVector = reinterpret_cast<std::vector<HWND>*>(lParam);
+            pVector->push_back (hWnd);
+
+            return TRUE;
+          }, reinterpret_cast<LPARAM>(&vHWNDs));
+
+          if (! vHWNDs.empty())
+          {
+            POINT point = { };
+
+            if (GetCursorPos (&point))
+            {
+              for (auto& hWnd : vHWNDs)
+              {
+                if (_IgnoreWindow (hWnd))
+                  continue;
+
+                RECT rect = { };
+
+                if (GetWindowRect (hWnd, &rect))
+                {
+                  HRGN hRgn = CreateRectRgn (rect.left, rect.top, rect.right, rect.bottom);
+                  bool breakLoop = false;
+
+                  if (PtInRegion (hRgn, point.x, point.y))
+                  {
+                    // Ensure the current selected window is the top-most
+                    /* Does not seem to be required
+                    HWND top_most = hWnd;
+                    HWND parent   = hWnd;
+
+                    while (false)
+                    {
+                      parent = GetNextWindow (parent, GW_HWNDPREV);
+
+                      if (parent != NULL && ! _IgnoreWindow (parent))
+                      {
+                        RECT new_rect = { };
+                        if (GetWindowRect (parent, &new_rect))
+                        {
+                          hRgn = CreateRectRgn (new_rect.left, new_rect.top, new_rect.right, new_rect.bottom);
+
+                          if (PtInRegion (hRgn, point.x, point.y))
+                          {
+                            rect     = new_rect;
+                            top_most = parent;
+                          }
+                        }
+                      }
+
+                      else
+                        break;
+                    }
+                    */
+
+                    selection_auto.Min.x = static_cast<float> (rect.left);
+                    selection_auto.Min.y = static_cast<float> (rect.top);
+                    selection_auto.Max.x = static_cast<float> (rect.right);
+                    selection_auto.Max.y = static_cast<float> (rect.bottom);
+
+                    /*
+                    PLOG_VERBOSE << "----------------------";
+                    PLOG_VERBOSE << "HWND:  " << top_most;
+                    wchar_t                         wszRealWindowClass [64] = { };
+                    if (RealGetWindowClassW (top_most,  wszRealWindowClass, 64))
+                    PLOG_VERBOSE << "Class: " << wszRealWindowClass;
+                    PLOG_VERBOSE << "Pos:   " << point.x << "," << point.y;
+                    PLOG_VERBOSE << "Min:   " << selection_auto.Min.x << "," << selection_auto.Min.y;
+                    PLOG_VERBOSE << "Max:   " << selection_auto.Max.x << "," << selection_auto.Max.y;
+                    */
+
+                    breakLoop = true;
+                  }
+ 
+                  DeleteObject (hRgn);
+
+                  if (breakLoop)
+                    break;
+                }
+              }
+            }
+          }
+        };
+
                           // Desktop Pos,      Desktop Pos + Desktop Size
         ImRect allowable (ImVec2 (0.0f, 0.0f), vDesktopSize);
+        ImRect capture_area;
 
-        if (SKIF_ImGui_SelectionRect (&selection, allowable, 0, SelectionFlag_Filled))
+        static bool clicked = false;
+
+        if (! clicked && SKIF_ImGui_SelectionRect (&selection, allowable, 0, SelectionFlag_Filled))
         {
           _registry._SnippingModeExit = true;
+          capture_area = selection;
+        }
 
-          if (selection.GetArea () != 0)
+        else if (! ImGui::IsMouseDragging (ImGuiMouseButton_Left))
+        {
+          _GetRectBelowCursor ( );
+
+          // Keep the selection within the allowed rectangle
+          selection_auto.ClipWithFull (allowable);
+
+          if (ImGui::IsMouseClicked (ImGuiMouseButton_Left))
+            clicked = true;
+
+          else if (ImGui::IsMouseReleased (ImGuiMouseButton_Left))
           {
-            const size_t
-              x      = static_cast <size_t> (std::max (0.0f, selection.Min.x)),
-              y      = static_cast <size_t> (std::max (0.0f, selection.Min.y)),
-              width  = static_cast <size_t> (std::max (0.0f, selection.GetWidth  ())),
-              height = static_cast <size_t> (std::max (0.0f, selection.GetHeight ()));
+            clicked = false;
+            _registry._SnippingModeExit = true;
+            capture_area = selection_auto;
+          }
 
-            const DirectX::Rect
-              src_rect (x,y, width,height);
+          else if (selection_auto.Min != selection_auto.Max)
+          {
+            ImDrawList* draw_list =
+              ImGui::GetForegroundDrawList ();
 
-            auto pDevice = SKIF_pd3dDevice;
+            draw_list->AddRect       (selection_auto.Min, selection_auto.Max, ImGui::GetColorU32 (IM_COL32(0,130,216,255)), 0.0f, 0, 5.0f); // Border
+            draw_list->AddRectFilled (selection_auto.Min, selection_auto.Max, ImGui::GetColorU32 (IM_COL32(0,130,216,50)));                 // Background
+          }
+        }
 
-            CComPtr <ID3D11DeviceContext>  pDevCtx;
-            pDevice->GetImmediateContext (&pDevCtx.p);
+        else
+          clicked = false;
 
-            DirectX::ScratchImage                                                    captured_img;
-            if (SUCCEEDED (DirectX::CaptureTexture (pDevice, pDevCtx, pDesktopRes.p, captured_img)))
+        if (capture_area.GetArea() != 0)
+        {
+          ignoredWindows.clear();
+
+          const size_t
+            x      = static_cast <size_t> (std::max (0.0f, capture_area.Min.x)),
+            y      = static_cast <size_t> (std::max (0.0f, capture_area.Min.y)),
+            width  = static_cast <size_t> (std::max (0.0f, capture_area.GetWidth  ())),
+            height = static_cast <size_t> (std::max (0.0f, capture_area.GetHeight ()));
+
+          const DirectX::Rect
+            src_rect (x,y, width,height);
+
+          auto pDevice = SKIF_pd3dDevice;
+
+          CComPtr <ID3D11DeviceContext>  pDevCtx;
+          pDevice->GetImmediateContext (&pDevCtx.p);
+
+          DirectX::ScratchImage                                                    captured_img;
+          if (SUCCEEDED (DirectX::CaptureTexture (pDevice, pDevCtx, pDesktopRes.p, captured_img)))
+          {
+            DirectX::ScratchImage
+                            subrect;
+            if (SUCCEEDED (subrect.Initialize2D   ( captured_img.GetMetadata ().format, width, height, 1, 1)) &&
+                SUCCEEDED (DirectX::CopyRectangle (*captured_img.GetImages   (), src_rect,
+                                                                                  *subrect.GetImages (), DirectX::TEX_FILTER_DEFAULT, 0, 0)))
             {
-              DirectX::ScratchImage
-                             subrect;
-              if (SUCCEEDED (subrect.Initialize2D   ( captured_img.GetMetadata ().format, width, height, 1, 1)) &&
-                  SUCCEEDED (DirectX::CopyRectangle (*captured_img.GetImages   (), src_rect,
-                                                                                   *subrect.GetImages (), DirectX::TEX_FILTER_DEFAULT, 0, 0)))
+              extern bool
+                  SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped);
+              if (SKIV_Image_CopyToClipboard (subrect.GetImages (), true))
               {
-                extern bool
-                    SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped);
-                if (SKIV_Image_CopyToClipboard (subrect.GetImages (), true))
-                {
-                }
               }
             }
           }
