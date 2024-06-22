@@ -200,6 +200,10 @@ struct SKIF_RegistrySettings {
     SKIF_MakeRegKeyB ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(First Launch)" );
 
+  KeyValue <bool> regKVCloseToTray =
+    SKIF_MakeRegKeyB ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(Close To Notification Area)" );
+
   KeyValue <bool> regKVMultipleInstances =
     SKIF_MakeRegKeyB ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(Multiple Instances)" );
@@ -376,6 +380,7 @@ struct SKIF_RegistrySettings {
   bool bImageDetails            = false;
 
   bool bFirstLaunch             = false;
+  bool bCloseToTray             = false;
   bool bMultipleInstances       = false;
   bool bOpenAtCursorPosition    = false;
 #if 0

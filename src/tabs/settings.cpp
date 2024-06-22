@@ -632,6 +632,9 @@ SKIF_UI_Tab_DrawSettings (void)
         );
     }
 
+    if ( ImGui::Checkbox ( "Close to the notification area", &_registry.bCloseToTray ) )
+      _registry.regKVCloseToTray.putData (                    _registry.bCloseToTray );
+
     if ( ImGui::Checkbox ( "Always open this app on the same monitor as the mouse", &_registry.bOpenAtCursorPosition ) )
       _registry.regKVOpenAtCursorPosition.putData (                                  _registry.bOpenAtCursorPosition );
 

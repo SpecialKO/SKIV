@@ -371,6 +371,7 @@ bool                   imageFailWarning  = false; // Set to true to warn about a
 
 bool                   activateSnipping  = false; // Set to true when a desktop capture is complete and ready to snip
 bool                   iconicBeforeSnip  = false;
+bool                   trayedBeforeSnip  = false;
 HWND                   hwndBeforeSnip    =  0;
 HWND                   hwndTopBeforeSnip =  0; // Window above SKIV in z-order
 ImRect                 selection_rect    = { };
@@ -2706,7 +2707,19 @@ SKIF_UI_Tab_DrawViewer (void)
 
     ImGui::Separator ( );
 
-    if (SKIF_ImGui_MenuItemEx2 ("Exit", 0, ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Info), /*"Esc"*/"Alt+F4"))
+    if (_registry.bCloseToTray)
+    {
+      if (SKIF_ImGui_MenuItemEx2 ("Close app", 0, ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info), "Esc"))
+        PostMessage (SKIF_Notify_hWnd, WM_SKIF_MINIMIZE, 0x0, 0x0);
+    }
+
+    else
+    {
+      if (SKIF_ImGui_MenuItemEx2 ("Minimize", 0, ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info), "Ctrl+N"))
+        PostMessage (SKIF_Notify_hWnd, WM_SKIF_MINIMIZE, 0x0, 0x0);
+    }
+
+    if (SKIF_ImGui_MenuItemEx2 ("Exit", 0, ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Info), "Ctrl+Q"))
     {
       extern bool bKeepWindowAlive;
       bKeepWindowAlive = false;

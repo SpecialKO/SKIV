@@ -155,6 +155,7 @@ static const GUID SKIF_NOTIFY_GUID = // {8142287D-5BC6-4131-95CD-709A2613E1F5}
 #define SKIF_NOTIFY_SNIP_FULLSCREEN         0x1334 // 4916
 #define SKIF_NOTIFY_RUN_UPDATER             0x1335 // 4917
 #define WM_SKIF_NOTIFY_ICON      (WM_USER + 0x150) // 1360
+bool SKIF_isTrayed = false;
 NOTIFYICONDATA niData;
 HMENU hMenu;
 
@@ -1010,13 +1011,18 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
   //SKIF_Util_Debug_LogUserNames ( );
 
+  // First round
   if (_Signal.Minimize)
     nCmdShow = SW_SHOWMINNOACTIVE;
 
+  if (nCmdShow == SW_MINIMIZE && _registry.bCloseToTray)
+    nCmdShow = SW_HIDE;
+
+  // Second round
   if (nCmdShow == SW_SHOWMINNOACTIVE)
     startedMinimized = true;
   else if (nCmdShow == SW_HIDE)
-    startedMinimized = true;
+    startedMinimized = SKIF_isTrayed = true;
 
   SKIF_nCmdShow = nCmdShow;
 
@@ -1748,53 +1754,6 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
 
 
-      // Escape does situational stuff
-      if (hotkeyEsc)
-      {
-        if (_registry._SnippingMode)
-          _registry._SnippingModeExit = true;
-
-        else if (PopupMessageInfo != PopupState_Closed)
-          SKIF_ImGui_PopBackInfoPopup ( );
-
-        else if
-          (UpdatePromptPopup != PopupState_Closed ||
-           HistoryPopup      != PopupState_Closed  )
-        {
-          UpdatePromptPopup   = PopupState_Closed;
-          HistoryPopup        = PopupState_Closed;
-
-          ImGui::ClosePopupsOverWindow (ImGui::GetCurrentWindowRead ( ), false);
-        }
-
-        else
-        {
-          switch (SKIF_Tab_Selected)
-          {
-          case UITab_None:
-            break;
-          case UITab_Viewer:
-            if (SKIF_ImGui_IsFullscreen (SKIF_ImGui_hWnd))
-              SKIF_ImGui_SetFullscreen  (SKIF_ImGui_hWnd, false);
-// Make this a user preference
-#ifdef ALLOW_ESC_EXIT
-            else
-              bKeepWindowAlive = false;
-#endif
-            break;
-          case UITab_Settings:
-            SKIF_Tab_ChangeTo = UITab_Viewer;
-            break;
-          case UITab_About:
-            break;
-          case UITab_ALL:
-            break;
-          default:
-            break;
-          }
-        }
-      }
-
       ImGui::BeginGroup ();
 
       static bool last_snip_state = false;
@@ -1839,6 +1798,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
         static ImRect selection;
         static ImRect selection_auto;
+#if 0
 
         static ImVec2 last_non_snip_pos;
         static ImVec2 last_non_snip_size;
@@ -1852,6 +1812,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
           ImGui::SetWindowPos  (ImVec2 (0.0f, 0.0f)); // TODO
           ImGui::SetWindowSize (vDesktopSize);
         }
+#endif
 
         if (GetForegroundWindow () != SKIF_ImGui_hWnd)
             SetForegroundWindow (     SKIF_ImGui_hWnd);
@@ -1861,17 +1822,21 @@ wWinMain ( _In_     HINSTANCE hInstance,
           _registry._SnippingMode     = false;
           _registry._SnippingModeExit = false;
 
-          ImGui::SetWindowSize (last_non_snip_size);
-          ImGui::SetWindowPos  (last_non_snip_pos);
+          SKIF_ImGui_SetFullscreen (SKIF_ImGui_hWnd, false);
+
+          //ImGui::SetWindowSize (last_non_snip_size);
+          //ImGui::SetWindowPos  (last_non_snip_pos);
 
           extern HWND hwndBeforeSnip;
           extern HWND hwndTopBeforeSnip;
           extern bool iconicBeforeSnip;
+          extern bool trayedBeforeSnip;
 
           if (iconicBeforeSnip)
-          {
             ShowWindow (SKIF_ImGui_hWnd, SW_MINIMIZE);
-          }
+
+          if (trayedBeforeSnip)
+            ShowWindow (SKIF_ImGui_hWnd, SW_HIDE);
 
           SetForegroundWindow (hwndBeforeSnip);
 
@@ -2288,7 +2253,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
             ImGui::PushStyleColor (ImGuiCol_Text, ImGui::GetStyleColorVec4 (ImGuiCol_WindowBg)); //ImVec4 (0.9F, 0.9F, 0.9F, 1.0f));
 
           if (ImGui::Button (ICON_FA_XMARK, ImVec2 ( 30.0f * SKIF_ImGui_GlobalDPIScale, 0.0f ) )) // HotkeyEsc is situational
-            hotkeyCtrlQ = true;
+            hotkeyEsc = true;
       
           if (_registry._StyleLightMode)
           {
@@ -2315,6 +2280,60 @@ wWinMain ( _In_     HINSTANCE hInstance,
 #pragma endregion
 
 #pragma region CaptionActions
+
+      // Escape does situational stuff
+      if (hotkeyEsc)
+      {
+        if (_registry._SnippingMode)
+          _registry._SnippingModeExit = true;
+
+        else if (PopupMessageInfo != PopupState_Closed)
+          SKIF_ImGui_PopBackInfoPopup ( );
+
+        else if
+          (UpdatePromptPopup != PopupState_Closed ||
+           HistoryPopup      != PopupState_Closed  )
+        {
+          UpdatePromptPopup   = PopupState_Closed;
+          HistoryPopup        = PopupState_Closed;
+
+          ImGui::ClosePopupsOverWindow (ImGui::GetCurrentWindowRead ( ), false);
+        }
+
+        else
+        {
+          switch (SKIF_Tab_Selected)
+          {
+          case UITab_None:
+            break;
+          case UITab_Viewer:
+            if (SKIF_ImGui_IsFullscreen (SKIF_ImGui_hWnd))
+              SKIF_ImGui_SetFullscreen  (SKIF_ImGui_hWnd, false);
+
+            else if (_registry.bCloseToTray && bKeepWindowAlive && ! SKIF_isTrayed)
+            {
+              bKeepWindowAlive = true;
+              ShowWindow   (SKIF_ImGui_hWnd, SW_MINIMIZE);
+              ShowWindow   (SKIF_ImGui_hWnd, SW_HIDE);
+              UpdateWindow (SKIF_ImGui_hWnd);
+              SKIF_isTrayed = true;
+            }
+
+            else
+              bKeepProcessAlive = false;
+            break;
+          case UITab_Settings:
+            SKIF_Tab_ChangeTo = UITab_Viewer;
+            break;
+          case UITab_About:
+            break;
+          case UITab_ALL:
+            break;
+          default:
+            break;
+          }
+        }
+      }
 
       if (hotkeyCtrlN)
         ShowWindow (SKIF_ImGui_hWnd, SW_MINIMIZE);
@@ -2988,7 +3007,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
     }
 
     // Conditional rendering, but only if SKIF_ImGui_hWnd has actually been created
-    bool bRefresh = (SKIF_ImGui_hWnd != NULL && IsIconic (SKIF_ImGui_hWnd)) ? false : true;
+    bool bRefresh = (SKIF_ImGui_hWnd != NULL && (SKIF_isTrayed || IsIconic (SKIF_ImGui_hWnd))) ? false : true;
 
     if (invalidatedDevice > 0 && SKIF_Tab_Selected == UITab_Viewer)
       bRefresh = false;
@@ -3671,19 +3690,26 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         extern HWND hwndBeforeSnip;
         extern HWND hwndTopBeforeSnip;
         extern bool iconicBeforeSnip;
+        extern bool trayedBeforeSnip;
 
         extern ImRect selection_rect;
 
         hwndBeforeSnip    = GetForegroundWindow ();
         hwndTopBeforeSnip = GetWindow (SKIF_ImGui_hWnd, GW_HWNDNEXT);
 
+        trayedBeforeSnip = SKIF_isTrayed;
         iconicBeforeSnip =
           IsIconic (SKIF_ImGui_hWnd);
 
-        if (iconicBeforeSnip)
-        {
-          ShowWindow (SKIF_ImGui_hWnd, SW_RESTORE);
+        if (SKIF_isTrayed)
+        {   SKIF_isTrayed = false;
+          ShowWindow (SKIF_ImGui_hWnd, SW_SHOW);
         }
+
+        if (iconicBeforeSnip)
+          ShowWindow (SKIF_ImGui_hWnd, SW_RESTORE);
+
+        SKIF_ImGui_SetFullscreen (SKIF_ImGui_hWnd, true);
 
         selection_rect.Min = ImVec2 (0.0f, 0.0f);
         selection_rect.Max = ImVec2 (0.0f, 0.0f);
@@ -3884,7 +3910,19 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
     case WM_SKIF_MINIMIZE:
       if (SKIF_ImGui_hWnd != NULL)
-        ShowWindowAsync (SKIF_ImGui_hWnd, SW_MINIMIZE);
+      {
+        if (_registry.bCloseToTray && ! SKIF_isTrayed)
+        {
+          ShowWindow       (SKIF_ImGui_hWnd, SW_MINIMIZE);
+          ShowWindow       (SKIF_ImGui_hWnd, SW_HIDE);
+          UpdateWindow     (SKIF_ImGui_hWnd);
+          SKIF_isTrayed    = true;
+        }
+
+        else if (! _registry.bCloseToTray) {
+          ShowWindowAsync (SKIF_ImGui_hWnd, SW_MINIMIZE);
+        }
+      }
       break;
 
     case WM_SKIF_REFRESHFOCUS:
@@ -4012,8 +4050,13 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
     case WM_SKIF_RESTORE:
       if (SKIF_ImGui_hWnd != NULL)
       {
-        if (! IsIconic (SKIF_ImGui_hWnd))
+        if (! SKIF_isTrayed && ! IsIconic (SKIF_ImGui_hWnd))
           RepositionSKIF            = true;
+
+        if (SKIF_isTrayed)
+        {   SKIF_isTrayed           = false;
+          ShowWindow   (SKIF_ImGui_hWnd, SW_SHOW); // ShowWindowAsync
+        }
 
         ShowWindow     (SKIF_ImGui_hWnd, SW_RESTORE); // ShowWindowAsync
 
