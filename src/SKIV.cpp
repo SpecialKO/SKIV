@@ -150,9 +150,9 @@ static const GUID SKIF_NOTIFY_GUID = // {8142287D-5BC6-4131-95CD-709A2613E1F5}
 { 0x8142287d, 0x5bc6, 0x4131, { 0x95, 0xcd, 0x70, 0x9a, 0x26, 0x13, 0xe1, 0xf5 } };
 #define SKIF_NOTIFY_ICON                    0x1330 // 4912
 #define SKIF_NOTIFY_EXIT                    0x1331 // 4913
-#define SKIF_NOTIFY_START                   0x1332 // 4914
-#define SKIF_NOTIFY_STOP                    0x1333 // 4915
-#define SKIF_NOTIFY_STARTWITHSTOP           0x1334 // 4916
+#define SKIF_NOTIFY_OPEN                    0x1332 // 4914
+#define SKIF_NOTIFY_SNIP_REGION             0x1333 // 4915
+#define SKIF_NOTIFY_SNIP_FULLSCREEN         0x1334 // 4916
 #define SKIF_NOTIFY_RUN_UPDATER             0x1335 // 4917
 #define WM_SKIF_NOTIFY_ICON      (WM_USER + 0x150) // 1360
 NOTIFYICONDATA niData;
@@ -246,10 +246,13 @@ SKIF_Startup_ProcessCmdLineArgs (LPWSTR lpCmdLine)
 //  wcscmp (lpCmdLine, L"2") == NULL;
   _Signal.OpenFileDialog = 
     _wcsicmp (lpCmdLine, L"/OpenFileDialog") == NULL;
+  _Signal.CaptureRegion = 
+    _wcsicmp (lpCmdLine, L"/CaptureRegion") == NULL;
 
-  if (! _Signal.Quit     &&
-      ! _Signal.Minimize &&
-      ! _Signal.OpenFileDialog)
+  if (! _Signal.Quit           &&
+      ! _Signal.Minimize       &&
+      ! _Signal.OpenFileDialog &&
+      ! _Signal.CaptureRegion)
     _Signal._FilePath = std::wstring(lpCmdLine);
 
   SKIF_Util_TrimLeadingSpacesW (_Signal._FilePath);
@@ -348,6 +351,7 @@ SKIF_Startup_ProxyCommandLineArguments (void)
 
   if (! _Signal.Minimize         &&
       ! _Signal.OpenFileDialog   &&
+      ! _Signal.CaptureRegion    &&
       ! _Signal.CheckForUpdates  &&
       ! _Signal.Quit)
     return;
@@ -381,6 +385,23 @@ SKIF_Startup_ProxyCommandLineArguments (void)
         if (StrCmpIW ((LPWSTR)lParam, wszRealWindowClass) == 0)
         {
           PostMessage (hWnd, WM_SKIF_FILE_DIALOG, 0x0, 0x0);
+          return FALSE;
+        }
+      return TRUE;
+    }, (LPARAM)SKIF_NotifyIcoClass);
+  }
+
+  if (_Signal.CaptureRegion)
+  {
+    // Send WM_SKIF_SNIP_REGION to a single running instance (including ourselves)
+    EnumWindows ( []( HWND   hWnd,
+                      LPARAM lParam ) -> BOOL
+    {
+      wchar_t                         wszRealWindowClass [64] = { };
+      if (RealGetWindowClassW (hWnd,  wszRealWindowClass, 64))
+        if (StrCmpIW ((LPWSTR)lParam, wszRealWindowClass) == 0)
+        {
+          PostMessage (hWnd, WM_SKIF_SNIP_REGION, 0x0, 0x0);
           return FALSE;
         }
       return TRUE;
@@ -465,12 +486,16 @@ void SKIF_Shell_CreateUpdateNotifyMenu (void)
   hMenu = CreatePopupMenu ( );
   if (hMenu != NULL)
   {
-  //AppendMenu (hMenu, MF_STRING, SKIF_NOTIFY_RUN_UPDATER,   L"Open file...");
+    AppendMenu (hMenu, MF_STRING, SKIF_NOTIFY_SNIP_REGION,     L"Capture region");
+  //AppendMenu (hMenu, MF_STRING, SKIF_NOTIFY_SNIP_FULLSCREEN, L"Capture fullscreen");
+
   //AppendMenu (hMenu, MF_STRING | ((svcStopped)         ? MF_CHECKED | MF_GRAYED :                                    0x0), SKIF_NOTIFY_STOP,          L"Stop Service");
   //AppendMenu (hMenu, MF_SEPARATOR, 0, NULL);
   //AppendMenu (hMenu, MF_STRING, SKIF_NOTIFY_RUN_UPDATER,   L"Check for updates...");
-  //AppendMenu (hMenu, MF_SEPARATOR, 0, NULL);
-    AppendMenu (hMenu, MF_STRING, SKIF_NOTIFY_EXIT,          L"Exit");
+
+    AppendMenu (hMenu, MF_SEPARATOR, 0, NULL);
+    AppendMenu (hMenu, MF_STRING, SKIF_NOTIFY_OPEN,            L"Open");
+    AppendMenu (hMenu, MF_STRING, SKIF_NOTIFY_EXIT,            L"Exit");
   }
 }
 
@@ -485,7 +510,7 @@ void SKIF_Shell_CreateNotifyIcon (void)
   niData.hIcon        = LoadIcon (hModSKIF, MAKEINTRESOURCE (IDI_SKIV));
   niData.hWnd         = SKIF_Notify_hWnd;
   niData.uVersion     = NOTIFYICON_VERSION_4;
-  wcsncpy_s (niData.szTip,      128, L"Special K",   128);
+  wcsncpy_s (niData.szTip, 128, L"SKIV", 128);
 
   niData.uCallbackMessage = WM_SKIF_NOTIFY_ICON;
 
@@ -557,7 +582,39 @@ void SKIF_Shell_CreateJumpList (void)
 
     if   (SUCCEEDED (pObjColl.CoCreateInstance (CLSID_EnumerableObjectCollection)))
     {
-      // Task #1: /OpenFileDialog
+      // Task: /CaptureRegion
+      if (SUCCEEDED (pLink.CoCreateInstance (CLSID_ShellLink)))
+      {
+        CComQIPtr <IPropertyStore>   pPropStore = pLink.p;                      // The link title is kept in the object's property store, so QI for that interface.
+
+        pLink     ->SetPath         (_path_cache.skiv_executable);
+        pLink     ->SetArguments    (L"/CaptureRegion");                        // Set the arguments
+        pLink     ->SetIconLocation (_path_cache.skiv_executable, 0);           // Set the icon location.
+        pLink     ->SetDescription  (L"Starts a new region capture");           // Set the link description (tooltip on the jump list item)
+        InitPropVariantFromString   (L"Capture region", &pv);
+        pPropStore->SetValue                   (PKEY_Title, pv);                // Set the title property.
+        PropVariantClear                                  (&pv);
+        pPropStore->Commit          ( );                                        // Save the changes we made to the property store
+        pObjColl  ->AddObject       (pLink);                                    // Add this shell link to the object collection.
+        pPropStore .Release         ( );
+        pLink      .Release         ( );
+      }
+
+      // Separator
+      if (SUCCEEDED (pLink.CoCreateInstance (CLSID_ShellLink)))
+      {
+        CComQIPtr <IPropertyStore>   pPropStore = pLink.p;                      // The link title is kept in the object's property store, so QI for that interface.
+
+        InitPropVariantFromBoolean  (TRUE, &pv);
+        pPropStore->SetValue (PKEY_AppUserModel_IsDestListSeparator, pv);       // Set the separator property.
+        PropVariantClear                                  (&pv);
+        pPropStore->Commit          ( );                                        // Save the changes we made to the property store
+        pObjColl  ->AddObject       (pLink);                                    // Add this shell link to the object collection.
+        pPropStore .Release         ( );
+        pLink      .Release         ( );
+      }
+
+      // Task: /OpenFileDialog
       if (SUCCEEDED (pLink.CoCreateInstance (CLSID_ShellLink)))
       {
         CComQIPtr <IPropertyStore>   pPropStore = pLink.p;                      // The link title is kept in the object's property store, so QI for that interface.
@@ -574,22 +631,6 @@ void SKIF_Shell_CreateJumpList (void)
         pPropStore .Release         ( );
         pLink      .Release         ( );
       }
-
-      /*
-      // Separator
-      if (SUCCEEDED (pLink.CoCreateInstance (CLSID_ShellLink)))
-      {
-        CComQIPtr <IPropertyStore>   pPropStore = pLink.p;                      // The link title is kept in the object's property store, so QI for that interface.
-
-        InitPropVariantFromBoolean  (TRUE, &pv);
-        pPropStore->SetValue (PKEY_AppUserModel_IsDestListSeparator, pv);       // Set the separator property.
-        PropVariantClear                                  (&pv);
-        pPropStore->Commit          ( );                                        // Save the changes we made to the property store
-        pObjColl  ->AddObject       (pLink);                                    // Add this shell link to the object collection.
-        pPropStore .Release         ( );
-        pLink      .Release         ( );
-      }
-      */
 
       // Task #5: Exit -- Not actually needed since Windows exposes a "Close window" and "Close all windows" option in the jump list
       /*
@@ -1020,12 +1061,10 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
   hIcon = LoadIcon (hModSKIF, MAKEINTRESOURCE (IDI_SKIV));
 
-#if 0
   // The notify window has been created but not displayed.
   // Now we have a parent window to which a notification tray icon can be associated.
   SKIF_Shell_CreateNotifyIcon       ();
   SKIF_Shell_CreateUpdateNotifyMenu ();
-#endif
 
   // Initialize the gamepad input child thread
   static SKIF_GamePadInputHelper& _gamepad =
@@ -3607,6 +3646,65 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
   // We don't define this here to ensure it doesn't get created before we are ready to handle it
 //static SKIF_Updater&          _updater    = SKIF_Updater         ::GetInstance ( );
 
+  auto _EnterSnippingMode = [&](void) -> void
+  {
+    POINT              ptMainDisplay = { 1,1 };
+    POINT              ptCursor      = {     };
+    GetCursorPos     (&ptCursor);
+
+    //
+    // Only support snipping the primary monitor for now
+    //
+    if (MonitorFromPoint (ptCursor, 0x0) ==
+        MonitorFromPoint (ptMainDisplay, 0x0))
+    if (! std::exchange (_registry._SnippingMode, true))
+    {
+      extern HRESULT
+      SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, int flags = 0x0);
+
+      DirectX::ScratchImage        captured_img;
+      HRESULT hr =
+        SKIV_Image_CaptureDesktop (captured_img);
+
+      if (SUCCEEDED (hr))
+      {
+        extern HWND hwndBeforeSnip;
+        extern HWND hwndTopBeforeSnip;
+        extern bool iconicBeforeSnip;
+
+        extern ImRect selection_rect;
+
+        hwndBeforeSnip    = GetForegroundWindow ();
+        hwndTopBeforeSnip = GetWindow (SKIF_ImGui_hWnd, GW_HWNDNEXT);
+
+        iconicBeforeSnip =
+          IsIconic (SKIF_ImGui_hWnd);
+
+        if (iconicBeforeSnip)
+        {
+          ShowWindow (SKIF_ImGui_hWnd, SW_RESTORE);
+        }
+
+        selection_rect.Min = ImVec2 (0.0f, 0.0f);
+        selection_rect.Max = ImVec2 (0.0f, 0.0f);
+
+        _registry._SnippingMode = true;
+
+        ImGui::GetIO ().MouseDown         [0] = false;
+        ImGui::GetIO ().MouseDownDuration [0] = -1.0f;
+      }
+
+      else
+        MessageBox (nullptr, L"Uh oh", L"Uh oh", MB_OK);
+    }
+
+    else
+    {
+      SetForegroundWindow (SKIF_ImGui_hWnd);
+    }
+  };
+
+
   switch (msg)
   {
     case WM_COPYDATA:
@@ -3696,62 +3794,7 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
       if (wParam == SKIF_HotKey_HDR)
         SKIF_Util_EnableHDROutput ( );
       if (wParam == SKIV_HotKey_Snip)
-      {
-        POINT              ptMainDisplay = { 1,1 };
-        POINT              ptCursor      = {     };
-        GetCursorPos     (&ptCursor);
-
-        //
-        // Only support snipping the primary monitor for now
-        //
-        if (MonitorFromPoint (ptCursor, 0x0) ==
-            MonitorFromPoint (ptMainDisplay, 0x0))
-        if (! std::exchange (_registry._SnippingMode, true))
-        {
-          extern HRESULT
-          SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, int flags = 0x0);
-
-          DirectX::ScratchImage        captured_img;
-          HRESULT hr =
-            SKIV_Image_CaptureDesktop (captured_img);
-
-          if (SUCCEEDED (hr))
-          {
-            extern HWND hwndBeforeSnip;
-            extern HWND hwndTopBeforeSnip;
-            extern bool iconicBeforeSnip;
-
-            extern ImRect selection_rect;
-
-            hwndBeforeSnip    = GetForegroundWindow ();
-            hwndTopBeforeSnip = GetWindow (SKIF_ImGui_hWnd, GW_HWNDNEXT);
-
-            iconicBeforeSnip =
-              IsIconic (SKIF_ImGui_hWnd);
-
-            if (iconicBeforeSnip)
-            {
-              ShowWindow (SKIF_ImGui_hWnd, SW_RESTORE);
-            }
-
-            selection_rect.Min = ImVec2 (0.0f, 0.0f);
-            selection_rect.Max = ImVec2 (0.0f, 0.0f);
-
-            _registry._SnippingMode = true;
-
-            ImGui::GetIO ().MouseDown         [0] = false;
-            ImGui::GetIO ().MouseDownDuration [0] = -1.0f;
-          }
-
-          else
-            MessageBox (nullptr, L"Uh oh", L"Uh oh", MB_OK);
-        }
-
-        else
-        {
-          SetForegroundWindow (SKIF_ImGui_hWnd);
-        }
-      }
+        _EnterSnippingMode ( );
 
     break;
 
@@ -3903,6 +3946,15 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
     case WM_SKIF_FILE_DIALOG:
       OpenFileDialog = PopupState_Open;
+      break;
+
+    case WM_SKIF_SNIP_REGION:
+      _EnterSnippingMode ( );
+      break;
+
+    case WM_SKIF_SNIP_FULLSCREEN:
+      _EnterSnippingMode ( );
+      // TODO: Add some additional variable that indicates a fullscreen snip should be taken
       break;
 
     case WM_SKIF_RUN_UPDATER:
@@ -4132,8 +4184,14 @@ SKIF_Notify_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
     case WM_COMMAND:
       switch (LOWORD(wParam))
       {
-        case SKIF_NOTIFY_RUN_UPDATER:
-          PostMessage (SKIF_Notify_hWnd, WM_SKIF_RUN_UPDATER, 0, 0);
+        case SKIF_NOTIFY_SNIP_REGION:
+          PostMessage (SKIF_Notify_hWnd, WM_SKIF_SNIP_REGION, 0, 0);
+          break;
+        case SKIF_NOTIFY_SNIP_FULLSCREEN:
+          PostMessage (SKIF_Notify_hWnd, WM_SKIF_SNIP_FULLSCREEN, 0, 0);
+          break;
+        case SKIF_NOTIFY_OPEN:
+          PostMessage (SKIF_Notify_hWnd, WM_SKIF_FILE_DIALOG, 0, 0);
           break;
         case SKIF_NOTIFY_EXIT:
           if (SKIF_ImGui_hWnd != NULL)
@@ -4150,7 +4208,6 @@ SKIF_Notify_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
       break;
         
     default:
-#if 0
       // Taskbar was recreated (explorer.exe restarted),
       //   so we need to recreate the notification icon
       if (msg == SHELL_TASKBAR_RESTART)
@@ -4167,7 +4224,6 @@ SKIF_Notify_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         SKIF_Shell_CreateUpdateNotifyMenu ( );
         SKIF_Shell_UpdateNotifyIcon       ( );
       }
-#endif
       break;
   }
   return
