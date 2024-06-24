@@ -4380,7 +4380,7 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, int flags = 0x0)
     CComPtr <IDXGIOutput> pOutput;
     UINT                 uiOutput = 0;
 
-    while (SUCCEEDED (pAdapter->EnumOutputs (uiOutput, &pOutput)))
+    while (SUCCEEDED (pAdapter->EnumOutputs (uiOutput++, &pOutput)))
     {
       DXGI_OUTPUT_DESC   out_desc;
       pOutput->GetDesc (&out_desc);
