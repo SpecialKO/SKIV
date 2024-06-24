@@ -4411,6 +4411,8 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, int flags = 0x0)
         pCursorOutput = pOutput;
         break;
       }
+
+      pOutput = nullptr;
     }
 
     if (pCursorOutput != nullptr)
