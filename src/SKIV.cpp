@@ -3674,8 +3674,8 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
     //
     // Only support snipping the primary monitor for now
     //
-    if (MonitorFromPoint (ptCursor, 0x0) ==
-        MonitorFromPoint (ptMainDisplay, 0x0))
+    //if (MonitorFromPoint (ptCursor, 0x0) ==
+    //    MonitorFromPoint (ptMainDisplay, 0x0))
     if (! std::exchange (_registry._SnippingMode, true))
     {
       extern HRESULT
@@ -3710,6 +3710,8 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
           ShowWindow (SKIF_ImGui_hWnd, SW_RESTORE);
 
         SKIF_ImGui_SetFullscreen (SKIF_ImGui_hWnd, true);
+
+        UpdateWindow (SKIF_ImGui_hWnd);
 
         selection_rect.Min = ImVec2 (0.0f, 0.0f);
         selection_rect.Max = ImVec2 (0.0f, 0.0f);
@@ -3819,7 +3821,8 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
     case WM_HOTKEY:
       if (wParam == SKIF_HotKey_HDR)
         SKIF_Util_EnableHDROutput ( );
-      if (wParam == SKIV_HotKey_Snip)
+
+      else if (wParam == SKIV_HotKey_Snip)
         _EnterSnippingMode ( );
 
     break;
