@@ -1920,9 +1920,29 @@ SKIF_UI_Tab_DrawViewer (void)
     SKIV_HDR_MaxCLL = 1.0f;
 
   ImVec2 image_pos  = ImGui::GetCursorScreenPos ( ); // NOTE! Actual screen position (since that's what ImGui::Image uses)
+  // Snap position to integer coordinates, starting at (0,0)
+  //
+  if (image_pos.x < 1.0f) image_pos.x = 0.0f;
+  if (image_pos.y < 1.0f) image_pos.y = 0.0f;
+
+  image_pos = ImVec2 ( roundf (image_pos.x),
+                       roundf (image_pos.y) );
+
+  ImGui::SetCursorPos        (image_pos);
   ImRect image_rect = ImRect (image_pos, image_pos + sizeCover);
 
+#if 1
   // Display game cover image
+  ImDrawList* draw_list =
+    ImGui::GetWindowDrawList ();
+
+  if (cover.pRawTexSRV.p != nullptr)
+  {
+    draw_list->AddImage (cover.pRawTexSRV.p, image_pos, ImVec2 (image_pos.x+sizeCover.x, image_pos.y+sizeCover.y),
+                         cover.light_info.isHDR ? hdr_uv0 : cover.uv0,  // Top Left coordinates
+                         cover.light_info.isHDR ? hdr_uv1 : cover.uv1); // Bottom Right coordinates
+  }
+#else
   SKIF_ImGui_OptImage  (cover.pRawTexSRV.p,
                                                     ImVec2 (sizeCover.x,
                                                             sizeCover.y),
@@ -1931,6 +1951,7 @@ SKIF_UI_Tab_DrawViewer (void)
                                   (_registry._StyleLightMode) ? ImVec4 (1.0f, 1.0f, 1.0f, fGammaCorrectedTint * AdjustAlpha (fAlpha))  :
                                                                 ImVec4 (1.f, 1.f, 1.f, 1.f) // Alpha transparency (2024-01-01, removed fGammaCorrectedTint * fAlpha for the light style)
   );
+#endif
 
   isImageHovered = ImGui::IsItemHovered();
 
