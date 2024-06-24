@@ -1476,15 +1476,15 @@ SKIF_ImGui_IsScrollbarY (void)
 bool
 SKIF_ImGui_IsFullscreen (HWND hWnd)
 {
-  extern bool SKIF_ImGui_ImplWin32_SetFullscreen (HWND, int);
-  return SKIF_ImGui_ImplWin32_SetFullscreen      (hWnd, -1);
+  extern bool SKIF_ImGui_ImplWin32_SetFullscreen (HWND, int, HMONITOR);
+  return SKIF_ImGui_ImplWin32_SetFullscreen      (hWnd, -1, NULL);
 }
 
 void
-SKIF_ImGui_SetFullscreen (HWND hWnd, bool fullscreen)
+SKIF_ImGui_SetFullscreen (HWND hWnd, bool fullscreen, HMONITOR monitor)
 {
-  extern bool SKIF_ImGui_ImplWin32_SetFullscreen (HWND, int);
-  SKIF_ImGui_ImplWin32_SetFullscreen             (hWnd, static_cast<int> (fullscreen));
+  extern bool SKIF_ImGui_ImplWin32_SetFullscreen (HWND, int, HMONITOR);
+  SKIF_ImGui_ImplWin32_SetFullscreen             (hWnd, static_cast<int> (fullscreen), monitor);
 }
 
 void

@@ -130,7 +130,7 @@ static void ImGui_ImplWin32_UpdateMonitors();
 void    SKIF_ImGui_ImplWin32_UpdateDWMBorders (void);
 void    SKIF_ImGui_ImplWin32_SetDWMBorders    (void* hWnd, DWM_WINDOW_CORNER_PREFERENCE dwmCornerPreference = DWMWCP_DEFAULT);
 bool    SKIF_ImGui_ImplWin32_IsFocused        (void);
-bool    SKIF_ImGui_ImplWin32_SetFullscreen    (HWND hWnd, int fullscreen);
+bool    SKIF_ImGui_ImplWin32_SetFullscreen    (HWND hWnd, int fullscreen, HMONITOR monitor = NULL);
 
 struct ImGui_ImplWin32_Data
 {
@@ -2148,7 +2148,7 @@ SKIF_ImGui_ImplWin32_WantUpdateMonitors (void)
 
 
 bool
-SKIF_ImGui_ImplWin32_SetFullscreen (HWND hWnd, int fullscreen)
+SKIF_ImGui_ImplWin32_SetFullscreen (HWND hWnd, int fullscreen, HMONITOR monitor)
 {
   // Cached data structure to support tracking multiple windows
   struct fullscreen_s {
@@ -2215,9 +2215,12 @@ SKIF_ImGui_ImplWin32_SetFullscreen (HWND hWnd, int fullscreen)
       SetWindowLong (hWnd, GWL_STYLE,   _cached->dwStyle   & ~(WS_CAPTION | WS_THICKFRAME));
       SetWindowLong (hWnd, GWL_EXSTYLE, _cached->dwExStyle & ~(WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE | WS_EX_STATICEDGE));
 
+      if (monitor == NULL)
+        monitor = MonitorFromWindow (hWnd, MONITOR_DEFAULTTONEAREST);
+
       MONITORINFO mi = { };
       mi.cbSize = sizeof(mi);
-      GetMonitorInfo (MonitorFromWindow (hWnd, MONITOR_DEFAULTTONEAREST), &mi);
+      GetMonitorInfo (monitor, &mi);
       rect = mi.rcMonitor;
 
       SKIF_ImGui_ImplWin32_SetDWMBorders (hWnd, DWMWCP_DONOTROUND);

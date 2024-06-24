@@ -1434,7 +1434,15 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
     // F11 / Ctrl+F toggles fullscreen mode
     if (hotkeyF11 || hotkeyCtrlF)
-      SKIF_ImGui_SetFullscreen (SKIF_ImGui_hWnd, ! SKIF_ImGui_IsFullscreen (SKIF_ImGui_hWnd));
+    {
+      POINT    ptCursor = {     };
+      HMONITOR monitor  = NULL;
+
+      if (GetCursorPos (&ptCursor))
+        monitor = MonitorFromPoint (ptCursor, MONITOR_DEFAULTTONULL);
+
+      SKIF_ImGui_SetFullscreen (SKIF_ImGui_hWnd, ! SKIF_ImGui_IsFullscreen (SKIF_ImGui_hWnd), monitor);
+    }
 
     if (hotkeyCtrlD)
     {
@@ -3667,15 +3675,6 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
   auto _EnterSnippingMode = [&](void) -> void
   {
-    POINT              ptMainDisplay = { 1,1 };
-    POINT              ptCursor      = {     };
-    GetCursorPos     (&ptCursor);
-
-    //
-    // Only support snipping the primary monitor for now
-    //
-    //if (MonitorFromPoint (ptCursor, 0x0) ==
-    //    MonitorFromPoint (ptMainDisplay, 0x0))
     if (! std::exchange (_registry._SnippingMode, true))
     {
       extern HRESULT
@@ -3708,8 +3707,14 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
         if (iconicBeforeSnip)
           ShowWindow (SKIF_ImGui_hWnd, SW_RESTORE);
+        
+        POINT    ptCursor = {     };
+        HMONITOR monitor  = NULL;
 
-        SKIF_ImGui_SetFullscreen (SKIF_ImGui_hWnd, true);
+        if (GetCursorPos (&ptCursor))
+          monitor = MonitorFromPoint (ptCursor, MONITOR_DEFAULTTONULL);
+
+        SKIF_ImGui_SetFullscreen (SKIF_ImGui_hWnd, true, monitor);
 
         UpdateWindow (SKIF_ImGui_hWnd);
 
