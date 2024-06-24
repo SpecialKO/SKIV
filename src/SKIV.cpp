@@ -1230,7 +1230,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
   while (! SKIF_Shutdown.load() ) // && IsWindow (hWnd) )
   {
     // Reset on each frame
-    SKIF_MouseDragMoveAllowed = (! _registry._SnippingMode);
+    SKIF_MouseDragMoveAllowed = (! _registry._SnippingMode && ! SKIF_ImGui_IsFullscreen (SKIF_ImGui_hWnd));
     imageFadeActive           = false; // Assume there's no cover fade effect active
     msg                       = { };
     static UINT uiLastMsg     = 0x0;
@@ -1655,7 +1655,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
         ImGui::SetNextWindowSizeConstraints (wnd_minimum_size, ImVec2 (FLT_MAX, FLT_MAX));
 
       const bool bNoMove =
-        (io.KeyCtrl || _registry._SnippingMode);
+        (io.KeyCtrl || ! SKIF_MouseDragMoveAllowed);
 
       ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2());
       ImGui::PushStyleVar (ImGuiStyleVar_WindowBorderSize, 0.0f); // Disable ImGui's 1 px window border
@@ -3675,6 +3675,8 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
   auto _EnterSnippingMode = [&](void) -> void
   {
+    PLOG_VERBOSE << "Received request to enter snipping mode...";
+
     if (! std::exchange (_registry._SnippingMode, true))
     {
       extern HRESULT
@@ -3686,6 +3688,8 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
       if (SUCCEEDED (hr))
       {
+        PLOG_VERBOSE << "Desktop capture was successful!";
+
         extern HWND hwndBeforeSnip;
         extern HWND hwndTopBeforeSnip;
         extern bool iconicBeforeSnip;
