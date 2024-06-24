@@ -1879,6 +1879,8 @@ SKIF_UI_Tab_DrawViewer (void)
       ImGui::SetCursorPosX ((ImGui::GetContentRegionAvail().x - sizeCover_old.x) * 0.5f);
     if (sizeCover_old.y < ImGui::GetContentRegionAvail().y)
       ImGui::SetCursorPosY ((ImGui::GetContentRegionAvail().y - sizeCover_old.y) * 0.5f);
+
+    sizeCover_old = ImFloor (sizeCover_old);
   
     SKIF_ImGui_OptImage  (cover_old.pRawTexSRV.p,
                                                       ImVec2 (sizeCover_old.x,
