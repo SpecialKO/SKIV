@@ -1798,10 +1798,10 @@ wWinMain ( _In_     HINSTANCE hInstance,
           SKIF_ImGui_OptImage (SKIV_DesktopImage, vDesktopSize, ImVec2 (-1024.0f, -1024.0f),
                                                                 ImVec2 (-2048.0f, -2048.0f));
 
-          ImDrawList* draw_list =
-            ImGui::GetForegroundDrawList ();
+          //ImDrawList* draw_list =
+          //  ImGui::GetForegroundDrawList ();
 
-          draw_list->AddRectFilled (ImVec2 (0.0f, 0.0f), vDesktopSize, ImGui::GetColorU32 (IM_COL32(20,20,20,128))); // Background
+          //draw_list->AddRectFilled (monitor_extent.Min, vDesktopSize, ImGui::GetColorU32 (IM_COL32(20,20,20,128))); // Background
         }
 
         static ImRect selection;
@@ -1984,12 +1984,12 @@ wWinMain ( _In_     HINSTANCE hInstance,
         };
 
                           // Desktop Pos,      Desktop Pos + Desktop Size
-        ImRect allowable (ImVec2 (0.0f, 0.0f), vDesktopSize);
+        ImRect allowable (monitor_extent.Min, vDesktopSize);
         ImRect capture_area;
 
         static bool clicked = false;
 
-        if (! clicked && SKIF_ImGui_SelectionRect (&selection, allowable, 0, SelectionFlag_Filled))
+        if (! clicked && SKIF_ImGui_SelectionRect (&selection, allowable, 0, SelectionFlag_None))
         {
           _registry._SnippingModeExit = true;
           capture_area = selection;
