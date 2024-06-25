@@ -3938,12 +3938,17 @@ SKIV_HDR_ConvertImageToPNG (const DirectX::Image& raw_hdr_img, DirectX::ScratchI
   using namespace DirectX;
 
   if (auto typeless_fmt = DirectX::MakeTypeless (raw_hdr_img.format);
+           typeless_fmt == DXGI_FORMAT_R8G8B8A8_TYPELESS     ||
            typeless_fmt == DXGI_FORMAT_R10G10B10A2_TYPELESS  ||
            typeless_fmt == DXGI_FORMAT_R16G16B16A16_TYPELESS ||
            typeless_fmt == DXGI_FORMAT_R32G32B32A32_TYPELESS)
   {
     if (png_img.GetImageCount () == 0)
     {
+      // Early SDR exit
+      if (typeless_fmt == DXGI_FORMAT_R8G8B8A8_TYPELESS)
+        return (SUCCEEDED (png_img.InitializeFromImage (raw_hdr_img)));
+
       if (FAILED (png_img.Initialize2D (DXGI_FORMAT_R16G16B16A16_UNORM,
               raw_hdr_img.width,
               raw_hdr_img.height, 1, 1)))
@@ -4034,6 +4039,8 @@ SKIV_PNG_MakeHDR ( const wchar_t*        wszFilePath,
 
   if (png_crc32 ((const BYTE *)_test, 0, 4, 0) == 0xae426082)
   {
+    PLOG_VERBOSE << "png_crc32 == TRUE";
+
     FILE*
         fPNG = _wfopen (wszFilePath, L"r+b");
     if (fPNG != nullptr)
@@ -4246,6 +4253,9 @@ SKIV_HDR_SavePNGToDisk (const wchar_t* wszPNGPath, const DirectX::Image* png_ima
         png_image == nullptr ||
         raw_image == nullptr )
   {
+    PLOG_VERBOSE_IF(wszPNGPath == nullptr) << "wszPNGPath == nullptr";
+    PLOG_VERBOSE_IF(png_image  == nullptr) << "png_image  == nullptr";
+    PLOG_VERBOSE_IF(raw_image  == nullptr) << "raw_image  == nullptr";
     return false;
   }
 
@@ -4264,9 +4274,13 @@ SKIV_HDR_SavePNGToDisk (const wchar_t* wszPNGPath, const DirectX::Image* png_ima
                                               SK_WIC_SetMetadataTitle (pMQW, metadata_title);
                                             }*/)))
   {
-    return
-      SKIV_PNG_MakeHDR (wszPNGPath, *png_image, *raw_image);
-  }
+    PLOG_VERBOSE << "DirectX::SaveToWICFile ( ): SUCCEEDED";
+
+    return (png_image->format == DXGI_FORMAT_R16G16B16A16_UNORM)
+           ? SKIV_PNG_MakeHDR (wszPNGPath, *png_image, *raw_image)
+           : true;
+  } else
+    PLOG_VERBOSE << "DirectX::SaveToWICFile ( ): FAILED";
 
   return false;
 }
@@ -4327,6 +4341,8 @@ bool SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped)
   DirectX::ScratchImage                    hdr10_img;
   if (SKIV_HDR_ConvertImageToPNG (*pImage, hdr10_img))
   {
+    PLOG_VERBOSE << "SKIV_HDR_ConvertImageToPNG ( ): TRUE";
+
     wchar_t                         wszPNGPath [MAX_PATH + 2] = { };
     GetCurrentDirectoryW (MAX_PATH, wszPNGPath);
 
@@ -4336,8 +4352,11 @@ bool SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped)
 
     if (SKIV_HDR_SavePNGToDisk (wszPNGPath, hdr10_img.GetImages (), pImage, nullptr))
     {
+      PLOG_VERBOSE << "SKIV_HDR_SavePNGToDisk ( ): TRUE";
+
       if (SKIV_PNG_CopyToClipboard (*hdr10_img.GetImage (0,0,0), wszPNGPath, 0))
       {
+        PLOG_VERBOSE << "SKIV_PNG_CopyToClipboard ( ): TRUE";
         return true;
       }
     }

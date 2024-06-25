@@ -1797,13 +1797,13 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
           //SKIF_ImGui_OptImage (SKIV_DesktopImage, vDesktopSize, ImVec2 (-1024.0f, -1024.0f),
           //                                                      ImVec2 (-2048.0f, -2048.0f));
-          
+
           SKIF_ImGui_OptImage (SKIV_DesktopImage, vDesktopSize);
 
-          ImDrawList* draw_list =
-            ImGui::GetForegroundDrawList ();
+          //ImDrawList* draw_list =
+          //  ImGui::GetForegroundDrawList ();
 
-          draw_list->AddRectFilled (ImVec2 (0, 0), vDesktopSize, ImGui::GetColorU32 (IM_COL32(20, 20, 20, 128))); // Background
+          //draw_list->AddRectFilled (ImVec2 (0, 0), vDesktopSize, ImGui::GetColorU32 (IM_COL32(20, 20, 20, 128))); // Background
         }
 
         static ImRect selection;
@@ -2031,6 +2031,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
         {
           ignoredWindows.clear();
 
+          PLOG_VERBOSE << "Attempting to capture region...";
+
           const size_t
             x      = static_cast <size_t> (std::max (0.0f, capture_area.Min.x)),
             y      = static_cast <size_t> (std::max (0.0f, capture_area.Min.y)),
@@ -2048,19 +2050,31 @@ wWinMain ( _In_     HINSTANCE hInstance,
           DirectX::ScratchImage                                                    captured_img;
           if (SUCCEEDED (DirectX::CaptureTexture (pDevice, pDevCtx, pDesktopRes.p, captured_img)))
           {
+            PLOG_VERBOSE << "DirectX::CaptureTexture    ( ): SUCCEEDED";
             DirectX::ScratchImage
                             subrect;
-            if (SUCCEEDED (subrect.Initialize2D   ( captured_img.GetMetadata ().format, width, height, 1, 1)) &&
-                SUCCEEDED (DirectX::CopyRectangle (*captured_img.GetImages   (), src_rect,
-                                                                                  *subrect.GetImages (), DirectX::TEX_FILTER_DEFAULT, 0, 0)))
+
+            if (SUCCEEDED (subrect.Initialize2D   ( captured_img.GetMetadata ().format, width, height, 1, 1)))
             {
-              extern bool
-                  SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped);
-              if (SKIV_Image_CopyToClipboard (subrect.GetImages (), true))
+              PLOG_VERBOSE << "subrect.Initialize2D       ( ): SUCCEEDED";
+
+              if (SUCCEEDED (DirectX::CopyRectangle (*captured_img.GetImages   (), src_rect,
+                                                                                    *subrect.GetImages (), DirectX::TEX_FILTER_DEFAULT, 0, 0)))
               {
-              }
-            }
-          }
+                PLOG_VERBOSE << "DirectX::CopyRectangle     ( ): SUCCEEDED";
+
+                extern bool
+                    SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped);
+                if (SKIV_Image_CopyToClipboard (subrect.GetImages (), true))
+                  PLOG_VERBOSE << "SKIV_Image_CopyToClipboard ( ): SUCCEEDED";
+                else
+                  PLOG_WARNING << "SKIV_Image_CopyToClipboard ( ): FAILED";
+              } else
+                PLOG_WARNING << "DirectX::CopyRectangle     ( ): FAILED";
+            } else
+              PLOG_WARNING << "subrect.Initialize2D       ( ): FAILED";
+          } else
+            PLOG_WARNING << "DirectX::CaptureTexture    ( ): FAILED";
         }
 
         if (_registry._SnippingModeExit)

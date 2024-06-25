@@ -603,7 +603,7 @@ void ImGui_ImplDX11_RenderDrawData (ImDrawData *draw_data)
       pix_constant_buffer->tonemap_type              = SKIV_HDR_TonemapType;
     else
       pix_constant_buffer->tonemap_type              = SKIV_HDR_TonemapType::SKIV_TONEMAP_TYPE_NONE;
-    //pix_constant_buffer->hdr_max_cll                 = SKIV_HDR_MaxCLL;
+  //pix_constant_buffer->hdr_max_cll                 = SKIV_HDR_MaxCLL;
     pix_constant_buffer->hdr_visualization           = SKIV_HDR_VisualizationId;
     pix_constant_buffer->sdr_reference_white         = SKIV_HDR_SDRWhite;
     pix_constant_buffer->hdr_visualization_flags [3] = SKIV_HDR_VisualizationFlagsSDR;
