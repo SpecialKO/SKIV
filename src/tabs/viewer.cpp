@@ -1437,8 +1437,7 @@ SKIF_UI_Tab_DrawViewer (void)
   //
   // User is requesting to copy the loaded image to clipboard,
   //   let's download it back from the GPU and have some fun!
-  if (wantCopyToClipboard && cover.pRawTexSRV.p != nullptr &&
-                             cover.is_hdr)
+  if (wantCopyToClipboard && cover.pRawTexSRV.p != nullptr /* && cover.is_hdr */)
   {
     auto
         pDevice = SKIF_D3D11_GetDevice ();
@@ -2585,7 +2584,7 @@ SKIF_UI_Tab_DrawViewer (void)
       if (cover.is_hdr &&
           SKIF_ImGui_MenuItemEx2 ("Export to SDR", ICON_FA_FILE_EXPORT, ImGui::GetStyleColorVec4(ImGuiCol_Text),      "Ctrl+X"))
         ExportSDRDialog = PopupState_Open;
-      if (cover.is_hdr &&
+      if (//cover.is_hdr &&
           SKIF_ImGui_MenuItemEx2 ("Copy",          ICON_FA_CLIPBOARD,   ImGui::GetStyleColorVec4(ImGuiCol_Text),      "Ctrl+C"))
       {
         extern void SKIV_HandleCopyShortcut (void);
