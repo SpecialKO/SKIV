@@ -1780,6 +1780,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
         ImVec2 vDesktopSize (0.0f, 0.0f);
 
+        bool SKIV_HDR = (_registry.iHDRMode > 0 && SKIF_Util_IsHDRActive ( ));
+
         extern CComPtr <ID3D11ShaderResourceView> SKIV_DesktopImage;
                CComPtr <ID3D11Resource>           pDesktopRes;
 
@@ -1801,8 +1803,13 @@ wWinMain ( _In_     HINSTANCE hInstance,
             }
           }
 
-          SKIF_ImGui_OptImage (SKIV_DesktopImage, vDesktopSize, ImVec2 (-1024.0f, -1024.0f),
-                                                                ImVec2 (-2048.0f, -2048.0f));
+          static const ImVec2 sdr_uv0 = ImVec2 (0, 0),
+                              sdr_uv1 = ImVec2 (1, 1),
+                              hdr_uv0 = ImVec2 (-1024.0f, -1024.0f),
+                              hdr_uv1 = ImVec2 (-2048.0f, -2048.0f);
+
+          SKIF_ImGui_OptImage (SKIV_DesktopImage, vDesktopSize, (SKIV_HDR) ? hdr_uv0 : sdr_uv0,
+                                                                (SKIV_HDR) ? hdr_uv1 : sdr_uv1);
 
           extern uint32_t SKIV_HDR_VisualizationId;
           extern float SKIV_HDR_SDRWhite;
@@ -2085,7 +2092,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
                 extern bool
                     SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped, bool isHDR);
-                if (SKIV_Image_CopyToClipboard (subrect.GetImages (), true, (_registry.iHDRMode > 0 && SKIF_Util_IsHDRActive ( ))))
+                if (SKIV_Image_CopyToClipboard (subrect.GetImages (), true, SKIV_HDR))
                   PLOG_VERBOSE << "SKIV_Image_CopyToClipboard ( ): SUCCEEDED";
                 else
                   PLOG_WARNING << "SKIV_Image_CopyToClipboard ( ): FAILED";
