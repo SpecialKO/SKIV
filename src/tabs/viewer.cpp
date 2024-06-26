@@ -575,9 +575,9 @@ static int getTextureLoadQueuePos (void) {
 extern void SKIF_Shell_AddJumpList     (std::wstring name, std::wstring path, std::wstring parameters, std::wstring directory, std::wstring icon_path, bool bService);
 
 // Forward declarations
-bool    SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped, bool isHDR);
+bool    SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped, bool isHDR, bool force_sRGB);
 HRESULT SKIF_Image_SaveToDisk_HDR  (const DirectX::Image& image, const wchar_t* wszFileName);
-HRESULT SKIF_Image_SaveToDisk_SDR  (const DirectX::Image& image, const wchar_t* wszFileName);
+HRESULT SKIF_Image_SaveToDisk_SDR  (const DirectX::Image& image, const wchar_t* wszFileName, bool force_sRGB);
 
 // Functions / Structs
 
@@ -1479,7 +1479,7 @@ SKIF_UI_Tab_DrawViewer (void)
                   SUCCEEDED (DirectX::CopyRectangle (*captured_img.GetImages   (), src_rect,
                                                                                    *subrect.GetImages (), DirectX::TEX_FILTER_DEFAULT, 0, 0)))
               {
-                if (SKIV_Image_CopyToClipboard (subrect.GetImages (), true, cover.is_hdr))
+                if (SKIV_Image_CopyToClipboard (subrect.GetImages (), true, cover.is_hdr, false))
                 {
                   ImGui::InsertNotification (
                     {
@@ -1514,7 +1514,7 @@ SKIF_UI_Tab_DrawViewer (void)
 
             else
             {
-              if (SKIV_Image_CopyToClipboard (captured_img.GetImages (), false, cover.is_hdr))
+              if (SKIV_Image_CopyToClipboard (captured_img.GetImages (), false, cover.is_hdr, false))
               {
                 ImGui::InsertNotification (
                   {
@@ -3125,7 +3125,7 @@ SKIF_UI_Tab_DrawViewer (void)
             else
             {
               hr =
-                SKIF_Image_SaveToDisk_SDR (*captured_img.GetImages (), pwszFilePath);
+                SKIF_Image_SaveToDisk_SDR (*captured_img.GetImages (), pwszFilePath, false);
             }
           }
         }
@@ -3258,14 +3258,14 @@ SKIF_UI_Tab_DrawViewer (void)
             if (cover.is_hdr)
             {
               hr =
-                SKIF_Image_SaveToDisk_SDR (*captured_img.GetImages (), pwszFilePath);
+                SKIF_Image_SaveToDisk_SDR (*captured_img.GetImages (), pwszFilePath, false);
             }
 
             else
             {
               // WTF? It's already SDR... oh well, save it anyway
               hr =
-                SKIF_Image_SaveToDisk_SDR (*captured_img.GetImages (), pwszFilePath);
+                SKIF_Image_SaveToDisk_SDR (*captured_img.GetImages (), pwszFilePath, false);
             }
           }
         }
@@ -4372,7 +4372,7 @@ void SKIV_HandleCopyShortcut (void)
 
 CComPtr <ID3D11ShaderResourceView> SKIV_DesktopImage;
 
-bool SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped, bool isHDR)
+bool SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped, bool isHDR, bool force_sRGB)
 {
   if (pImage == nullptr)
     return false;
@@ -4401,7 +4401,7 @@ bool SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped, boo
   }
 
   else {
-    if (SUCCEEDED (SKIF_Image_SaveToDisk_SDR (*pImage, wsPNGPath.c_str())))
+    if (SUCCEEDED (SKIF_Image_SaveToDisk_SDR (*pImage, wsPNGPath.c_str(), force_sRGB)))
     {
       PLOG_VERBOSE << "SKIF_Image_SaveToDisk_SDR ( ): SUCCEEDED";
 
@@ -4485,9 +4485,15 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, int flags = 0x0)
     return E_NOTIMPL;
   }
 
+  // The ordering goes from the highest prioritized format to the lowest
   DXGI_FORMAT capture_formats [] = {
-    DXGI_FORMAT_R8G8B8A8_UNORM, // Not HDR...
-    DXGI_FORMAT_B8G8R8X8_UNORM, // Not HDR...
+    // SDR:
+    DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, // Prefer SRGB formats as even non-SRGB formats use sRGB gamma
+    DXGI_FORMAT_R8G8B8A8_UNORM,      // The most common format for the desktop
+    DXGI_FORMAT_B8G8R8X8_UNORM_SRGB,
+    DXGI_FORMAT_B8G8R8X8_UNORM,
+
+    // HDR:
     DXGI_FORMAT_R10G10B10A2_UNORM,
     DXGI_FORMAT_R16G16B16A16_FLOAT,
     DXGI_FORMAT_R32G32B32A32_FLOAT
@@ -4628,7 +4634,7 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, int flags = 0x0)
 }
 
 HRESULT
-SKIF_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileName)
+SKIF_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileName, const bool force_sRGB)
 {
   using namespace DirectX;
 
@@ -4836,7 +4842,7 @@ SKIF_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
   }
 
   GUID      wic_codec;
-  WIC_FLAGS wic_flags = WIC_FLAGS_DITHER_DIFFUSION;
+  WIC_FLAGS wic_flags = WIC_FLAGS_DITHER_DIFFUSION | (force_sRGB ? WIC_FLAGS_FORCE_SRGB : WIC_FLAGS_NONE);
 
   if (StrStrIW (wszExtension, L"jpg") ||
       StrStrIW (wszExtension, L"jpeg"))

@@ -1779,7 +1779,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
         ImVec2 vDesktopSize (0.0f, 0.0f);
 
-        bool SKIV_HDR = (_registry.iHDRMode > 0 && SKIF_Util_IsHDRActive ( ));
+        bool SKIV_HDR  = (_registry.iHDRMode > 0 && SKIF_Util_IsHDRActive ( ));
+        bool sRGB_Hack = false;
 
         extern CComPtr <ID3D11ShaderResourceView> SKIV_DesktopImage;
                CComPtr <ID3D11Resource>           pDesktopRes;
@@ -1799,16 +1800,23 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
               vDesktopSize.x = static_cast <float> (texDesc.Width);
               vDesktopSize.y = static_cast <float> (texDesc.Height);
+
+              // Non-sRGB DXGI formats still use sRGB gamma so they need a hack to appear properly
+              if (texDesc.Format == DXGI_FORMAT_R8G8B8A8_UNORM ||
+                  texDesc.Format == DXGI_FORMAT_B8G8R8X8_UNORM)
+                sRGB_Hack = true;
             }
           }
 
-          static const ImVec2 srgb_uv0 = ImVec2 (-4096.0f, -4096.0f), // SDR is in sRGB colorspace
-                              srgb_uv1 = ImVec2 (-5120.0f, -5120.0f), // SDR is in sRGB colorspace
-                              hdr_uv0  = ImVec2 (-1024.0f, -1024.0f),
-                              hdr_uv1  = ImVec2 (-2048.0f, -2048.0f);
+          static const ImVec2 srgb_uv0       = ImVec2 (0, 0), // _SRGB format
+                              srgb_uv1       = ImVec2 (1, 1), // _SRGB format
+                              force_srgb_uv0 = ImVec2 (-4096.0f, -4096.0f), // Non-sRGB formats needs a hack to force them to appear properly
+                              force_srgb_uv1 = ImVec2 (-5120.0f, -5120.0f), // Non-sRGB formats needs a hack to force them to appear properly
+                              hdr_uv0        = ImVec2 (-1024.0f, -1024.0f),
+                              hdr_uv1        = ImVec2 (-2048.0f, -2048.0f);
 
-          SKIF_ImGui_OptImage (SKIV_DesktopImage, vDesktopSize, (SKIV_HDR) ? hdr_uv0 : srgb_uv0,
-                                                                (SKIV_HDR) ? hdr_uv1 : srgb_uv1);
+          SKIF_ImGui_OptImage (SKIV_DesktopImage, vDesktopSize, (SKIV_HDR) ? hdr_uv0 : (sRGB_Hack) ? force_srgb_uv0 : srgb_uv0,
+                                                                (SKIV_HDR) ? hdr_uv1 : (sRGB_Hack) ? force_srgb_uv1 : srgb_uv1);
 
           ImDrawList* draw_list =
             ImGui::GetForegroundDrawList ();
@@ -2074,8 +2082,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
                 PLOG_VERBOSE << "DirectX::CopyRectangle     ( ): SUCCEEDED";
 
                 extern bool
-                    SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped, bool isHDR);
-                if (SKIV_Image_CopyToClipboard (subrect.GetImages (), true, SKIV_HDR))
+                    SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped, bool isHDR, bool force_sRGB);
+                if (SKIV_Image_CopyToClipboard (subrect.GetImages (), true, SKIV_HDR, sRGB_Hack))
                   PLOG_VERBOSE << "SKIV_Image_CopyToClipboard ( ): SUCCEEDED";
                 else
                   PLOG_WARNING << "SKIV_Image_CopyToClipboard ( ): FAILED";
