@@ -49,11 +49,12 @@ struct VS_INPUT
 
 struct PS_INPUT
 {
-  float4 pos     : SV_POSITION;
-  float2 uv      : TEXCOORD0;
-  float4 col     : COLOR0; // ImU32
-  float4 lum     : COLOR1; // constant_buffer->luminance_scale
-  float  hdr_img : COLOR2;
+  float4 pos      : SV_POSITION;
+  float2 uv       : TEXCOORD0;
+  float4 col      : COLOR0; // ImU32
+  float4 lum      : COLOR1; // constant_buffer->luminance_scale
+  float  hdr_img  : COLOR2; // 1 to indicate HDR content
+  float  srgb_img : COLOR3; // 1 to indicate sRGB (SDR) content
 };
 
 PS_INPUT main (VS_INPUT input)
@@ -64,21 +65,34 @@ PS_INPUT main (VS_INPUT input)
                         float4 (input.pos.xy, 0.f, 1.f) );
   output.lum = Luminance.xyzw;
 
+  // Reserved texcoords for sRGB (SDR) content passthrough
+  if (all(input.uv <= -4096.0f))
+  {
+    output.uv.x = (input.uv.x == -4096.0f ? 0.0f : 1.0f);
+    output.uv.y = (input.uv.y == -4096.0f ? 0.0f : 1.0f);
+    
+    output.col      = input.col;
+    output.srgb_img = 1.0f;
+    output.hdr_img  = 0.0f;
+  }
+
   // Reserved texcoords for HDR content passthrough
-  if (all (input.uv <= -1024.0f))
+  else if (all (input.uv <= -1024.0f))
   {
     output.uv.x = (input.uv.x == -1024.0f ? 0.0f : 1.0f);
     output.uv.y = (input.uv.y == -1024.0f ? 0.0f : 1.0f);
     
-    output.col     = float4 (1.0f, 1.0f, 1.0f, 1.0f);
-    output.hdr_img = 1.0f;
+    output.col      = float4 (1.0f, 1.0f, 1.0f, 1.0f);
+    output.srgb_img = 0.0f;
+    output.hdr_img  = 1.0f;
   }
 
   else
   {
-    output.uv      = input.uv; // Texture coordinates
-    output.col     = input.col;
-    output.hdr_img = 0.0f;
+    output.uv       = input.uv; // Texture coordinates
+    output.col      = input.col;
+    output.srgb_img = 0.0f;
+    output.hdr_img  = 0.0f;
   }
 
   return output;

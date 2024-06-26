@@ -911,7 +911,6 @@ void SKIF_Initialize (LPWSTR lpCmdLine)
 
   // Create the folder for temporary files
   else {
-    std::error_code ec;
     std::filesystem::create_directories (_path_cache.skiv_temp, ec);
   }
 }
@@ -1803,34 +1802,18 @@ wWinMain ( _In_     HINSTANCE hInstance,
             }
           }
 
-          static const ImVec2 sdr_uv0 = ImVec2 (0, 0),
-                              sdr_uv1 = ImVec2 (1, 1),
-                              hdr_uv0 = ImVec2 (-1024.0f, -1024.0f),
-                              hdr_uv1 = ImVec2 (-2048.0f, -2048.0f);
+          static const ImVec2 srgb_uv0 = ImVec2 (-4096.0f, -4096.0f), // SDR is in sRGB colorspace
+                              srgb_uv1 = ImVec2 (-5120.0f, -5120.0f), // SDR is in sRGB colorspace
+                              hdr_uv0  = ImVec2 (-1024.0f, -1024.0f),
+                              hdr_uv1  = ImVec2 (-2048.0f, -2048.0f);
 
-          SKIF_ImGui_OptImage (SKIV_DesktopImage, vDesktopSize, (SKIV_HDR) ? hdr_uv0 : sdr_uv0,
-                                                                (SKIV_HDR) ? hdr_uv1 : sdr_uv1);
+          SKIF_ImGui_OptImage (SKIV_DesktopImage, vDesktopSize, (SKIV_HDR) ? hdr_uv0 : srgb_uv0,
+                                                                (SKIV_HDR) ? hdr_uv1 : srgb_uv1);
 
-          extern uint32_t SKIV_HDR_VisualizationId;
-          extern float SKIV_HDR_SDRWhite;
-          extern float SKIV_HDR_MaxCLL;
-          extern float SKIV_HDR_MaxLuminance;
-          extern float SKIV_HDR_DisplayMaxLuminance;
-          extern float SKIV_HDR_BrightnessScale;
+          ImDrawList* draw_list =
+            ImGui::GetForegroundDrawList ();
 
-          //SKIV_HDR_VisualizationId = SKIV_HDR_VISUALIZTION_GAMUT;
-          //SKIV_HDR_SDRWhite              = 0.0f;
-          //SKIV_HDR_MaxCLL                = 0.0f;
-          //SKIV_HDR_MaxLuminance          = 0.0f;
-          //SKIV_HDR_DisplayMaxLuminance   = 0.0f;
-          //SKIV_HDR_BrightnessScale       = 0.1f;
-
-          //SKIF_ImGui_OptImage (SKIV_DesktopImage, vDesktopSize);
-
-          //ImDrawList* draw_list =
-          //  ImGui::GetForegroundDrawList ();
-
-          //draw_list->AddRectFilled (ImVec2 (0, 0), vDesktopSize, ImGui::GetColorU32 (IM_COL32(20, 20, 20, 128))); // Background
+          draw_list->AddRectFilled (ImVec2 (0, 0), vDesktopSize, ImGui::GetColorU32 (IM_COL32(20, 20, 20, 80))); // Transparent Overlay
         }
 
         static ImRect selection;

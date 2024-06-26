@@ -45,11 +45,12 @@ float4 main(PS_INPUT input) : SV_Target
 
 struct PS_INPUT
 {
-  float4 pos     : SV_POSITION;
-  float2 uv      : TEXCOORD0;
-  float4 col     : COLOR0;
-  float4 lum     : COLOR1; // constant_buffer->luminance_scale
-  float  hdr_img : COLOR2;
+  float4 pos      : SV_POSITION;
+  float2 uv       : TEXCOORD0;
+  float4 col      : COLOR0;
+  float4 lum      : COLOR1; // constant_buffer->luminance_scale
+  float  hdr_img  : COLOR2; // 1 to indicate HDR content
+  float  srgb_img : COLOR3; // 1 to indicate sRGB (SDR) content
 };
 
 cbuffer imgui_cbuffer : register (b0)
@@ -183,7 +184,20 @@ float4 main (PS_INPUT input) : SV_Target
   // Primaries: BT.709 
   else if (is10bpc)
   {
-    if (! input.hdr_img)
+    // sRGB (SDR) Content
+    if (input.srgb_img)
+    {
+      out_col =
+        float4 (   (           input_col.rgb) *
+                   (             out_col.rgb),
+                                    saturate (  out_col.a)  *
+                                    saturate (input_col.a)
+                );
+
+      out_col.rgb = RemoveSRGBCurve (out_col.rgb);
+    }
+    
+    else if (! input.hdr_img)
     {
       out_col =
         float4 (  RemoveGammaExp  (           input_col.rgb *
@@ -230,7 +244,20 @@ float4 main (PS_INPUT input) : SV_Target
     out_col.a = 1.0f - RemoveSRGBCurve (1.0f - out_col.a);
 #else
 
-    if (! input.hdr_img)
+    // sRGB (SDR) Content
+    if (input.srgb_img)
+    {
+      out_col =
+        float4 (   (           input_col.rgb) *
+                   (             out_col.rgb),
+                                    saturate (  out_col.a)  *
+                                    saturate (input_col.a)
+                );
+
+      out_col.rgb = RemoveSRGBCurve (out_col.rgb);
+    }
+    
+    else if (! input.hdr_img)
     {
       out_col =
         float4 (  RemoveGammaExp (           input_col.rgb *
@@ -253,8 +280,7 @@ float4 main (PS_INPUT input) : SV_Target
     }
 #endif
   }
-
-
+  
   if (input.hdr_img)
   {
     uint implied_tonemap_type =

@@ -4485,7 +4485,7 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, int flags = 0x0)
     return E_NOTIMPL;
   }
 
-  DXGI_FORMAT capture_formats [5] = {
+  DXGI_FORMAT capture_formats [] = {
     DXGI_FORMAT_R8G8B8A8_UNORM, // Not HDR...
     DXGI_FORMAT_B8G8R8X8_UNORM, // Not HDR...
     DXGI_FORMAT_R10G10B10A2_UNORM,
