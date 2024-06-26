@@ -4398,6 +4398,9 @@ bool SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped, boo
         return true;
       }
     }
+
+    else
+      PLOG_VERBOSE << "SKIF_Image_SaveToDisk_HDR ( ): FAILED";
   }
 
   else {
@@ -4411,6 +4414,9 @@ bool SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped, boo
         return true;
       }
     }
+
+    else
+      PLOG_VERBOSE << "SKIF_Image_SaveToDisk_SDR ( ): FAILED";
   }
 
   return false;

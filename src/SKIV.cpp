@@ -799,7 +799,7 @@ void SKIF_Initialize (LPWSTR lpCmdLine)
                 fallbackDir.c_str(), _TRUNCATE);
         
     // Create any missing directories
-    if (! std::filesystem::exists (            fallbackDir, ec))
+    if (! std::filesystem::exists             (fallbackDir, ec))
           std::filesystem::create_directories (fallbackDir, ec);
   }
 
@@ -853,65 +853,61 @@ void SKIF_Initialize (LPWSTR lpCmdLine)
 
   // SKIV also uses a folder to temporary files
   const std::wstring tempDir =
-    std::wstring (_path_cache.app_data_local.path) + LR"(\Temp\skiv\)";
+    SKIF_Util_NormalizeFullPath (std::wstring (_path_cache.app_data_local.path) + LR"(\Temp\skiv\)");
 
   wcsncpy_s (_path_cache.skiv_temp, MAX_PATH,
                   tempDir.c_str(), _TRUNCATE);
 
+  // Create the folder for temporary files
+  if (! std::filesystem::exists         (_path_cache.skiv_temp, ec))
+    std::filesystem::create_directories (_path_cache.skiv_temp, ec);
+
   // Clear out any temp files older than a day
-  if (PathFileExists (_path_cache.skiv_temp))
+  auto _isDayOld = [&](FILETIME ftLastWriteTime) -> bool
   {
-    auto _isDayOld = [&](FILETIME ftLastWriteTime) -> bool
+    FILETIME ftSystemTime{}, ftAdjustedFileTime{};
+    SYSTEMTIME systemTime{};
+    GetSystemTime (&systemTime);
+
+    if (SystemTimeToFileTime(&systemTime, &ftSystemTime))
     {
-      FILETIME ftSystemTime{}, ftAdjustedFileTime{};
-      SYSTEMTIME systemTime{};
-      GetSystemTime (&systemTime);
+      ULARGE_INTEGER uintLastWriteTime{};
 
-      if (SystemTimeToFileTime(&systemTime, &ftSystemTime))
-      {
-        ULARGE_INTEGER uintLastWriteTime{};
+      // Copy to ULARGE_INTEGER union to perform 64-bit arithmetic
+      uintLastWriteTime.HighPart        = ftLastWriteTime.dwHighDateTime;
+      uintLastWriteTime.LowPart         = ftLastWriteTime.dwLowDateTime;
 
-        // Copy to ULARGE_INTEGER union to perform 64-bit arithmetic
-        uintLastWriteTime.HighPart        = ftLastWriteTime.dwHighDateTime;
-        uintLastWriteTime.LowPart         = ftLastWriteTime.dwLowDateTime;
+      // Perform 64-bit arithmetic to add 1 day to last modified timestamp
+      uintLastWriteTime.QuadPart        = uintLastWriteTime.QuadPart + ULONGLONG(1 * 24 * 60 * 60 * 1.0e+7);
 
-        // Perform 64-bit arithmetic to add 1 day to last modified timestamp
-        uintLastWriteTime.QuadPart        = uintLastWriteTime.QuadPart + ULONGLONG(1 * 24 * 60 * 60 * 1.0e+7);
+      // Copy the results to an FILETIME struct
+      ftAdjustedFileTime.dwHighDateTime = uintLastWriteTime.HighPart;
+      ftAdjustedFileTime.dwLowDateTime  = uintLastWriteTime.LowPart;
 
-        // Copy the results to an FILETIME struct
-        ftAdjustedFileTime.dwHighDateTime = uintLastWriteTime.HighPart;
-        ftAdjustedFileTime.dwLowDateTime  = uintLastWriteTime.LowPart;
+      // Compare with system time, and if system time is later (1), then return true
+      if (CompareFileTime (&ftSystemTime, &ftAdjustedFileTime) == 1)
+        return true;
+    }
 
-        // Compare with system time, and if system time is later (1), then return true
-        if (CompareFileTime (&ftSystemTime, &ftAdjustedFileTime) == 1)
-          return true;
-      }
+    return false;
+  };
 
-      return false;
-    };
+  HANDLE hFind        = INVALID_HANDLE_VALUE;
+  WIN32_FIND_DATA ffd = { };
 
-    HANDLE hFind        = INVALID_HANDLE_VALUE;
-    WIN32_FIND_DATA ffd = { };
+  hFind = 
+    FindFirstFileExW ((tempDir + L"*").c_str(), FindExInfoBasic, &ffd, FindExSearchNameMatch, NULL, NULL);
 
-    hFind = 
-      FindFirstFileExW ((tempDir + L"*").c_str(), FindExInfoBasic, &ffd, FindExSearchNameMatch, NULL, NULL);
+  if (INVALID_HANDLE_VALUE != hFind)
+  {
+    if (_isDayOld  (ffd.ftLastWriteTime))
+      DeleteFile  ((tempDir + ffd.cFileName).c_str());
 
-    if (INVALID_HANDLE_VALUE != hFind)
-    {
+    while (FindNextFile (hFind, &ffd))
       if (_isDayOld  (ffd.ftLastWriteTime))
         DeleteFile  ((tempDir + ffd.cFileName).c_str());
 
-      while (FindNextFile (hFind, &ffd))
-        if (_isDayOld  (ffd.ftLastWriteTime))
-          DeleteFile  ((tempDir + ffd.cFileName).c_str());
-
-      FindClose (hFind);
-    }
-  }
-
-  // Create the folder for temporary files
-  else {
-    std::filesystem::create_directories (_path_cache.skiv_temp, ec);
+    FindClose (hFind);
   }
 }
 
@@ -1779,7 +1775,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
         ImVec2 vDesktopSize (0.0f, 0.0f);
 
-        bool SKIV_HDR  = (_registry.iHDRMode > 0 && SKIF_Util_IsHDRActive ( ));
+        bool HDR_Image = false;
         bool sRGB_Hack = false;
 
         extern CComPtr <ID3D11ShaderResourceView> SKIV_DesktopImage;
@@ -1805,6 +1801,12 @@ wWinMain ( _In_     HINSTANCE hInstance,
               if (texDesc.Format == DXGI_FORMAT_R8G8B8A8_UNORM ||
                   texDesc.Format == DXGI_FORMAT_B8G8R8X8_UNORM)
                 sRGB_Hack = true;
+
+              // HDR formats indicates we are working with a HDR capture
+              else if (texDesc.Format == DXGI_FORMAT_R10G10B10A2_UNORM  ||
+                       texDesc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT ||
+                       texDesc.Format == DXGI_FORMAT_R32G32B32A32_FLOAT)
+                HDR_Image = true;
             }
           }
 
@@ -1812,11 +1814,11 @@ wWinMain ( _In_     HINSTANCE hInstance,
                               srgb_uv1       = ImVec2 (1, 1), // _SRGB format
                               force_srgb_uv0 = ImVec2 (-4096.0f, -4096.0f), // Non-sRGB formats needs a hack to force them to appear properly
                               force_srgb_uv1 = ImVec2 (-5120.0f, -5120.0f), // Non-sRGB formats needs a hack to force them to appear properly
-                              hdr_uv0        = ImVec2 (-1024.0f, -1024.0f),
-                              hdr_uv1        = ImVec2 (-2048.0f, -2048.0f);
+                              hdr_uv0        = ImVec2 (-1024.0f, -1024.0f), // HDR formats
+                              hdr_uv1        = ImVec2 (-2048.0f, -2048.0f); // HDR formats
 
-          SKIF_ImGui_OptImage (SKIV_DesktopImage, vDesktopSize, (SKIV_HDR) ? hdr_uv0 : (sRGB_Hack) ? force_srgb_uv0 : srgb_uv0,
-                                                                (SKIV_HDR) ? hdr_uv1 : (sRGB_Hack) ? force_srgb_uv1 : srgb_uv1);
+          SKIF_ImGui_OptImage (SKIV_DesktopImage, vDesktopSize, (HDR_Image) ? hdr_uv0 : (sRGB_Hack) ? force_srgb_uv0 : srgb_uv0,
+                                                                (HDR_Image) ? hdr_uv1 : (sRGB_Hack) ? force_srgb_uv1 : srgb_uv1);
 
           ImDrawList* draw_list =
             ImGui::GetForegroundDrawList ();
@@ -2083,10 +2085,29 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
                 extern bool
                     SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped, bool isHDR, bool force_sRGB);
-                if (SKIV_Image_CopyToClipboard (subrect.GetImages (), true, SKIV_HDR, sRGB_Hack))
+                if (SKIV_Image_CopyToClipboard (subrect.GetImages (), true, HDR_Image, sRGB_Hack))
+                {
                   PLOG_VERBOSE << "SKIV_Image_CopyToClipboard ( ): SUCCEEDED";
-                else
+
+                  ImGui::InsertNotification (
+                    {
+                      ImGuiToastType::Info,
+                      3000,
+                      "Copied image to clipboard", ""
+                    }
+                  );
+                }
+
+                else {
+                  ImGui::InsertNotification (
+                    {
+                      ImGuiToastType::Error,
+                      3000,
+                      "Failed to copy image to clipboard", ""
+                    }
+                  );
                   PLOG_WARNING << "SKIV_Image_CopyToClipboard ( ): FAILED";
+                }
               } else
                 PLOG_WARNING << "DirectX::CopyRectangle     ( ): FAILED";
             } else
