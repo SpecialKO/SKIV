@@ -851,7 +851,7 @@ void SKIF_Initialize (LPWSTR lpCmdLine)
             << "\n|    > user data   | " << _path_cache.skiv_userdata
             << "\n+------------------+-------------------------------------+";
 
-  // SKIV also uses a folder to temporary internet files
+  // SKIV also uses a folder to temporary files
   const std::wstring tempDir =
     std::wstring (_path_cache.app_data_local.path) + LR"(\Temp\skiv\)";
 
@@ -907,6 +907,12 @@ void SKIF_Initialize (LPWSTR lpCmdLine)
 
       FindClose (hFind);
     }
+  }
+
+  // Create the folder for temporary files
+  else {
+    std::error_code ec;
+    std::filesystem::create_directories (_path_cache.skiv_temp, ec);
   }
 }
 
@@ -1795,10 +1801,24 @@ wWinMain ( _In_     HINSTANCE hInstance,
             }
           }
 
-          //SKIF_ImGui_OptImage (SKIV_DesktopImage, vDesktopSize, ImVec2 (-1024.0f, -1024.0f),
-          //                                                      ImVec2 (-2048.0f, -2048.0f));
+          SKIF_ImGui_OptImage (SKIV_DesktopImage, vDesktopSize, ImVec2 (-1024.0f, -1024.0f),
+                                                                ImVec2 (-2048.0f, -2048.0f));
 
-          SKIF_ImGui_OptImage (SKIV_DesktopImage, vDesktopSize);
+          extern uint32_t SKIV_HDR_VisualizationId;
+          extern float SKIV_HDR_SDRWhite;
+          extern float SKIV_HDR_MaxCLL;
+          extern float SKIV_HDR_MaxLuminance;
+          extern float SKIV_HDR_DisplayMaxLuminance;
+          extern float SKIV_HDR_BrightnessScale;
+
+          //SKIV_HDR_VisualizationId = SKIV_HDR_VISUALIZTION_GAMUT;
+          //SKIV_HDR_SDRWhite              = 0.0f;
+          //SKIV_HDR_MaxCLL                = 0.0f;
+          //SKIV_HDR_MaxLuminance          = 0.0f;
+          //SKIV_HDR_DisplayMaxLuminance   = 0.0f;
+          //SKIV_HDR_BrightnessScale       = 0.1f;
+
+          //SKIF_ImGui_OptImage (SKIV_DesktopImage, vDesktopSize);
 
           //ImDrawList* draw_list =
           //  ImGui::GetForegroundDrawList ();
@@ -2064,8 +2084,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
                 PLOG_VERBOSE << "DirectX::CopyRectangle     ( ): SUCCEEDED";
 
                 extern bool
-                    SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped);
-                if (SKIV_Image_CopyToClipboard (subrect.GetImages (), true))
+                    SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped, bool isHDR);
+                if (SKIV_Image_CopyToClipboard (subrect.GetImages (), true, (_registry.iHDRMode > 0 && SKIF_Util_IsHDRActive ( ))))
                   PLOG_VERBOSE << "SKIV_Image_CopyToClipboard ( ): SUCCEEDED";
                 else
                   PLOG_WARNING << "SKIV_Image_CopyToClipboard ( ): FAILED";

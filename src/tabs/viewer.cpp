@@ -572,7 +572,12 @@ static int getTextureLoadQueuePos (void) {
 }
 
 // External declaration
-extern void SKIF_Shell_AddJumpList (std::wstring name, std::wstring path, std::wstring parameters, std::wstring directory, std::wstring icon_path, bool bService);
+extern void SKIF_Shell_AddJumpList     (std::wstring name, std::wstring path, std::wstring parameters, std::wstring directory, std::wstring icon_path, bool bService);
+
+// Forward declarations
+bool    SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped, bool isHDR);
+HRESULT SKIF_Image_SaveToDisk_HDR  (const DirectX::Image& image, const wchar_t* wszFileName);
+HRESULT SKIF_Image_SaveToDisk_SDR  (const DirectX::Image& image, const wchar_t* wszFileName);
 
 // Functions / Structs
 
@@ -1474,9 +1479,7 @@ SKIF_UI_Tab_DrawViewer (void)
                   SUCCEEDED (DirectX::CopyRectangle (*captured_img.GetImages   (), src_rect,
                                                                                    *subrect.GetImages (), DirectX::TEX_FILTER_DEFAULT, 0, 0)))
               {
-                extern bool
-                    SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped);
-                if (SKIV_Image_CopyToClipboard (subrect.GetImages (), true))
+                if (SKIV_Image_CopyToClipboard (subrect.GetImages (), true, cover.is_hdr))
                 {
                   ImGui::InsertNotification (
                     {
@@ -1492,6 +1495,7 @@ SKIF_UI_Tab_DrawViewer (void)
 
                   copyRect = { 0,0,0,0 };
                 }
+
                 else {
                   ImGui::InsertNotification (
                     {
@@ -1510,9 +1514,7 @@ SKIF_UI_Tab_DrawViewer (void)
 
             else
             {
-              extern bool
-                  SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped);
-              if (SKIV_Image_CopyToClipboard (captured_img.GetImages (), false))
+              if (SKIV_Image_CopyToClipboard (captured_img.GetImages (), false, cover.is_hdr))
               {
                 ImGui::InsertNotification (
                   {
@@ -1522,6 +1524,7 @@ SKIF_UI_Tab_DrawViewer (void)
                   }
                 );
               }
+
               else {
                 ImGui::InsertNotification (
                   {
@@ -3113,9 +3116,6 @@ SKIF_UI_Tab_DrawViewer (void)
           DirectX::ScratchImage                                                captured_img;
           if (SUCCEEDED (DirectX::CaptureTexture (pDevice, pDevCtx, pCoverRes, captured_img)))
           {
-            HRESULT SKIF_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileName);
-            HRESULT SKIF_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileName);
-
             if (cover.is_hdr)
             {
               hr =
@@ -3254,8 +3254,6 @@ SKIF_UI_Tab_DrawViewer (void)
           DirectX::ScratchImage                                                captured_img;
           if (SUCCEEDED (DirectX::CaptureTexture (pDevice, pDevCtx, pCoverRes, captured_img)))
           {
-            HRESULT SKIF_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileName);
-            HRESULT SKIF_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileName);
 
             if (cover.is_hdr)
             {
@@ -4289,7 +4287,7 @@ SK_WIC_SetMaximumQuality (IPropertyBag2 *props)
 bool
 SKIV_HDR_SavePNGToDisk (const wchar_t* wszPNGPath, const DirectX::Image* png_image,
                                                    const DirectX::Image* raw_image,
-                           const char* szUtf8MetadataTitle)
+                           const char* szUtf8MetadataTitle, bool isHDR)
 {
   if ( wszPNGPath == nullptr ||
         png_image == nullptr ||
@@ -4318,9 +4316,8 @@ SKIV_HDR_SavePNGToDisk (const wchar_t* wszPNGPath, const DirectX::Image* png_ima
   {
     PLOG_VERBOSE << "DirectX::SaveToWICFile ( ): SUCCEEDED";
 
-    return (png_image->format == DXGI_FORMAT_R16G16B16A16_UNORM)
-           ? SKIV_PNG_MakeHDR (wszPNGPath, *png_image, *raw_image)
-           : true;
+    return (isHDR) ? SKIV_PNG_MakeHDR (wszPNGPath, *png_image, *raw_image)
+                   : true;
   } else
     PLOG_VERBOSE << "DirectX::SaveToWICFile ( ): FAILED";
 
@@ -4375,28 +4372,40 @@ void SKIV_HandleCopyShortcut (void)
 
 CComPtr <ID3D11ShaderResourceView> SKIV_DesktopImage;
 
-bool SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped)
+bool SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped, bool isHDR)
 {
   if (pImage == nullptr)
     return false;
 
-  DirectX::ScratchImage                    hdr10_img;
-  if (SKIV_HDR_ConvertImageToPNG (*pImage, hdr10_img))
+  static SKIF_CommonPathsCache& _path_cache = SKIF_CommonPathsCache::GetInstance ( );
+
+  std::wstring wsPNGPath = _path_cache.skiv_temp;
+  wsPNGPath += snipped ? L"SKIV_Snip"
+                       : L"SKIV_Clipboard";
+  wsPNGPath += L".png";
+
+  PLOG_VERBOSE << wsPNGPath;
+
+  if (isHDR)
   {
-    PLOG_VERBOSE << "SKIV_HDR_ConvertImageToPNG ( ): TRUE";
-
-    wchar_t                         wszPNGPath [MAX_PATH + 2] = { };
-    GetCurrentDirectoryW (MAX_PATH, wszPNGPath);
-
-    PathAppendW       (wszPNGPath, snipped ? L"SKIV_HDR_Snip"
-                                           : L"SKIV_HDR_Clipboard");
-    PathAddExtensionW (wszPNGPath, L".png");
-
-    if (SKIV_HDR_SavePNGToDisk (wszPNGPath, hdr10_img.GetImages (), pImage, nullptr))
+    if (SUCCEEDED (SKIF_Image_SaveToDisk_HDR (*pImage, wsPNGPath.c_str())))
     {
-      PLOG_VERBOSE << "SKIV_HDR_SavePNGToDisk ( ): TRUE";
+      PLOG_VERBOSE << "SKIF_Image_SaveToDisk_HDR ( ): SUCCEEDED";
 
-      if (SKIV_PNG_CopyToClipboard (*hdr10_img.GetImage (0,0,0), wszPNGPath, 0))
+      if (SKIV_PNG_CopyToClipboard (*pImage, wsPNGPath.c_str(), 0))
+      {
+        PLOG_VERBOSE << "SKIV_PNG_CopyToClipboard ( ): TRUE";
+        return true;
+      }
+    }
+  }
+
+  else {
+    if (SUCCEEDED (SKIF_Image_SaveToDisk_SDR (*pImage, wsPNGPath.c_str())))
+    {
+      PLOG_VERBOSE << "SKIF_Image_SaveToDisk_SDR ( ): SUCCEEDED";
+
+      if (SKIV_PNG_CopyToClipboard (*pImage, wsPNGPath.c_str(), 0))
       {
         PLOG_VERBOSE << "SKIV_PNG_CopyToClipboard ( ): TRUE";
         return true;
@@ -4917,7 +4926,7 @@ SKIF_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
     DirectX::ScratchImage                  png_img;
     if (SKIV_HDR_ConvertImageToPNG (image, png_img))
     {
-      if (SKIV_HDR_SavePNGToDisk (wszImplicitFileName, png_img.GetImages (), &image, nullptr))
+      if (SKIV_HDR_SavePNGToDisk (wszImplicitFileName, png_img.GetImages (), &image, nullptr, true))
       {
         return S_OK;
       }
