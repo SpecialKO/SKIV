@@ -1308,7 +1308,7 @@ GetCurrentAspectRatio (image_s& image)
   static SKIF_RegistrySettings& _registry   = SKIF_RegistrySettings::GetInstance ( );
   static ImageScaling last_scaling = ImageScaling_Auto;
 
-  ImVec2 avail_size = ImGui::GetContentRegionAvail ( ) / SKIF_ImGui_GlobalDPIScale;
+  ImVec2 avail_size = ImFloor (ImGui::GetContentRegionAvail ( ) / SKIF_ImGui_GlobalDPIScale);
 
   // Clear any cached data on image changes
   if (image.pRawTexSRV.p == nullptr || image.height == 0 || image.width  == 0)
@@ -1406,7 +1406,7 @@ GetCurrentAspectRatio (image_s& image)
                << " > coord 0,0   : " << image.uv0.x << "," << image.uv0.y  << "\n"
                << " > coord 1,1   : " << image.uv1.x << "," << image.uv1.y;
 
-  image.avail_size       = ImVec2(avail_width, avail_height);
+  image.avail_size       = ImFloor (ImVec2 (avail_width, avail_height));
 
   return image.avail_size;
 }
@@ -1875,9 +1875,9 @@ SKIF_UI_Tab_DrawViewer (void)
   if (cover_old.pRawTexSRV.p != nullptr && fAlphaPrev > 0.0f)
   {
     if (sizeCover_old.x < ImGui::GetContentRegionAvail().x)
-      ImGui::SetCursorPosX ((ImGui::GetContentRegionAvail().x - sizeCover_old.x) * 0.5f);
+      ImGui::SetCursorPosX (ImFloor ((ImGui::GetContentRegionAvail().x - sizeCover_old.x) * 0.5f));
     if (sizeCover_old.y < ImGui::GetContentRegionAvail().y)
-      ImGui::SetCursorPosY ((ImGui::GetContentRegionAvail().y - sizeCover_old.y) * 0.5f);
+      ImGui::SetCursorPosY (ImFloor ((ImGui::GetContentRegionAvail().y - sizeCover_old.y) * 0.5f));
 
     sizeCover_old = ImFloor (sizeCover_old);
   
@@ -1913,9 +1913,9 @@ SKIF_UI_Tab_DrawViewer (void)
   SKIV_HDR_MaxLuminance = cover.light_info.max_nits;
 
   if (sizeCover.x < ImGui::GetContentRegionAvail().x)
-    ImGui::SetCursorPosX ((ImGui::GetContentRegionAvail().x - sizeCover.x) * 0.5f);
+    ImGui::SetCursorPosX (ImFloor ((ImGui::GetContentRegionAvail().x - sizeCover.x) * 0.5f));
   if (sizeCover.y < ImGui::GetContentRegionAvail().y)
-    ImGui::SetCursorPosY ((ImGui::GetContentRegionAvail().y - sizeCover.y) * 0.5f);
+    ImGui::SetCursorPosY (ImFloor ((ImGui::GetContentRegionAvail().y - sizeCover.y) * 0.5f));
 
   if (_registry._RendererHDREnabled)
     SKIV_HDR_MaxCLL = 1.0f;
