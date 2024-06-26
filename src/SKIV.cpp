@@ -1774,7 +1774,6 @@ wWinMain ( _In_     HINSTANCE hInstance,
 #pragma region UI: Snipping Mode
 
         ImVec2 vDesktopSize (0.0f, 0.0f);
-
         bool HDR_Image = false;
         bool sRGB_Hack = false;
 
@@ -1783,6 +1782,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
         if (SKIV_DesktopImage != nullptr)
         {
+          bool SKIV_HDR  = SKIF_ImGui_IsRendererHDR (SKIF_ImGui_hWnd);
+
           SKIV_DesktopImage->GetResource (&pDesktopRes.p);
 
           if (pDesktopRes != nullptr)
@@ -1817,8 +1818,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
                               hdr_uv0        = ImVec2 (-1024.0f, -1024.0f), // HDR formats
                               hdr_uv1        = ImVec2 (-2048.0f, -2048.0f); // HDR formats
 
-          SKIF_ImGui_OptImage (SKIV_DesktopImage, vDesktopSize, (HDR_Image) ? hdr_uv0 : (sRGB_Hack) ? force_srgb_uv0 : srgb_uv0,
-                                                                (HDR_Image) ? hdr_uv1 : (sRGB_Hack) ? force_srgb_uv1 : srgb_uv1);
+          SKIF_ImGui_OptImage (SKIV_DesktopImage, vDesktopSize, (SKIV_HDR && HDR_Image) ? hdr_uv0 : (sRGB_Hack) ? force_srgb_uv0 : srgb_uv0,
+                                                                (SKIV_HDR && HDR_Image) ? hdr_uv1 : (sRGB_Hack) ? force_srgb_uv1 : srgb_uv1);
 
           ImDrawList* draw_list =
             ImGui::GetForegroundDrawList ();
