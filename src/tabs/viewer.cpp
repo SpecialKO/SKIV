@@ -1437,58 +1437,100 @@ SKIF_UI_Tab_DrawViewer (void)
   //
   // User is requesting to copy the loaded image to clipboard,
   //   let's download it back from the GPU and have some fun!
-  if (wantCopyToClipboard && cover.pRawTexSRV.p != nullptr /* && cover.is_hdr */)
-  {
-    auto
-        pDevice = SKIF_D3D11_GetDevice ();
-    if (pDevice != nullptr)
+  if (wantCopyToClipboard)
+  {   wantCopyToClipboard = false;
+
+    if (cover.pRawTexSRV.p != nullptr /* && cover.is_hdr */)
     {
-      CComPtr <ID3D11DeviceContext>  pDevCtx;
-      pDevice->GetImmediateContext (&pDevCtx.p);
-
-      CComPtr <ID3D11Resource>        pTexResource;
-      cover.pRawTexSRV->GetResource (&pTexResource.p);
-
-      if (pTexResource.p != nullptr)
+      auto
+          pDevice = SKIF_D3D11_GetDevice ();
+      if (pDevice != nullptr)
       {
-        DirectX::ScratchImage                                                     captured_img;
-        if (SUCCEEDED (DirectX::CaptureTexture (pDevice, pDevCtx, pTexResource.p, captured_img)))
+        CComPtr <ID3D11DeviceContext>  pDevCtx;
+        pDevice->GetImmediateContext (&pDevCtx.p);
+
+        CComPtr <ID3D11Resource>        pTexResource;
+        cover.pRawTexSRV->GetResource (&pTexResource.p);
+
+        if (pTexResource.p != nullptr)
         {
-          if (copyRect.GetArea () != 0)
+          DirectX::ScratchImage                                                     captured_img;
+          if (SUCCEEDED (DirectX::CaptureTexture (pDevice, pDevCtx, pTexResource.p, captured_img)))
           {
-            const size_t
-              x      = static_cast <size_t> (std::max (0.0f, copyRect.Min.x)),
-              y      = static_cast <size_t> (std::max (0.0f, copyRect.Min.y)),
-              width  = static_cast <size_t> (std::max (0.0f, copyRect.GetWidth  ())),
-              height = static_cast <size_t> (std::max (0.0f, copyRect.GetHeight ()));
+            if (copyRect.GetArea () != 0)
+            {
+              const size_t
+                x      = static_cast <size_t> (std::max (0.0f, copyRect.Min.x)),
+                y      = static_cast <size_t> (std::max (0.0f, copyRect.Min.y)),
+                width  = static_cast <size_t> (std::max (0.0f, copyRect.GetWidth  ())),
+                height = static_cast <size_t> (std::max (0.0f, copyRect.GetHeight ()));
 
-            const DirectX::Rect
-              src_rect (x,y, width,height);
+              const DirectX::Rect
+                src_rect (x,y, width,height);
 
-            DirectX::ScratchImage
-                           subrect;
-            if (SUCCEEDED (subrect.Initialize2D   ( captured_img.GetMetadata ().format, width, height, 1, 1)) &&
-                SUCCEEDED (DirectX::CopyRectangle (*captured_img.GetImages   (), src_rect,
-                                                                                 *subrect.GetImages (), DirectX::TEX_FILTER_DEFAULT, 0, 0)))
+              DirectX::ScratchImage
+                             subrect;
+              if (SUCCEEDED (subrect.Initialize2D   ( captured_img.GetMetadata ().format, width, height, 1, 1)) &&
+                  SUCCEEDED (DirectX::CopyRectangle (*captured_img.GetImages   (), src_rect,
+                                                                                   *subrect.GetImages (), DirectX::TEX_FILTER_DEFAULT, 0, 0)))
+              {
+                extern bool
+                    SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped);
+                if (SKIV_Image_CopyToClipboard (subrect.GetImages (), true))
+                {
+                  ImGui::InsertNotification (
+                    {
+                      ImGuiToastType::Info,
+                      3000,
+                      "Copied area to clipboard", "%.fx%.f -> %.fx%.f",
+                      copyRect.Min.x,
+                      copyRect.Min.y,
+                      copyRect.Max.x,
+                      copyRect.Max.y
+                    }
+                  );
+
+                  copyRect = { 0,0,0,0 };
+                }
+                else {
+                  ImGui::InsertNotification (
+                    {
+                      ImGuiToastType::Error,
+                      3000,
+                      "Failed to copy area to clipboard", "Area: %.fx%.f -> %.fx%.f",
+                      copyRect.Min.x,
+                      copyRect.Min.y,
+                      copyRect.Max.x,
+                      copyRect.Max.y
+                    }
+                  );
+                }
+              }
+            }
+
+            else
             {
               extern bool
                   SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped);
-              if (SKIV_Image_CopyToClipboard (subrect.GetImages (), true))
+              if (SKIV_Image_CopyToClipboard (captured_img.GetImages (), false))
               {
-                std::exchange (wantCopyToClipboard, false);
-
-                copyRect = { 0,0,0,0 };
+                ImGui::InsertNotification (
+                  {
+                    ImGuiToastType::Info,
+                    3000,
+                    "Copied image to clipboard", ""
+                  }
+                );
               }
-            }
-          }
-
-          else
-          {
-            extern bool
-                SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped);
-            if (SKIV_Image_CopyToClipboard (captured_img.GetImages (), false))
-            {
-              std::exchange (wantCopyToClipboard, false);
+              else {
+                ImGui::InsertNotification (
+                  {
+                    ImGuiToastType::Error,
+                    3000,
+                    "Failed to copy image to clipboard", ""
+                  }
+                );
+              }
             }
           }
         }
@@ -1974,7 +2016,7 @@ SKIF_UI_Tab_DrawViewer (void)
       translated.Min *= scale;
       translated.Max *= scale;
 
-      // On release, do something
+      /*
       ImGui::InsertNotification (
         {
           ImGuiToastType::Info,
@@ -1990,6 +2032,7 @@ SKIF_UI_Tab_DrawViewer (void)
           translated.Max.y
         }
       );
+      */
 
       wantCopyToClipboard = true;
       copyRect            = translated;
