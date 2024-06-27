@@ -17,6 +17,7 @@ enum SKIF_ImGuiAxis {
      SKIF_ImGuiAxis_X | SKIF_ImGuiAxis_Y
 };
 
+
 typedef unsigned int SelectionFlag;  // -> enum SelectionFlag_
 enum SelectionFlag_
 {
@@ -72,10 +73,12 @@ void     SKIF_ImGui_AutoScroll            (bool touch_only_on_void, SKIF_ImGuiAx
 void     SKIF_ImGui_UpdateScrollbarState  (void); // Update the internal state tracking scrollbars
 bool     SKIF_ImGui_IsScrollbarX          (void); // Helper function returning true if a horizontal scrollbar is visible
 bool     SKIF_ImGui_IsScrollbarY          (void); // Helper function returning true if a vertical scrollbar is visible
-bool     SKIF_ImGui_IsFullscreen          (void);
-void     SKIF_ImGui_SetFullscreen         (bool fullscreen);
+bool     SKIF_ImGui_IsFullscreen          (HWND hWnd);
+void     SKIF_ImGui_SetFullscreen         (HWND hWnd, bool fullscreen, HMONITOR monitor = NULL); // Set window to fullscreen on the current/specified monitor
 void     SKIF_ImGui_InvalidateFonts       (void);
 ImGuiKey SKIF_ImGui_CharToImGuiKey        (char c);
+
+bool     SKIF_ImGui_IsRendererHDR         (HWND hWnd);
 
 // SKIF_ImGui_ImDerp, named as such as it is not a linear interpolation/lerp, is used
 //   to among other things force 1.0f for the alpha color channel (w)

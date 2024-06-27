@@ -356,6 +356,7 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
   // These defaults to false, so no need to check if the registry has another value
   //   since getData ( ) defaults to false for non-existent registry values
   bFirstLaunch             =   regKVFirstLaunch            .getData (&hKey);
+  bCloseToTray             =   regKVCloseToTray            .getData (&hKey);
   bMultipleInstances       =   regKVMultipleInstances      .getData (&hKey);
   bAutoUpdate              =   regKVAutoUpdate             .getData (&hKey);
   bOpenAtCursorPosition    =   regKVOpenAtCursorPosition   .getData (&hKey);

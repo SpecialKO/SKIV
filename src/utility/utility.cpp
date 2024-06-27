@@ -33,8 +33,9 @@ UINT CF_HTML = NULL;
 std::vector<HANDLE> vWatchHandles[UITab_ALL];
 INT64               SKIF_TimeInMilliseconds = 0;
 
-bool bHotKeyHDR = false,
-     bHotKeySVC = false;
+bool bHotKeyHDR  = false,
+     bHotKeySVC  = false,
+     bHotKeySnip = false;
 
 CRITICAL_SECTION CriticalSectionDbgHelp = { };
 
@@ -3202,6 +3203,54 @@ bool
 SKIF_Util_GetHotKeyStateHDRToggle (void)
 {
   return bHotKeyHDR;
+}
+
+// Register a hotkey for snipping a screenshot of the desktop (WinKey + Ctrl + Shift + P)
+bool
+SKIF_Util_RegisterHotKeySnip (void)
+{
+  if (bHotKeySnip)
+    return true;
+
+  /*
+  * Re. MOD_WIN: Either WINDOWS key was held down. These keys are labeled with the Windows logo.
+  *              Keyboard shortcuts that involve the WINDOWS key are reserved for use by the operating system.
+  */
+
+  constexpr auto VK_P = 'P';
+
+  if (RegisterHotKey (SKIF_Notify_hWnd, SKIV_HotKey_Snip, MOD_WIN | MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, VK_P))
+  {
+    bHotKeySnip = true;
+    PLOG_INFO << "Successfully registered hotkey (WinKey + Ctrl + Shift + P) for snipping desktop screenshots.";
+  }
+  else
+    PLOG_ERROR << "Failed to register hotkey for snipping desktop screenshots: " << SKIF_Util_GetErrorAsWStr ( );
+
+  return bHotKeySnip;
+}
+
+// Unregisters a hotkey for snipping a screenshot of the desktop (WinKey + Ctrl + Shift + P)
+bool
+SKIF_Util_UnregisterHotKeySnip (void)
+{
+  if (! bHotKeySnip)
+    return true;
+
+  if (UnregisterHotKey (SKIF_Notify_hWnd, SKIV_HotKey_Snip))
+  {
+    bHotKeySnip = false;
+    PLOG_INFO << "Removed the desktop snipping hotkey.";
+  }
+
+  return ! bHotKeySnip;
+}
+
+// Get the registration state of the hotkey for snipping a screenshot of the desktop (WinKey + Ctrl + Shift + P)
+bool
+SKIF_Util_GetHotKeyStateSnip (void)
+{
+  return bHotKeySnip;
 }
 
 // Register a hotkey for starting the service with auto-stop (WinKey + Shift + Insert)

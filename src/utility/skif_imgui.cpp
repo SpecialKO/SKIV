@@ -524,23 +524,26 @@ SKIF_ImGui_SelectionRect (ImRect*          selection,
     ImDrawList* draw_list =
       ImGui::GetForegroundDrawList ();
 
-      draw_list->AddRect       (selection->Min-inset, selection->Max+inset, ImGui::GetColorU32 (IM_COL32(0,130,216,255))); // Border
+    draw_list->AddRect       (selection->Min-inset, selection->Max+inset, ImGui::GetColorU32 (IM_COL32(0,130,216,255)), 0.0f, 0, 5.0f); // Border
 
     if (flags & SelectionFlag_Filled)
       draw_list->AddRectFilled (selection->Min,       selection->Max,       ImGui::GetColorU32 (IM_COL32(0,130,216,50)));  // Background
   }
 
   const bool complete =
-    (single_click && ImGui::IsMouseClicked  (mouse_button)) ||
-                     ImGui::IsMouseReleased (mouse_button);
+    ( single_click && GetAsyncKeyState (VK_LBUTTON)) ||
+    (!single_click && ImGui::IsMouseReleased (mouse_button));
 
   const bool allow_inversion =
     (flags & SelectionFlag_AllowInverted);
 
   if (complete)
   {
-    if (selection->IsInverted () && (! allow_inversion))
-       *selection = ImRect (selection->Max, selection->Min);
+    if (! allow_inversion)
+    {
+      if (selection->Min.x > selection->Max.x) std::swap (selection->Min.x, selection->Max.x);
+      if (selection->Min.y > selection->Max.y) std::swap (selection->Min.y, selection->Max.y);
+    }
   }
 
   return
@@ -845,7 +848,7 @@ SK_ImGui_GetGlyphRangesDefaultEx (void)
     0x2500,  0x257F, // Box Drawing (needed for U+2514)
     0x2600,  0x26FF, // Misc. Characters
     0x2700,  0x27BF, // Dingbats
-    0xc2b1,  0xc2b3, // ²
+    0xc2b1,  0xc2b3, // Â²
     0
   };
   return &ranges [0];
@@ -1471,17 +1474,17 @@ SKIF_ImGui_IsScrollbarY (void)
 }
 
 bool
-SKIF_ImGui_IsFullscreen (void)
+SKIF_ImGui_IsFullscreen (HWND hWnd)
 {
-  extern bool SKIF_ImGui_ImplWin32_SetFullscreen (int);
-  return SKIF_ImGui_ImplWin32_SetFullscreen      (-1);
+  extern bool SKIF_ImGui_ImplWin32_SetFullscreen (HWND, int, HMONITOR);
+  return SKIF_ImGui_ImplWin32_SetFullscreen      (hWnd, -1, NULL);
 }
 
 void
-SKIF_ImGui_SetFullscreen (bool fullscreen)
+SKIF_ImGui_SetFullscreen (HWND hWnd, bool fullscreen, HMONITOR monitor)
 {
-  extern bool SKIF_ImGui_ImplWin32_SetFullscreen (int);
-  SKIF_ImGui_ImplWin32_SetFullscreen             (static_cast<int> (fullscreen));
+  extern bool SKIF_ImGui_ImplWin32_SetFullscreen (HWND, int, HMONITOR);
+  SKIF_ImGui_ImplWin32_SetFullscreen             (hWnd, static_cast<int> (fullscreen), monitor);
 }
 
 void
@@ -1502,6 +1505,20 @@ SKIF_ImGui_InvalidateFonts (void)
 
   ImGui_ImplDX11_InvalidateDeviceObjects ( );
 }
+
+bool
+SKIF_ImGui_IsRendererHDR (HWND hWnd)
+{
+  if (ImGuiViewport *vp = ImGui::FindViewportByPlatformHandle ((void *)hWnd))
+  {
+    extern bool
+           SKIF_ImplDX11_ViewPort_IsHDR (ImGuiViewport* viewport);
+    return SKIF_ImplDX11_ViewPort_IsHDR (vp);
+  }
+
+  return false;
+}
+
 
 // This helper function maps char to ImGuiKey_xxx
 // For use with e.g. ImGui::GetKeyData ( )

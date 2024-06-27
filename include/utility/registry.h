@@ -200,6 +200,10 @@ struct SKIF_RegistrySettings {
     SKIF_MakeRegKeyB ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(First Launch)" );
 
+  KeyValue <bool> regKVCloseToTray =
+    SKIF_MakeRegKeyB ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(Close To Notification Area)" );
+
   KeyValue <bool> regKVMultipleInstances =
     SKIF_MakeRegKeyB ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(Multiple Instances)" );
@@ -376,6 +380,7 @@ struct SKIF_RegistrySettings {
   bool bImageDetails            = false;
 
   bool bFirstLaunch             = false;
+  bool bCloseToTray             = false;
   bool bMultipleInstances       = false;
   bool bOpenAtCursorPosition    = false;
 #if 0
@@ -394,6 +399,8 @@ struct SKIF_RegistrySettings {
   std::wstring wsPathViewer;
   std::wstring wsPathSpecialK;
   std::wstring wsAutoUpdateVersion; // Holds the version the auto-updater is trying to install
+  std::wstring wsDefaultHDRExt = L".png";
+  std::wstring wsDefaultSDRExt = L".png";
 
   // Windows stuff
   std::wstring wsAppRegistration;
@@ -408,6 +415,8 @@ struct SKIF_RegistrySettings {
   bool _RendererCanHDR              = false; // High Dynamic Range            Windows 10 1709+ (Build 16299)
   bool _RendererHDREnabled          = false; // HDR Enabled
   bool _TouchDevice                 = false;
+  bool _SnippingMode                = false;
+  bool _SnippingModeExit            = false;
 
   // Functions
   bool isDevLogging (void) const;

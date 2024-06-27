@@ -1,5 +1,5 @@
 //
-// Copyright 2020 Andon "Kaldaien" Coleman
+// Copyright 2024 Andon "Kaldaien" Coleman
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to
@@ -20,30 +20,34 @@
 // DEALINGS IN THE SOFTWARE.
 //
 
-#pragma once
+static const uint SKIV_TONEMAP_TYPE_NONE               = 0x0;
+static const uint SKIV_TONEMAP_TYPE_CLIP               = 0x1;
+static const uint SKIV_TONEMAP_TYPE_INFINITE_ROLLOFF   = 0x2;
+static const uint SKIV_TONEMAP_TYPE_NORMALIZE_TO_CLL   = 0x4;
+static const uint SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY = 0x8;
 
-void SKIF_UI_Tab_DrawViewer (void);
-
-enum SKIV_HDR_Visualizations
+float TonemapNone (float L)
 {
-  SKIV_HDR_VISUALIZTION_NONE    = 0,
-  SKIV_HDR_VISUALIZTION_HEATMAP = 1,
-  SKIV_HDR_VISUALIZTION_GAMUT   = 2,
-  SKIV_HDR_VISUALIZTION_SDR     = 3
-};
+  return L;
+}
 
-enum SKIV_HDR_VisualizationFlags
+float TonemapClip (float L, float Ld)
 {
-  SKIV_VIZ_FLAG_SDR_CONSIDER_LUMINANCE  = 0x1,
-  SKIV_VIZ_FLAG_SDR_CONSIDER_GAMUT      = 0x2,
-  SKIV_VIZ_FLAG_SDR_CONSIDER_OVERBRIGHT = 0x4
-};
+  return
+    min (L, Ld);
+}
 
-enum SKIV_HDR_TonemapType
+float TonemapSDR (float L, float Lc, float Ld)
 {
-  SKIV_TONEMAP_TYPE_NONE               = 0x0, // Let the display figure it out
-  SKIV_TONEMAP_TYPE_CLIP               = 0x1, // Truncate the image before display
-  SKIV_TONEMAP_TYPE_INFINITE_ROLLOFF   = 0x2, // Reduce to finite range (i.e. x/(1+x))
-  SKIV_TONEMAP_TYPE_NORMALIZE_TO_CLL   = 0x4, // Content range mapped to [0,1]
-  SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY = 0x8  // Content range mapped to display range
-};
+  return
+    (L + (1.0f / pow (Lc, 2.0f)) * pow (L, 2.0f)) / (1.0f + L);
+}
+
+float TonemapHDR (float L, float Lc, float Ld)
+{
+  float a = (  Ld / pow (Lc, 2.0f));
+  float b = (1.0f / Ld);
+
+  return
+    L * (1 + a * L) / (1 + b * L);
+}

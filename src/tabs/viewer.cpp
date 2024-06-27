@@ -72,31 +72,9 @@
 #include <stb_image.h>
 #include <html_coder.hpp>
 
+#pragma comment (lib, "dxguid.lib")
+
 thread_local stbi__context::cicp_s SKIV_STBI_CICP;
-
-enum SKIV_HDR_Visualizations
-{
-  SKIV_HDR_VISUALIZTION_NONE    = 0,
-  SKIV_HDR_VISUALIZTION_HEATMAP = 1,
-  SKIV_HDR_VISUALIZTION_GAMUT   = 2,
-  SKIV_HDR_VISUALIZTION_SDR     = 3
-};
-
-enum SKIV_HDR_VisualizationFlags
-{
-  SKIV_VIZ_FLAG_SDR_CONSIDER_LUMINANCE  = 0x1,
-  SKIV_VIZ_FLAG_SDR_CONSIDER_GAMUT      = 0x2,
-  SKIV_VIZ_FLAG_SDR_CONSIDER_OVERBRIGHT = 0x4
-};
-
-enum SKIV_HDR_TonemapType
-{
-  SKIV_TONEMAP_TYPE_NONE               = 0x0, // Let the display figure it out
-  SKIV_TONEMAP_TYPE_CLIP               = 0x1, // Truncate the image before display
-  SKIV_TONEMAP_TYPE_INFINITE_ROLLOFF   = 0x2, // Reduce to finite range (i.e. x/(1+x))
-  SKIV_TONEMAP_TYPE_NORMALIZE_TO_CLL   = 0x4, // Content range mapped to [0,1]
-  SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY = 0x8  // Content range mapped to display range
-};
 
 float SKIV_HDR_SDRWhite = 80.0f;
 
@@ -114,6 +92,215 @@ float    SKIV_HDR_MaxLuminance          = 80.0f;
 float    SKIV_HDR_DisplayMaxLuminance   = 426.0f;
 float    SKIV_HDR_BrightnessScale       = 100.0f;
 int      SKIV_HDR_TonemapType           = SKIV_HDR_TonemapType::SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY;
+
+static const DirectX::XMMATRIX c_from709to2020 = // Transposed
+{
+  { 0.627403914928436279296875f,     0.069097287952899932861328125f,    0.01639143936336040496826171875f, 0.0f },
+  { 0.3292830288410186767578125f,    0.9195404052734375f,               0.08801330626010894775390625f,    0.0f },
+  { 0.0433130674064159393310546875f, 0.011362315155565738677978515625f, 0.895595252513885498046875f,      0.0f },
+  { 0.0f,                            0.0f,                              0.0f,                             1.0f }
+};
+
+static const DirectX::XMMATRIX c_from2020toXYZ = // Transposed
+{
+  { 0.636958062648773193359375f,  0.26270020008087158203125f,      0.0f,                           0.0f },
+  { 0.144616901874542236328125f,  0.677998065948486328125f,        0.028072692453861236572265625f, 0.0f },
+  { 0.1688809692859649658203125f, 0.0593017153441905975341796875f, 1.060985088348388671875f,       0.0f },
+  { 0.0f,                         0.0f,                            0.0f,                           1.0f }
+};
+
+static const DirectX::XMMATRIX c_from709toXYZ = // Transposed
+{
+  { 0.4123907983303070068359375f,  0.2126390039920806884765625f,   0.0193308182060718536376953125f, 0.0f },
+  { 0.3575843274593353271484375f,  0.715168654918670654296875f,    0.119194783270359039306640625f,  0.0f },
+  { 0.18048079311847686767578125f, 0.072192318737506866455078125f, 0.950532138347625732421875f,     0.0f },
+  { 0.0f,                          0.0f,                           0.0f,                            1.0f }
+};
+
+static const DirectX::XMMATRIX c_from709toDCIP3 = // Transposed
+{
+  { 0.82246196269989013671875f,    0.03319419920444488525390625f, 0.017082631587982177734375f,  0.0f },
+  { 0.17753803730010986328125f,    0.96680581569671630859375f,    0.0723974406719207763671875f, 0.0f },
+  { 0.0f,                          0.0f,                          0.91051995754241943359375f,   0.0f },
+  { 0.0f,                          0.0f,                          0.0f,                         1.0f }
+};
+
+static const DirectX::XMMATRIX c_from709toAP0 = // Transposed
+{
+  { 0.4339316189289093017578125f, 0.088618390262126922607421875f, 0.01775003969669342041015625f,  0.0f },
+  { 0.3762523829936981201171875f, 0.809275329113006591796875f,    0.109447620809078216552734375f, 0.0f },
+  { 0.1898159682750701904296875f, 0.10210628807544708251953125f,  0.872802317142486572265625f,    0.0f },
+  { 0.0f,                         0.0f,                           0.0f,                           1.0f }
+};
+
+static const DirectX::XMMATRIX c_from709toAP1 = // Transposed
+{
+  { 0.61702883243560791015625f,       0.333867609500885009765625f,    0.04910354316234588623046875f,     0.0f },
+  { 0.069922320544719696044921875f,   0.91734969615936279296875f,     0.012727967463433742523193359375f, 0.0f },
+  { 0.02054978720843791961669921875f, 0.107552029192447662353515625f, 0.871898174285888671875f,          0.0f },
+  { 0.0f,                             0.0f,                           0.0f,                              1.0f }
+};
+
+static const DirectX::XMMATRIX c_fromXYZto709 = // Transposed
+{
+  {  3.2409698963165283203125f,    -0.96924364566802978515625f,       0.055630080401897430419921875f, 0.0f },
+  { -1.53738319873809814453125f,    1.875967502593994140625f,        -0.2039769589900970458984375f,   0.0f },
+  { -0.4986107647418975830078125f,  0.0415550582110881805419921875f,  1.05697154998779296875f,        0.0f },
+  {  0.0f,                          0.0f,                             0.0f,                           1.0f }
+};
+
+static const DirectX::XMMATRIX c_fromXYZtoLMS = // Transposed
+{
+  {  0.3592, -0.1922, 0.0070, 0.0 },
+  {  0.6976,  1.1004, 0.0749, 0.0 },
+  { -0.0358,  0.0755, 0.8434, 0.0 },
+  {  0.0,     0.0,    0.0,    1.0 }
+};
+
+static const DirectX::XMMATRIX c_fromLMStoXYZ = // Transposed
+{
+  {  2.070180056695613509600,  0.364988250032657479740, -0.049595542238932107896, 0.0 },
+  { -1.326456876103021025500,  0.680467362852235141020, -0.049421161186757487412, 0.0 },
+  {  0.206616006847855170810, -0.045421753075853231409,  1.187995941732803439400, 0.0 },
+  {  0.0,                      0.0,                      0.0,                     1.0 }
+};
+
+struct ParamsPQ
+{
+  DirectX::XMVECTOR N, M;
+  DirectX::XMVECTOR C1, C2, C3;
+};
+
+static const ParamsPQ PQ =
+{
+  DirectX::XMVectorReplicate (2610.0 / 4096.0 / 4.0),   // N
+  DirectX::XMVectorReplicate (2523.0 / 4096.0 * 128.0), // M
+  DirectX::XMVectorReplicate (3424.0 / 4096.0),         // C1
+  DirectX::XMVectorReplicate (2413.0 / 4096.0 * 32.0),  // C2
+  DirectX::XMVectorReplicate (2392.0 / 4096.0 * 32.0),  // C3
+};
+
+auto PQToLinear = [](DirectX::XMVECTOR N, DirectX::XMVECTOR maxPQValue = DirectX::g_XMOne)
+{
+using namespace DirectX;
+
+  XMVECTOR ret;
+
+  ret =
+    XMVectorPow (XMVectorAbs (N), XMVectorDivide (g_XMOne, PQ.M));
+
+  XMVECTOR nd;
+
+  nd =
+    XMVectorDivide (
+      XMVectorMax (XMVectorSubtract (ret, PQ.C1), g_XMZero),
+                   XMVectorSubtract (     PQ.C2,
+            XMVectorMultiply (PQ.C3, ret)));
+
+  ret =
+    XMVectorMultiply (XMVectorPow (XMVectorAbs (nd), XMVectorDivide (g_XMOne, PQ.N)), maxPQValue);
+
+  return ret;
+};
+
+auto LinearToPQ = [](DirectX::XMVECTOR N, DirectX::XMVECTOR maxPQValue = DirectX::g_XMOne)
+{
+  using namespace DirectX;
+
+  XMVECTOR ret;
+
+  ret =
+    XMVectorPow (XMVectorAbs (XMVectorDivide (N, maxPQValue)), PQ.N);
+
+  XMVECTOR nd =
+    XMVectorDivide (
+       XMVectorAdd (  PQ.C1, XMVectorMultiply (PQ.C2, ret)),
+       XMVectorAdd (g_XMOne, XMVectorMultiply (PQ.C3, ret))
+    );
+
+  return
+    XMVectorPow (XMVectorAbs (nd), PQ.M);
+};
+
+float LinearToPQY (float N)
+{
+  const float fScaledN =
+    fabs (N * 0.008f); // 0.008 = 1/125.0
+
+  float ret =
+    pow (fScaledN, 0.1593017578125f);
+
+  float nd =
+    fabs ( (0.8359375f + (18.8515625f * ret)) /
+           (1.0f       + (18.6875f    * ret)) );
+
+  return
+    pow (nd, 78.84375f);
+};
+
+auto Rec709toICtCp = [](DirectX::XMVECTOR N)
+{
+  using namespace DirectX;
+
+  XMVECTOR ret = N;
+
+  ret = XMVector3Transform (ret, c_from709toXYZ);
+  ret = XMVector3Transform (ret, c_fromXYZtoLMS);
+
+  ret =
+    LinearToPQ (ret, XMVectorReplicate (125.0f));
+
+  static const DirectX::XMMATRIX ConvMat = // Transposed
+  {
+    { 0.5000,  1.6137,  4.3780, 0.0f },
+    { 0.5000, -3.3234, -4.2455, 0.0f },
+    { 0.0000,  1.7097, -0.1325, 0.0f },
+    { 0.0f,    0.0f,    0.0f,   1.0f }
+  };
+
+  return
+    XMVector3Transform (ret, ConvMat);
+};
+
+auto ICtCptoRec709 = [](DirectX::XMVECTOR N)
+{
+  using namespace DirectX;
+
+  XMVECTOR ret = N;
+
+  static const DirectX::XMMATRIX ConvMat = // Transposed
+  {
+    { 1.0,                  1.0,                  1.0,                 0.0f },
+    { 0.00860514569398152, -0.00860514569398152,  0.56004885956263900, 0.0f },
+    { 0.11103560447547328, -0.11103560447547328, -0.32063747023212210, 0.0f },
+    { 0.0f,                 0.0f,                 0.0f,                1.0f }
+  };
+
+  ret =
+    XMVector3Transform (ret, ConvMat);
+
+  ret = PQToLinear (ret, XMVectorReplicate (125.0f));
+  ret = XMVector3Transform (ret, c_fromLMStoXYZ);
+
+  return
+    XMVector3Transform (ret, c_fromXYZto709);
+};
+
+static const DirectX::XMMATRIX c_scRGBtoBt2100 = // Transposed
+{
+  { 2939026994.L /  585553224375.L,   76515593.L / 138420033750.L,    12225392.L /   93230009375.L, 0.0 },
+  { 9255011753.L / 3513319346250.L, 6109575001.L / 830520202500.L,  1772384008.L / 2517210253125.L, 0.0 },
+  {  173911579.L /  501902763750.L,   75493061.L / 830520202500.L, 18035212433.L / 2517210253125.L, 0.0 },
+  {                            0.0,                           0.0,                             0.0, 1.0 }
+};
+
+static const DirectX::XMMATRIX c_Bt2100toscRGB = // Transposed
+{
+  {  348196442125.L / 1677558947.L, -579752563250.L / 37238079773.L,  -12183628000.L /  5369968309.L, 0.0f },
+  { -123225331250.L / 1677558947.L, 5273377093000.L / 37238079773.L, -472592308000.L / 37589778163.L, 0.0f },
+  {  -15276242500.L / 1677558947.L,  -38864558125.L / 37238079773.L, 5256599974375.L / 37589778163.L, 0.0f },
+  {                           0.0f,                            0.0f,                            0.0f, 1.0f }
+};
 
 CComPtr <ID3D11UnorderedAccessView>
          SKIV_HDR_GamutCoverageUAV      = nullptr;
@@ -142,6 +329,28 @@ const std::initializer_list<FileSignature> supported_formats =
 //FileSignature { L"image/x-targa",             { L".tga"  },          { 0x00, } }, // TGA has no real unique header identifier, so just use the file extension on those
 };
 
+const std::initializer_list<FileSignature> supported_sdr_encode_formats =
+{
+  FileSignature { L"image/png",                 { L".png"  },          { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A } },
+  FileSignature { L"image/jpeg",                { L".jpg", L".jpeg" }, { 0xFF, 0xD8, 0x00, 0x00 },   // JPEG (SOI; Start of Image)
+                                                                       { 0xFF, 0xFF, 0x00, 0x00 } }, // JPEG App Markers are masked as they can be all over the place (e.g. 0xFF 0xD8 0xFF 0xED)
+  FileSignature { L"image/bmp",                 { L".bmp"  },          { 0x42, 0x4D } },
+  FileSignature { L"image/tiff",                { L".tiff", L".tif" }, { 0x49, 0x49, 0x2A, 0x00 } }, // TIFF: little-endian
+  FileSignature { L"image/tiff",                { L".tiff", L".tif" }, { 0x4D, 0x4D, 0x00, 0x2A } }, // TIFF: big-endian
+//FileSignature { L"image/vnd-ms.dds",          { L".dds"  },          { 0x44, 0x44, 0x53, 0x20 } },
+//FileSignature { L"image/x-targa",             { L".tga"  },          { 0x00, } }, // TGA has no real unique header identifier, so just use the file extension on those
+};
+
+const std::initializer_list<FileSignature> supported_hdr_encode_formats =
+{
+  FileSignature { L"image/png",                 { L".png"  },          { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A } },
+  FileSignature { L"image/vnd.ms-photo",        { L".jxr"  },          { 0x49, 0x49, 0xBC } },
+//FileSignature { L"image/avif",                { L".avif" },          { 0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x61, 0x76, 0x69, 0x66 },   // ftypavif
+//                                                                     { 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF } }, // ?? ?? ?? ?? 66 74 79 70 61 76 69 66
+//FileSignature { L"image/vnd.radiance",        { L".hdr"  },          { 0x23, 0x3F, 0x52, 0x41, 0x44, 0x49, 0x41, 0x4E, 0x43, 0x45, 0x0A } }, // Radiance High Dynamic Range image file
+//FileSignature { L"image/vnd-ms.dds",          { L".dds"  },          { 0x44, 0x44, 0x53, 0x20 } },
+};
+
 bool isExtensionSupported (const std::wstring extension)
 {
   for (auto& type : supported_formats)
@@ -160,11 +369,21 @@ bool                   newImageLoaded    = false; // Set by the window msg handl
 bool                   newImageFailed    = false; // Set by the window msg handler when a new image failed to load
 bool                   imageFailWarning  = false; // Set to true to warn about a failed image load
 
+bool                   activateSnipping  = false; // Set to true when a desktop capture is complete and ready to snip
+bool                   iconicBeforeSnip  = false;
+bool                   trayedBeforeSnip  = false;
+HWND                   hwndBeforeSnip    =  0;
+HWND                   hwndTopBeforeSnip =  0; // Window above SKIV in z-order
+ImRect                 selection_rect    = { };
+
 bool                   coverRefresh      = false; // This just triggers a refresh of the cover
 std::wstring           coverRefreshPath  = L"";
 int                    coverRefreshCount = 0;
 int                    numRegular        = 0;
 int                    numPinnedOnTop    = 0;
+
+std::wstring           defaultHDRFileExt = L".png";
+std::wstring           defaultSDRFileExt = L".png";
 
 const float fTintMin     = 0.75f;
       float fTint        = 1.0f;
@@ -172,6 +391,8 @@ const float fTintMin     = 0.75f;
       float fAlphaPrev   = 1.0f;
 
 PopupState OpenFileDialog  = PopupState_Closed;
+PopupState SaveFileDialog  = PopupState_Closed;
+PopupState ExportSDRDialog = PopupState_Closed;
 PopupState ContextMenu     = PopupState_Closed;
 
 enum ImageScaling {
@@ -351,7 +572,12 @@ static int getTextureLoadQueuePos (void) {
 }
 
 // External declaration
-extern void SKIF_Shell_AddJumpList (std::wstring name, std::wstring path, std::wstring parameters, std::wstring directory, std::wstring icon_path, bool bService);
+extern void SKIF_Shell_AddJumpList     (std::wstring name, std::wstring path, std::wstring parameters, std::wstring directory, std::wstring icon_path, bool bService);
+
+// Forward declarations
+bool    SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped, bool isHDR, bool force_sRGB);
+HRESULT SKIF_Image_SaveToDisk_HDR  (const DirectX::Image& image, const wchar_t* wszFileName);
+HRESULT SKIF_Image_SaveToDisk_SDR  (const DirectX::Image& image, const wchar_t* wszFileName, bool force_sRGB);
 
 // Functions / Structs
 
@@ -479,148 +705,6 @@ SaveTempImage (std::wstring_view source, std::wstring_view filename)
 }
 
 #pragma endregion
-
-
-
-
-static const DirectX::XMVECTORF32 s_luminance_AP1 =
-  { 0.272229f, 0.674082f, 0.0536895f, 0.f };
-
-static const DirectX::XMVECTORF32 s_luminance_2020 =
-  { 0.2627f,   0.678f,    0.0593f,   0.f };
-
-static const DirectX::XMVECTORF32 s_luminance =
-  { 0.2126729f, 0.7151522f, 0.0721750f, 0.f };
-
-static const DirectX::XMMATRIX c_from2020to709 = // Transposed
-{
-  {  1.66096379471340f,   -0.124477196529907f,   -0.0181571579858552f, 0.0f },
-  { -0.588112737547978f,   1.13281946828499f,    -0.100666415661988f,  0.0f },
-  { -0.0728510571654192f, -0.00834227175508652f,  1.11882357364784f,   0.0f },
-  {  0.0f,                 0.0f,                  0.0f,                1.0f }
-};
-
-static const DirectX::XMMATRIX c_from709to2020 = // Transposed
-{
-  { 0.627225305694944f,  0.0690418812810714f, 0.0163911702607078f, 0.0f },
-  { 0.329476882715808f,  0.919605681354755f,  0.0880887513437058f, 0.0f },
-  { 0.0432978115892484f, 0.0113524373641739f, 0.895520078395586f,  0.0f },
-  { 0.0f,                0.0f,                0.0f,                1.0f }
-};
-
-static const DirectX::XMMATRIX c_fromXYZtoDCIP3 = // Transposed
-{
-  {  2.7253940305, -0.7951680258,  0.0412418914, 0.0f },
-  { -1.0180030062,  1.6897320548, -0.0876390192, 0.0f },
-  { -0.4401631952,  0.0226471906,  1.1009293786, 0.0f },
-  {  0.0f,          0.0f,          0.0f,         1.0f }
-};
-
-static const DirectX::XMMATRIX c_fromXYZtoAP1 = // Transposed
-{
-  {  1.6410233797, -0.6636628587,  0.0117218943, 0.0f },
-  { -0.3248032942,  1.6153315917, -0.0082844420, 0.0f },
-  { -0.2364246952,  0.0167563477,  0.9883948585, 0.0f },
-  {  0.0f,          0.0f,          0.0f,         1.0f }
-};
-
-static const DirectX::XMMATRIX c_from709toXYZ = // Transposed
-{
-  { 0.4123907983303070068359375f,  0.2126390039920806884765625f,   0.0193308182060718536376953125f, 0.0f },
-  { 0.3575843274593353271484375f,  0.715168654918670654296875f,    0.119194783270359039306640625f,  0.0f },
-  { 0.18048079311847686767578125f, 0.072192318737506866455078125f, 0.950532138347625732421875f,     0.0f },
-  { 0.0f,                          0.0f,                           0.0f,                            1.0f }
-};
-
-static const DirectX::XMMATRIX c_from709toDCIP3 = // Transposed
-{
-  { 0.82246196269989013671875f,    0.03319419920444488525390625f, 0.017082631587982177734375f,  0.0f },
-  { 0.17753803730010986328125f,    0.96680581569671630859375f,    0.0723974406719207763671875f, 0.0f },
-  { 0.0f,                          0.0f,                          0.91051995754241943359375f,   0.0f },
-  { 0.0f,                          0.0f,                          0.0f,                         1.0f }
-};
-
-static const DirectX::XMMATRIX c_from709toAP0 = // Transposed
-{
-  { 0.4339316189289093017578125f, 0.088618390262126922607421875f, 0.01775003969669342041015625f,  0.0f },
-  { 0.3762523829936981201171875f, 0.809275329113006591796875f,    0.109447620809078216552734375f, 0.0f },
-  { 0.1898159682750701904296875f, 0.10210628807544708251953125f,  0.872802317142486572265625f,    0.0f },
-  { 0.0f,                         0.0f,                           0.0f,                           1.0f }
-};
-
-static const DirectX::XMMATRIX c_from709toAP1 = // Transposed
-{
-  { 0.61702883243560791015625f,       0.333867609500885009765625f,    0.04910354316234588623046875f,     0.0f },
-  { 0.069922320544719696044921875f,   0.91734969615936279296875f,     0.012727967463433742523193359375f, 0.0f },
-  { 0.02054978720843791961669921875f, 0.107552029192447662353515625f, 0.871898174285888671875f,          0.0f },
-  { 0.0f,                             0.0f,                           0.0f,                              1.0f }
-};
-
-static const DirectX::XMMATRIX c_fromAP1to709 = // Transposed
-{
-  {  1.70505f, -0.13026f, -0.02400f, 0.0f },
-  { -0.62179f,  1.14080f, -0.12897f, 0.0f },
-  { -0.08326f, -0.01055f,  1.15297f, 0.0f },
-  {  0.0f,      0.0f,      0.0f,     1.0f }
-};
-
-static const DirectX::XMMATRIX c_fromAP1toXYZ = // Transposed
-{
-  { 0.647507190704345703125f,      0.266086399555206298828125f,   -0.00544886849820613861083984375f,  0.0f },
-  { 0.13437913358211517333984375f, 0.67596781253814697265625f,     0.004072095267474651336669921875f, 0.0f },
-  { 0.1685695946216583251953125f,  0.057945795357227325439453125f, 1.090434551239013671875f,          0.0f },
-  { 0.0f,                          0.0f,                           0.0f,                              1.0f }
-};
-
-static const DirectX::XMMATRIX c_fromXYZto709 = // Transposed
-{
-  {  3.2409698963165283203125f,    -0.96924364566802978515625f,       0.055630080401897430419921875f, 0.0f },
-  { -1.53738319873809814453125f,    1.875967502593994140625f,        -0.2039769589900970458984375f,   0.0f },
-  { -0.4986107647418975830078125f,  0.0415550582110881805419921875f,  1.05697154998779296875f,        0.0f },
-  {  0.0f,                          0.0f,                             0.0f,                           1.0f }
-};
-
-struct ParamsPQ
-{
-  DirectX::XMVECTOR N, M;
-  DirectX::XMVECTOR C1, C2, C3;
-  DirectX::XMVECTOR MaxPQ;
-};
-                  
-static const ParamsPQ PQ =
-{
-  DirectX::XMVectorReplicate (2610.0 / 4096.0 / 4.0),   // N
-  DirectX::XMVectorReplicate (2523.0 / 4096.0 * 128.0), // M
-  DirectX::XMVectorReplicate (3424.0 / 4096.0),         // C1
-  DirectX::XMVectorReplicate (2413.0 / 4096.0 * 32.0),  // C2
-  DirectX::XMVectorReplicate (2392.0 / 4096.0 * 32.0),  // C3
-  DirectX::XMVectorReplicate (125.0),
-};
-
-auto PQToLinear = [](DirectX::XMVECTOR N)
-{
-using namespace DirectX;
-
-  XMVECTOR ret;
-
-  ret =
-    XMVectorPow (N, XMVectorDivide (g_XMOne, PQ.M));
-
-  XMVECTOR nd;
-
-  nd =
-    XMVectorDivide (
-      XMVectorMax (XMVectorSubtract (ret, PQ.C1), g_XMZero),
-                   XMVectorSubtract (     PQ.C2,
-            XMVectorMultiply (PQ.C3, ret)));
-
-  ret =
-    XMVectorMultiply (
-      XMVectorPow (nd, XMVectorDivide (g_XMOne, PQ.N)), PQ.MaxPQ
-    );
-
-  return ret;
-};
 
 
 #pragma region LoadTexture
@@ -830,7 +914,7 @@ LoadLibraryTexture (image_s& image)
                   XMVECTOR v = inPixels [j];
 
                   outPixels [j] =
-                    XMVector3Transform (PQToLinear (v), c_from2020to709);
+                    XMVector3Transform (PQToLinear (v), c_Bt2100toscRGB);
                 }
               }, img );
 
@@ -1001,7 +1085,7 @@ LoadLibraryTexture (image_s& image)
     XMVECTOR vMaxLum = g_XMZero;
     XMVECTOR vMinLum = g_XMOne;
 
-    float fLumAccum = 0.0f;
+    double dLumAccum = 0.0;
 
     static constexpr float FLT16_MIN = 0.0000000894069671630859375f;
 
@@ -1021,7 +1105,7 @@ LoadLibraryTexture (image_s& image)
 
       uint32_t xm_test_all = 0x0;
 
-      float fScanlineLum = 0.0f;
+      double dScanlineLum = 0.0;
 
       for (size_t j = 0; j < width; ++j)
       {
@@ -1037,7 +1121,7 @@ LoadLibraryTexture (image_s& image)
 
         xm_test_all = 0x0;
 
-        #define FP16_MIN 0.0000000894069671630859375f
+        #define FP16_MIN 0.0005f
 
         if (XMVectorGreaterOrEqualR (&xm_test_all, v, g_XMZero);
             XMComparisonAllTrue     ( xm_test_all) || XMVectorGetY (vColorXYZ) < FP16_MIN)
@@ -1106,14 +1190,14 @@ LoadLibraryTexture (image_s& image)
         vMinLum =
           XMVectorMin (vMinLum, vColorXYZ);
 
-        fScanlineLum +=
-          XMVectorGetY (v);
+        dScanlineLum +=
+          std::max (0.0, static_cast <double> (XMVectorGetY (v)));
 
         pixels++;
       }
 
-      fLumAccum +=
-        (fScanlineLum / static_cast <float> (width));
+      dLumAccum +=
+        (dScanlineLum / static_cast <float> (width));
     } );
 
     const float fMaxCLL =
@@ -1145,12 +1229,12 @@ LoadLibraryTexture (image_s& image)
 
     image.light_info.max_cll      = fMaxCLL;
     image.light_info.max_cll_name = cMaxChannel;
-    image.light_info.max_nits     = fMaxLum * 80.0f; // scRGB
-    image.light_info.min_nits     = fMinLum * 80.0f; // scRGB
+    image.light_info.max_nits     = std::max (0.0f, fMaxLum * 80.0f); // scRGB
+    image.light_info.min_nits     = std::max (0.0f, fMinLum * 80.0f); // scRGB
 
     // We use the sum of averages per-scanline to help avoid overflow
-    image.light_info.avg_nits     = 80.0f *
-      (fLumAccum / static_cast <float> (meta.height));
+    image.light_info.avg_nits     = static_cast <float> (80.0 *
+      (dLumAccum / static_cast <double> (meta.height)));
   }
 
   HRESULT hr =
@@ -1229,7 +1313,7 @@ GetCurrentAspectRatio (image_s& image)
   static SKIF_RegistrySettings& _registry   = SKIF_RegistrySettings::GetInstance ( );
   static ImageScaling last_scaling = ImageScaling_Auto;
 
-  ImVec2 avail_size = ImGui::GetContentRegionAvail ( ) / SKIF_ImGui_GlobalDPIScale;
+  ImVec2 avail_size = ImFloor (ImGui::GetContentRegionAvail ( ) / SKIF_ImGui_GlobalDPIScale);
 
   // Clear any cached data on image changes
   if (image.pRawTexSRV.p == nullptr || image.height == 0 || image.width  == 0)
@@ -1327,7 +1411,7 @@ GetCurrentAspectRatio (image_s& image)
                << " > coord 0,0   : " << image.uv0.x << "," << image.uv0.y  << "\n"
                << " > coord 1,1   : " << image.uv1.x << "," << image.uv1.y;
 
-  image.avail_size       = ImVec2(avail_width, avail_height);
+  image.avail_size       = ImFloor (ImVec2 (avail_width, avail_height));
 
   return image.avail_size;
 }
@@ -1358,59 +1442,98 @@ SKIF_UI_Tab_DrawViewer (void)
   //
   // User is requesting to copy the loaded image to clipboard,
   //   let's download it back from the GPU and have some fun!
-  if (wantCopyToClipboard && cover.pRawTexSRV.p != nullptr &&
-                             cover.is_hdr)
-  {
-    auto
-        pDevice = SKIF_D3D11_GetDevice ();
-    if (pDevice != nullptr)
+  if (wantCopyToClipboard)
+  {   wantCopyToClipboard = false;
+
+    if (cover.pRawTexSRV.p != nullptr /* && cover.is_hdr */)
     {
-      CComPtr <ID3D11DeviceContext>  pDevCtx;
-      pDevice->GetImmediateContext (&pDevCtx.p);
-
-      CComPtr <ID3D11Resource>        pTexResource;
-      cover.pRawTexSRV->GetResource (&pTexResource.p);
-
-      if (pTexResource.p != nullptr)
+      auto
+          pDevice = SKIF_D3D11_GetDevice ();
+      if (pDevice != nullptr)
       {
-        DirectX::ScratchImage                                                     captured_img;
-        if (SUCCEEDED (DirectX::CaptureTexture (pDevice, pDevCtx, pTexResource.p, captured_img)))
+        CComPtr <ID3D11DeviceContext>  pDevCtx;
+        pDevice->GetImmediateContext (&pDevCtx.p);
+
+        CComPtr <ID3D11Resource>        pTexResource;
+        cover.pRawTexSRV->GetResource (&pTexResource.p);
+
+        if (pTexResource.p != nullptr)
         {
-          if (copyRect.GetArea () != 0)
+          DirectX::ScratchImage                                                     captured_img;
+          if (SUCCEEDED (DirectX::CaptureTexture (pDevice, pDevCtx, pTexResource.p, captured_img)))
           {
-            const size_t
-              x      = static_cast <size_t> (std::max (0.0f, copyRect.Min.x)),
-              y      = static_cast <size_t> (std::max (0.0f, copyRect.Min.y)),
-              width  = static_cast <size_t> (std::max (0.0f, copyRect.GetWidth  ())),
-              height = static_cast <size_t> (std::max (0.0f, copyRect.GetHeight ()));
-
-            const DirectX::Rect
-              src_rect (x,y, width,height);
-
-            DirectX::ScratchImage
-                           subrect;
-            if (SUCCEEDED (subrect.Initialize2D   ( captured_img.GetMetadata ().format, width, height, 1, 1)) &&
-                SUCCEEDED (DirectX::CopyRectangle (*captured_img.GetImages   (), src_rect,
-                                                                                 *subrect.GetImages (), DirectX::TEX_FILTER_DEFAULT, 0, 0)))
+            if (copyRect.GetArea () != 0)
             {
-              extern bool
-                  SKIV_Image_CopyToClipboard (const DirectX::Image* pImage);
-              if (SKIV_Image_CopyToClipboard (subrect.GetImages ()))
-              {
-                std::exchange (wantCopyToClipboard, false);
+              const size_t
+                x      = static_cast <size_t> (std::max (0.0f, copyRect.Min.x)),
+                y      = static_cast <size_t> (std::max (0.0f, copyRect.Min.y)),
+                width  = static_cast <size_t> (std::max (0.0f, copyRect.GetWidth  ())),
+                height = static_cast <size_t> (std::max (0.0f, copyRect.GetHeight ()));
 
-                copyRect = { 0,0,0,0 };
+              const DirectX::Rect
+                src_rect (x,y, width,height);
+
+              DirectX::ScratchImage
+                             subrect;
+              if (SUCCEEDED (subrect.Initialize2D   ( captured_img.GetMetadata ().format, width, height, 1, 1)) &&
+                  SUCCEEDED (DirectX::CopyRectangle (*captured_img.GetImages   (), src_rect,
+                                                                                   *subrect.GetImages (), DirectX::TEX_FILTER_DEFAULT, 0, 0)))
+              {
+                if (SKIV_Image_CopyToClipboard (subrect.GetImages (), true, cover.is_hdr, false))
+                {
+                  ImGui::InsertNotification (
+                    {
+                      ImGuiToastType::Info,
+                      3000,
+                      "Copied area to clipboard", "%.fx%.f -> %.fx%.f",
+                      copyRect.Min.x,
+                      copyRect.Min.y,
+                      copyRect.Max.x,
+                      copyRect.Max.y
+                    }
+                  );
+
+                  copyRect = { 0,0,0,0 };
+                }
+
+                else {
+                  ImGui::InsertNotification (
+                    {
+                      ImGuiToastType::Error,
+                      3000,
+                      "Failed to copy area to clipboard", "Area: %.fx%.f -> %.fx%.f",
+                      copyRect.Min.x,
+                      copyRect.Min.y,
+                      copyRect.Max.x,
+                      copyRect.Max.y
+                    }
+                  );
+                }
               }
             }
-          }
 
-          else
-          {
-            extern bool
-                SKIV_Image_CopyToClipboard (const DirectX::Image* pImage);
-            if (SKIV_Image_CopyToClipboard (captured_img.GetImages ()))
+            else
             {
-              std::exchange (wantCopyToClipboard, false);
+              if (SKIV_Image_CopyToClipboard (captured_img.GetImages (), false, cover.is_hdr, false))
+              {
+                ImGui::InsertNotification (
+                  {
+                    ImGuiToastType::Info,
+                    3000,
+                    "Copied image to clipboard", ""
+                  }
+                );
+              }
+
+              else {
+                ImGui::InsertNotification (
+                  {
+                    ImGuiToastType::Error,
+                    3000,
+                    "Failed to copy image to clipboard", ""
+                  }
+                );
+              }
             }
           }
         }
@@ -1730,7 +1853,8 @@ SKIF_UI_Tab_DrawViewer (void)
 
 #pragma region GameCover
 
-  static const ImVec2 hdr_uv (-2048.0f, -2048.0f);
+  static const ImVec2 hdr_uv0 (-1024.0f, -1024.0f);
+  static const ImVec2 hdr_uv1 (-2048.0f, -2048.0f);
   
   static int    queuePosGameCover  = 0;
   static char   cstrLabelDowning[] = "Downloading...";
@@ -1796,15 +1920,17 @@ SKIF_UI_Tab_DrawViewer (void)
   if (cover_old.pRawTexSRV.p != nullptr && fAlphaPrev > 0.0f)
   {
     if (sizeCover_old.x < ImGui::GetContentRegionAvail().x)
-      ImGui::SetCursorPosX ((ImGui::GetContentRegionAvail().x - sizeCover_old.x) * 0.5f);
+      ImGui::SetCursorPosX (ImFloor ((ImGui::GetContentRegionAvail().x - sizeCover_old.x) * 0.5f));
     if (sizeCover_old.y < ImGui::GetContentRegionAvail().y)
-      ImGui::SetCursorPosY ((ImGui::GetContentRegionAvail().y - sizeCover_old.y) * 0.5f);
+      ImGui::SetCursorPosY (ImFloor ((ImGui::GetContentRegionAvail().y - sizeCover_old.y) * 0.5f));
+
+    sizeCover_old = ImFloor (sizeCover_old);
   
     SKIF_ImGui_OptImage  (cover_old.pRawTexSRV.p,
                                                       ImVec2 (sizeCover_old.x,
                                                               sizeCover_old.y),
-                                    cover_old.light_info.isHDR ? hdr_uv : cover_old.uv0, // Top Left coordinates
-                                    cover_old.light_info.isHDR ? hdr_uv : cover_old.uv1, // Bottom Right coordinates
+                                    cover_old.light_info.isHDR ? hdr_uv0 : cover_old.uv0, // Top Left coordinates
+                                    cover_old.light_info.isHDR ? hdr_uv1 : cover_old.uv1, // Bottom Right coordinates
                                     (_registry._StyleLightMode) ? ImVec4 (1.0f, 1.0f, 1.0f, fGammaCorrectedTint * AdjustAlpha (fAlphaPrev))  : ImVec4 (fTint, fTint, fTint, fAlphaPrev) // Alpha transparency
     );
   
@@ -1832,24 +1958,24 @@ SKIF_UI_Tab_DrawViewer (void)
   SKIV_HDR_MaxLuminance = cover.light_info.max_nits;
 
   if (sizeCover.x < ImGui::GetContentRegionAvail().x)
-    ImGui::SetCursorPosX ((ImGui::GetContentRegionAvail().x - sizeCover.x) * 0.5f);
+    ImGui::SetCursorPosX (ImFloor ((ImGui::GetContentRegionAvail().x - sizeCover.x) * 0.5f));
   if (sizeCover.y < ImGui::GetContentRegionAvail().y)
-    ImGui::SetCursorPosY ((ImGui::GetContentRegionAvail().y - sizeCover.y) * 0.5f);
+    ImGui::SetCursorPosY (ImFloor ((ImGui::GetContentRegionAvail().y - sizeCover.y) * 0.5f));
 
   if (_registry._RendererHDREnabled)
     SKIV_HDR_MaxCLL = 1.0f;
 
-  ImVec2 image_pos  = ImGui::GetCursorScreenPos ( ); // NOTE! Actual screen position (since that's what ImGui::Image uses)
+  sizeCover         = ImFloor (sizeCover);
+  ImVec2 image_pos  = ImFloor (ImGui::GetCursorScreenPos ( )); // NOTE! Actual screen position (since that's what ImGui::Image uses)
   ImRect image_rect = ImRect (image_pos, image_pos + sizeCover);
 
-  // Display game cover image
   SKIF_ImGui_OptImage  (cover.pRawTexSRV.p,
                                                     ImVec2 (sizeCover.x,
                                                             sizeCover.y),
-                                  cover.light_info.isHDR ? hdr_uv : cover.uv0, // Top Left coordinates
-                                  cover.light_info.isHDR ? hdr_uv : cover.uv1, // Bottom Right coordinates
+                                  cover.light_info.isHDR ? hdr_uv0 : cover.uv0, // Top Left coordinates
+                                  cover.light_info.isHDR ? hdr_uv1 : cover.uv1, // Bottom Right coordinates
                                   (_registry._StyleLightMode) ? ImVec4 (1.0f, 1.0f, 1.0f, fGammaCorrectedTint * AdjustAlpha (fAlpha))  :
-                                                                ImVec4 (fTint, fTint, fTint, fAlpha) // Alpha transparency (2024-01-01, removed fGammaCorrectedTint * fAlpha for the light style)
+                                                                ImVec4 (1.f, 1.f, 1.f, 1.f) // Alpha transparency (2024-01-01, removed fGammaCorrectedTint * fAlpha for the light style)
   );
 
   isImageHovered = ImGui::IsItemHovered();
@@ -1867,16 +1993,22 @@ SKIF_UI_Tab_DrawViewer (void)
 
   if (cover.pRawTexSRV.p != nullptr)
   {
+    auto& io =
+      ImGui::GetIO ();
+
     // Using 4.975f and 0.075f to work around some floating point shenanigans
-    if (     ImGui::GetIO().MouseWheel > 0 && cover.zoom < 4.975f)
+    if (     io.MouseWheel > 0 && cover.zoom < 4.975f && io.KeyCtrl)
       cover.zoom += 0.05f;
 
-    else if (ImGui::GetIO().MouseWheel < 0 && cover.zoom > 0.075f)
+    else if (io.MouseWheel < 0 && cover.zoom > 0.075f && io.KeyCtrl)
       cover.zoom -= 0.05f;
 
-    static ImRect selection_rect;
-    if (ImGui::GetIO().KeyCtrl && SKIF_ImGui_SelectionRect (&selection_rect, image_rect))
+    if ((io.KeyCtrl && SKIF_ImGui_SelectionRect (&selection_rect, image_rect)))
     {
+      // Flip an inverted rectangle
+      if (selection_rect.Min.x > selection_rect.Max.x) std::swap (selection_rect.Min.x, selection_rect.Max.x);
+      if (selection_rect.Min.y > selection_rect.Max.y) std::swap (selection_rect.Min.y, selection_rect.Max.y);
+      
       // Adjust for image position
       selection_rect.Min -= image_pos;
       selection_rect.Max -= image_pos;
@@ -1887,7 +2019,7 @@ SKIF_UI_Tab_DrawViewer (void)
       translated.Min *= scale;
       translated.Max *= scale;
 
-      // On release, do something
+      /*
       ImGui::InsertNotification (
         {
           ImGuiToastType::Info,
@@ -1903,6 +2035,7 @@ SKIF_UI_Tab_DrawViewer (void)
           translated.Max.y
         }
       );
+      */
 
       wantCopyToClipboard = true;
       copyRect            = translated;
@@ -2021,6 +2154,19 @@ SKIF_UI_Tab_DrawViewer (void)
       ImGui::TextUnformatted (szLabels);
       ImGui::SameLine        (posXvalues);
       ImGui::TextUnformatted (szLabelsData);
+
+      if (cover.zoom != 1.0f)
+      {
+        ImGui::SameLine             ();
+        ImGui::BeginGroup           ();
+        ImGui::PopFont              ();
+        ImGui::Spacing              ();
+        ImGui::Spacing              ();
+        if (ImGui::Button (ICON_FA_ROTATE_LEFT "###Zoom_Reset"))
+          cover.zoom = 1.0f;
+        ImGui::PushFont (fontConsolas);
+        ImGui::EndGroup             ();
+      }
     }
 
     // HDR Light Levels
@@ -2132,8 +2278,84 @@ SKIF_UI_Tab_DrawViewer (void)
 
       ImGui::PopFont ();
 
-      ImGui::TextUnformatted ("\n");
+      ImGui::SameLine   ();
+      ImGui::BeginGroup ();
+
+#if 0
+      ImGui::TextUnformatted ("Output Format");
+
+      extern bool RecreateSwapChains;
+      static int* ptrSDR = nullptr;
+
+      if ((_registry.iHDRMode > 0 && SKIF_Util_IsHDRActive ( )))
+      {
+        ptrSDR = &_registry.iHDRMode;
+      }
+      else
+        ptrSDR = &_registry.iSDRMode;
+
+      if (ImGui::RadioButton   (" 8 bpc SDR", ptrSDR, 0))
+      {
+        _registry.iHDRMode = 0;
+        _registry.iSDRMode = 0;
+        _registry.regKVSDRMode.putData (_registry.iSDRMode);
+        _registry.regKVHDRMode.putData (_registry.iHDRMode);
+
+        RecreateSwapChains = true;
+      }
+      // It seems that Windows 10 1709+ (Build 16299) is required to
+      // support 10 bpc (DXGI_FORMAT_R10G10B10A2_UNORM) for flip model
+      if (SKIF_Util_IsWindows10v1709OrGreater ( ))
+      {
+        if (ImGui::RadioButton ("10 bpc SDR", ptrSDR, 1))
+        {
+          _registry.iHDRMode = 0;
+          _registry.iSDRMode = 1;
+          _registry.regKVSDRMode.putData (_registry.iSDRMode);
+          _registry.regKVHDRMode.putData (_registry.iHDRMode);
+
+          RecreateSwapChains = true;
+        }
+      }
+      if (SKIF_Util_IsHDRActive ())
+      {
+        if (ImGui::RadioButton ("16 bpc HDR", &_registry.iHDRMode, 2))
+        {
+          _registry.iSDRMode = 0;
+          _registry.regKVSDRMode.putData (_registry.iSDRMode);
+          _registry.regKVHDRMode.putData (_registry.iHDRMode);
+
+          RecreateSwapChains = true;
+        }
+      }
+
+      ImGui::Spacing (); ImGui::Spacing (); ImGui::Spacing (); ImGui::Spacing ();
+      //ImGui::TextUnformatted ("");
+
+      if (ImGui::Button (ICON_FA_FLOPPY_DISK " Save As..."))
+        SaveFileDialog  = PopupState_Open;
+      if (ImGui::Button (ICON_FA_FILE_EXPORT "Export to SDR"))
+        ExportSDRDialog = PopupState_Open;
+
+      ImGui::Spacing (); ImGui::Spacing (); ImGui::Spacing (); ImGui::Spacing ();
+      //ImGui::TextUnformatted ("");
+
+      if (ImGui::Button (ICON_FA_COPY "Copy to Clipboard"))
+      {
+      }
+
+      static int clipboard_type = 0;
+      ImGui::RadioButton ("HDR (.png)", &clipboard_type, 0); ImGui::SameLine ();
+      ImGui::RadioButton ("SDR",        &clipboard_type, 1);
+#endif
+      ImGui::EndGroup ();
+
+      ImGui::Spacing (); ImGui::Spacing ();
+
       ImGui::SliderFloat ("Brightness", &SKIV_HDR_BrightnessScale, 1.0f, 2000.0f, "%.3f %%", ImGuiSliderFlags_Logarithmic);
+
+      float slider_width =
+        ImGui::CalcItemWidth ();
 
       if (SKIV_HDR_BrightnessScale != 100.0f)
       {
@@ -2147,23 +2369,180 @@ SKIF_UI_Tab_DrawViewer (void)
         ImGui_ImplDX11_ViewportData* vd =
           (ImGui_ImplDX11_ViewportData *)ImGui::GetWindowViewport ()->RendererUserData;
 
-        ImGui::BeginDisabled ();
-        SKIV_HDR_DisplayMaxLuminance = vd->HDRLuma;
-        ImGui::SliderFloat   ("Display Luminance", &vd->HDRLuma, 200.0f, 2000.0f, (const char *)u8"%.1f cd / m\u00b2");
-        ImGui::EndDisabled   ();
+        float fCursorX1 =
+          ImGui::GetCursorPosX ();
 
-        if ((SKIV_HDR_BrightnessScale / 100.0f) * SKIV_HDR_MaxLuminance > SKIV_HDR_DisplayMaxLuminance)
+        static bool  bLockCalibration     = true;
+        static float fCalibrationOverride = 0.0f;
+
+        if (ImGui::Button ( bLockCalibration ? ICON_FA_LOCK     "###LockCalibration"
+                                             : ICON_FA_UNLOCK "###UnlockCalibration" ))
         {
-          ImGui::TextUnformatted ("\n");
-          ImGui::TextColored (ImColor (0xff0099ff), ICON_FA_TRIANGLE_EXCLAMATION);
-          ImGui::SameLine    ();
-          ImGui::TextUnformatted ("Content Exceeds Display Capabilities");
+          bLockCalibration =
+             (! bLockCalibration);
+          if (! bLockCalibration)
+          {
+            if ( fCalibrationOverride >= 0.0f )
+                 fCalibrationOverride = std::min (-SKIV_HDR_DisplayMaxLuminance,
+                                                   SKIV_HDR_DisplayMaxLuminance);
+          }
 
-          ImGui::RadioButton ("Do Nothing",      &SKIV_HDR_TonemapType, SKIV_TONEMAP_TYPE_NONE);
+          else
+          {
+            fCalibrationOverride =
+              std::max (-fCalibrationOverride,
+                         fCalibrationOverride);
+          }
+        }
+
+        if (bLockCalibration) ImGui::BeginDisabled ();
+
+        ImGui::SameLine ();
+
+        float fCursorX2 =
+          ImGui::GetCursorPosX ();
+
+        if (fCalibrationOverride == 0.0f) SKIV_HDR_DisplayMaxLuminance = vd->HDRLuma;
+        else                              SKIV_HDR_DisplayMaxLuminance = bLockCalibration ? abs (fCalibrationOverride)
+                                                                                          :      fCalibrationOverride;
+
+        ImGui::SetNextItemWidth (
+          (slider_width - (fCursorX2 - fCursorX1))
+        );
+
+        static constexpr float _fMinStdHdrLuminance =  300.0f;
+        static constexpr float _fMaxStdHdrLuminance = 1500.0f;
+
+        if (fCalibrationOverride != 0.0f)
+        {
+          float override_slider =
+            abs (fCalibrationOverride);
+
+          if (ImGui::SliderFloat ( "Display Luminance", &override_slider,
+                              _fMinStdHdrLuminance, _fMaxStdHdrLuminance,
+                                   (const char *)u8"%.1f cd / m\u00b2", ImGuiSliderFlags_Logarithmic ))
+          {
+            SKIV_HDR_DisplayMaxLuminance = -override_slider;
+            fCalibrationOverride         = -override_slider;
+          }
+
+          if (ImGui::IsItemHovered ())
+          {
+            ImGui::BeginTooltip    ( );
+            ImGui::TextUnformatted ("Ctrl-Click to Manually Input Precise Values");
+            ImGui::Separator       ( );
+            ImGui::BulletText      ("Accurate maximum luminance is necessary to display content "
+                                    "brighter than your display supports.");
+            ImGui::Separator       ( );
+            ImGui::TextUnformatted (ICON_FA_LOCK " the slider to dismiss the test pattern.");
+            ImGui::EndTooltip      ( );
+          }
+        }
+
+        else if (ImGui::SliderFloat ( "Display Luminance", &SKIV_HDR_DisplayMaxLuminance,
+                                              _fMinStdHdrLuminance, _fMaxStdHdrLuminance,
+                                                   (const char *)u8"%.1f cd / m\u00b2", ImGuiSliderFlags_Logarithmic ))
+        {
+          fCalibrationOverride =
+            -SKIV_HDR_DisplayMaxLuminance;
+        }
+        if (ImGui::IsItemHovered (ImGuiHoveredFlags_AllowWhenDisabled) && bLockCalibration)
+        {
+          ImGui::BeginTooltip    (  );
+          ImGui::TextUnformatted ("Validate or Override EDID/ICC Profile Display Maximum Luminance");
+          ImGui::Separator       (  );
+          ImGui::Spacing         (  );
+          ImGui::PushStyleColor  (ImGuiCol_Text, ImVec4 (.55f, .55f, .55f, 1.f));
+          ImGui::BulletText      ("Many TVs do not supply actual luminance capabilities to Windows !!");
+          ImGui::BulletText      ("Do not trust SKIV's default values unless you have run Windows 11 HDR Calibration.");
+          ImGui::PopStyleColor   (  );
+          ImGui::Spacing         (  );
+          ImGui::Spacing         (  );
+          ImGui::TextUnformatted ("To validate display luminance clipping, " ICON_FA_UNLOCK " the slider and adjust"
+                                  " until the white checkerboard pattern appears solid white.");
+          ImGui::Spacing         (  );
+          ImGui::PushStyleColor  (ImGuiCol_Text, ImVec4 (.55f, .55f, .55f, 1.f));
+          ImGui::BulletText      ("Find the -smallest- value that causes the test pattern to disappear (clip).");
+          ImGui::PopStyleColor   (  );
+          ImGui::Spacing         (  );
+          ImGui::Spacing         (  );
+          ImGui::TextUnformatted ("If the default values fail to clip, run Windows HDR Calibration and/or disable "
+                                  "driver color management (i.e. Reference Mode).");
+          ImGui::Spacing         (  );
+          ImGui::Spacing         (  );
+          ImGui::Separator       (  );
+          ImGui::TextColored     (ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Info), "%hs", ICON_FA_CIRCLE_INFO); ImGui::SameLine ();
+          ImGui::TextUnformatted ("This test measures signal processing / driver color management bugs; it cannot measure "
+                                  "ABL or physical light output.");
+          ImGui::EndTooltip      (  );
+        }
+        if (bLockCalibration) ImGui::EndDisabled ();
+
+        if (fCalibrationOverride != 0.0f)
+        {
           ImGui::SameLine ();
-          ImGui::RadioButton ("Clip to Display", &SKIV_HDR_TonemapType, SKIV_TONEMAP_TYPE_CLIP);
-          ImGui::SameLine ();
-          ImGui::RadioButton ("Map to Display",  &SKIV_HDR_TonemapType, SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY);
+          if (ImGui::Button (ICON_FA_ROTATE_LEFT "###Calibration_Reset"))
+                                                    fCalibrationOverride = 0.0f;
+        }
+
+        // Do not show content range warnings while the override value is negative,
+        //   user is calibrating their screen...
+        if (bLockCalibration)
+        {
+          if ( (SKIV_HDR_BrightnessScale / 100.0f) * SKIV_HDR_MaxLuminance >
+                                                     SKIV_HDR_DisplayMaxLuminance )
+          {
+            ImGui::Spacing (); ImGui::Spacing ();
+            ImGui::TextColored (ImColor (0xff0099ff), ICON_FA_TRIANGLE_EXCLAMATION);
+            ImGui::SameLine    ();
+            ImGui::TextUnformatted ("Content Exceeds Display Capabilities");
+
+            ImGui::RadioButton ("Do Nothing",      &SKIV_HDR_TonemapType, SKIV_TONEMAP_TYPE_NONE);
+            if (ImGui::IsItemHovered ())
+            {
+              ImGui::BeginTooltip    ( );
+              ImGui::TextUnformatted ("If Content Exceeds Display's Maximum Luminance:\t");
+              ImGui::SameLine        ( );
+              ImGui::TextColored     (ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Info), "Nasal Demons...?");
+              ImGui::Separator       ( );
+              ImGui::PushStyleColor  (ImGuiCol_Text, ImVec4 (.65f, .65f, .65f, 1.f));
+              ImGui::BulletText      ("You are going to need a pixel exorcist.");
+              ImGui::PopStyleColor   ( );
+              ImGui::EndTooltip      ( );
+            }
+            ImGui::SameLine    ();
+
+            ImGui::RadioButton ("Clip to Display", &SKIV_HDR_TonemapType, SKIV_TONEMAP_TYPE_CLIP);
+            if (ImGui::IsItemHovered ())
+            {
+              ImGui::BeginTooltip    ( );
+              ImGui::TextUnformatted ("If Content Exceeds Display's Maximum Luminance:\t");
+              ImGui::SameLine        ( );
+              ImGui::TextColored     (ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Yellow), "Clip Luminance at Display's Limit");
+              ImGui::Separator       ( );
+              ImGui::PushStyleColor  (ImGuiCol_Text, ImVec4 (.65f, .65f, .65f, 1.f));
+              ImGui::BulletText      ("Produces the brightest highlights possible, even if it means loss of image detail.");
+              ImGui::BulletText      ("Some HDR scenes are intentionally too bright, and clipping is intended behavior.");
+              ImGui::PopStyleColor   ( );
+              ImGui::EndTooltip      ( );
+            }
+            ImGui::SameLine          ( );
+
+            ImGui::RadioButton ("Map to Display",  &SKIV_HDR_TonemapType, SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY);
+            if (ImGui::IsItemHovered ())
+            {
+              ImGui::BeginTooltip    ( );
+              ImGui::TextUnformatted ("If Content Exceeds Display's Maximum Luminance:\t");
+              ImGui::SameLine        ( );
+              ImGui::TextColored     (ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Success), "Tone-map for Maximum Visibility");
+              ImGui::Separator       ( );
+              ImGui::PushStyleColor  (ImGuiCol_Text, ImVec4 (.65f, .65f, .65f, 1.f));
+              ImGui::BulletText      ("Causes some loss in white luminance on highlights.");
+              ImGui::BulletText      ("May expose details you were not intended to see (i.e. calibration test patterns).");
+              ImGui::PopStyleColor   ( );
+              ImGui::EndTooltip      ( );
+            }
+          }
         }
       }
 
@@ -2246,7 +2625,18 @@ SKIF_UI_Tab_DrawViewer (void)
 
     else if (cover.pRawTexSRV.p != nullptr)
     {
-      if (SKIF_ImGui_MenuItemEx2 ("Close", 0, ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info), "Ctrl+W"))
+      if (SKIF_ImGui_MenuItemEx2 ("Save As...", ICON_FA_FLOPPY_DISK,    ImGui::GetStyleColorVec4(ImGuiCol_Text),      "Ctrl+S"))
+        SaveFileDialog = PopupState_Open;
+      if (cover.is_hdr &&
+          SKIF_ImGui_MenuItemEx2 ("Export to SDR", ICON_FA_FILE_EXPORT, ImGui::GetStyleColorVec4(ImGuiCol_Text),      "Ctrl+X"))
+        ExportSDRDialog = PopupState_Open;
+      if (//cover.is_hdr &&
+          SKIF_ImGui_MenuItemEx2 ("Copy",          ICON_FA_CLIPBOARD,   ImGui::GetStyleColorVec4(ImGuiCol_Text),      "Ctrl+C"))
+      {
+        extern void SKIV_HandleCopyShortcut (void);
+                    SKIV_HandleCopyShortcut ();
+      }
+      if (SKIF_ImGui_MenuItemEx2 ("Close", 0,                           ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info), "Ctrl+W"))
         _SwapOutCover ();
 
       // Image scaling
@@ -2352,14 +2742,31 @@ SKIF_UI_Tab_DrawViewer (void)
 
     ImGui::Separator ( );
 
-    if (SKIF_ImGui_MenuItemEx2 ("Fullscreen", SKIF_ImGui_IsFullscreen () ? ICON_FA_DOWN_LEFT_AND_UP_RIGHT_TO_CENTER : ICON_FA_UP_RIGHT_AND_DOWN_LEFT_FROM_CENTER, ImGui::GetStyleColorVec4 (ImGuiCol_Text), "Ctrl+F"))
+    if (SKIF_ImGui_MenuItemEx2 ("Fullscreen", SKIF_ImGui_IsFullscreen (SKIF_ImGui_hWnd) ? ICON_FA_DOWN_LEFT_AND_UP_RIGHT_TO_CENTER : ICON_FA_UP_RIGHT_AND_DOWN_LEFT_FROM_CENTER, ImGui::GetStyleColorVec4 (ImGuiCol_Text), "Ctrl+F"))
     {
-      SKIF_ImGui_SetFullscreen (! SKIF_ImGui_IsFullscreen( ));
+      SKIF_ImGui_SetFullscreen (SKIF_ImGui_hWnd, ! SKIF_ImGui_IsFullscreen (SKIF_ImGui_hWnd));
     }
+
+    //if (SKIF_ImGui_MenuItemEx2 ("Snipping Mode", ICON_FA_SCISSORS, ImGui::GetStyleColorVec4 (ImGuiCol_Text), ""))
+    //{
+    //  _registry._SnippingMode = ! _registry._SnippingMode;
+    //}
 
     ImGui::Separator ( );
 
-    if (SKIF_ImGui_MenuItemEx2 ("Exit", 0, ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Info), "Esc"))
+    if (_registry.bCloseToTray)
+    {
+      if (SKIF_ImGui_MenuItemEx2 ("Close app", 0, ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info), "Esc"))
+        PostMessage (SKIF_Notify_hWnd, WM_SKIF_MINIMIZE, 0x0, 0x0);
+    }
+
+    else
+    {
+      if (SKIF_ImGui_MenuItemEx2 ("Minimize", 0, ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info), "Ctrl+N"))
+        PostMessage (SKIF_Notify_hWnd, WM_SKIF_MINIMIZE, 0x0, 0x0);
+    }
+
+    if (SKIF_ImGui_MenuItemEx2 ("Exit", 0, ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Info), "Ctrl+Q"))
     {
       extern bool bKeepWindowAlive;
       bKeepWindowAlive = false;
@@ -2406,6 +2813,8 @@ SKIF_UI_Tab_DrawViewer (void)
     HANDLE hWorkerThread = (HANDLE)
     _beginthreadex (nullptr, 0x0, [](void* var) -> unsigned
     {
+      SetThreadPriority (GetCurrentThread (), THREAD_PRIORITY_TIME_CRITICAL);
+
       SKIF_Util_SetThreadDescription (GetCurrentThread (), L"SKIV_ImageWorker");
 
       thread_s* _data = static_cast<thread_s*>(var);
@@ -2497,7 +2906,6 @@ SKIF_UI_Tab_DrawViewer (void)
 
       PLOG_INFO  << "Finished streaming image asynchronously...";
       PLOG_DEBUG << "SKIV_ImageWorker thread stopped!";
-
       return 0;
     }, data, 0x0, nullptr);
 
@@ -2597,6 +3005,288 @@ SKIF_UI_Tab_DrawViewer (void)
 
     OpenFileDialog = PopupState_Closed;
   }
+
+
+  if (SaveFileDialog == PopupState_Open)
+  {
+    SaveFileDialog = PopupState_Opened;
+
+    struct filterspec_s {
+      std::list<std::pair<std::wstring, std::wstring>> _raw_list  = { };
+      std::vector<COMDLG_FILTERSPEC>                   filterSpec = { };
+    };
+
+    auto _CreateFILTERSPEC = [](void) -> filterspec_s
+    {
+      filterspec_s _spec = { };
+
+      { // All supported formats
+        std::wstring ext_filter;
+
+        for (auto& type : cover.is_hdr ? supported_hdr_encode_formats
+                                       : supported_sdr_encode_formats)
+        {
+          static std::wstring prev_mime;
+          std::wstring mime = type.mime_type;
+
+          if (mime == prev_mime)
+            continue;
+          
+          for (auto& file_extension : type.file_extensions)
+            ext_filter += ((! ext_filter.empty()) ? L";*" : L"*") + file_extension;
+
+          prev_mime = mime;
+        }
+
+        _spec._raw_list.push_back ({ L"All supported formats", ext_filter });
+      }
+
+      for (auto& type : cover.is_hdr ? supported_hdr_encode_formats
+                                     : supported_sdr_encode_formats)
+      {
+        static std::wstring prev_mime;
+        std::wstring mime = type.mime_type;
+
+        if (mime == prev_mime)
+          continue;
+
+        std::wstring ext_filter;
+        for (auto& file_extension : type.file_extensions)
+          ext_filter += ((! ext_filter.empty()) ? L";*" : L"*") + file_extension;
+
+        _spec._raw_list.push_back ({ type.mime_type, ext_filter });
+
+        prev_mime = mime;
+      }
+
+      _spec.filterSpec       = std::vector<COMDLG_FILTERSPEC> (_spec._raw_list.size());
+      COMDLG_FILTERSPEC* ptr = _spec.filterSpec.data();
+
+      for (const auto& filter : _spec._raw_list)
+      {
+        ptr->pszName = filter.first.c_str();
+        ptr->pszSpec = filter.second.c_str();
+        ++ptr;
+      }
+
+      return _spec;
+    };
+
+    const filterspec_s filters = _CreateFILTERSPEC ( );
+
+#ifdef _DEBUG
+    for (auto& filter : filters.filterSpec)
+      PLOG_VERBOSE << std::wstring (filter.pszName) << ": " << std::wstring (filter.pszSpec);
+#endif
+
+    wchar_t               wszCoverName [MAX_PATH + 2] = { };
+    wcsncpy (             wszCoverName, cover.file_info.filename.c_str(), MAX_PATH);
+    PathRemoveExtensionW (wszCoverName);
+
+    const wchar_t *wszDefaultExtension =
+      cover.is_hdr ? defaultHDRFileExt.c_str ()
+                   : defaultSDRFileExt.c_str ();
+
+    LPWSTR pwszFilePath = NULL;
+    HRESULT hr          = // COMDLG_FILTERSPEC{ L"Images", L"*.png;*.jpg;*.jpeg;*.webp;*.psd;*.bmp;*.jxr;*.hdr;*.avif" }
+      SK_FileSaveDialog (&pwszFilePath, wszCoverName, wszDefaultExtension, filters.filterSpec.data(), static_cast<UINT> (filters.filterSpec.size()), FOS_STRICTFILETYPES|FOS_FILEMUSTEXIST|FOS_OVERWRITEPROMPT|FOS_DONTADDTORECENT, FOLDERID_Pictures);
+          
+    if (hr == HRESULT_FROM_WIN32(ERROR_CANCELLED))
+    {
+      // If cancelled, do nothing
+    }
+
+    else if (SUCCEEDED(hr))
+    {
+      hr = E_UNEXPECTED;
+
+      auto pDevice =
+        SKIF_D3D11_GetDevice ();
+
+      if (pDevice && cover.pRawTexSRV.p != nullptr)
+      {
+        CComPtr <ID3D11DeviceContext>  pDevCtx;
+        pDevice->GetImmediateContext (&pDevCtx);
+
+        if (pDevCtx)
+        {
+          CComPtr <ID3D11Resource>        pCoverRes;
+          cover.pRawTexSRV->GetResource (&pCoverRes.p);
+
+          DirectX::ScratchImage                                                captured_img;
+          if (SUCCEEDED (DirectX::CaptureTexture (pDevice, pDevCtx, pCoverRes, captured_img)))
+          {
+            if (cover.is_hdr)
+            {
+              hr =
+                SKIF_Image_SaveToDisk_HDR (*captured_img.GetImages (), pwszFilePath);
+            }
+
+            else
+            {
+              hr =
+                SKIF_Image_SaveToDisk_SDR (*captured_img.GetImages (), pwszFilePath, false);
+            }
+          }
+        }
+      }
+
+      if (FAILED (hr))
+      {
+        // Crap...
+        ImGui::InsertNotification (
+        {
+          ImGuiToastType::Error,
+          15000,
+          "File Save", "Failed to Save '%ws', HRESULT=%x",
+          pwszFilePath, hr
+        });
+      }
+    }
+
+    SaveFileDialog = PopupState_Closed;
+  }
+
+
+  if (ExportSDRDialog == PopupState_Open)
+  {
+    ExportSDRDialog = PopupState_Opened;
+
+    struct filterspec_s {
+      std::list<std::pair<std::wstring, std::wstring>> _raw_list  = { };
+      std::vector<COMDLG_FILTERSPEC>                   filterSpec = { };
+    };
+
+    auto _CreateFILTERSPEC = [](void) -> filterspec_s
+    {
+      filterspec_s _spec = { };
+
+      { // All supported formats
+        std::wstring ext_filter;
+
+        for (auto& type : supported_sdr_encode_formats)
+        {
+          static std::wstring prev_mime;
+          std::wstring mime = type.mime_type;
+
+          if (mime == prev_mime)
+            continue;
+          
+          for (auto& file_extension : type.file_extensions)
+            ext_filter += ((! ext_filter.empty()) ? L";*" : L"*") + file_extension;
+
+          prev_mime = mime;
+        }
+
+        _spec._raw_list.push_back ({ L"All supported formats", ext_filter });
+      }
+
+      for (auto& type : supported_sdr_encode_formats)
+      {
+        static std::wstring prev_mime;
+        std::wstring mime = type.mime_type;
+
+        if (mime == prev_mime)
+          continue;
+
+        std::wstring ext_filter;
+        for (auto& file_extension : type.file_extensions)
+          ext_filter += ((! ext_filter.empty()) ? L";*" : L"*") + file_extension;
+
+        _spec._raw_list.push_back ({ type.mime_type, ext_filter });
+
+        prev_mime = mime;
+      }
+
+      _spec.filterSpec       = std::vector<COMDLG_FILTERSPEC> (_spec._raw_list.size());
+      COMDLG_FILTERSPEC* ptr = _spec.filterSpec.data();
+
+      for (const auto& filter : _spec._raw_list)
+      {
+        ptr->pszName = filter.first.c_str();
+        ptr->pszSpec = filter.second.c_str();
+        ++ptr;
+      }
+
+      return _spec;
+    };
+
+    const filterspec_s filters = _CreateFILTERSPEC ( );
+
+#ifdef _DEBUG
+    for (auto& filter : filters.filterSpec)
+      PLOG_VERBOSE << std::wstring (filter.pszName) << ": " << std::wstring (filter.pszSpec);
+#endif
+
+    wchar_t               wszCoverName [MAX_PATH + 2] = { };
+    wcsncpy (             wszCoverName, cover.file_info.filename.c_str(), MAX_PATH);
+    PathRemoveExtensionW (wszCoverName);
+
+    const wchar_t *wszDefaultExtension =
+               defaultSDRFileExt.c_str ();
+
+    LPWSTR pwszFilePath = NULL;
+    HRESULT hr          = // COMDLG_FILTERSPEC{ L"Images", L"*.png;*.jpg;*.jpeg;*.webp;*.psd;*.bmp;*.jxr;*.hdr;*.avif" }
+      SK_FileSaveDialog (&pwszFilePath, wszCoverName, wszDefaultExtension, filters.filterSpec.data(), static_cast<UINT> (filters.filterSpec.size()), FOS_STRICTFILETYPES|FOS_FILEMUSTEXIST, FOLDERID_Pictures);
+          
+    if (hr == HRESULT_FROM_WIN32(ERROR_CANCELLED))
+    {
+      // If cancelled, do nothing
+    }
+
+    else if (SUCCEEDED(hr))
+    {
+      hr = E_UNEXPECTED;
+
+      auto pDevice =
+        SKIF_D3D11_GetDevice ();
+
+      if (pDevice && cover.pRawTexSRV.p != nullptr)
+      {
+        CComPtr <ID3D11DeviceContext>  pDevCtx;
+        pDevice->GetImmediateContext (&pDevCtx);
+
+        if (pDevCtx)
+        {
+          CComPtr <ID3D11Resource>        pCoverRes;
+          cover.pRawTexSRV->GetResource (&pCoverRes.p);
+
+          DirectX::ScratchImage                                                captured_img;
+          if (SUCCEEDED (DirectX::CaptureTexture (pDevice, pDevCtx, pCoverRes, captured_img)))
+          {
+
+            if (cover.is_hdr)
+            {
+              hr =
+                SKIF_Image_SaveToDisk_SDR (*captured_img.GetImages (), pwszFilePath, false);
+            }
+
+            else
+            {
+              // WTF? It's already SDR... oh well, save it anyway
+              hr =
+                SKIF_Image_SaveToDisk_SDR (*captured_img.GetImages (), pwszFilePath, false);
+            }
+          }
+        }
+      }
+
+      if (FAILED (hr))
+      {
+        // Crap...
+        ImGui::InsertNotification (
+        {
+          ImGuiToastType::Error,
+          15000,
+          "SDR Export", "Failed to Export SDR copy to '%ws', HRESULT=%x",
+          pwszFilePath, hr
+        });
+      }
+    }
+
+    ExportSDRDialog = PopupState_Closed;
+  }
+
 
   if (! tryingToLoadImage && ! tryingToDownImage)
   {
@@ -2736,7 +3426,6 @@ SKIF_UI_Tab_DrawViewer (void)
   bool         incTick = false;
 
   // Fade in/out transition
-
   if (_registry.bFadeCovers)
   {
     // Fade in the new cover
@@ -2976,192 +3665,191 @@ struct SK_PNG_HDR_iCCP_Payload
 {
   char          profile_name [20]   = "RGB_D65_202_Rel_PeQ";
   uint8_t       compression_type    = PNG_COMPRESSION_TYPE_DEFAULT;
-  unsigned char profile_data [2195] =
-  {
-    0x58, 0x85, 0xED, 0x98, 0x79, 0x54, 0x53, 0x57, 0x1E, 0xC7, 0x7F, 0x80,
-    0xCA, 0xA8, 0x54, 0x61, 0x6C, 0xA7, 0x1D, 0x44, 0xA5, 0x02, 0x01, 0x11,
-    0x6A, 0xD8, 0x5C, 0x40, 0x14, 0x50, 0xC1, 0xAD, 0x1A, 0x41, 0x94, 0x1D,
-    0x21, 0x84, 0x6D, 0x04, 0x21, 0x01, 0x12, 0xB6, 0xF2, 0x40, 0x45, 0x04,
-    0x59, 0x13, 0x96, 0x20, 0x21, 0x6C, 0x09, 0x8B, 0xAC, 0xB2, 0x25, 0x20,
-    0x9B, 0x10, 0x96, 0x84, 0x80, 0x12, 0x44, 0xAA, 0xD5, 0xA9, 0x22, 0xB8,
-    0x6B, 0x08, 0xB8, 0xCC, 0x58, 0xA4, 0x27, 0xA1, 0x96, 0xD0, 0xE9, 0xD8,
-    0x73, 0xE6, 0xCC, 0x7F, 0xF6, 0x9E, 0xCF, 0x1F, 0xBF, 0x77, 0xBF, 0xF7,
-    0xDD, 0xF3, 0x3E, 0xEF, 0xBE, 0x3F, 0xEE, 0x7D, 0x00, 0x8A, 0x6F, 0x7D,
-    0x49, 0x27, 0x55, 0x17, 0x99, 0x01, 0xF8, 0xF9, 0x07, 0xE1, 0xAD, 0xAD,
-    0x2C, 0x54, 0x0F, 0xBA, 0xB9, 0xAB, 0xCA, 0x8F, 0x81, 0x02, 0xC8, 0x80,
-    0xA4, 0xB9, 0x61, 0x09, 0x01, 0xE6, 0x18, 0xCC, 0x41, 0xF8, 0xFD, 0x26,
-    0x03, 0xF0, 0x7A, 0x64, 0x6E, 0xAC, 0x40, 0x57, 0x3C, 0xD7, 0x9A, 0xE0,
-    0x7D, 0x49, 0xCA, 0xD3, 0xCD, 0xC7, 0x37, 0x2F, 0x8F, 0x7F, 0xF9, 0x15,
-    0x5A, 0xE7, 0x34, 0x7C, 0xBC, 0x2D, 0xF3, 0xC0, 0x11, 0xB0, 0x00, 0xF0,
-    0x13, 0x00, 0xEC, 0xC6, 0x06, 0xE0, 0x83, 0x00, 0x64, 0xCC, 0x00, 0x40,
-    0x9D, 0x18, 0x14, 0x20, 0xAE, 0x3D, 0x00, 0xE0, 0x73, 0xAC, 0xB7, 0x9B,
-    0x07, 0x80, 0x0C, 0x09, 0x00, 0x74, 0xB0, 0x3E, 0xD8, 0x00, 0x00, 0x99,
-    0x22, 0x00, 0x50, 0xC0, 0xDB, 0xD9, 0x3B, 0x00, 0xC8, 0x54, 0x8B, 0xC7,
-    0x78, 0xCD, 0xD5, 0x5D, 0xE2, 0xDA, 0x7D, 0xAE, 0x1E, 0x15, 0xD7, 0xE6,
-    0xFA, 0x16, 0x68, 0x00, 0x99, 0x67, 0x00, 0x2B, 0xAE, 0x58, 0xE8, 0x9B,
-    0xA3, 0x01, 0x14, 0x4B, 0x00, 0x00, 0xE3, 0x77, 0x32, 0x18, 0x3B, 0xEF,
-    0x00, 0x0A, 0x38, 0x7F, 0x5B, 0x1B, 0x00, 0x40, 0x01, 0x80, 0x0A, 0x58,
-    0x83, 0x15, 0x58, 0x80, 0x2B, 0xEC, 0x86, 0xCD, 0x60, 0x04, 0xAE, 0xA0,
-    0x0F, 0x68, 0xD0, 0x07, 0x57, 0xB0, 0x06, 0x1C, 0x9C, 0x04, 0x57, 0xC0,
-    0x00, 0x0E, 0x8E, 0x00, 0xFC, 0x97, 0x39, 0x96, 0x48, 0xE6, 0xD8, 0x05,
-    0xBB, 0x00, 0x0D, 0x60, 0x67, 0xEF, 0xA0, 0x3A, 0x37, 0x64, 0xFE, 0x3D,
-    0x11, 0x3C, 0x0D, 0xF4, 0xE7, 0xEE, 0x52, 0x30, 0x03, 0x58, 0x7C, 0x67,
-    0x76, 0x76, 0x4A, 0x1B, 0x40, 0x3E, 0x0D, 0x60, 0x26, 0x65, 0x76, 0xF6,
-    0x5D, 0xE1, 0xEC, 0xEC, 0x4C, 0x21, 0x80, 0xDC, 0x6D, 0x80, 0xF6, 0xE8,
-    0x39, 0x5F, 0x80, 0xA5, 0x8A, 0x20, 0x33, 0x3F, 0x57, 0xB9, 0x37, 0x80,
-    0xD5, 0xA9, 0xD9, 0xD9, 0xD9, 0x98, 0xF9, 0x3E, 0x6D, 0x1F, 0x80, 0xF2,
-    0x31, 0x00, 0xF9, 0x8A, 0xF9, 0x3E, 0x55, 0x79, 0x80, 0xE5, 0x95, 0x00,
-    0xFD, 0xAB, 0xFC, 0x3C, 0x83, 0xF4, 0xC4, 0x3D, 0x72, 0x72, 0x4B, 0xE7,
-    0x9E, 0xF6, 0x37, 0xAB, 0xF8, 0x1F, 0xD7, 0x32, 0xB2, 0x72, 0x8B, 0x16,
-    0x2F, 0x91, 0xFF, 0xCB, 0xD2, 0x65, 0xCB, 0x15, 0x3E, 0x5B, 0xB1, 0x52,
-    0x51, 0xE9, 0xAF, 0xAB, 0x3E, 0xFF, 0xE2, 0x6F, 0x5F, 0x7E, 0xF5, 0x77,
-    0xE5, 0xD5, 0x2A, 0x6B, 0xD6, 0xAE, 0x53, 0xFD, 0x7A, 0xBD, 0x9A, 0xBA,
-    0x06, 0x4A, 0x53, 0x6B, 0x83, 0xF6, 0x46, 0x1D, 0xDD, 0x6F, 0x36, 0xA1,
-    0xF5, 0xF4, 0x0D, 0x0C, 0x8D, 0x36, 0x6F, 0xD9, 0xBA, 0xCD, 0xD8, 0x64,
-    0xBB, 0xE9, 0x8E, 0x9D, 0x66, 0xE6, 0x16, 0xBB, 0x76, 0xEF, 0xB1, 0xB4,
-    0xDA, 0xBB, 0x6F, 0xFF, 0x81, 0x83, 0xDF, 0x1E, 0x3A, 0x8C, 0x39, 0x62,
-    0x6D, 0x73, 0xD4, 0xF6, 0xD8, 0x71, 0x3B, 0x7B, 0x07, 0x47, 0x27, 0x67,
-    0x17, 0xD7, 0x13, 0x6E, 0xEE, 0x58, 0x0F, 0x9C, 0xA7, 0x97, 0xB7, 0x8F,
-    0xEF, 0x3F, 0x4E, 0xFA, 0xF9, 0x9F, 0x0A, 0x08, 0xC4, 0x13, 0x82, 0x82,
-    0x43, 0x88, 0xA4, 0xD0, 0xB0, 0xF0, 0x88, 0xC8, 0xEF, 0xA2, 0x90, 0xE8,
-    0x98, 0xD3, 0x67, 0xCE, 0xC6, 0x9E, 0x8B, 0x3B, 0x1F, 0x9F, 0x70, 0x21,
-    0x31, 0x29, 0x39, 0x25, 0x35, 0x8D, 0x4C, 0x49, 0xCF, 0xC8, 0xCC, 0xA2,
-    0x66, 0x5F, 0xCC, 0xA1, 0xE5, 0xD2, 0xF3, 0xF2, 0x0B, 0x0A, 0x8B, 0x18,
-    0xCC, 0xE2, 0x92, 0xD2, 0xB2, 0x4B, 0xE5, 0x15, 0x95, 0x55, 0xD5, 0x35,
-    0x97, 0x6B, 0xEB, 0xEA, 0x1B, 0x1A, 0x59, 0xEC, 0xA6, 0xE6, 0x2B, 0x2D,
-    0xAD, 0x6D, 0xED, 0x1D, 0x57, 0x3B, 0xBB, 0x38, 0xDD, 0x3D, 0xBD, 0x7D,
-    0x5C, 0x5E, 0x3F, 0x7F, 0x60, 0xF0, 0xDA, 0xF5, 0x21, 0xC1, 0xF0, 0x8D,
-    0x91, 0x9B, 0xA3, 0xDF, 0xDF, 0xBA, 0xFD, 0xC3, 0x9D, 0xBB, 0xFF, 0xFC,
-    0xF1, 0xDE, 0xFD, 0xB1, 0x07, 0xE3, 0x13, 0x0F, 0x1F, 0x3D, 0x7E, 0xF2,
-    0xF4, 0xD9, 0xF3, 0x17, 0x2F, 0x85, 0x93, 0xA2, 0xA9, 0xE9, 0x57, 0xAF,
-    0xDF, 0xBC, 0xFD, 0xD7, 0xBF, 0xDF, 0xFD, 0x34, 0xF3, 0x7E, 0xF6, 0x4F,
-    0xFF, 0x4F, 0x7C, 0xFD, 0x11, 0x04, 0xA2, 0x23, 0x65, 0xCF, 0x79, 0x2D,
-    0xCB, 0xB5, 0x52, 0xAB, 0xD7, 0xD8, 0xDB, 0xB5, 0x04, 0x57, 0xA5, 0x1C,
-    0x58, 0xB2, 0x3E, 0x84, 0x81, 0x5A, 0x14, 0x1E, 0xB3, 0x28, 0x22, 0x6A,
-    0x49, 0x8C, 0xCF, 0x0A, 0xEA, 0x7E, 0x8D, 0xCB, 0x9A, 0xFB, 0x3A, 0xE5,
-    0x71, 0x55, 0xCA, 0x78, 0x49, 0xB4, 0xD6, 0x81, 0xBC, 0xCE, 0x31, 0x45,
-    0xD5, 0x3D, 0x4C, 0x23, 0xDC, 0xDE, 0x90, 0xA6, 0x87, 0x61, 0x2B, 0x78,
-    0x97, 0xAB, 0xE0, 0x8B, 0xD5, 0x88, 0x0C, 0xD4, 0xE1, 0xCD, 0xD5, 0x87,
-    0xB7, 0x94, 0x63, 0x4C, 0xB2, 0xAC, 0x0F, 0x86, 0xD8, 0x9D, 0xDA, 0xE7,
-    0x7D, 0x51, 0x25, 0xB0, 0x70, 0x7D, 0x48, 0x91, 0x06, 0xA9, 0x48, 0x33,
-    0x69, 0x25, 0x3F, 0x69, 0x25, 0x37, 0x49, 0xE9, 0x4A, 0xB2, 0x32, 0x3D,
-    0x55, 0x2F, 0x30, 0xDD, 0xC3, 0x38, 0x3E, 0xC9, 0x00, 0xC9, 0xD1, 0x09,
-    0xCF, 0xDF, 0xC0, 0x81, 0x07, 0x1C, 0x18, 0xE3, 0xC0, 0x0F, 0x1C, 0xE8,
-    0xED, 0x86, 0xA2, 0x1E, 0x65, 0xBF, 0x7A, 0xFF, 0xC3, 0xD9, 0xF1, 0xA6,
-    0xB1, 0x54, 0xF4, 0xB8, 0x5A, 0x9D, 0x84, 0xDA, 0x71, 0xB5, 0x9A, 0x71,
-    0xF5, 0xB2, 0x09, 0xAD, 0xAC, 0x87, 0xFA, 0x01, 0x5D, 0x04, 0x7B, 0x7A,
-    0xBC, 0x99, 0xF0, 0x08, 0xF5, 0x03, 0x59, 0xC2, 0x23, 0x99, 0x42, 0xEB,
-    0x74, 0xE1, 0xD1, 0x0B, 0x22, 0x47, 0x62, 0x6F, 0x90, 0x93, 0xC8, 0x9E,
-    0xB2, 0x00, 0x07, 0xB2, 0xC8, 0x21, 0x75, 0xCA, 0x29, 0xFE, 0x15, 0x36,
-    0x54, 0xF6, 0x4C, 0xB4, 0xEC, 0xD9, 0xEF, 0x16, 0x25, 0x78, 0x2B, 0xE4,
-    0xEF, 0x55, 0x6F, 0x40, 0xED, 0xE5, 0xC8, 0xFF, 0xAA, 0xBC, 0x38, 0xEA,
-    0xF4, 0x62, 0x04, 0x91, 0x8F, 0xF5, 0x55, 0xCC, 0x39, 0x80, 0xBA, 0xAC,
-    0x25, 0xAD, 0xBC, 0xCE, 0x95, 0xA2, 0x7A, 0x22, 0xF5, 0x6B, 0xAF, 0x70,
-    0x54, 0xA4, 0x83, 0x51, 0xAE, 0x1E, 0xA6, 0x49, 0x4A, 0x79, 0x5B, 0xF5,
-    0x61, 0xE3, 0x0A, 0xCC, 0x8E, 0x2C, 0xEB, 0x43, 0x44, 0xFB, 0x80, 0x85,
-    0xCA, 0x8A, 0xFC, 0x24, 0x25, 0x6E, 0xD2, 0xAA, 0x96, 0xE4, 0xD5, 0xF4,
-    0x54, 0x7D, 0x7C, 0x86, 0x44, 0x39, 0x3A, 0x47, 0x27, 0xE2, 0x23, 0xCA,
-    0xD9, 0xFF, 0x7F, 0xE5, 0xCF, 0x72, 0xCF, 0xAF, 0xA0, 0xC7, 0xAE, 0x2C,
-    0x08, 0xF8, 0xB2, 0x0C, 0xB3, 0x91, 0xBD, 0xF1, 0x40, 0xF7, 0x52, 0xCF,
-    0xEA, 0xD5, 0xF8, 0x12, 0xB5, 0x10, 0x06, 0x4A, 0x89, 0x9A, 0xA0, 0x94,
-    0x1D, 0xB7, 0x2A, 0x07, 0xBF, 0x9A, 0x61, 0xAD, 0xDB, 0xA0, 0x73, 0x90,
-    0xB3, 0xD4, 0xB3, 0xEA, 0x97, 0x48, 0x33, 0x82, 0xAA, 0x19, 0x91, 0xA1,
-    0x85, 0x20, 0xBA, 0x17, 0x5C, 0xB6, 0x15, 0x19, 0xDA, 0x34, 0xAF, 0xF0,
-    0xA9, 0x50, 0x21, 0x48, 0x94, 0xAD, 0xBF, 0xBD, 0x6C, 0x7D, 0xA8, 0xCA,
-    0xE6, 0x48, 0xB6, 0xAD, 0x53, 0xA8, 0x23, 0xF1, 0x80, 0x6F, 0xEE, 0x1A,
-    0x7C, 0x91, 0x5A, 0x48, 0x11, 0x8A, 0x54, 0xA4, 0x99, 0xAC, 0x3C, 0x90,
-    0xBC, 0x9A, 0x97, 0xAC, 0xD2, 0x92, 0xA2, 0x9E, 0x97, 0xB6, 0x15, 0x9F,
-    0xE1, 0x65, 0x92, 0x90, 0x6C, 0x10, 0x9D, 0xA3, 0x2B, 0xA5, 0x7C, 0x87,
-    0x03, 0x7D, 0xDD, 0x32, 0x45, 0x3D, 0x6B, 0xFC, 0x1B, 0x4E, 0x61, 0x7E,
-    0x47, 0x59, 0xE3, 0xD2, 0xC7, 0x95, 0x27, 0x6D, 0xFF, 0x58, 0x19, 0xDD,
-    0x90, 0xAF, 0xD7, 0x90, 0xAB, 0xD7, 0x78, 0xCE, 0xA8, 0xC9, 0xC3, 0xAC,
-    0x73, 0xDB, 0x71, 0x9E, 0x92, 0x6F, 0xCD, 0x1A, 0x42, 0x89, 0x3A, 0x91,
-    0x89, 0xD2, 0xAF, 0x2D, 0xD0, 0xAF, 0xA3, 0x1B, 0xD4, 0xC5, 0x6D, 0x61,
-    0xE1, 0xCC, 0xAF, 0x1A, 0xDB, 0x71, 0x95, 0x7C, 0x6B, 0xD6, 0xCE, 0x45,
-    0xA6, 0x85, 0xA5, 0x3B, 0x0A, 0x19, 0x3B, 0x18, 0xC9, 0xE6, 0xA5, 0x27,
-    0xF7, 0xD7, 0x9B, 0x39, 0x5F, 0xFD, 0xC2, 0xAF, 0x72, 0x5D, 0x50, 0x89,
-    0x3A, 0x91, 0x81, 0x72, 0x09, 0x6D, 0x72, 0x09, 0x6D, 0x74, 0x09, 0x2F,
-    0x38, 0x81, 0x20, 0xB8, 0x64, 0x6B, 0xF1, 0x07, 0xC3, 0xD4, 0x20, 0x32,
-    0xC4, 0xCA, 0x64, 0x93, 0xEB, 0x64, 0x93, 0x01, 0xF2, 0xF6, 0x0E, 0x8A,
-    0x79, 0x61, 0x06, 0x26, 0x24, 0x9B, 0x60, 0x9A, 0x98, 0x6A, 0x14, 0x43,
-    0xD3, 0x8D, 0x28, 0xD8, 0xD0, 0x2D, 0x3B, 0xDE, 0x2D, 0xFB, 0xA0, 0x5B,
-    0xEE, 0x6E, 0xCF, 0x12, 0x6E, 0xCF, 0x4A, 0x46, 0xAF, 0xD6, 0xA9, 0xC6,
-    0x40, 0x4C, 0x76, 0xC2, 0x8E, 0x73, 0xD9, 0xE8, 0x71, 0x8D, 0xFA, 0x71,
-    0x8D, 0x3A, 0x09, 0x97, 0x27, 0x50, 0x97, 0x26, 0xB4, 0xA9, 0x8F, 0x0C,
-    0xE7, 0x94, 0xCD, 0x17, 0x28, 0x5B, 0x7F, 0x50, 0x76, 0x22, 0xF6, 0x06,
-    0x2F, 0x54, 0x76, 0x58, 0xA0, 0xEC, 0x3E, 0xDC, 0xE9, 0x3E, 0xDC, 0xEE,
-    0x3E, 0x5C, 0xEA, 0x31, 0x72, 0xC6, 0xE7, 0x96, 0x6D, 0xD0, 0xA8, 0x3A,
-    0xB1, 0x1E, 0x45, 0x2A, 0xD3, 0x24, 0x31, 0x35, 0xB1, 0x82, 0x2E, 0xAC,
-    0xA0, 0x1D, 0x2B, 0x28, 0xC5, 0xDD, 0x38, 0xEB, 0xFB, 0xBD, 0x6D, 0xF0,
-    0xA8, 0xC6, 0xAF, 0x91, 0x37, 0xAF, 0xDB, 0x9B, 0xD7, 0xE9, 0xDD, 0x5F,
-    0xEE, 0xCB, 0x8F, 0xF3, 0x1F, 0xB2, 0x23, 0x0D, 0x69, 0x86, 0xD6, 0x6A,
-    0x86, 0x96, 0x6A, 0x86, 0x32, 0x35, 0xC3, 0xAB, 0x07, 0xC3, 0xAB, 0x79,
-    0xE1, 0x35, 0x0D, 0x11, 0xB5, 0xE4, 0x28, 0xB6, 0x47, 0x6C, 0x3B, 0x1A,
-    0x29, 0xD7, 0x89, 0x60, 0x6E, 0x08, 0x63, 0x68, 0xD1, 0x43, 0x6E, 0xD3,
-    0x43, 0x46, 0xE9, 0x21, 0xDC, 0xBC, 0xD0, 0x8A, 0x7C, 0x04, 0x61, 0x90,
-    0xF7, 0x50, 0xA8, 0xC6, 0xB1, 0xB9, 0xE8, 0xC8, 0x02, 0x6D, 0xAE, 0xCE,
-    0x63, 0xAE, 0xCE, 0x23, 0xAE, 0xCE, 0x3D, 0xEE, 0x37, 0x7C, 0xAE, 0x61,
-    0x29, 0xCF, 0x92, 0xD0, 0x44, 0xB2, 0xA1, 0x25, 0xEE, 0x8C, 0xCB, 0xD6,
-    0x7B, 0xB8, 0xB1, 0xF1, 0x03, 0xF5, 0x0F, 0x75, 0x2A, 0x1F, 0x6E, 0xBA,
-    0xF8, 0x78, 0x6B, 0x20, 0x27, 0xD8, 0x21, 0x2F, 0xC1, 0x5C, 0x68, 0x43,
-    0x95, 0x22, 0x4B, 0x78, 0x34, 0x7D, 0xF2, 0x58, 0xE2, 0x94, 0x33, 0x49,
-    0xAC, 0x2C, 0xD6, 0x94, 0x86, 0x2C, 0x72, 0x4C, 0x9D, 0x72, 0x16, 0x2B,
-    0xD3, 0x84, 0x7C, 0x9A, 0x90, 0x47, 0x13, 0x5E, 0xA5, 0x09, 0xCB, 0xE8,
-    0x53, 0xD1, 0x45, 0xEF, 0xF6, 0x90, 0xDB, 0xB6, 0x9D, 0xAD, 0xD8, 0x14,
-    0x59, 0xAC, 0x4D, 0x7B, 0xC9, 0xA7, 0xBD, 0xEC, 0xA7, 0xBD, 0xBC, 0x9A,
-    0x2B, 0x89, 0x18, 0x52, 0x11, 0xFD, 0xD9, 0x20, 0xFD, 0x19, 0x9F, 0xFE,
-    0xBC, 0x8B, 0xFE, 0xBC, 0x3C, 0x5F, 0x18, 0xC3, 0x7C, 0x6B, 0x49, 0x69,
-    0x35, 0x3E, 0x5B, 0x81, 0x8E, 0x2C, 0xD6, 0x66, 0xDE, 0xBB, 0xC5, 0xBC,
-    0x37, 0xCA, 0xBC, 0xCF, 0x2F, 0x1E, 0xAB, 0x2D, 0x99, 0x88, 0x2B, 0x7F,
-    0x71, 0x80, 0xCA, 0x32, 0x8D, 0x2B, 0xD3, 0xFB, 0x8E, 0xB9, 0x91, 0xD5,
-    0x22, 0x64, 0xB5, 0xBC, 0x60, 0xB5, 0xFC, 0xC8, 0x6A, 0xED, 0x64, 0xB7,
-    0x67, 0x35, 0xF7, 0x3A, 0x17, 0x97, 0x5A, 0xA6, 0x14, 0x6E, 0x89, 0x29,
-    0xD4, 0x15, 0x10, 0x44, 0x02, 0xC2, 0xA4, 0x80, 0xF0, 0x44, 0x10, 0x74,
-    0x53, 0x40, 0xAC, 0x1B, 0x46, 0x90, 0xAE, 0x04, 0xFB, 0x22, 0xF2, 0xEE,
-    0x84, 0x1C, 0xC3, 0x27, 0x26, 0x5D, 0x12, 0x3A, 0x9F, 0x6C, 0xEF, 0x78,
-    0x6A, 0xCA, 0x7A, 0xBA, 0xB3, 0xF0, 0x99, 0x25, 0xA1, 0x2F, 0xDC, 0xA9,
-    0x20, 0x71, 0xD7, 0xE4, 0x31, 0xEA, 0x3C, 0xC7, 0xB3, 0x26, 0x8F, 0xA7,
-    0x8B, 0x1C, 0x12, 0xA7, 0x4F, 0x90, 0xFA, 0x88, 0xCE, 0x22, 0x47, 0x8A,
-    0x34, 0x53, 0x8E, 0xE4, 0x29, 0xA7, 0xD4, 0x29, 0x97, 0xF8, 0x57, 0x1E,
-    0xA1, 0xAC, 0x81, 0x3C, 0xD6, 0x00, 0x5D, 0x42, 0x0E, 0x7B, 0x80, 0xD2,
-    0x3C, 0x18, 0xD5, 0x21, 0xB0, 0xCB, 0xAF, 0xB7, 0x88, 0x2F, 0x33, 0xF8,
-    0x58, 0xC4, 0xCF, 0x93, 0x40, 0x67, 0xF3, 0x73, 0xD8, 0x7C, 0x4A, 0xF3,
-    0x20, 0xD2, 0x31, 0x64, 0x97, 0x5F, 0xB7, 0x2B, 0xBE, 0xCC, 0xA0, 0xB9,
-    0x2F, 0x4F, 0x02, 0xBD, 0x99, 0x4B, 0xBB, 0xC2, 0x4D, 0x6F, 0xE5, 0x45,
-    0x77, 0x0E, 0xDA, 0x17, 0xD6, 0xEE, 0x4E, 0x28, 0x35, 0xE8, 0x6C, 0x2B,
-    0xE8, 0x6C, 0xCB, 0x97, 0x40, 0xEF, 0x6A, 0xCF, 0xE4, 0x74, 0x9C, 0xE1,
-    0x76, 0xBB, 0x94, 0x54, 0x5A, 0x25, 0x16, 0x1B, 0x8D, 0x30, 0x8B, 0x7F,
-    0xA1, 0x98, 0x31, 0x52, 0x9C, 0x7B, 0xB3, 0x34, 0xF1, 0x56, 0xB5, 0x77,
-    0x43, 0x1E, 0x26, 0x3D, 0xCF, 0x58, 0x84, 0x9F, 0x95, 0x30, 0x23, 0xC2,
-    0x4F, 0x8B, 0x08, 0x77, 0x45, 0x21, 0x6C, 0x11, 0x82, 0x0C, 0xC5, 0xB9,
-    0x97, 0xA6, 0x59, 0x4D, 0xBB, 0x65, 0x4B, 0x41, 0x7D, 0xE5, 0x9E, 0xF9,
-    0x0A, 0x9B, 0xFC, 0xC6, 0x27, 0x8C, 0x1F, 0xE1, 0x3A, 0xE5, 0x42, 0x91,
-    0x66, 0xDA, 0x85, 0x3C, 0xED, 0x9A, 0x3A, 0xED, 0x96, 0xF0, 0xDA, 0x33,
-    0x8C, 0xD3, 0x96, 0x29, 0x21, 0x43, 0x02, 0xA5, 0xBB, 0x2D, 0xA9, 0xB7,
-    0x2D, 0x6A, 0xA0, 0xE3, 0x04, 0xA3, 0x66, 0x0F, 0xA7, 0x35, 0x53, 0xCC,
-    0x47, 0xA2, 0xD6, 0x0C, 0x09, 0xF3, 0x11, 0xB3, 0x66, 0x4F, 0x77, 0x4B,
-    0xA6, 0x84, 0x0C, 0x09, 0x94, 0x9E, 0x96, 0xA4, 0xBE, 0x56, 0x64, 0xA0,
-    0xDD, 0x8D, 0x59, 0x6D, 0xD9, 0xDB, 0x94, 0xF9, 0x81, 0x8C, 0xBE, 0x26,
-    0x4A, 0x5F, 0x53, 0x32, 0xAF, 0x39, 0xFA, 0x7A, 0x8B, 0x7B, 0x49, 0xA5,
-    0xD5, 0xB5, 0xEA, 0x4C, 0x29, 0xD2, 0xAF, 0x57, 0xA7, 0x0C, 0xD5, 0x9C,
-    0xBE, 0x59, 0xE7, 0x59, 0x51, 0xB6, 0xFF, 0xFE, 0xC5, 0x2C, 0x29, 0x32,
-    0xEF, 0x5F, 0x24, 0x8F, 0xD1, 0xCE, 0x4F, 0xE4, 0x05, 0x34, 0xD1, 0x6C,
-    0x66, 0x48, 0x65, 0x52, 0x94, 0xCE, 0x84, 0x16, 0xCF, 0x84, 0xE5, 0xCD,
-    0x20, 0xC8, 0x8D, 0x73, 0xB8, 0xD7, 0x5E, 0xE9, 0x52, 0x50, 0xC4, 0x78,
-    0xA7, 0xBD, 0xF1, 0xB9, 0xF0, 0xD6, 0x3F, 0xBC, 0x8F, 0x4D, 0x91, 0x82,
-    0xCC, 0x65, 0xA7, 0x71, 0xD9, 0x89, 0xFD, 0x4D, 0xC8, 0x50, 0x33, 0xF6,
-    0x7F, 0x8B, 0xB8, 0x6C, 0x8A, 0x14, 0xE2, 0x88, 0xC7, 0x4E, 0xEC, 0x67,
-    0x23, 0x43, 0x4D, 0x58, 0x2E, 0x8B, 0x22, 0x05, 0x99, 0xC7, 0x4A, 0xE3,
-    0xB1, 0x12, 0xF9, 0x2C, 0x44, 0xD0, 0xE4, 0xC1, 0xAF, 0xA3, 0x48, 0x41,
-    0xE6, 0xD7, 0xA7, 0x0D, 0xD4, 0x27, 0x5E, 0xAB, 0x8F, 0xBE, 0xD1, 0x88,
-    0x1B, 0x2E, 0xA7, 0x2C, 0x24, 0xED, 0x46, 0x79, 0xD2, 0x48, 0xC5, 0xE9,
-    0xDB, 0x55, 0x3E, 0xE3, 0x59, 0xE9, 0x52, 0x50, 0xC6, 0xB3, 0xC8, 0xE3,
-    0xD4, 0x94, 0x89, 0xEC, 0xB8, 0xC7, 0x34, 0xFC, 0xFB, 0x88, 0x0C, 0x29,
-    0xD2, 0x25, 0x90, 0xDF, 0x47, 0x26, 0xCD, 0x22, 0xC8, 0x9F, 0x5B, 0xD1,
-    0x4F, 0x7C, 0x2B, 0xFA, 0xA9, 0xFB, 0xFB, 0x59, 0x98, 0x4B, 0xCE, 0xB3,
-    0x72, 0x72, 0x73, 0x87, 0xDA, 0xDF, 0xFE, 0x44, 0x08, 0x70, 0xC3, 0xBB,
-    0x49, 0x9F, 0x5D, 0xFF, 0xE8, 0xFA, 0x67, 0x0B, 0x10, 0x3B, 0xD9
-  };
+
+  unsigned char profile_data [2178] = {
+	0x78, 0x9C, 0xED, 0x97, 0x79, 0x58, 0x13, 0x67, 0x1E, 0xC7, 0x47, 0x50,
+	0x59, 0x95, 0x2A, 0xAC, 0xED, 0xB6, 0x8B, 0xA8, 0x54, 0x20, 0x20, 0x42,
+	0xE5, 0xF4, 0x00, 0x51, 0x40, 0x05, 0xAF, 0x6A, 0x04, 0x51, 0x6E, 0x84,
+	0x70, 0xAF, 0x20, 0x24, 0xDC, 0x87, 0x0C, 0xA8, 0x88, 0x20, 0x09, 0x90,
+	0x04, 0x12, 0x24, 0x24, 0x90, 0x03, 0x82, 0xA0, 0x41, 0x08, 0x24, 0x41,
+	0x2E, 0x21, 0x01, 0x12, 0x83, 0x4A, 0x10, 0xA9, 0x56, 0xB7, 0x8A, 0xE0,
+	0xAD, 0x21, 0xE0, 0xB1, 0x6B, 0x31, 0x3B, 0x49, 0x74, 0x09, 0x6D, 0xD7,
+	0x3E, 0xCF, 0x3E, 0xFD, 0xAF, 0x4E, 0x3E, 0xF3, 0xBC, 0xBF, 0x79, 0xBF,
+	0xEF, 0xBC, 0x33, 0x9F, 0xC9, 0xFC, 0x31, 0x2F, 0x00, 0xE8, 0xBC, 0x8D,
+	0x4A, 0x3E, 0x62, 0x30, 0xD7, 0x09, 0x00, 0xA2, 0x63, 0xE2, 0x91, 0xEE,
+	0x6E, 0x2E, 0x06, 0x7B, 0x82, 0x82, 0x0D, 0xB4, 0x46, 0x01, 0x6D, 0x60,
+	0x0E, 0xA0, 0xDC, 0x82, 0x10, 0xA8, 0x58, 0x67, 0x38, 0x7C, 0x8F, 0xEA,
+	0xE8, 0x57, 0x1B, 0x34, 0xEA, 0xF5, 0xB0, 0x6A, 0xAC, 0xC4, 0x42, 0x31,
+	0xD7, 0xF2, 0x84, 0x9D, 0x68, 0xBD, 0xA9, 0xD6, 0x43, 0xEB, 0x16, 0xE5,
+	0xBD, 0xFC, 0xC6, 0xD2, 0xFC, 0xF8, 0xFF, 0x38, 0xEF, 0xE3, 0xB6, 0x30,
+	0x24, 0x14, 0x85, 0x80, 0xDA, 0x9F, 0xA1, 0x7D, 0x1B, 0x22, 0x16, 0x19,
+	0x0F, 0x4D, 0xE9, 0x04, 0xD5, 0x46, 0x49, 0xF1, 0xB1, 0x8A, 0x3A, 0x04,
+	0xAA, 0xBF, 0x44, 0x44, 0x04, 0x41, 0xED, 0x9C, 0x64, 0xA8, 0x36, 0x47,
+	0x44, 0x22, 0x62, 0xA1, 0x9A, 0x06, 0xD5, 0xDA, 0x48, 0x2F, 0x6F, 0x1F,
+	0xA8, 0x66, 0x29, 0xC6, 0x84, 0xAB, 0xEA, 0x1E, 0x45, 0x1D, 0xAC, 0xAA,
+	0x47, 0x14, 0xB5, 0xB3, 0xB5, 0x8B, 0x25, 0x54, 0x3F, 0x03, 0x80, 0xC5,
+	0x97, 0x5C, 0xAC, 0x9D, 0xA1, 0x5A, 0xA7, 0x06, 0xEA, 0x87, 0x47, 0x1F,
+	0x49, 0x50, 0x5C, 0xF7, 0x83, 0x03, 0xA0, 0x1D, 0x1A, 0xE3, 0xE9, 0x01,
+	0xB5, 0x30, 0x68, 0xD7, 0x07, 0xDC, 0x01, 0x37, 0xC0, 0x05, 0x08, 0x04,
+	0xB6, 0x01, 0xEB, 0x00, 0x3B, 0xA8, 0xB5, 0x06, 0x2C, 0xA1, 0x3D, 0x10,
+	0xEA, 0x0F, 0x05, 0x8E, 0x40, 0x2D, 0x1C, 0x6A, 0xF7, 0x43, 0xCF, 0xEC,
+	0xB7, 0xE7, 0x98, 0xAF, 0x9C, 0x63, 0x2B, 0xF4, 0x83, 0xAE, 0x06, 0xDD,
+	0x8A, 0x81, 0x6A, 0xC8, 0xCC, 0x73, 0x42, 0x85, 0xD9, 0x58, 0xAB, 0xCE,
+	0xD2, 0x86, 0x5C, 0xE7, 0xDD, 0x91, 0xCB, 0x27, 0xCD, 0x00, 0x40, 0xAB,
+	0x18, 0x00, 0xA6, 0x0B, 0xE5, 0xF2, 0x77, 0x54, 0xB9, 0x7C, 0x9A, 0x0A,
+	0x00, 0x9A, 0xB7, 0x01, 0xA0, 0x33, 0x4B, 0xE5, 0x0B, 0x00, 0x0B, 0x74,
+	0x80, 0x39, 0x33, 0x73, 0xD5, 0x45, 0x00, 0x80, 0xDB, 0x51, 0xB9, 0x5C,
+	0x9E, 0x3D, 0xD3, 0x67, 0x16, 0x09, 0xF5, 0x8F, 0x42, 0xF3, 0xD4, 0xCF,
+	0xF4, 0x19, 0x68, 0x01, 0xC0, 0xA2, 0xF3, 0x00, 0x70, 0x65, 0x69, 0x74,
+	0x58, 0xBC, 0x95, 0xA2, 0x47, 0x53, 0x73, 0x81, 0xEA, 0x6E, 0x7F, 0xF1,
+	0x2F, 0xFE, 0xEA, 0x78, 0x8E, 0x86, 0xE6, 0xDC, 0x79, 0xF3, 0xB5, 0xFE,
+	0xB2, 0x60, 0xE1, 0x22, 0xED, 0x2F, 0x16, 0x2F, 0xD1, 0xD1, 0xFD, 0xEB,
+	0xD2, 0x2F, 0xBF, 0xFA, 0xDB, 0xD7, 0xDF, 0xFC, 0x5D, 0x6F, 0x99, 0xFE,
+	0xF2, 0x15, 0x2B, 0x0D, 0xBE, 0x5D, 0x65, 0x68, 0x64, 0x0C, 0x33, 0x31,
+	0x5D, 0x6D, 0xB6, 0xC6, 0xDC, 0xE2, 0xBB, 0xB5, 0x96, 0x56, 0xD6, 0x36,
+	0xB6, 0x76, 0xEB, 0xD6, 0x6F, 0xD8, 0x68, 0xEF, 0xB0, 0xC9, 0x71, 0xF3,
+	0x16, 0x27, 0x67, 0x97, 0xAD, 0xDB, 0xB6, 0xBB, 0xBA, 0xED, 0xD8, 0xB9,
+	0x6B, 0xF7, 0x9E, 0xEF, 0xF7, 0xEE, 0x83, 0xEF, 0x77, 0xF7, 0x38, 0xE0,
+	0x79, 0xF0, 0x10, 0x74, 0x6F, 0xBE, 0x7E, 0xFE, 0x01, 0x81, 0x87, 0x83,
+	0x82, 0x11, 0x21, 0xA1, 0x61, 0xE1, 0x11, 0x91, 0x51, 0xFF, 0x38, 0x12,
+	0x1D, 0x73, 0x34, 0x36, 0x0E, 0x89, 0x8A, 0x4F, 0x48, 0x4C, 0x4A, 0x4E,
+	0x49, 0x4D, 0x4B, 0xCF, 0x38, 0x96, 0x09, 0x66, 0x65, 0x1F, 0x3F, 0x71,
+	0x32, 0xE7, 0x54, 0xEE, 0xE9, 0xBC, 0xFC, 0x33, 0x05, 0x68, 0x4C, 0x61,
+	0x51, 0x31, 0x16, 0x87, 0x2F, 0x29, 0x25, 0x10, 0xCB, 0xCE, 0x96, 0x93,
+	0x2A, 0xC8, 0x94, 0xCA, 0x2A, 0x2A, 0x8D, 0xCE, 0xA8, 0xAE, 0x61, 0xD6,
+	0x9E, 0xAB, 0xAB, 0x3F, 0x7F, 0x81, 0xD5, 0x70, 0xB1, 0xB1, 0x89, 0xDD,
+	0xDC, 0xC2, 0xE1, 0xF2, 0x5A, 0x2F, 0xB5, 0xB5, 0x77, 0x74, 0x76, 0x5D,
+	0xEE, 0xEE, 0xE1, 0x0B, 0x7A, 0xFB, 0xFA, 0x85, 0xA2, 0x2B, 0xE2, 0x81,
+	0xAB, 0xD7, 0xAE, 0x0F, 0x4A, 0x86, 0x6E, 0x0C, 0xDF, 0x1C, 0xF9, 0xE1,
+	0xD6, 0xED, 0x1F, 0xEF, 0xDC, 0xFD, 0xE7, 0x4F, 0xF7, 0xEE, 0x8F, 0x3E,
+	0x18, 0x1B, 0x7F, 0xF8, 0xE8, 0xF1, 0x93, 0xA7, 0xCF, 0x9E, 0xBF, 0x78,
+	0x29, 0x9D, 0x90, 0x4D, 0x4E, 0xBD, 0x7A, 0xFD, 0xE6, 0xED, 0xBF, 0xFE,
+	0xFD, 0xEE, 0xE7, 0xE9, 0xF7, 0xF2, 0xCF, 0xFE, 0x7F, 0x72, 0x7F, 0x10,
+	0x04, 0xB2, 0x32, 0x34, 0x4E, 0x85, 0x2F, 0xAC, 0x70, 0x33, 0x64, 0x1B,
+	0xEF, 0xE8, 0x99, 0x1F, 0x7A, 0x41, 0x2F, 0xAE, 0x66, 0x55, 0x22, 0x1D,
+	0x36, 0x37, 0x2D, 0x7B, 0x6E, 0x7A, 0xE6, 0xFC, 0xEC, 0xC8, 0xC5, 0xC4,
+	0x5D, 0xC6, 0x17, 0x4D, 0x76, 0x76, 0x6B, 0x41, 0x11, 0x52, 0x19, 0xAD,
+	0xF0, 0xC1, 0xAE, 0xF4, 0x2D, 0x34, 0x08, 0x4E, 0x35, 0x4E, 0xF3, 0xB6,
+	0x25, 0x59, 0xC1, 0xB9, 0xDA, 0x11, 0x75, 0xFA, 0xC8, 0x6A, 0xC3, 0x24,
+	0x3A, 0x6C, 0xDF, 0x3A, 0xD6, 0xBE, 0xF5, 0x75, 0x70, 0x07, 0x82, 0xFB,
+	0x9E, 0x44, 0xAF, 0xA3, 0x3B, 0x23, 0xCE, 0xEA, 0xC7, 0x51, 0x57, 0x25,
+	0xD2, 0x8C, 0x93, 0x69, 0x26, 0xE8, 0x25, 0x62, 0xF4, 0x12, 0x21, 0x5A,
+	0xF7, 0x12, 0x46, 0x8F, 0x5C, 0x64, 0x15, 0x87, 0x0F, 0xB1, 0xCF, 0x43,
+	0xDB, 0x80, 0xE5, 0xE6, 0x69, 0x95, 0xAB, 0xF9, 0xC0, 0x03, 0x3E, 0x30,
+	0xCA, 0x07, 0x7E, 0xE4, 0x03, 0x7D, 0x02, 0x80, 0xD6, 0xAB, 0x17, 0xCD,
+	0x8E, 0xD9, 0x57, 0x96, 0xE7, 0x98, 0x43, 0xB4, 0x1C, 0x33, 0x6C, 0x52,
+	0xD2, 0x38, 0x66, 0xD8, 0x30, 0x66, 0x54, 0x3B, 0x6E, 0x4A, 0x78, 0x68,
+	0x1D, 0xDB, 0x83, 0xF2, 0x26, 0xE7, 0x39, 0x49, 0xF7, 0x13, 0x3F, 0x42,
+	0x90, 0xEE, 0x2F, 0x95, 0xBA, 0xE3, 0xA5, 0x07, 0xCE, 0xC8, 0x7C, 0x93,
+	0xFA, 0xE2, 0xFD, 0x64, 0xDE, 0xB8, 0x59, 0xF8, 0x60, 0x65, 0x3E, 0x45,
+	0x93, 0x7E, 0x79, 0xAF, 0x10, 0x29, 0x1A, 0x27, 0xB2, 0x34, 0x4E, 0x1E,
+	0x9B, 0x9B, 0x1F, 0xA1, 0x5D, 0xB9, 0xC3, 0xA8, 0x19, 0xB6, 0x83, 0xAF,
+	0xF0, 0x52, 0x29, 0xCF, 0xCB, 0x3C, 0x3E, 0x0F, 0x04, 0xB5, 0x72, 0xA2,
+	0x74, 0xCA, 0x77, 0xC3, 0x2E, 0x9A, 0xAA, 0x2B, 0xAF, 0x0C, 0xC4, 0x19,
+	0x1C, 0x2E, 0xFA, 0x36, 0x3C, 0x0D, 0x96, 0xE1, 0x63, 0x57, 0x61, 0x05,
+	0xE7, 0xA9, 0x29, 0x6F, 0x64, 0xED, 0xB3, 0xAF, 0x87, 0x6F, 0x26, 0xB8,
+	0xEF, 0x4D, 0xF2, 0x8E, 0x9D, 0xAD, 0xAC, 0x23, 0x46, 0xEB, 0x0A, 0xD1,
+	0x4B, 0xDB, 0x30, 0xCB, 0xC8, 0x45, 0xD6, 0xC8, 0x12, 0xA5, 0x72, 0x56,
+	0xB9, 0x79, 0xFA, 0x27, 0x94, 0xCB, 0xFE, 0x78, 0xE5, 0x2F, 0x2A, 0x4E,
+	0x2F, 0x26, 0xE7, 0x2C, 0xA9, 0x8A, 0xFD, 0xBA, 0x16, 0xBE, 0x86, 0xBB,
+	0x66, 0xB7, 0x60, 0x41, 0x18, 0x6B, 0x19, 0xB2, 0xC6, 0x10, 0xF2, 0xD2,
+	0x25, 0xE6, 0xEB, 0x96, 0xE5, 0x2E, 0x2D, 0x47, 0x2E, 0xA3, 0xBB, 0x5B,
+	0x34, 0x9B, 0xEF, 0xE1, 0x2F, 0x08, 0xBB, 0xF0, 0x21, 0x32, 0x49, 0x27,
+	0x9A, 0xA4, 0x97, 0x98, 0x82, 0xA0, 0xC5, 0x99, 0x80, 0x8D, 0x34, 0x5B,
+	0x8F, 0xD6, 0xC5, 0x91, 0xF5, 0xFA, 0x28, 0xA5, 0xB2, 0xFB, 0xF7, 0x17,
+	0xDD, 0xF7, 0x5E, 0xF0, 0xD8, 0x5F, 0xE6, 0xE9, 0x97, 0xE2, 0x9B, 0xB4,
+	0x3B, 0xAA, 0x62, 0x39, 0x92, 0x66, 0x98, 0x48, 0x83, 0x41, 0xCA, 0x18,
+	0xBD, 0x01, 0xCC, 0x32, 0x11, 0x46, 0xBF, 0xAD, 0xD0, 0x88, 0x52, 0xBC,
+	0x01, 0x59, 0x12, 0xEE, 0x90, 0x8F, 0x81, 0x94, 0x2D, 0xD4, 0x94, 0xEF,
+	0xF0, 0x81, 0x7E, 0xC1, 0x1C, 0x5A, 0xEF, 0xF2, 0x98, 0xE6, 0xA3, 0xF0,
+	0xDF, 0x50, 0x36, 0x3E, 0xF7, 0x69, 0xE5, 0x09, 0xCF, 0xDF, 0x57, 0xB6,
+	0x6C, 0xAE, 0xB4, 0x6A, 0xAE, 0xB0, 0x6A, 0x39, 0x65, 0xC7, 0x0B, 0x71,
+	0xEA, 0xDE, 0x78, 0x48, 0xA4, 0x1B, 0xD5, 0xB0, 0x1C, 0x55, 0x63, 0x94,
+	0xC4, 0x80, 0x59, 0x37, 0x56, 0x59, 0x37, 0x91, 0x6D, 0x9A, 0x72, 0xD7,
+	0x73, 0x42, 0x9D, 0x2F, 0xDB, 0x7B, 0x09, 0xA1, 0x68, 0x85, 0x2A, 0x72,
+	0xA4, 0x32, 0x37, 0x53, 0xE9, 0x9B, 0xE9, 0x18, 0x67, 0xE6, 0x91, 0x5D,
+	0x6C, 0x27, 0xFF, 0xCB, 0x5F, 0x45, 0x9F, 0x5F, 0x19, 0x0F, 0x45, 0x74,
+	0x58, 0x40, 0x0A, 0x2F, 0x20, 0xA5, 0x25, 0x20, 0xAD, 0xEA, 0x30, 0x08,
+	0x86, 0x62, 0xDC, 0x15, 0x2F, 0x0C, 0xC3, 0x18, 0xEA, 0x87, 0x94, 0xB1,
+	0x0E, 0xD7, 0xB1, 0x0E, 0x03, 0xD8, 0x4D, 0x5D, 0x38, 0x67, 0x6A, 0x09,
+	0x3C, 0xB1, 0x0C, 0xE5, 0x58, 0x50, 0x64, 0x97, 0x4D, 0xB2, 0x48, 0xAF,
+	0x5A, 0x2D, 0xD0, 0x18, 0x13, 0x68, 0x3C, 0x10, 0x68, 0xDE, 0xED, 0x9D,
+	0x2F, 0xEC, 0x5D, 0x42, 0xEF, 0x33, 0x3D, 0xDA, 0x12, 0x07, 0x2F, 0xCB,
+	0xDF, 0x7C, 0x0A, 0x52, 0x36, 0x66, 0x8F, 0x19, 0x37, 0x29, 0xB9, 0x38,
+	0x0E, 0x3B, 0x37, 0x6E, 0x46, 0x7C, 0x64, 0xAB, 0x52, 0x76, 0x9E, 0xA5,
+	0xEC, 0xFE, 0x51, 0xD9, 0x2F, 0xA9, 0x2F, 0x61, 0xB6, 0xB2, 0xCF, 0x2C,
+	0xE5, 0xE0, 0xA1, 0xEE, 0xE0, 0xA1, 0xCE, 0xE0, 0x21, 0x66, 0xC8, 0xF0,
+	0x89, 0xC8, 0x5B, 0x9E, 0xF1, 0x23, 0x46, 0x49, 0x6C, 0x58, 0x72, 0xAD,
+	0x49, 0x32, 0xC3, 0x04, 0x21, 0xE9, 0x41, 0x48, 0x3A, 0x11, 0x12, 0x66,
+	0xE8, 0x8D, 0x93, 0x51, 0x3F, 0x78, 0x26, 0x8C, 0x18, 0xFF, 0x37, 0x8A,
+	0x10, 0x09, 0x22, 0x44, 0xDD, 0x11, 0x57, 0xEA, 0xA2, 0xC4, 0xB9, 0x31,
+	0x83, 0x5E, 0xC9, 0x83, 0x26, 0x29, 0x8D, 0x26, 0x29, 0x4C, 0x93, 0x14,
+	0x86, 0x49, 0x1A, 0xEB, 0x6A, 0x1A, 0x4B, 0x94, 0xD6, 0xD0, 0x9C, 0xDE,
+	0x88, 0xCD, 0xE4, 0x86, 0xE4, 0x74, 0x5A, 0x82, 0x75, 0xE6, 0xE9, 0x8C,
+	0xD5, 0xA9, 0x74, 0x53, 0x72, 0xE2, 0x6D, 0x72, 0xE2, 0x08, 0x39, 0x51,
+	0x48, 0x49, 0xA9, 0xAF, 0x04, 0x41, 0x3A, 0x76, 0x3B, 0x8E, 0x68, 0x9F,
+	0x53, 0x61, 0x99, 0x51, 0x65, 0x26, 0x34, 0x7F, 0x2C, 0x34, 0x7F, 0x24,
+	0x34, 0xBF, 0x27, 0xFC, 0x4E, 0x2C, 0xB4, 0x65, 0x8A, 0x5C, 0x51, 0xBC,
+	0x64, 0x0F, 0x52, 0xC1, 0x96, 0xDC, 0x32, 0xAB, 0x87, 0x6B, 0x5A, 0x3E,
+	0xC2, 0x7E, 0x68, 0x7E, 0xFE, 0xE1, 0xDA, 0xB3, 0x8F, 0x37, 0xC4, 0xF1,
+	0x13, 0x7C, 0x28, 0xF9, 0xCE, 0x52, 0x0F, 0xA2, 0x1A, 0x04, 0xE9, 0x01,
+	0xFC, 0xC4, 0xC1, 0x82, 0x49, 0xFF, 0x64, 0x85, 0xB2, 0x42, 0x53, 0x1D,
+	0xAC, 0xCC, 0xB7, 0x68, 0xD2, 0x5F, 0xA1, 0x4C, 0x92, 0x8A, 0x49, 0x52,
+	0x11, 0x49, 0x7A, 0x99, 0x24, 0xAD, 0x25, 0x4F, 0x66, 0xD1, 0xDE, 0x6D,
+	0xC7, 0x76, 0x6C, 0x3C, 0x59, 0xBF, 0x36, 0xA3, 0xDA, 0x8C, 0xF4, 0x52,
+	0x4C, 0x7A, 0x79, 0x85, 0xF4, 0xF2, 0x72, 0x85, 0x32, 0xA2, 0xAB, 0x45,
+	0xE4, 0x67, 0x57, 0xC9, 0xCF, 0xC4, 0xE4, 0xE7, 0x3D, 0xE4, 0xE7, 0x75,
+	0x95, 0xD2, 0x6C, 0xC6, 0x5B, 0x57, 0x5C, 0xBB, 0xFD, 0xC9, 0x7A, 0x4B,
+	0x28, 0x62, 0xDC, 0xBB, 0xC5, 0xB8, 0x37, 0xC2, 0xB8, 0x2F, 0xAE, 0x1E,
+	0x6D, 0xAC, 0x19, 0xCF, 0xAD, 0x7B, 0xB1, 0x9B, 0xC8, 0x71, 0xCC, 0xAD,
+	0xB5, 0x3A, 0xC6, 0x58, 0xC3, 0x69, 0x93, 0x72, 0xDA, 0x5E, 0x70, 0xDA,
+	0x7E, 0xE2, 0xB4, 0x77, 0x73, 0x3B, 0x09, 0xAD, 0x7D, 0xFE, 0xD5, 0x4C,
+	0xD7, 0x42, 0xEA, 0xFA, 0x6C, 0xAA, 0x85, 0x04, 0x25, 0x93, 0xA0, 0x26,
+	0x24, 0xA8, 0x27, 0x92, 0xF8, 0x9B, 0x92, 0xA4, 0xA6, 0x21, 0x10, 0xEC,
+	0xC9, 0xF7, 0xA6, 0x61, 0xB7, 0xE5, 0x97, 0xDB, 0x3E, 0x71, 0xE8, 0x51,
+	0xD2, 0xFD, 0x64, 0x53, 0xD7, 0x53, 0x47, 0xCE, 0xD3, 0x2D, 0xD4, 0x67,
+	0xAE, 0xA8, 0xFE, 0x34, 0xBF, 0xAA, 0x82, 0xAD, 0x13, 0x07, 0x89, 0x33,
+	0x1C, 0x22, 0x4C, 0x1C, 0xC2, 0xCB, 0x7C, 0x0A, 0xA6, 0x0E, 0x27, 0xF7,
+	0x27, 0xF9, 0xCB, 0x7C, 0x71, 0xEA, 0x4C, 0xFA, 0x62, 0x27, 0xFD, 0x8A,
+	0x26, 0x03, 0xF2, 0x5E, 0x85, 0xA4, 0x70, 0x06, 0x28, 0x9C, 0x01, 0xB2,
+	0x92, 0x72, 0xEE, 0x00, 0xAE, 0xF5, 0x6A, 0x66, 0x97, 0xC4, 0xAB, 0x92,
+	0xED, 0x92, 0x57, 0x6B, 0xF3, 0xA9, 0x48, 0x4C, 0x51, 0x42, 0xE6, 0x8A,
+	0xCB, 0xB9, 0x62, 0x28, 0x02, 0xBB, 0x06, 0xBD, 0x2A, 0x9B, 0xB6, 0x42,
+	0x51, 0x6B, 0x3F, 0x45, 0x09, 0xB9, 0x55, 0x48, 0xBA, 0x24, 0xC4, 0xB7,
+	0x8B, 0xB2, 0xBA, 0xAF, 0x7A, 0x53, 0x1B, 0xB7, 0xE5, 0x33, 0x6D, 0xBA,
+	0x3B, 0xAA, 0xBA, 0x3B, 0x2A, 0x95, 0x90, 0x7B, 0x3A, 0x4B, 0xF9, 0x5D,
+	0x27, 0x84, 0x82, 0x80, 0x9A, 0xF3, 0x6E, 0x05, 0xD5, 0x76, 0xC3, 0x8C,
+	0xEA, 0x0F, 0x54, 0xD3, 0x87, 0xAB, 0x2B, 0x6E, 0x32, 0x0B, 0x6E, 0xB1,
+	0x22, 0x9A, 0x29, 0x70, 0x3C, 0xC5, 0x5E, 0x86, 0x94, 0x2B, 0x99, 0x96,
+	0x21, 0xA7, 0x64, 0xA8, 0xBB, 0xB2, 0x44, 0xAE, 0x0C, 0x04, 0x07, 0x73,
+	0x83, 0x99, 0xC5, 0x6E, 0x53, 0x41, 0x65, 0x6A, 0x10, 0x5F, 0x05, 0x97,
+	0xBE, 0x42, 0x60, 0xDE, 0x44, 0xA6, 0x8A, 0xD3, 0x03, 0x27, 0x03, 0x70,
+	0xEA, 0x4C, 0x05, 0x60, 0xA7, 0x02, 0x8B, 0xA6, 0x82, 0xF2, 0x5F, 0x87,
+	0xA5, 0xF2, 0x3B, 0x4A, 0x95, 0x94, 0x28, 0xC1, 0x09, 0x3A, 0xD0, 0x7D,
+	0x1D, 0x99, 0x03, 0x5D, 0x87, 0xE9, 0x0D, 0xDB, 0xF9, 0xED, 0xA5, 0x0A,
+	0x3E, 0x11, 0xB5, 0x97, 0x28, 0x99, 0x89, 0x18, 0x0D, 0xDB, 0x05, 0x6D,
+	0xA5, 0x4A, 0x4A, 0x94, 0xE0, 0x7A, 0xDB, 0xD0, 0xFD, 0xED, 0xE0, 0x40,
+	0x67, 0x10, 0x83, 0xE5, 0xDA, 0xC7, 0x2B, 0xFD, 0x48, 0x49, 0x3F, 0x0F,
+	0xD7, 0xCF, 0xC3, 0x88, 0x5A, 0xB3, 0xAE, 0xB7, 0x05, 0x43, 0xD6, 0xD7,
+	0x58, 0xA5, 0x6A, 0xE0, 0xAF, 0xB3, 0x0A, 0x07, 0x1B, 0x8E, 0xDF, 0x6C,
+	0x0A, 0xAB, 0xAF, 0xDD, 0x75, 0xFF, 0x2C, 0x41, 0x8D, 0xD2, 0xFB, 0x67,
+	0xB1, 0xA3, 0xA4, 0xD3, 0xE3, 0x94, 0x58, 0x1E, 0xC9, 0x63, 0x3A, 0xB9,
+	0x56, 0x0D, 0xE6, 0x74, 0x4A, 0xF5, 0x74, 0x2A, 0x65, 0x1A, 0x04, 0x6F,
+	0x9C, 0x0A, 0x7D, 0x1D, 0x8E, 0x57, 0x03, 0xA7, 0x20, 0xA2, 0xF8, 0x4D,
+	0xE4, 0x99, 0xB7, 0x31, 0x69, 0xFD, 0x5C, 0x9C, 0x1A, 0x58, 0x21, 0xB7,
+	0x58, 0xC8, 0x2D, 0xB8, 0xC2, 0x03, 0x07, 0x5B, 0x11, 0xFF, 0x5F, 0x24,
+	0xE4, 0xE2, 0xD4, 0x50, 0x44, 0x22, 0x28, 0xE2, 0x82, 0x83, 0x3C, 0x84,
+	0x90, 0x83, 0x53, 0x03, 0x2B, 0xE2, 0x14, 0x8B, 0x38, 0x05, 0x62, 0x0E,
+	0x28, 0xE1, 0x85, 0x88, 0x9B, 0x70, 0x6A, 0x60, 0xC5, 0xEC, 0xE2, 0x01,
+	0x76, 0xC1, 0x35, 0x76, 0xD6, 0x8D, 0x96, 0xD0, 0xA1, 0x3A, 0xDC, 0x6C,
+	0x8A, 0x6F, 0xD4, 0xA1, 0x87, 0xEB, 0x8F, 0xDF, 0xBE, 0x10, 0x39, 0x46,
+	0xC0, 0xAB, 0x81, 0x1B, 0x23, 0x60, 0xC7, 0x88, 0x85, 0xE3, 0x65, 0xB9,
+	0x8F, 0x49, 0xC8, 0xF7, 0xE9, 0x25, 0x6A, 0xE0, 0x95, 0x60, 0xDF, 0x67,
+	0xA0, 0xE5, 0xD0, 0x77, 0xC8, 0xE7, 0x4F, 0xD1, 0xCF, 0xFE, 0x7F, 0x66,
+	0xFF, 0x68, 0x17, 0x67, 0xE5, 0x7A, 0x56, 0x53, 0x53, 0xB5, 0xA8, 0xFD,
+	0xC5, 0x6A, 0x15, 0x88, 0x0D, 0x42, 0x06, 0xA9, 0xAF, 0x5D, 0x7F, 0xEF,
+	0xF8, 0x3F, 0x0B, 0x10, 0x3B, 0xD9
+};
 };
 
 bool
@@ -3212,14 +3900,6 @@ SKIV_HDR_CalculateContentLightInfo (const DirectX::Image& img)
   using namespace DirectX;
 
   SK_PNG_HDR_cLLi_Payload clli;
-
-  static const XMMATRIX c_from2020toXYZ =
-  {
-    { 0.636958062f, 0.2627002000f, 0.0000000000f, 0.0f },
-    { 0.144616901f, 0.6779980650f, 0.0280726924f, 0.0f },
-    { 0.168880969f, 0.0593017153f, 1.0609850800f, 0.0f },
-    { 0.0f,         0.0f,          0.0f,          1.0f }
-  };
 
   float N         = 0.0f;
   float fLumAccum = 0.0f;
@@ -3298,12 +3978,17 @@ SKIV_HDR_ConvertImageToPNG (const DirectX::Image& raw_hdr_img, DirectX::ScratchI
   using namespace DirectX;
 
   if (auto typeless_fmt = DirectX::MakeTypeless (raw_hdr_img.format);
+           typeless_fmt == DXGI_FORMAT_R8G8B8A8_TYPELESS     ||
            typeless_fmt == DXGI_FORMAT_R10G10B10A2_TYPELESS  ||
            typeless_fmt == DXGI_FORMAT_R16G16B16A16_TYPELESS ||
            typeless_fmt == DXGI_FORMAT_R32G32B32A32_TYPELESS)
   {
     if (png_img.GetImageCount () == 0)
     {
+      // Early SDR exit
+      if (typeless_fmt == DXGI_FORMAT_R8G8B8A8_TYPELESS)
+        return (SUCCEEDED (png_img.InitializeFromImage (raw_hdr_img)));
+
       if (FAILED (png_img.Initialize2D (DXGI_FORMAT_R16G16B16A16_UNORM,
               raw_hdr_img.width,
               raw_hdr_img.height, 1, 1)))
@@ -3320,23 +4005,6 @@ SKIV_HDR_ConvertImageToPNG (const DirectX::Image& raw_hdr_img, DirectX::ScratchI
 
     if (rgb16_pixels == nullptr)
       return false;
-
-    auto LinearToPQ = [](XMVECTOR N)
-    {
-      XMVECTOR ret;
-
-      ret =
-        XMVectorPow (N, PQ.N);
-
-      XMVECTOR nd =
-        XMVectorDivide (
-           XMVectorAdd (  PQ.C1, XMVectorMultiply (PQ.C2, ret)),
-           XMVectorAdd (g_XMOne, XMVectorMultiply (PQ.C3, ret))
-        );
-
-      return
-        XMVectorPow (nd, PQ.M);
-    };
 
     EvaluateImage ( raw_hdr_img,
     [&](const XMVECTOR* pixels, size_t width, size_t y)
@@ -3377,10 +4045,7 @@ SKIV_HDR_ConvertImageToPNG (const DirectX::Image& raw_hdr_img, DirectX::ScratchI
         if (typeless_fmt == DXGI_FORMAT_R16G16B16A16_TYPELESS ||
             typeless_fmt == DXGI_FORMAT_R32G32B32A32_TYPELESS)
         {
-          XMVECTOR  value = XMVector3Transform (v, c_from709to2020);
-          XMVECTOR nvalue = XMVectorDivide     ( XMVectorMax (g_XMZero,
-                                                   XMVectorMin (value, PQ.MaxPQ)),
-                                                                       PQ.MaxPQ );
+          XMVECTOR nvalue = XMVector3Transform (v, c_scRGBtoBt2100);
                         v = LinearToPQ (nvalue);
         }
 
@@ -3414,6 +4079,8 @@ SKIV_PNG_MakeHDR ( const wchar_t*        wszFilePath,
 
   if (png_crc32 ((const BYTE *)_test, 0, 4, 0) == 0xae426082)
   {
+    PLOG_VERBOSE << "png_crc32 == TRUE";
+
     FILE*
         fPNG = _wfopen (wszFilePath, L"r+b");
     if (fPNG != nullptr)
@@ -3620,12 +4287,15 @@ SK_WIC_SetMaximumQuality (IPropertyBag2 *props)
 bool
 SKIV_HDR_SavePNGToDisk (const wchar_t* wszPNGPath, const DirectX::Image* png_image,
                                                    const DirectX::Image* raw_image,
-                           const char* szUtf8MetadataTitle)
+                           const char* szUtf8MetadataTitle, bool isHDR)
 {
   if ( wszPNGPath == nullptr ||
         png_image == nullptr ||
         raw_image == nullptr )
   {
+    PLOG_VERBOSE_IF(wszPNGPath == nullptr) << "wszPNGPath == nullptr";
+    PLOG_VERBOSE_IF(png_image  == nullptr) << "png_image  == nullptr";
+    PLOG_VERBOSE_IF(raw_image  == nullptr) << "raw_image  == nullptr";
     return false;
   }
 
@@ -3644,9 +4314,12 @@ SKIV_HDR_SavePNGToDisk (const wchar_t* wszPNGPath, const DirectX::Image* png_ima
                                               SK_WIC_SetMetadataTitle (pMQW, metadata_title);
                                             }*/)))
   {
-    return
-      SKIV_PNG_MakeHDR (wszPNGPath, *png_image, *raw_image);
-  }
+    PLOG_VERBOSE << "DirectX::SaveToWICFile ( ): SUCCEEDED";
+
+    return (isHDR) ? SKIV_PNG_MakeHDR (wszPNGPath, *png_image, *raw_image)
+                   : true;
+  } else
+    PLOG_VERBOSE << "DirectX::SaveToWICFile ( ): FAILED";
 
   return false;
 }
@@ -3697,28 +4370,596 @@ void SKIV_HandleCopyShortcut (void)
   wantCopyToClipboard = true;
 }
 
-bool SKIV_Image_CopyToClipboard (const DirectX::Image* pImage)
+CComPtr <ID3D11ShaderResourceView> SKIV_DesktopImage;
+
+bool SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped, bool isHDR, bool force_sRGB)
 {
   if (pImage == nullptr)
     return false;
 
-  DirectX::ScratchImage                    hdr10_img;
-  if (SKIV_HDR_ConvertImageToPNG (*pImage, hdr10_img))
+  static SKIF_CommonPathsCache& _path_cache = SKIF_CommonPathsCache::GetInstance ( );
+
+  std::wstring wsPNGPath = _path_cache.skiv_temp;
+  wsPNGPath += snipped ? L"SKIV_Snip"
+                       : L"SKIV_Clipboard";
+  wsPNGPath += L".png";
+
+  PLOG_VERBOSE << wsPNGPath;
+
+  if (isHDR)
   {
-    wchar_t                         wszPNGPath [MAX_PATH + 2] = { };
-    GetCurrentDirectoryW (MAX_PATH, wszPNGPath);
-
-    PathAppendW       (wszPNGPath, L"SKIV_HDR_Clipboard");
-    PathAddExtensionW (wszPNGPath, L".png");
-
-    if (SKIV_HDR_SavePNGToDisk (wszPNGPath, hdr10_img.GetImages (), pImage, nullptr))
+    if (SUCCEEDED (SKIF_Image_SaveToDisk_HDR (*pImage, wsPNGPath.c_str())))
     {
-      if (SKIV_PNG_CopyToClipboard (*hdr10_img.GetImage (0,0,0), wszPNGPath, 0))
+      PLOG_VERBOSE << "SKIF_Image_SaveToDisk_HDR ( ): SUCCEEDED";
+
+      if (SKIV_PNG_CopyToClipboard (*pImage, wsPNGPath.c_str(), 0))
       {
+        PLOG_VERBOSE << "SKIV_PNG_CopyToClipboard ( ): TRUE";
         return true;
+      }
+    }
+
+    else
+      PLOG_VERBOSE << "SKIF_Image_SaveToDisk_HDR ( ): FAILED";
+  }
+
+  else {
+    if (SUCCEEDED (SKIF_Image_SaveToDisk_SDR (*pImage, wsPNGPath.c_str(), force_sRGB)))
+    {
+      PLOG_VERBOSE << "SKIF_Image_SaveToDisk_SDR ( ): SUCCEEDED";
+
+      if (SKIV_PNG_CopyToClipboard (*pImage, wsPNGPath.c_str(), 0))
+      {
+        PLOG_VERBOSE << "SKIV_PNG_CopyToClipboard ( ): TRUE";
+        return true;
+      }
+    }
+
+    else
+      PLOG_VERBOSE << "SKIF_Image_SaveToDisk_SDR ( ): FAILED";
+  }
+
+  return false;
+}
+
+#include <dxgi1_5.h>
+
+HRESULT
+SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, int flags = 0x0)
+{
+  SKIV_DesktopImage = nullptr;
+
+  std::ignore = flags;
+
+  HRESULT res = E_NOT_VALID_STATE;
+
+  auto pDevice =
+    SKIF_D3D11_GetDevice ();
+
+  if (! pDevice)
+    return res;
+
+  CComPtr <IDXGIFactory> pFactory;
+  CreateDXGIFactory (IID_IDXGIFactory, (void **)&pFactory.p);
+
+  if (! pFactory)
+    return E_NOTIMPL;
+
+  CComPtr <IDXGIAdapter> pAdapter;
+  UINT                  uiAdapter = 0;
+
+  POINT          cursor_pos;
+  GetCursorPos (&cursor_pos);
+
+  CComPtr <IDXGIOutput> pCursorOutput;
+
+  while (SUCCEEDED (pFactory->EnumAdapters (uiAdapter++, &pAdapter.p)))
+  {
+    CComPtr <IDXGIOutput> pOutput;
+    UINT                 uiOutput = 0;
+
+    while (SUCCEEDED (pAdapter->EnumOutputs (uiOutput++, &pOutput)))
+    {
+      DXGI_OUTPUT_DESC   out_desc;
+      pOutput->GetDesc (&out_desc);
+
+      if (out_desc.AttachedToDesktop && PtInRect (&out_desc.DesktopCoordinates, cursor_pos))
+      {
+        pCursorOutput = pOutput;
+        break;
+      }
+
+      pOutput = nullptr;
+    }
+
+    if (pCursorOutput != nullptr)
+      break;
+
+    pAdapter = nullptr;
+  }
+
+  if (! pCursorOutput)
+  {
+    return E_UNEXPECTED;
+  }
+
+  CComQIPtr <IDXGIOutput5> pOutput5 (pCursorOutput);
+
+  // Down-level interfaces support duplication, but for HDR we want Output5
+  if (! pOutput5)
+  {
+    return E_NOTIMPL;
+  }
+
+  // The ordering goes from the highest prioritized format to the lowest
+  DXGI_FORMAT capture_formats [] = {
+    // SDR:
+    DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, // Prefer SRGB formats as even non-SRGB formats use sRGB gamma
+    DXGI_FORMAT_R8G8B8A8_UNORM,      // The most common format for the desktop
+    DXGI_FORMAT_B8G8R8X8_UNORM_SRGB,
+    DXGI_FORMAT_B8G8R8X8_UNORM,
+
+    // HDR:
+    DXGI_FORMAT_R10G10B10A2_UNORM,
+    DXGI_FORMAT_R16G16B16A16_FLOAT,
+    DXGI_FORMAT_R32G32B32A32_FLOAT
+  };
+
+  CComPtr <IDXGIOutputDuplication> pDuplicator;
+  pOutput5->DuplicateOutput1 (pDevice, 0x0, _ARRAYSIZE (capture_formats),
+                                                        capture_formats, &pDuplicator.p);
+
+  if (! pDuplicator)
+  {
+    return E_NOTIMPL;
+  }
+
+  DXGI_OUTDUPL_FRAME_INFO frame_info = { };
+  CComPtr <IDXGIResource> pDuplicatedResource;
+
+  int    tries = 0;
+  while (tries++ < 3)
+  {
+    pDuplicator->AcquireNextFrame (150, &frame_info, &pDuplicatedResource.p);
+
+    if (frame_info.LastPresentTime.QuadPart)
+      break;
+
+    pDuplicator->ReleaseFrame ();
+  }
+
+  if (! pDuplicatedResource)
+  {
+    return E_UNEXPECTED;
+  }
+
+  CComQIPtr <IDXGISurface>    pSurface       (pDuplicatedResource);
+  CComQIPtr <ID3D11Texture2D> pDuplicatedTex (pSurface);
+
+  if (! pDuplicatedTex)
+  {
+    return E_NOTIMPL;
+  }
+
+  DXGI_SURFACE_DESC   surfDesc;
+  pSurface->GetDesc (&surfDesc);
+
+  CComPtr <ID3D11Texture2D> pStagingTex;
+  CComPtr <ID3D11Texture2D> pDesktopImage; // For rendering during snipping
+
+  D3D11_TEXTURE2D_DESC
+    texDesc                = { };
+    texDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    texDesc.Usage          = D3D11_USAGE_STAGING;
+    texDesc.ArraySize      = 1;
+    texDesc.MipLevels      = 1;
+    texDesc.SampleDesc     = { .Count = 1, .Quality = 0 };
+    texDesc.Format         = surfDesc.Format;
+    texDesc.Width          = surfDesc.Width;
+    texDesc.Height         = surfDesc.Height;
+
+  CComPtr <ID3D11DeviceContext>  pDevCtx;
+  pDevice->GetImmediateContext (&pDevCtx);
+
+  if (pDevCtx == nullptr)
+    return E_UNEXPECTED;
+
+#if 0
+  if (FAILED (pDevice->CreateTexture2D (&texDesc, nullptr, &pStagingTex.p)))
+  {
+    pDuplicator->ReleaseFrame ();
+    return E_UNEXPECTED;
+  }
+
+  pDevCtx->CopyResource (pStagingTex,   pDuplicatedTex);
+
+  D3D11_MAPPED_SUBRESOURCE mapped;
+
+  if (SUCCEEDED (pDevCtx->Map (pStagingTex, 0, D3D11_MAP_READ, 0x0, &mapped)))
+  {
+    image.Initialize2D (surfDesc.Format,
+                        surfDesc.Width,
+                        surfDesc.Height, 1, 1
+    );
+
+    if (! image.GetPixels ())
+    {
+      pSurface->Unmap ();
+      return E_POINTER;
+    }
+
+    auto pImg =
+      image.GetImages ();
+
+    const uint8_t* src = (const uint8_t *)mapped.pData;
+          uint8_t* dst = pImg->pixels;
+
+    for (size_t h = 0; h < surfDesc.Height; ++h)
+    {
+      size_t msize =
+        std::min <size_t> (pImg->rowPitch, mapped.RowPitch);
+
+      memcpy_s (dst, pImg->rowPitch, src, msize);
+
+      src += mapped.RowPitch;
+      dst += pImg->rowPitch;
+    }
+
+    if (FAILED (pSurface->Unmap ()))
+    {
+      return E_UNEXPECTED;
+    }
+  }
+#else
+  texDesc.CPUAccessFlags = 0x0;
+  texDesc.Usage          = D3D11_USAGE_DEFAULT;
+  texDesc.BindFlags      = D3D11_BIND_SHADER_RESOURCE;
+
+  if (FAILED (pDevice->CreateTexture2D (&texDesc, nullptr, &pDesktopImage.p)))
+  {
+    pDuplicator->ReleaseFrame ();
+    return E_UNEXPECTED;
+  }
+
+  D3D11_SHADER_RESOURCE_VIEW_DESC
+    srvDesc                           = { };
+    srvDesc.Format                    = texDesc.Format;
+    srvDesc.ViewDimension             = D3D11_SRV_DIMENSION_TEXTURE2D;
+    srvDesc.Texture2D.MipLevels       = 1;
+    srvDesc.Texture2D.MostDetailedMip = 0;
+
+  pDevCtx->CopyResource             (pDesktopImage, pDuplicatedTex);
+  pDevice->CreateShaderResourceView (pDesktopImage, &srvDesc, &SKIV_DesktopImage);
+
+  pDevCtx->Flush ();
+
+  pDuplicator->ReleaseFrame ();
+#endif
+
+  return S_OK;
+}
+
+HRESULT
+SKIF_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileName, const bool force_sRGB)
+{
+  using namespace DirectX;
+
+  const Image* pOutputImage = &image;
+
+  XMVECTOR maxLum = XMVectorZero          (),
+           minLum = XMVectorSplatInfinity ();
+
+  double lumTotal    = 0.0;
+  double logLumTotal = 0.0;
+  double N           = 0.0;
+
+  bool is_hdr = false;
+
+  ScratchImage scrgb;
+  ScratchImage final_sdr;
+
+  if (image.format == DXGI_FORMAT_R16G16B16A16_FLOAT ||
+      image.format == DXGI_FORMAT_R32G32B32A32_FLOAT)
+  {
+    is_hdr = true;
+
+    if (FAILED (scrgb.InitializeFromImage (image)))
+      return E_INVALIDARG;
+  }
+
+  if (is_hdr)
+  {
+    ScratchImage tonemapped_hdr;
+    ScratchImage tonemapped_copy;
+
+    EvaluateImage ( scrgb.GetImages     (),
+                    scrgb.GetImageCount (),
+                    scrgb.GetMetadata   (),
+    [&](const XMVECTOR* pixels, size_t width, size_t y)
+    {
+      UNREFERENCED_PARAMETER(y);
+
+      for (size_t j = 0; j < width; ++j)
+      {
+        XMVECTOR v = *pixels;
+
+        v =
+          XMVector3Transform (v, c_from709toXYZ);
+
+        maxLum =
+          XMVectorReplicate (XMVectorGetY (XMVectorMax (v, maxLum)));
+
+        minLum =
+          XMVectorReplicate (XMVectorGetY (XMVectorMin (v, minLum)));
+
+        logLumTotal +=
+          log2 ( std::max (0.000001, static_cast <double> (std::max (0.0f, XMVectorGetY (v)))) );
+           lumTotal +=               static_cast <double> (std::max (0.0f, XMVectorGetY (v)));
+        ++N;
+
+        v = XMVectorMax (g_XMZero, v);
+  
+        pixels++;
+      }
+    });
+
+    //SK_LOGi0 ( L"Min Luminance: %f, Max Luminance: %f", std::max (0.0f, XMVectorGetY (minLum)) * 80.0f,
+    //                                                                    XMVectorGetY (maxLum)  * 80.0f );
+    //
+    //SK_LOGi0 ( L"Mean Luminance (arithmetic, geometric): %f, %f", 80.0 *      ( lumTotal    / N ),
+    //                                                              80.0 * exp2 ( logLumTotal / N ) );
+
+    // After tonemapping, re-normalize the image to preserve peak white,
+    //   this is important in cases where the maximum luminance was < 1000 nits
+    XMVECTOR maxTonemappedRGB = g_XMZero;
+
+    // If it's too bright, don't bother trying to tonemap the full range...
+    static constexpr float _maxNitsToTonemap = 10000.0f/80.0f;
+
+    const float maxYInPQ =
+      LinearToPQY (std::min (_maxNitsToTonemap, XMVectorGetY (maxLum))),
+               SDR_YInPQ =
+      LinearToPQY (                                              1.25f);
+
+    TransformImage ( scrgb.GetImages     (),
+                     scrgb.GetImageCount (),
+                     scrgb.GetMetadata   (),
+      [&](XMVECTOR* outPixels, const XMVECTOR* inPixels, size_t width, size_t y)
+      {
+        UNREFERENCED_PARAMETER(y);
+
+        auto TonemapHDR = [](float L, float Lc, float Ld) -> float
+        {
+          float a = (  Ld / pow (Lc, 2.0f));
+          float b = (1.0f / Ld);
+
+          return
+            L * (1 + a * L) / (1 + b * L);
+        };
+
+        static const XMVECTOR vLumaRescale =
+          XMVectorReplicate (1.0/1.6f);
+
+        for (size_t j = 0; j < width; ++j)
+        {
+          XMVECTOR value = inPixels [j];
+
+          value =
+            XMVectorMultiply (value, vLumaRescale);
+
+          XMVECTOR ICtCp =
+            Rec709toICtCp (value);
+
+          float Y_in  = std::max (XMVectorGetX (ICtCp), 0.0f);
+          float Y_out = 1.0f;
+
+          Y_out =
+            TonemapHDR (Y_in, maxYInPQ, SDR_YInPQ);
+
+          if (Y_out + Y_in > 0.0f)
+          {
+            ICtCp.m128_f32 [0] *=
+              std::max ((Y_out / Y_in), 0.0f);
+          }
+
+          value =
+            ICtCptoRec709 (ICtCp);
+
+          maxTonemappedRGB =
+            XMVectorMax (maxTonemappedRGB, XMVectorMax (value, g_XMZero));
+
+          outPixels [j] = XMVectorSaturate (value);
+        }
+      }, tonemapped_hdr
+    );
+
+    float fMaxR = XMVectorGetX (maxTonemappedRGB);
+    float fMaxG = XMVectorGetY (maxTonemappedRGB);
+    float fMaxB = XMVectorGetZ (maxTonemappedRGB);
+
+    if (( fMaxR <  1.0f ||
+          fMaxG <  1.0f ||
+          fMaxB <  1.0f ) &&
+        ( fMaxR >= 1.0f ||
+          fMaxG >= 1.0f ||
+          fMaxB >= 1.0f ))
+    {
+#ifdef GAMUT_MAPPING_WARNING
+      SK_LOGi0 (
+        L"After tone mapping, maximum RGB was %4.2fR %4.2fG %4.2fB -- "
+        L"SDR image will be normalized to min (R|G|B) and clipped.",
+          fMaxR, fMaxG, fMaxB
+      );
+#endif
+
+      float fSmallestComp =
+        std::min ({fMaxR, fMaxG, fMaxB});
+
+      float fRescale =
+        (1.0f / fSmallestComp);
+
+      XMVECTOR vNormalizationScale =
+        XMVectorReplicate (fRescale);
+
+      TransformImage (*tonemapped_hdr.GetImages (),
+        [&]( _Out_writes_ (width)       XMVECTOR* outPixels,
+              _In_reads_  (width) const XMVECTOR* inPixels,
+                                        size_t    width,
+                                        size_t )
+        {
+          for (size_t j = 0; j < width; ++j)
+          {
+            XMVECTOR value =
+             inPixels [j];
+            outPixels [j] =
+              XMVectorSaturate (
+                XMVectorMultiply (value, vNormalizationScale)
+              );
+          }
+        }, tonemapped_copy
+      );
+
+      std::swap (tonemapped_hdr, tonemapped_copy);
+    }
+
+    if (FAILED (DirectX::Convert (*tonemapped_hdr.GetImages (), DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,
+                                  (TEX_FILTER_FLAGS)0x200000FF, 1.0f, final_sdr)))
+    {
+      return E_UNEXPECTED;
+    }
+
+    pOutputImage =
+      final_sdr.GetImages ();
+  }
+
+
+  wchar_t* wszExtension =
+    PathFindExtensionW (wszFileName);
+
+  wchar_t wszImplicitFileName [MAX_PATH] = { };
+  wcscpy (wszImplicitFileName, wszFileName);
+
+  // For silly users who don't give us filenames...
+  if (! wszExtension)
+  {
+    PathAddExtension (wszImplicitFileName, defaultSDRFileExt.c_str ());
+    wszExtension =
+      PathFindExtensionW (wszImplicitFileName);
+  }
+
+  GUID      wic_codec;
+  WIC_FLAGS wic_flags = WIC_FLAGS_DITHER_DIFFUSION | (force_sRGB ? WIC_FLAGS_FORCE_SRGB : WIC_FLAGS_NONE);
+
+  if (StrStrIW (wszExtension, L"jpg") ||
+      StrStrIW (wszExtension, L"jpeg"))
+  {
+    wic_codec = GetWICCodec (WIC_CODEC_JPEG);
+  }
+
+  else if (StrStrIW (wszExtension, L"png"))
+  {
+    wic_codec = GetWICCodec (WIC_CODEC_PNG);
+  }
+
+  else if (StrStrIW (wszExtension, L"bmp"))
+  {
+    wic_codec = GetWICCodec (WIC_CODEC_BMP);
+  }
+
+  else if (StrStrIW (wszExtension, L"tiff"))
+  {
+    wic_codec = GetWICCodec (WIC_CODEC_TIFF);
+  }
+
+  // Probably ignore this
+  else if (StrStrIW (wszExtension, L"hdp"))
+  {
+    wic_codec = GetWICCodec (WIC_CODEC_WMP);
+  }
+
+  // AVIF technically works for SDR... do we want to support it?
+  //  If we do, WIC won't help us, however.
+
+  else
+  {
+    return E_UNEXPECTED;
+  }
+
+  ///DirectX::TexMetadata              orig_tex_metadata;
+  ///CComPtr <IWICMetadataQueryReader> pQueryReader;
+  ///
+  ///DirectX::GetMetadataFromWICFile (wszOriginalFile, DirectX::WIC_FLAGS_NONE, orig_tex_metadata, [&](IWICMetadataQueryReader *pMQR){
+  ///  pQueryReader = pMQR;
+  ///});
+
+  return
+    DirectX::SaveToWICFile (*pOutputImage, wic_flags, wic_codec,
+                      wszImplicitFileName, nullptr, SK_WIC_SetMaximumQuality);
+}
+
+HRESULT
+SKIF_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileName)
+{
+  using namespace DirectX;
+
+  const Image* pOutputImage = &image;
+
+  if (image.format != DXGI_FORMAT_R16G16B16A16_FLOAT &&
+      image.format != DXGI_FORMAT_R32G32B32A32_FLOAT)
+  {
+    // SKIV always uses scRGB internally for HDR, any other format
+    //   can't be HDR...
+    return E_NOTIMPL;
+  }
+
+  wchar_t* wszExtension =
+    PathFindExtensionW (wszFileName);
+
+  wchar_t wszImplicitFileName [MAX_PATH] = { };
+  wcscpy (wszImplicitFileName, wszFileName);
+
+  // For doofus users who don't give us filenames...
+  if (! wszExtension)
+  {
+    PathAddExtension (wszImplicitFileName, defaultHDRFileExt.c_str());
+    wszExtension =
+      PathFindExtensionW (wszImplicitFileName);
+  }
+
+  GUID wic_codec;
+
+  if (StrStrIW (wszExtension, L"jxr"))
+  {
+    wic_codec = GetWICCodec (WIC_CODEC_WMP);
+  }
+
+  else if (StrStrIW (wszExtension, L"png"))
+  {
+    DirectX::ScratchImage                  png_img;
+    if (SKIV_HDR_ConvertImageToPNG (image, png_img))
+    {
+      if (SKIV_HDR_SavePNGToDisk (wszImplicitFileName, png_img.GetImages (), &image, nullptr, true))
+      {
+        return S_OK;
       }
     }
   }
 
-  return false;
+  else if (StrStrIW (wszExtension, L"avif") ||
+           StrStrIW (wszExtension, L"hdr")  ||
+           StrStrIW (wszExtension, L"jxl"))
+  {
+    // Not yet, sorry...
+    return E_NOTIMPL;
+  }
+
+  else
+  {
+    // What the hell is this?
+    return E_UNEXPECTED;
+  }
+
+  return
+    DirectX::SaveToWICFile (*pOutputImage, DirectX::WIC_FLAGS_NONE, wic_codec,
+                      wszImplicitFileName, nullptr, SK_WIC_SetMaximumQuality);
 }
