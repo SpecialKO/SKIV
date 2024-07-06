@@ -365,11 +365,17 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
   bImageDetails            =   regKVImageDetails           .getData (&hKey);
 
   // Keybindings
+  // All keybindings must first read the data from the registry,
+  //   then parse the human_readable data through .parse()
 
   if (regKVHotkeyCaptureRegion.hasData(&hKey))
-    kbCaptureRegion.human_readable = regKVHotkeyCaptureRegion.getData(&hKey);
+    kbCaptureRegion.human_readable = regKVHotkeyCaptureRegion.getData (&hKey);
+
+  if (regKVHotkeyCaptureScreen.hasData(&hKey))
+    kbCaptureScreen.human_readable = regKVHotkeyCaptureScreen.getData (&hKey);
 
   kbCaptureRegion.parse();
+  kbCaptureScreen.parse();
 
   if (hKey != nullptr)
     RegCloseKey (hKey);

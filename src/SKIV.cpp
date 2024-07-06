@@ -152,7 +152,7 @@ static const GUID SKIF_NOTIFY_GUID = // {8142287D-5BC6-4131-95CD-709A2613E1F5}
 #define SKIF_NOTIFY_EXIT                    0x1331 // 4913
 #define SKIF_NOTIFY_OPEN                    0x1332 // 4914
 #define SKIF_NOTIFY_SNIP_REGION             0x1333 // 4915
-#define SKIF_NOTIFY_SNIP_FULLSCREEN         0x1334 // 4916
+#define SKIF_NOTIFY_SNIP_SCREEN             0x1334 // 4916
 #define SKIF_NOTIFY_RUN_UPDATER             0x1335 // 4917
 #define WM_SKIF_NOTIFY_ICON      (WM_USER + 0x150) // 1360
 bool SKIF_isTrayed = false;
@@ -254,11 +254,14 @@ SKIF_Startup_ProcessCmdLineArgs (LPWSTR lpCmdLine)
     _wcsicmp (lpCmdLine, L"/OpenFileDialog") == NULL;
   _Signal.CaptureRegion = 
     _wcsicmp (lpCmdLine, L"/CaptureRegion") == NULL;
+  _Signal.CaptureScreen = 
+    _wcsicmp (lpCmdLine, L"/CaptureScreen") == NULL;
 
   if (! _Signal.Quit           &&
       ! _Signal.Minimize       &&
       ! _Signal.OpenFileDialog &&
-      ! _Signal.CaptureRegion)
+      ! _Signal.CaptureRegion  &&
+      ! _Signal.CaptureScreen)
     _Signal._FilePath = std::wstring(lpCmdLine);
 
   SKIF_Util_TrimLeadingSpacesW (_Signal._FilePath);
@@ -358,6 +361,7 @@ SKIF_Startup_ProxyCommandLineArguments (void)
   if (! _Signal.Minimize         &&
       ! _Signal.OpenFileDialog   &&
       ! _Signal.CaptureRegion    &&
+      ! _Signal.CaptureScreen    &&
       ! _Signal.CheckForUpdates  &&
       ! _Signal.Quit)
     return;
@@ -408,6 +412,23 @@ SKIF_Startup_ProxyCommandLineArguments (void)
         if (StrCmpIW ((LPWSTR)lParam, wszRealWindowClass) == 0)
         {
           PostMessage (hWnd, WM_SKIF_SNIP_REGION, 0x0, 0x0);
+          return FALSE;
+        }
+      return TRUE;
+    }, (LPARAM)SKIF_NotifyIcoClass);
+  }
+
+  if (_Signal.CaptureScreen)
+  {
+    // Send WM_SKIF_SNIP_SCREEN to a single running instance (including ourselves)
+    EnumWindows ( []( HWND   hWnd,
+                      LPARAM lParam ) -> BOOL
+    {
+      wchar_t                         wszRealWindowClass [64] = { };
+      if (RealGetWindowClassW (hWnd,  wszRealWindowClass, 64))
+        if (StrCmpIW ((LPWSTR)lParam, wszRealWindowClass) == 0)
+        {
+          PostMessage (hWnd, WM_SKIF_SNIP_SCREEN, 0x0, 0x0);
           return FALSE;
         }
       return TRUE;
@@ -493,11 +514,11 @@ void SKIF_Shell_CreateUpdateNotifyMenu (void)
   if (hMenu != NULL)
   {
     AppendMenu (hMenu, MF_STRING, SKIF_NOTIFY_SNIP_REGION,     L"Capture region");
-  //AppendMenu (hMenu, MF_STRING, SKIF_NOTIFY_SNIP_FULLSCREEN, L"Capture fullscreen");
+    AppendMenu (hMenu, MF_STRING, SKIF_NOTIFY_SNIP_SCREEN,     L"Capture screen");
 
   //AppendMenu (hMenu, MF_STRING | ((svcStopped)         ? MF_CHECKED | MF_GRAYED :                                    0x0), SKIF_NOTIFY_STOP,          L"Stop Service");
   //AppendMenu (hMenu, MF_SEPARATOR, 0, NULL);
-  //AppendMenu (hMenu, MF_STRING, SKIF_NOTIFY_RUN_UPDATER,   L"Check for updates...");
+  //AppendMenu (hMenu, MF_STRING, SKIF_NOTIFY_RUN_UPDATER,     L"Check for updates...");
 
     AppendMenu (hMenu, MF_SEPARATOR, 0, NULL);
     AppendMenu (hMenu, MF_STRING, SKIF_NOTIFY_OPEN,            L"Open");
@@ -1217,7 +1238,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
   */
 
   // Register snipping hotkey
-  SKIF_Util_RegisterHotKeySnip (&_registry.kbCaptureRegion);
+  SKIF_Util_RegisterHotKeyCapture (&_registry.kbCaptureRegion, true);
+  SKIF_Util_RegisterHotKeyCapture (&_registry.kbCaptureScreen, false);
 
   // Register the HTML Format for the clipboard
   CF_HTML = RegisterClipboardFormatW (L"HTML Format");
@@ -1854,8 +1876,9 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
         auto _RestoreWindow = [&](void) -> void
         {
-          _registry._SnippingMode     = false;
-          _registry._SnippingModeExit = false;
+          _registry._SnippingMode       = false;
+          _registry._SnippingModeRegion = false;
+          _registry._SnippingModeExit   = false;
 
           SKIF_ImGui_SetFullscreen (SKIF_ImGui_hWnd, false);
 
@@ -2689,7 +2712,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
         ImGui::TextColored (ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Success), updateTxt.c_str());
         */
 
-        ImGui::Text        ("You are currently using");
+        ImGui::Text        ("You are using");
         ImGui::SameLine    ( );
         ImGui::TextColored (ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Info), "Special K Image Viewer v " SKIV_VERSION_STR_A);
 
@@ -3420,7 +3443,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
   PLOG_INFO << "Exited main loop...";
 
-  SKIF_Util_UnregisterHotKeySnip      ( );
+  SKIF_Util_UnregisterHotKeyCapture    (true);
+  SKIF_Util_UnregisterHotKeyCapture    (false);
   //SKIF_Util_UnregisterHotKeySVCTemp   ( );
   //SKIF_Util_UnregisterHotKeyHDRToggle ( );
 
@@ -3737,7 +3761,7 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
   // We don't define this here to ensure it doesn't get created before we are ready to handle it
 //static SKIF_Updater&          _updater    = SKIF_Updater         ::GetInstance ( );
 
-  auto _EnterSnippingMode = [&](void) -> void
+  auto _EnterSnippingMode = [&](bool region_) -> void
   {
     PLOG_VERBOSE << "Received request to enter snipping mode...";
 
@@ -3761,38 +3785,42 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
         extern ImRect selection_rect;
 
-        hwndBeforeSnip    = GetForegroundWindow ();
-        hwndTopBeforeSnip = GetWindow (SKIF_ImGui_hWnd, GW_HWNDNEXT);
+        _registry._SnippingMode       = true;
+        _registry._SnippingModeRegion = region_;
 
-        trayedBeforeSnip = SKIF_isTrayed;
-        iconicBeforeSnip =
-          IsIconic (SKIF_ImGui_hWnd);
+        if (region_)
+        {
+          hwndBeforeSnip    = GetForegroundWindow ();
+          hwndTopBeforeSnip = GetWindow (SKIF_ImGui_hWnd, GW_HWNDNEXT);
 
-        if (SKIF_isTrayed)
-        {   SKIF_isTrayed = false;
-          ShowWindow (SKIF_ImGui_hWnd, SW_SHOW);
-        }
+          trayedBeforeSnip = SKIF_isTrayed;
+          iconicBeforeSnip =
+            IsIconic (SKIF_ImGui_hWnd);
 
-        if (iconicBeforeSnip)
-          ShowWindow (SKIF_ImGui_hWnd, SW_RESTORE);
+          if (SKIF_isTrayed)
+          {   SKIF_isTrayed = false;
+            ShowWindow (SKIF_ImGui_hWnd, SW_SHOW);
+          }
+
+          if (iconicBeforeSnip)
+            ShowWindow (SKIF_ImGui_hWnd, SW_RESTORE);
         
-        POINT    ptCursor = {     };
-        HMONITOR monitor  = NULL;
+          POINT    ptCursor = {     };
+          HMONITOR monitor  = NULL;
 
-        if (GetCursorPos (&ptCursor))
-          monitor = MonitorFromPoint (ptCursor, MONITOR_DEFAULTTONULL);
+          if (GetCursorPos (&ptCursor))
+            monitor = MonitorFromPoint (ptCursor, MONITOR_DEFAULTTONULL);
 
-        SKIF_ImGui_SetFullscreen (SKIF_ImGui_hWnd, true, monitor);
+          SKIF_ImGui_SetFullscreen (SKIF_ImGui_hWnd, true, monitor);
 
-        UpdateWindow (SKIF_ImGui_hWnd);
+          UpdateWindow (SKIF_ImGui_hWnd);
 
-        selection_rect.Min = ImVec2 (0.0f, 0.0f);
-        selection_rect.Max = ImVec2 (0.0f, 0.0f);
+          selection_rect.Min = ImVec2 (0.0f, 0.0f);
+          selection_rect.Max = ImVec2 (0.0f, 0.0f);
 
-        _registry._SnippingMode = true;
-
-        ImGui::GetIO ().MouseDown         [0] = false;
-        ImGui::GetIO ().MouseDownDuration [0] = -1.0f;
+          ImGui::GetIO ().MouseDown         [0] = false;
+          ImGui::GetIO ().MouseDownDuration [0] = -1.0f;
+        }
       }
 
       else
@@ -3892,12 +3920,15 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
       break;
 
     case WM_HOTKEY:
-      if (wParam == SKIF_HotKey_HDR)
-        SKIF_Util_EnableHDROutput ( );
-
-      else if (wParam == SKIV_HotKey_Snip)
-        _EnterSnippingMode ( );
-
+      switch (wParam)
+      {
+      case SKIV_HotKey_CaptureRegion:
+        _EnterSnippingMode (true);
+        break;
+      case SKIV_HotKey_CaptureScreen:
+        _EnterSnippingMode (false);
+        break;
+      }
     break;
 
     // System wants to shut down and is asking if we can allow it
@@ -4063,12 +4094,11 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
       break;
 
     case WM_SKIF_SNIP_REGION:
-      _EnterSnippingMode ( );
+      _EnterSnippingMode (true);
       break;
 
-    case WM_SKIF_SNIP_FULLSCREEN:
-      _EnterSnippingMode ( );
-      // TODO: Add some additional variable that indicates a fullscreen snip should be taken
+    case WM_SKIF_SNIP_SCREEN:
+      _EnterSnippingMode (false);
       break;
 
     case WM_SKIF_RUN_UPDATER:
@@ -4306,8 +4336,8 @@ SKIF_Notify_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         case SKIF_NOTIFY_SNIP_REGION:
           PostMessage (SKIF_Notify_hWnd, WM_SKIF_SNIP_REGION, 0, 0);
           break;
-        case SKIF_NOTIFY_SNIP_FULLSCREEN:
-          PostMessage (SKIF_Notify_hWnd, WM_SKIF_SNIP_FULLSCREEN, 0, 0);
+        case SKIF_NOTIFY_SNIP_SCREEN:
+          PostMessage (SKIF_Notify_hWnd, WM_SKIF_SNIP_SCREEN, 0, 0);
           break;
         case SKIF_NOTIFY_OPEN:
           PostMessage (SKIF_Notify_hWnd, WM_SKIF_FILE_DIALOG, 0, 0);

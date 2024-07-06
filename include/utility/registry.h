@@ -325,6 +325,10 @@ struct SKIF_RegistrySettings {
     SKIF_MakeRegKeyWS ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(Hotkey Capture Region)" );
 
+  KeyValue <std::wstring> regKVHotkeyCaptureScreen =
+    SKIF_MakeRegKeyWS ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(Hotkey Capture Screen)" );
+
   // Multi wide Strings
 
   KeyValue <std::vector<std::wstring>> regKVCategories =
@@ -421,6 +425,7 @@ struct SKIF_RegistrySettings {
   bool _RendererHDREnabled          = false; // HDR Enabled
   bool _TouchDevice                 = false;
   bool _SnippingMode                = false;
+  bool _SnippingModeRegion          = false;
   bool _SnippingModeExit            = false;
 
   // Keybindings
@@ -429,6 +434,12 @@ struct SKIF_RegistrySettings {
         "Capture Region",
        L"Ctrl+Windows+Shift+P",
         "Ctrl+Windows+Shift+P"
+  };
+
+  SK_Keybind kbCaptureScreen = SK_Keybind {
+        "Capture Screen",
+       L"Ctrl+Windows+Shift+O",
+        "Ctrl+Windows+Shift+O"
   };
 
   // Functions

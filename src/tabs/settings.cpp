@@ -64,34 +64,40 @@ SKIF_UI_Tab_DrawSettings (void)
 
 #pragma region Section: Keybindings
 
-#if 1
   if (ImGui::CollapsingHeader ("Keybindings###SKIF_SettingsHeader-0", ImGuiTreeNodeFlags_DefaultOpen))
   {
-    static std::set <SK_Keybind*>
+    struct kb_kv_bool_s
+    {
+      SK_Keybind*                                    _key;
+      SKIF_RegistrySettings::KeyValue<std::wstring>* _reg;
+      bool                                           _region;
+    };
+
+    static std::vector <kb_kv_bool_s>
       keybinds = {
-      &_registry.kbCaptureRegion
+      { &_registry.kbCaptureRegion, &_registry.regKVHotkeyCaptureRegion, true  },
+      { &_registry.kbCaptureScreen, &_registry.regKVHotkeyCaptureScreen, false }
     };
 
     ImGui::BeginGroup ();
-    for ( auto keybind : keybinds )
+    for (auto& keybind : keybinds)
     {
       ImGui::Text          ( "%s:  ",
-                            keybind->bind_name );
+                            keybind._key->bind_name );
     }
     ImGui::EndGroup   ();
     ImGui::SameLine   ();
     ImGui::BeginGroup ();
-    for ( auto keybind : keybinds )
+    for (auto& keybind : keybinds)
     {
-      if (SK_ImGui_Keybinding ( keybind ))
+      if (SK_ImGui_Keybinding (keybind._key))
       {
-        _registry.regKVHotkeyCaptureRegion.putData (keybind->human_readable);
-        SKIF_Util_RegisterHotKeySnip            (&_registry.kbCaptureRegion);
+        keybind._reg->putData           (keybind._key->human_readable);
+        SKIF_Util_RegisterHotKeyCapture (keybind._key, keybind._region);
       }
     }
     ImGui::EndGroup   ();
   }
-#endif
 
 #pragma endregion
 

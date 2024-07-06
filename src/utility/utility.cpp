@@ -33,9 +33,10 @@ UINT CF_HTML = NULL;
 std::vector<HANDLE> vWatchHandles[UITab_ALL];
 INT64               SKIF_TimeInMilliseconds = 0;
 
-bool bHotKeyHDR  = false,
-     bHotKeySVC  = false,
-     bHotKeySnip = false;
+bool bHotKeyHDR           = false,
+     bHotKeySVC           = false,
+     bHotKeyCaptureRegion = false,
+     bHotKeyCaptureScreen = false;
 
 CRITICAL_SECTION CriticalSectionDbgHelp = { };
 
@@ -3205,70 +3206,91 @@ SKIF_Util_GetHotKeyStateHDRToggle (void)
   return bHotKeyHDR;
 }
 
-// Register a hotkey for snipping a screenshot of the desktop (WinKey + Ctrl + Shift + P)
+// Register a hotkey for capturing a screenshot of the desktop (WinKey + Ctrl + Shift + P)
 bool
-SKIF_Util_RegisterHotKeySnip (SK_Keybind* binding)
+SKIF_Util_RegisterHotKeyCapture (SK_Keybind* binding, bool region)
 {
-  //if (bHotKeySnip)
-  //  return true;
+  bool*     pbCapture = (region) ? &bHotKeyCaptureRegion      : &bHotKeyCaptureScreen;
+  const int iHotkey   = (region) ?  SKIV_HotKey_CaptureRegion :  SKIV_HotKey_CaptureScreen;
 
   /*
   * Re. MOD_WIN: Either WINDOWS key was held down. These keys are labeled with the Windows logo.
   *              Keyboard shortcuts that involve the WINDOWS key are reserved for use by the operating system.
   */
 
-  UINT fsModifiers = MOD_NOREPEAT;
-
-  if (binding->ctrl)
-    fsModifiers |= MOD_CONTROL;
-
-  if (binding->shift)
-    fsModifiers |= MOD_SHIFT;
-
-  if (binding->alt)
-    fsModifiers |= MOD_ALT;
-
-  if (binding->super)
-    fsModifiers |= MOD_WIN;
-
-  if (bHotKeySnip)
-    SKIF_Util_UnregisterHotKeySnip ( );
+  if (*pbCapture)
+    SKIF_Util_UnregisterHotKeyCapture (region);
 
   if (binding->vKey == 0)
     return false;
 
-  if (RegisterHotKey (SKIF_Notify_hWnd, SKIV_HotKey_Snip, fsModifiers, binding->vKey))
+  UINT fsModifiers = MOD_NOREPEAT;
+  std::string szModifiers = "";
+
+  if (binding->ctrl)
   {
-    bHotKeySnip = true;
-    PLOG_INFO << "Successfully registered hotkey (" << binding->human_readable_utf8 << ") for snipping desktop screenshots.";
+    fsModifiers |= MOD_CONTROL;
+    szModifiers += "Ctrl+";
+  }
+
+  if (binding->super)
+  {
+    fsModifiers |= MOD_WIN;
+    szModifiers += "Windows+";
+  }
+
+  if (binding->shift)
+  {
+    fsModifiers |= MOD_SHIFT;
+    szModifiers += "Shift+";
+  }
+
+  if (binding->alt)
+  {
+    fsModifiers |= MOD_ALT;
+    szModifiers += "Alt+";
+  }
+
+  szModifiers += (char)(binding->vKey);
+
+  PLOG_VERBOSE_IF(szModifiers != binding->human_readable_utf8) << "Misread input?! " << szModifiers << " vs. " << binding->human_readable_utf8;
+
+  if (RegisterHotKey (SKIF_Notify_hWnd, iHotkey, fsModifiers, binding->vKey))
+  {
+    *pbCapture = true;
+    PLOG_INFO << "Successfully registered hotkey (" << szModifiers << ") for snipping desktop screenshots.";
   }
   else
     PLOG_ERROR << "Failed to register hotkey for snipping desktop screenshots: " << SKIF_Util_GetErrorAsWStr ( );
 
-  return bHotKeySnip;
+  return *pbCapture;
 }
 
 // Unregisters a hotkey for snipping a screenshot of the desktop (WinKey + Ctrl + Shift + P)
 bool
-SKIF_Util_UnregisterHotKeySnip (void)
+SKIF_Util_UnregisterHotKeyCapture (bool region)
 {
-  if (! bHotKeySnip)
+  bool*     pbCapture = (region) ? &bHotKeyCaptureRegion : &bHotKeyCaptureScreen;
+  const int iHotkey   = (region) ?  SKIV_HotKey_CaptureRegion :  SKIV_HotKey_CaptureScreen;
+
+  if (! *pbCapture)
     return true;
 
-  if (UnregisterHotKey (SKIF_Notify_hWnd, SKIV_HotKey_Snip))
+  if (UnregisterHotKey (SKIF_Notify_hWnd, iHotkey))
   {
-    bHotKeySnip = false;
+    *pbCapture = false;
     PLOG_INFO << "Removed the desktop snipping hotkey.";
   }
 
-  return ! bHotKeySnip;
+  return ! *pbCapture;
 }
 
 // Get the registration state of the hotkey for snipping a screenshot of the desktop (WinKey + Ctrl + Shift + P)
 bool
-SKIF_Util_GetHotKeyStateSnip (void)
+SKIF_Util_GetHotKeyStateCapture (bool region)
 {
-  return bHotKeySnip;
+  bool*   pbCapture = (region) ? &bHotKeyCaptureRegion : &bHotKeyCaptureScreen;
+  return *pbCapture;
 }
 
 // Register a hotkey for starting the service with auto-stop (WinKey + Shift + Insert)

@@ -76,9 +76,10 @@ struct FileSignature {
   };
 };
 
-constexpr  int     SKIF_HotKey_HDR        = 1337; // Win + Ctrl + Shift + H
-constexpr  int     SKIF_HotKey_SVC        = 1338; // Win + Shift + Insert
-constexpr  int     SKIV_HotKey_Snip       = 1339; // Win + Shift + Insert
+constexpr  int     SKIF_HotKey_HDR           = 1337; // Win + Ctrl + Shift + H
+constexpr  int     SKIF_HotKey_SVC           = 1338; // Win + Shift + Insert
+constexpr  int     SKIV_HotKey_CaptureRegion = 1339; // Win + Ctrl + Shift + P
+constexpr  int     SKIV_HotKey_CaptureScreen = 1340; // 
 
 extern UITab       SKIF_Tab_Selected; // Current selected tab
 extern UITab       SKIF_Tab_ChangeTo; // Tab we want to change to
@@ -229,9 +230,9 @@ bool            SKIF_Util_GetHotKeyStateHDRToggle     (void);
 bool            SKIF_Util_RegisterHotKeySVCTemp       (void);
 bool            SKIF_Util_UnregisterHotKeySVCTemp     (void);
 bool            SKIF_Util_GetHotKeyStateSVCTemp       (void);
-bool            SKIF_Util_RegisterHotKeySnip          (SK_Keybind* binding);
-bool            SKIF_Util_UnregisterHotKeySnip        (void);
-bool            SKIF_Util_GetHotKeyStateSnip          (void);
+bool            SKIF_Util_RegisterHotKeyCapture       (SK_Keybind* binding, bool region);
+bool            SKIF_Util_UnregisterHotKeyCapture     (bool region);
+bool            SKIF_Util_GetHotKeyStateCapture       (bool region);
 
 
 // Web
