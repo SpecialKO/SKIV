@@ -16,6 +16,7 @@
 #include <utility/gamepad.h>
 #include "../../version.h"
 #include <tabs/common_ui.h>
+#include <set>
 
 extern bool allowShortcutCtrlA;
 
@@ -60,6 +61,39 @@ SKIF_UI_Tab_DrawSettings (void)
 
   ImGui::Spacing ();
   ImGui::Spacing ();
+
+#pragma region Section: Keybindings
+
+#if 1
+  if (ImGui::CollapsingHeader ("Keybindings###SKIF_SettingsHeader-0", ImGuiTreeNodeFlags_DefaultOpen))
+  {
+    static std::set <SK_Keybind*>
+      keybinds = {
+      &_registry.kbCaptureRegion
+    };
+
+    ImGui::BeginGroup ();
+    for ( auto keybind : keybinds )
+    {
+      ImGui::Text          ( "%s:  ",
+                            keybind->bind_name );
+    }
+    ImGui::EndGroup   ();
+    ImGui::SameLine   ();
+    ImGui::BeginGroup ();
+    for ( auto keybind : keybinds )
+    {
+      if (SK_ImGui_Keybinding ( keybind ))
+      {
+        _registry.regKVHotkeyCaptureRegion.putData (keybind->human_readable);
+        SKIF_Util_RegisterHotKeySnip            (&_registry.kbCaptureRegion);
+      }
+    }
+    ImGui::EndGroup   ();
+  }
+#endif
+
+#pragma endregion
 
 #pragma region Section: Image
 
