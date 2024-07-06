@@ -171,6 +171,11 @@ extern PopupState  OpenFileDialog;  // Viewer: open file dialog
 extern PopupState  SaveFileDialog;  // Viewer: save file dialog
 extern PopupState  ExportSDRDialog; // Viewer: export sdr dialog
 
+// Variables related to the display SKIF is visible on
+ImVec2  windowPos;
+ImRect  windowRect       = ImRect(0.0f, 0.0f, 0.0f, 0.0f);
+ImRect  monitor_extent   = ImRect(0.0f, 0.0f, 0.0f, 0.0f);
+
 HMODULE hModSKIF     = nullptr;
 HMODULE hModSpecialK = nullptr;
 HICON   hIcon        = nullptr;
@@ -1183,10 +1188,6 @@ wWinMain ( _In_     HINSTANCE hInstance,
   // Message queue/pump
   MSG msg = { };
 
-  // Variables related to the display SKIF is visible on
-  ImVec2  windowPos;
-  ImRect  windowRect       = ImRect(0.0f, 0.0f, 0.0f, 0.0f);
-  ImRect  monitor_extent   = ImRect(0.0f, 0.0f, 0.0f, 0.0f);
   RepositionSKIF   = (! PathFileExistsW (L"SKIV.ini") || _registry.bOpenAtCursorPosition);
 
   // Add the status bar if it is not disabled
@@ -1204,16 +1205,19 @@ wWinMain ( _In_     HINSTANCE hInstance,
   bool repositionToCenter = false;
 
   // Do final checks and actions if we are expected to live longer than a few seconds
+  /*
   if (! _Signal.Launcher && ! _Signal.LauncherURI && ! _Signal.Quit && ! _Signal.ServiceMode)
   {
     // Register HDR toggle hotkey (if applicable)
     SKIF_Util_RegisterHotKeyHDRToggle ( );
 
     // Register service (auto-stop) hotkey
-    //SKIF_Util_RegisterHotKeySVCTemp   ( );
+    SKIF_Util_RegisterHotKeySVCTemp   ( );
   }
+  */
 
-  SKIF_Util_RegisterHotKeySnip ( );
+  // Register snipping hotkey
+  SKIF_Util_RegisterHotKeySnip (&_registry.kbCaptureRegion);
 
   // Register the HTML Format for the clipboard
   CF_HTML = RegisterClipboardFormatW (L"HTML Format");
@@ -3415,6 +3419,10 @@ wWinMain ( _In_     HINSTANCE hInstance,
   }
 
   PLOG_INFO << "Exited main loop...";
+
+  SKIF_Util_UnregisterHotKeySnip      ( );
+  //SKIF_Util_UnregisterHotKeySVCTemp   ( );
+  //SKIF_Util_UnregisterHotKeyHDRToggle ( );
 
   PLOG_INFO << "Killing timers...";
   KillTimer (SKIF_Notify_hWnd, IDT_REFRESH_TOOLTIP);
