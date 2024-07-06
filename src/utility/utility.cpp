@@ -3207,22 +3207,40 @@ SKIF_Util_GetHotKeyStateHDRToggle (void)
 
 // Register a hotkey for snipping a screenshot of the desktop (WinKey + Ctrl + Shift + P)
 bool
-SKIF_Util_RegisterHotKeySnip (void)
+SKIF_Util_RegisterHotKeySnip (SK_Keybind* binding)
 {
-  if (bHotKeySnip)
-    return true;
+  //if (bHotKeySnip)
+  //  return true;
 
   /*
   * Re. MOD_WIN: Either WINDOWS key was held down. These keys are labeled with the Windows logo.
   *              Keyboard shortcuts that involve the WINDOWS key are reserved for use by the operating system.
   */
 
-  constexpr auto VK_P = 'P';
+  UINT fsModifiers = MOD_NOREPEAT;
 
-  if (RegisterHotKey (SKIF_Notify_hWnd, SKIV_HotKey_Snip, MOD_WIN | MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, VK_P))
+  if (binding->ctrl)
+    fsModifiers |= MOD_CONTROL;
+
+  if (binding->shift)
+    fsModifiers |= MOD_SHIFT;
+
+  if (binding->alt)
+    fsModifiers |= MOD_ALT;
+
+  if (binding->super)
+    fsModifiers |= MOD_WIN;
+
+  if (bHotKeySnip)
+    SKIF_Util_UnregisterHotKeySnip ( );
+
+  if (binding->vKey == 0)
+    return false;
+
+  if (RegisterHotKey (SKIF_Notify_hWnd, SKIV_HotKey_Snip, fsModifiers, binding->vKey))
   {
     bHotKeySnip = true;
-    PLOG_INFO << "Successfully registered hotkey (WinKey + Ctrl + Shift + P) for snipping desktop screenshots.";
+    PLOG_INFO << "Successfully registered hotkey (" << binding->human_readable_utf8 << ") for snipping desktop screenshots.";
   }
   else
     PLOG_ERROR << "Failed to register hotkey for snipping desktop screenshots: " << SKIF_Util_GetErrorAsWStr ( );

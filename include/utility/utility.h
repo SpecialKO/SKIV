@@ -13,6 +13,7 @@
 #include <shellapi.h>
 #include <stdexcept>
 #include <DirectXTex.h>
+#include "sk_utility.h"
 
 #pragma comment(lib, "wininet.lib")
 
@@ -228,7 +229,7 @@ bool            SKIF_Util_GetHotKeyStateHDRToggle     (void);
 bool            SKIF_Util_RegisterHotKeySVCTemp       (void);
 bool            SKIF_Util_UnregisterHotKeySVCTemp     (void);
 bool            SKIF_Util_GetHotKeyStateSVCTemp       (void);
-bool            SKIF_Util_RegisterHotKeySnip          (void);
+bool            SKIF_Util_RegisterHotKeySnip          (SK_Keybind* binding);
 bool            SKIF_Util_UnregisterHotKeySnip        (void);
 bool            SKIF_Util_GetHotKeyStateSnip          (void);
 
