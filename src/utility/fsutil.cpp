@@ -397,7 +397,7 @@ SK_GetFontsDir (void)
 }
 
 HRESULT
-SK_FileOpenDialog (LPWSTR *pszPath, const COMDLG_FILTERSPEC* fileTypes, UINT cFileTypes, FILEOPENDIALOGOPTIONS dialogOptions, const GUID defaultFolder)
+SK_FileOpenDialog (LPWSTR *pszPath, const COMDLG_FILTERSPEC* fileTypes, UINT cFileTypes, FILEOPENDIALOGOPTIONS dialogOptions, const GUID defaultFolder, const wchar_t* setFolder)
 {
   IFileOpenDialog  *pFileOpen = nullptr;
   HRESULT hr = E_UNEXPECTED;
@@ -408,11 +408,18 @@ SK_FileOpenDialog (LPWSTR *pszPath, const COMDLG_FILTERSPEC* fileTypes, UINT cFi
   if (SUCCEEDED(hr))
   {
     IShellItem* psiDefaultFolder = nullptr;
+    IShellItem* psiSetFolder     = nullptr;
 
     if (S_OK == SHGetKnownFolderItem (defaultFolder, KF_FLAG_DEFAULT, NULL, IID_IShellItem, (void**)&psiDefaultFolder))
     {
       pFileOpen->SetDefaultFolder (psiDefaultFolder);
       psiDefaultFolder->Release();
+    }
+
+    if (setFolder != nullptr && S_OK == SHCreateItemFromParsingName (setFolder, NULL, IID_IShellItem, (void**)&psiSetFolder))
+    {
+      pFileOpen->SetFolder (psiSetFolder);
+      psiSetFolder->Release();
     }
 
     pFileOpen->SetFileTypes (cFileTypes, fileTypes);
@@ -447,7 +454,7 @@ SK_FileOpenDialog (LPWSTR *pszPath, const COMDLG_FILTERSPEC* fileTypes, UINT cFi
 }
 
 HRESULT
-SK_FileSaveDialog (LPWSTR *pszPath, LPCWSTR wszDefaultName, const wchar_t* wszDefaultExtension, const COMDLG_FILTERSPEC* fileTypes, UINT cFileTypes, FILEOPENDIALOGOPTIONS dialogOptions, const GUID defaultFolder)
+SK_FileSaveDialog (LPWSTR *pszPath, LPCWSTR wszDefaultName, const wchar_t* wszDefaultExtension, const COMDLG_FILTERSPEC* fileTypes, UINT cFileTypes, FILEOPENDIALOGOPTIONS dialogOptions, const GUID defaultFolder, const wchar_t* setFolder)
 {
   IFileSaveDialog  *pFileSave = nullptr;
   HRESULT hr = E_UNEXPECTED;
@@ -458,11 +465,18 @@ SK_FileSaveDialog (LPWSTR *pszPath, LPCWSTR wszDefaultName, const wchar_t* wszDe
   if (SUCCEEDED(hr))
   {
     IShellItem* psiDefaultFolder = nullptr;
+    IShellItem* psiSetFolder     = nullptr;
 
     if (S_OK == SHGetKnownFolderItem (defaultFolder, KF_FLAG_DEFAULT, NULL, IID_IShellItem, (void**)&psiDefaultFolder))
     {
       pFileSave->SetDefaultFolder (psiDefaultFolder);
       psiDefaultFolder->Release();
+    }
+
+    if (setFolder != nullptr && S_OK == SHCreateItemFromParsingName (setFolder, NULL, IID_IShellItem, (void**)&psiSetFolder))
+    {
+      pFileSave->SetFolder (psiSetFolder);
+      psiSetFolder->Release();
     }
 
     // Users are forgetting to set extensions, establish a default
