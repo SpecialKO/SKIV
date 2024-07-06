@@ -114,7 +114,7 @@ namespace fb {
           char32_t c = static_cast<char32_t> (number);
           std::string d;
 
-          constexpr std::u8string repchar = u8"\uFFFD";
+          constexpr std::u8string_view repchar = u8"\uFFFD";
           if (c <= 0x7f)
             d.push_back (static_cast<char> (c));
 
