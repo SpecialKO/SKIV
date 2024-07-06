@@ -425,7 +425,6 @@ struct SKIF_RegistrySettings {
   bool _RendererHDREnabled          = false; // HDR Enabled
   bool _TouchDevice                 = false;
   bool _SnippingMode                = false;
-  bool _SnippingModeRegion          = false;
   bool _SnippingModeExit            = false;
 
   // Keybindings

@@ -1,6 +1,8 @@
 #pragma once
 
 #include <DirectXTex.h>
+#include <imgui/imgui_internal.h>
+#include <atlbase.h>
 
 #pragma warning( push )
 #pragma warning( disable : 4305 )
@@ -108,7 +110,7 @@ static const ParamsPQ PQ =
   DirectX::XMVectorReplicate (2392.0 / 4096.0 * 32.0),  // C3
 };
 
-#pragma warning( pop ) 
+#pragma warning( pop )
 
 // Declarations
 DirectX::XMVECTOR SKIV_Image_PQToLinear    (DirectX::XMVECTOR N, DirectX::XMVECTOR maxPQValue = DirectX::g_XMOne);
@@ -120,3 +122,61 @@ DirectX::XMVECTOR SKIV_Image_ICtCptoRec709 (DirectX::XMVECTOR N);
 bool    SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped, bool isHDR, bool force_sRGB);
 HRESULT SKIV_Image_SaveToDisk_HDR  (const DirectX::Image& image, const wchar_t* wszFileName);
 HRESULT SKIV_Image_SaveToDisk_SDR  (const DirectX::Image& image, const wchar_t* wszFileName, bool force_sRGB);
+HRESULT SKIV_Image_CaptureDesktop  (DirectX::ScratchImage& image, int flags = 0x0);
+void    SKIV_Image_CaptureRegion   (ImRect capture_area);
+
+// Structs
+
+struct skiv_image_desktop_s {
+  CComPtr <ID3D11ShaderResourceView> _srv        = nullptr;
+  CComPtr <ID3D11Resource>           _res        = nullptr;
+  bool                               _hdr_image  =   false;
+  bool                               _srgb_hack  =   false;
+  ImVec2                             _resolution = ImVec2 (0.0f, 0.0f);
+
+  bool process (void)
+  {
+    if (_srv != nullptr)
+    {
+      _srv->GetResource (&_res.p);
+
+      if (_res != nullptr)
+      {
+        CComQIPtr <ID3D11Texture2D>
+            pDesktopTex (_res);
+        if (pDesktopTex != nullptr)
+        {
+          D3D11_TEXTURE2D_DESC   texDesc = { };
+          pDesktopTex->GetDesc (&texDesc);
+
+          _resolution.x = static_cast <float> (texDesc.Width);
+          _resolution.y = static_cast <float> (texDesc.Height);
+
+          // Non-sRGB DXGI formats still use sRGB gamma so they need a hack to appear properly
+          if (texDesc.Format == DXGI_FORMAT_R8G8B8A8_UNORM ||
+              texDesc.Format == DXGI_FORMAT_B8G8R8X8_UNORM)
+            _srgb_hack = true;
+
+          // HDR formats indicates we are working with a HDR capture
+          else if (texDesc.Format == DXGI_FORMAT_R10G10B10A2_UNORM  ||
+                    texDesc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT ||
+                    texDesc.Format == DXGI_FORMAT_R32G32B32A32_FLOAT)
+            _hdr_image = true;
+
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  void clear (void)
+  {
+    _res        = nullptr;
+    _srv        = nullptr;
+    _hdr_image  =   false;
+    _srgb_hack  =   false;
+    _resolution = ImVec2 (0.0f, 0.0f);
+  }
+};

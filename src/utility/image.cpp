@@ -5,9 +5,11 @@
 #include <strsafe.h>
 #include <wincodec.h>
 #include <ShlObj_core.h>
-#include <imgui/imgui_internal.h>
-#include <atlbase.h>
 #include <utility/fsutil.h>
+#include <dxgi1_5.h>
+#include <Shlwapi.h>
+#include <ImGuiNotify.hpp>
+#include <utility/skif_imgui.h>
 
 extern std::wstring defaultHDRFileExt;
 extern std::wstring defaultSDRFileExt;
@@ -944,8 +946,6 @@ SKIV_PNG_CopyToClipboard (const DirectX::Image& image, const void *pData, size_t
   return false;
 }
 
-CComPtr <ID3D11ShaderResourceView> SKIV_DesktopImage;
-
 bool SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped, bool isHDR, bool force_sRGB)
 {
   if (pImage == nullptr)
@@ -994,224 +994,6 @@ bool SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped, boo
   }
 
   return false;
-}
-
-#include <dxgi1_5.h>
-#include <Shlwapi.h>
-
-HRESULT
-SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, int flags = 0x0)
-{
-  SKIV_DesktopImage = nullptr;
-
-  std::ignore = flags;
-
-  HRESULT res = E_NOT_VALID_STATE;
-
-  auto pDevice =
-    SKIF_D3D11_GetDevice ();
-
-  if (! pDevice)
-    return res;
-
-  CComPtr <IDXGIFactory> pFactory;
-  CreateDXGIFactory (IID_IDXGIFactory, (void **)&pFactory.p);
-
-  if (! pFactory)
-    return E_NOTIMPL;
-
-  CComPtr <IDXGIAdapter> pAdapter;
-  UINT                  uiAdapter = 0;
-
-  POINT          cursor_pos;
-  GetCursorPos (&cursor_pos);
-
-  CComPtr <IDXGIOutput> pCursorOutput;
-
-  while (SUCCEEDED (pFactory->EnumAdapters (uiAdapter++, &pAdapter.p)))
-  {
-    CComPtr <IDXGIOutput> pOutput;
-    UINT                 uiOutput = 0;
-
-    while (SUCCEEDED (pAdapter->EnumOutputs (uiOutput++, &pOutput)))
-    {
-      DXGI_OUTPUT_DESC   out_desc;
-      pOutput->GetDesc (&out_desc);
-
-      if (out_desc.AttachedToDesktop && PtInRect (&out_desc.DesktopCoordinates, cursor_pos))
-      {
-        pCursorOutput = pOutput;
-        break;
-      }
-
-      pOutput = nullptr;
-    }
-
-    if (pCursorOutput != nullptr)
-      break;
-
-    pAdapter = nullptr;
-  }
-
-  if (! pCursorOutput)
-  {
-    return E_UNEXPECTED;
-  }
-
-  CComQIPtr <IDXGIOutput5> pOutput5 (pCursorOutput);
-
-  // Down-level interfaces support duplication, but for HDR we want Output5
-  if (! pOutput5)
-  {
-    return E_NOTIMPL;
-  }
-
-  // The ordering goes from the highest prioritized format to the lowest
-  DXGI_FORMAT capture_formats [] = {
-    // SDR:
-    DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, // Prefer SRGB formats as even non-SRGB formats use sRGB gamma
-    DXGI_FORMAT_R8G8B8A8_UNORM,      // The most common format for the desktop
-    DXGI_FORMAT_B8G8R8X8_UNORM_SRGB,
-    DXGI_FORMAT_B8G8R8X8_UNORM,
-
-    // HDR:
-    DXGI_FORMAT_R10G10B10A2_UNORM,
-    DXGI_FORMAT_R16G16B16A16_FLOAT,
-    DXGI_FORMAT_R32G32B32A32_FLOAT
-  };
-
-  CComPtr <IDXGIOutputDuplication> pDuplicator;
-  pOutput5->DuplicateOutput1 (pDevice, 0x0, _ARRAYSIZE (capture_formats),
-                                                        capture_formats, &pDuplicator.p);
-
-  if (! pDuplicator)
-  {
-    return E_NOTIMPL;
-  }
-
-  DXGI_OUTDUPL_FRAME_INFO frame_info = { };
-  CComPtr <IDXGIResource> pDuplicatedResource;
-
-  int    tries = 0;
-  while (tries++ < 3)
-  {
-    pDuplicator->AcquireNextFrame (150, &frame_info, &pDuplicatedResource.p);
-
-    if (frame_info.LastPresentTime.QuadPart)
-      break;
-
-    pDuplicator->ReleaseFrame ();
-  }
-
-  if (! pDuplicatedResource)
-  {
-    return E_UNEXPECTED;
-  }
-
-  CComQIPtr <IDXGISurface>    pSurface       (pDuplicatedResource);
-  CComQIPtr <ID3D11Texture2D> pDuplicatedTex (pSurface);
-
-  if (! pDuplicatedTex)
-  {
-    return E_NOTIMPL;
-  }
-
-  DXGI_SURFACE_DESC   surfDesc;
-  pSurface->GetDesc (&surfDesc);
-
-  CComPtr <ID3D11Texture2D> pStagingTex;
-  CComPtr <ID3D11Texture2D> pDesktopImage; // For rendering during snipping
-
-  D3D11_TEXTURE2D_DESC
-    texDesc                = { };
-    texDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-    texDesc.Usage          = D3D11_USAGE_STAGING;
-    texDesc.ArraySize      = 1;
-    texDesc.MipLevels      = 1;
-    texDesc.SampleDesc     = { .Count = 1, .Quality = 0 };
-    texDesc.Format         = surfDesc.Format;
-    texDesc.Width          = surfDesc.Width;
-    texDesc.Height         = surfDesc.Height;
-
-  CComPtr <ID3D11DeviceContext>  pDevCtx;
-  pDevice->GetImmediateContext (&pDevCtx);
-
-  if (pDevCtx == nullptr)
-    return E_UNEXPECTED;
-
-#if 0
-  if (FAILED (pDevice->CreateTexture2D (&texDesc, nullptr, &pStagingTex.p)))
-  {
-    pDuplicator->ReleaseFrame ();
-    return E_UNEXPECTED;
-  }
-
-  pDevCtx->CopyResource (pStagingTex,   pDuplicatedTex);
-
-  D3D11_MAPPED_SUBRESOURCE mapped;
-
-  if (SUCCEEDED (pDevCtx->Map (pStagingTex, 0, D3D11_MAP_READ, 0x0, &mapped)))
-  {
-    image.Initialize2D (surfDesc.Format,
-                        surfDesc.Width,
-                        surfDesc.Height, 1, 1
-    );
-
-    if (! image.GetPixels ())
-    {
-      pSurface->Unmap ();
-      return E_POINTER;
-    }
-
-    auto pImg =
-      image.GetImages ();
-
-    const uint8_t* src = (const uint8_t *)mapped.pData;
-          uint8_t* dst = pImg->pixels;
-
-    for (size_t h = 0; h < surfDesc.Height; ++h)
-    {
-      size_t msize =
-        std::min <size_t> (pImg->rowPitch, mapped.RowPitch);
-
-      memcpy_s (dst, pImg->rowPitch, src, msize);
-
-      src += mapped.RowPitch;
-      dst += pImg->rowPitch;
-    }
-
-    if (FAILED (pSurface->Unmap ()))
-    {
-      return E_UNEXPECTED;
-    }
-  }
-#else
-  texDesc.CPUAccessFlags = 0x0;
-  texDesc.Usage          = D3D11_USAGE_DEFAULT;
-  texDesc.BindFlags      = D3D11_BIND_SHADER_RESOURCE;
-
-  if (FAILED (pDevice->CreateTexture2D (&texDesc, nullptr, &pDesktopImage.p)))
-  {
-    pDuplicator->ReleaseFrame ();
-    return E_UNEXPECTED;
-  }
-
-  D3D11_SHADER_RESOURCE_VIEW_DESC
-    srvDesc                           = { };
-    srvDesc.Format                    = texDesc.Format;
-    srvDesc.ViewDimension             = D3D11_SRV_DIMENSION_TEXTURE2D;
-    srvDesc.Texture2D.MipLevels       = 1;
-    srvDesc.Texture2D.MostDetailedMip = 0;
-
-  pDevCtx->CopyResource             (pDesktopImage, pDuplicatedTex);
-  pDevice->CreateShaderResourceView (pDesktopImage, &srvDesc, &SKIV_DesktopImage);
-
-  pDevCtx->Flush ();
-
-  pDuplicator->ReleaseFrame ();
-#endif
-
-  return S_OK;
 }
 
 HRESULT
@@ -1537,4 +1319,292 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
   return
     DirectX::SaveToWICFile (*pOutputImage, DirectX::WIC_FLAGS_NONE, wic_codec,
                       wszImplicitFileName, nullptr, SK_WIC_SetMaximumQuality);
+}
+
+skiv_image_desktop_s SKIV_DesktopImage;
+
+HRESULT
+SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, int flags)
+{
+  SKIV_DesktopImage.clear();
+
+  std::ignore = flags;
+
+  HRESULT res = E_NOT_VALID_STATE;
+
+  auto pDevice =
+    SKIF_D3D11_GetDevice ();
+
+  if (! pDevice)
+    return res;
+
+  CComPtr <IDXGIFactory> pFactory;
+  CreateDXGIFactory (IID_IDXGIFactory, (void **)&pFactory.p);
+
+  if (! pFactory)
+    return E_NOTIMPL;
+
+  CComPtr <IDXGIAdapter> pAdapter;
+  UINT                  uiAdapter = 0;
+
+  POINT          cursor_pos;
+  GetCursorPos (&cursor_pos);
+
+  CComPtr <IDXGIOutput> pCursorOutput;
+
+  while (SUCCEEDED (pFactory->EnumAdapters (uiAdapter++, &pAdapter.p)))
+  {
+    CComPtr <IDXGIOutput> pOutput;
+    UINT                 uiOutput = 0;
+
+    while (SUCCEEDED (pAdapter->EnumOutputs (uiOutput++, &pOutput)))
+    {
+      DXGI_OUTPUT_DESC   out_desc;
+      pOutput->GetDesc (&out_desc);
+
+      if (out_desc.AttachedToDesktop && PtInRect (&out_desc.DesktopCoordinates, cursor_pos))
+      {
+        pCursorOutput = pOutput;
+        break;
+      }
+
+      pOutput = nullptr;
+    }
+
+    if (pCursorOutput != nullptr)
+      break;
+
+    pAdapter = nullptr;
+  }
+
+  if (! pCursorOutput)
+  {
+    return E_UNEXPECTED;
+  }
+
+  CComQIPtr <IDXGIOutput5> pOutput5 (pCursorOutput);
+
+  // Down-level interfaces support duplication, but for HDR we want Output5
+  if (! pOutput5)
+  {
+    return E_NOTIMPL;
+  }
+
+  // The ordering goes from the highest prioritized format to the lowest
+  DXGI_FORMAT capture_formats [] = {
+    // SDR:
+    DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, // Prefer SRGB formats as even non-SRGB formats use sRGB gamma
+    DXGI_FORMAT_R8G8B8A8_UNORM,      // The most common format for the desktop
+    DXGI_FORMAT_B8G8R8X8_UNORM_SRGB,
+    DXGI_FORMAT_B8G8R8X8_UNORM,
+
+    // HDR:
+    DXGI_FORMAT_R10G10B10A2_UNORM,
+    DXGI_FORMAT_R16G16B16A16_FLOAT,
+    DXGI_FORMAT_R32G32B32A32_FLOAT
+  };
+
+  CComPtr <IDXGIOutputDuplication> pDuplicator;
+  pOutput5->DuplicateOutput1 (pDevice, 0x0, _ARRAYSIZE (capture_formats),
+                                                        capture_formats, &pDuplicator.p);
+
+  if (! pDuplicator)
+  {
+    return E_NOTIMPL;
+  }
+
+  DXGI_OUTDUPL_FRAME_INFO frame_info = { };
+  CComPtr <IDXGIResource> pDuplicatedResource;
+
+  int    tries = 0;
+  while (tries++ < 3)
+  {
+    pDuplicator->AcquireNextFrame (150, &frame_info, &pDuplicatedResource.p);
+
+    if (frame_info.LastPresentTime.QuadPart)
+      break;
+
+    pDuplicator->ReleaseFrame ();
+  }
+
+  if (! pDuplicatedResource)
+  {
+    return E_UNEXPECTED;
+  }
+
+  CComQIPtr <IDXGISurface>    pSurface       (pDuplicatedResource);
+  CComQIPtr <ID3D11Texture2D> pDuplicatedTex (pSurface);
+
+  if (! pDuplicatedTex)
+  {
+    return E_NOTIMPL;
+  }
+
+  DXGI_SURFACE_DESC   surfDesc;
+  pSurface->GetDesc (&surfDesc);
+
+  CComPtr <ID3D11Texture2D> pStagingTex;
+  CComPtr <ID3D11Texture2D> pDesktopImage; // For rendering during snipping
+
+  D3D11_TEXTURE2D_DESC
+    texDesc                = { };
+    texDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    texDesc.Usage          = D3D11_USAGE_STAGING;
+    texDesc.ArraySize      = 1;
+    texDesc.MipLevels      = 1;
+    texDesc.SampleDesc     = { .Count = 1, .Quality = 0 };
+    texDesc.Format         = surfDesc.Format;
+    texDesc.Width          = surfDesc.Width;
+    texDesc.Height         = surfDesc.Height;
+
+  CComPtr <ID3D11DeviceContext>  pDevCtx;
+  pDevice->GetImmediateContext (&pDevCtx);
+
+  if (pDevCtx == nullptr)
+    return E_UNEXPECTED;
+
+#if 0
+  if (FAILED (pDevice->CreateTexture2D (&texDesc, nullptr, &pStagingTex.p)))
+  {
+    pDuplicator->ReleaseFrame ();
+    return E_UNEXPECTED;
+  }
+
+  pDevCtx->CopyResource (pStagingTex,   pDuplicatedTex);
+
+  D3D11_MAPPED_SUBRESOURCE mapped;
+
+  if (SUCCEEDED (pDevCtx->Map (pStagingTex, 0, D3D11_MAP_READ, 0x0, &mapped)))
+  {
+    image.Initialize2D (surfDesc.Format,
+                        surfDesc.Width,
+                        surfDesc.Height, 1, 1
+    );
+
+    if (! image.GetPixels ())
+    {
+      pSurface->Unmap ();
+      return E_POINTER;
+    }
+
+    auto pImg =
+      image.GetImages ();
+
+    const uint8_t* src = (const uint8_t *)mapped.pData;
+          uint8_t* dst = pImg->pixels;
+
+    for (size_t h = 0; h < surfDesc.Height; ++h)
+    {
+      size_t msize =
+        std::min <size_t> (pImg->rowPitch, mapped.RowPitch);
+
+      memcpy_s (dst, pImg->rowPitch, src, msize);
+
+      src += mapped.RowPitch;
+      dst += pImg->rowPitch;
+    }
+
+    if (FAILED (pSurface->Unmap ()))
+    {
+      return E_UNEXPECTED;
+    }
+  }
+#else
+  texDesc.CPUAccessFlags = 0x0;
+  texDesc.Usage          = D3D11_USAGE_DEFAULT;
+  texDesc.BindFlags      = D3D11_BIND_SHADER_RESOURCE;
+
+  if (FAILED (pDevice->CreateTexture2D (&texDesc, nullptr, &pDesktopImage.p)))
+  {
+    pDuplicator->ReleaseFrame ();
+    return E_UNEXPECTED;
+  }
+
+  D3D11_SHADER_RESOURCE_VIEW_DESC
+    srvDesc                           = { };
+    srvDesc.Format                    = texDesc.Format;
+    srvDesc.ViewDimension             = D3D11_SRV_DIMENSION_TEXTURE2D;
+    srvDesc.Texture2D.MipLevels       = 1;
+    srvDesc.Texture2D.MostDetailedMip = 0;
+
+  pDevCtx->CopyResource             (pDesktopImage, pDuplicatedTex);
+  pDevice->CreateShaderResourceView (pDesktopImage, &srvDesc, &SKIV_DesktopImage._srv);
+
+  pDevCtx->Flush ();
+
+  pDuplicator->ReleaseFrame ();
+
+  SKIV_DesktopImage.process ();
+#endif
+
+  return S_OK;
+}
+
+void
+SKIV_Image_CaptureRegion (ImRect capture_area)
+{
+  const size_t
+    x      = static_cast <size_t> (std::max (0.0f, capture_area.Min.x)),
+    y      = static_cast <size_t> (std::max (0.0f, capture_area.Min.y)),
+    width  = static_cast <size_t> (std::max (0.0f, capture_area.GetWidth  ())),
+    height = static_cast <size_t> (std::max (0.0f, capture_area.GetHeight ()));
+
+  const DirectX::Rect
+    src_rect (x,y, width,height);
+
+  extern CComPtr <ID3D11Device>
+    SKIF_D3D11_GetDevice (bool bWait);
+
+  auto pDevice = SKIF_D3D11_GetDevice (false);
+
+  CComPtr <ID3D11DeviceContext>  pDevCtx;
+  pDevice->GetImmediateContext (&pDevCtx.p);
+
+  DirectX::ScratchImage                                                    captured_img;
+  if (SUCCEEDED (DirectX::CaptureTexture (pDevice, pDevCtx, SKIV_DesktopImage._res, captured_img)))
+  {
+    PLOG_VERBOSE << "DirectX::CaptureTexture    ( ): SUCCEEDED";
+    DirectX::ScratchImage
+                    subrect;
+
+    if (SUCCEEDED (subrect.Initialize2D   ( captured_img.GetMetadata ().format, width, height, 1, 1)))
+    {
+      PLOG_VERBOSE << "subrect.Initialize2D       ( ): SUCCEEDED";
+
+      if (SUCCEEDED (DirectX::CopyRectangle (*captured_img.GetImages   (), src_rect,
+                                                                            *subrect.GetImages (), DirectX::TEX_FILTER_DEFAULT, 0, 0)))
+      {
+        PLOG_VERBOSE << "DirectX::CopyRectangle     ( ): SUCCEEDED";
+
+        extern bool
+            SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped, bool isHDR, bool force_sRGB);
+        if (SKIV_Image_CopyToClipboard (subrect.GetImages (), true, SKIV_DesktopImage._hdr_image, SKIV_DesktopImage._srgb_hack))
+        {
+          PLOG_VERBOSE << "SKIV_Image_CopyToClipboard ( ): SUCCEEDED";
+
+          ImGui::InsertNotification (
+            {
+              ImGuiToastType::Info,
+              3000,
+              "Copied image to clipboard", ""
+            }
+          );
+        }
+
+        else {
+          ImGui::InsertNotification (
+            {
+              ImGuiToastType::Error,
+              3000,
+              "Failed to copy image to clipboard", ""
+            }
+          );
+          PLOG_WARNING << "SKIV_Image_CopyToClipboard ( ): FAILED";
+        }
+      } else
+        PLOG_WARNING << "DirectX::CopyRectangle     ( ): FAILED";
+    } else
+      PLOG_WARNING << "subrect.Initialize2D       ( ): FAILED";
+  } else
+    PLOG_WARNING << "DirectX::CaptureTexture    ( ): FAILED";
 }

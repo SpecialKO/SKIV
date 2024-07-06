@@ -76,6 +76,7 @@
 #include <shlobj.h>
 #include <netlistmgr.h>
 #include <html_coder.hpp>
+#include <utility/image.h>
 
 const int SKIF_STEAM_APPID      = 1157970;
 bool  RecreateSwapChains        = false;
@@ -1799,43 +1800,14 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
 #pragma region UI: Snipping Mode
 
-        ImVec2 vDesktopSize (0.0f, 0.0f);
-        bool HDR_Image = false;
-        bool sRGB_Hack = false;
+        extern skiv_image_desktop_s SKIV_DesktopImage;
 
-        extern CComPtr <ID3D11ShaderResourceView> SKIV_DesktopImage;
-               CComPtr <ID3D11Resource>           pDesktopRes;
+        bool SKIV_HDR  = SKIF_ImGui_IsRendererHDR (SKIF_ImGui_hWnd);
+        bool HDR_Image = SKIV_DesktopImage._hdr_image;
+        bool sRGB_Hack = SKIV_DesktopImage._srgb_hack;
 
-        if (SKIV_DesktopImage != nullptr)
+        if (SKIV_DesktopImage._srv != nullptr)
         {
-          bool SKIV_HDR  = SKIF_ImGui_IsRendererHDR (SKIF_ImGui_hWnd);
-
-          SKIV_DesktopImage->GetResource (&pDesktopRes.p);
-
-          if (pDesktopRes != nullptr)
-          {
-            CComQIPtr <ID3D11Texture2D>
-                pDesktopTex (pDesktopRes);
-            if (pDesktopTex != nullptr)
-            {
-              D3D11_TEXTURE2D_DESC   texDesc = { };
-              pDesktopTex->GetDesc (&texDesc);
-
-              vDesktopSize.x = static_cast <float> (texDesc.Width);
-              vDesktopSize.y = static_cast <float> (texDesc.Height);
-
-              // Non-sRGB DXGI formats still use sRGB gamma so they need a hack to appear properly
-              if (texDesc.Format == DXGI_FORMAT_R8G8B8A8_UNORM ||
-                  texDesc.Format == DXGI_FORMAT_B8G8R8X8_UNORM)
-                sRGB_Hack = true;
-
-              // HDR formats indicates we are working with a HDR capture
-              else if (texDesc.Format == DXGI_FORMAT_R10G10B10A2_UNORM  ||
-                       texDesc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT ||
-                       texDesc.Format == DXGI_FORMAT_R32G32B32A32_FLOAT)
-                HDR_Image = true;
-            }
-          }
 
           static const ImVec2 srgb_uv0       = ImVec2 (0, 0), // _SRGB format
                               srgb_uv1       = ImVec2 (1, 1), // _SRGB format
@@ -1844,13 +1816,14 @@ wWinMain ( _In_     HINSTANCE hInstance,
                               hdr_uv0        = ImVec2 (-1024.0f, -1024.0f), // HDR formats
                               hdr_uv1        = ImVec2 (-2048.0f, -2048.0f); // HDR formats
 
-          SKIF_ImGui_OptImage (SKIV_DesktopImage, vDesktopSize, (SKIV_HDR && HDR_Image) ? hdr_uv0 : (sRGB_Hack) ? force_srgb_uv0 : srgb_uv0,
+          SKIF_ImGui_OptImage (SKIV_DesktopImage._srv, SKIV_DesktopImage._resolution,
+                                                                (SKIV_HDR && HDR_Image) ? hdr_uv0 : (sRGB_Hack) ? force_srgb_uv0 : srgb_uv0,
                                                                 (SKIV_HDR && HDR_Image) ? hdr_uv1 : (sRGB_Hack) ? force_srgb_uv1 : srgb_uv1);
 
           ImDrawList* draw_list =
             ImGui::GetForegroundDrawList ();
 
-          draw_list->AddRectFilled (ImVec2 (0, 0), vDesktopSize, ImGui::GetColorU32 (IM_COL32(20, 20, 20, 80))); // Transparent Overlay
+          draw_list->AddRectFilled (ImVec2 (0, 0), SKIV_DesktopImage._resolution, ImGui::GetColorU32 (IM_COL32(20, 20, 20, 80))); // Transparent Overlay
         }
 
         static ImRect selection;
@@ -1877,7 +1850,6 @@ wWinMain ( _In_     HINSTANCE hInstance,
         auto _RestoreWindow = [&](void) -> void
         {
           _registry._SnippingMode       = false;
-          _registry._SnippingModeRegion = false;
           _registry._SnippingModeExit   = false;
 
           SKIF_ImGui_SetFullscreen (SKIF_ImGui_hWnd, false);
@@ -2034,7 +2006,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
         };
 
                           // Desktop Pos,      Desktop Pos + Desktop Size
-        ImRect allowable (monitor_extent.Min, vDesktopSize);
+        ImRect allowable (monitor_extent.Min, SKIV_DesktopImage._resolution);
         ImRect capture_area;
 
         static bool clicked = false;
@@ -2081,67 +2053,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
           PLOG_VERBOSE << "Attempting to capture region...";
 
-          const size_t
-            x      = static_cast <size_t> (std::max (0.0f, capture_area.Min.x)),
-            y      = static_cast <size_t> (std::max (0.0f, capture_area.Min.y)),
-            width  = static_cast <size_t> (std::max (0.0f, capture_area.GetWidth  ())),
-            height = static_cast <size_t> (std::max (0.0f, capture_area.GetHeight ()));
-
-          const DirectX::Rect
-            src_rect (x,y, width,height);
-
-          auto pDevice = SKIF_pd3dDevice;
-
-          CComPtr <ID3D11DeviceContext>  pDevCtx;
-          pDevice->GetImmediateContext (&pDevCtx.p);
-
-          DirectX::ScratchImage                                                    captured_img;
-          if (SUCCEEDED (DirectX::CaptureTexture (pDevice, pDevCtx, pDesktopRes.p, captured_img)))
-          {
-            PLOG_VERBOSE << "DirectX::CaptureTexture    ( ): SUCCEEDED";
-            DirectX::ScratchImage
-                            subrect;
-
-            if (SUCCEEDED (subrect.Initialize2D   ( captured_img.GetMetadata ().format, width, height, 1, 1)))
-            {
-              PLOG_VERBOSE << "subrect.Initialize2D       ( ): SUCCEEDED";
-
-              if (SUCCEEDED (DirectX::CopyRectangle (*captured_img.GetImages   (), src_rect,
-                                                                                    *subrect.GetImages (), DirectX::TEX_FILTER_DEFAULT, 0, 0)))
-              {
-                PLOG_VERBOSE << "DirectX::CopyRectangle     ( ): SUCCEEDED";
-
-                extern bool
-                    SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped, bool isHDR, bool force_sRGB);
-                if (SKIV_Image_CopyToClipboard (subrect.GetImages (), true, HDR_Image, sRGB_Hack))
-                {
-                  PLOG_VERBOSE << "SKIV_Image_CopyToClipboard ( ): SUCCEEDED";
-
-                  ImGui::InsertNotification (
-                    {
-                      ImGuiToastType::Info,
-                      3000,
-                      "Copied image to clipboard", ""
-                    }
-                  );
-                }
-
-                else {
-                  ImGui::InsertNotification (
-                    {
-                      ImGuiToastType::Error,
-                      3000,
-                      "Failed to copy image to clipboard", ""
-                    }
-                  );
-                  PLOG_WARNING << "SKIV_Image_CopyToClipboard ( ): FAILED";
-                }
-              } else
-                PLOG_WARNING << "DirectX::CopyRectangle     ( ): FAILED";
-            } else
-              PLOG_WARNING << "subrect.Initialize2D       ( ): FAILED";
-          } else
-            PLOG_WARNING << "DirectX::CaptureTexture    ( ): FAILED";
+          SKIV_Image_CaptureRegion (capture_area);
         }
 
         if (_registry._SnippingModeExit)
@@ -3763,13 +3675,10 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
   auto _EnterSnippingMode = [&](bool region_) -> void
   {
-    PLOG_VERBOSE << "Received request to enter snipping mode...";
+    PLOG_VERBOSE << "Received request to capture desktop...";
 
     if (! std::exchange (_registry._SnippingMode, true))
     {
-      extern HRESULT
-      SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, int flags = 0x0);
-
       DirectX::ScratchImage        captured_img;
       HRESULT hr =
         SKIV_Image_CaptureDesktop (captured_img);
@@ -3785,10 +3694,15 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
         extern ImRect selection_rect;
 
-        _registry._SnippingMode       = true;
-        _registry._SnippingModeRegion = region_;
+        if (! region_)
+        {
+          extern skiv_image_desktop_s SKIV_DesktopImage;
+          const ImRect screen = ImRect (ImVec2 (0, 0), SKIV_DesktopImage._resolution);
+          SKIV_Image_CaptureRegion (screen);
+          _registry._SnippingMode = false;
+        }
 
-        if (region_)
+        else
         {
           hwndBeforeSnip    = GetForegroundWindow ();
           hwndTopBeforeSnip = GetWindow (SKIF_ImGui_hWnd, GW_HWNDNEXT);
