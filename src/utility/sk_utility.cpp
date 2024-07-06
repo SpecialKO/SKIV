@@ -627,7 +627,7 @@ SK_Keybind::parse (void)
     _PushHumanToVirtual (L"Delete",        static_cast <BYTE> (VK_DELETE));
     _PushHumanToVirtual (L"Page Up",       static_cast <BYTE> (VK_PRIOR));
     _PushHumanToVirtual (L"Page Down",     static_cast <BYTE> (VK_NEXT));
-    _PushHumanToVirtual (L"Left Windows",  static_cast <BYTE> (VK_LWIN));
+    _PushHumanToVirtual (L"Windows",       static_cast <BYTE> (VK_LWIN)); // Left Windows (Super), but just refer to it as Windows
     _PushHumanToVirtual (L"Right Windows", static_cast <BYTE> (VK_RWIN));
 
     _PushVirtualToHuman (static_cast <BYTE> (VK_CONTROL),   L"Ctrl");
@@ -648,7 +648,7 @@ SK_Keybind::parse (void)
     _PushVirtualToHuman (static_cast <BYTE> (VK_DELETE),    L"Delete");
     _PushVirtualToHuman (static_cast <BYTE> (VK_PRIOR),     L"Page Up");
     _PushVirtualToHuman (static_cast <BYTE> (VK_NEXT),      L"Page Down");
-    _PushVirtualToHuman (static_cast <BYTE> (VK_LWIN),      L"Left Windows");
+    _PushVirtualToHuman (static_cast <BYTE> (VK_LWIN),      L"Windows"); // Left Windows (Super), but just refer to it as Windows
     _PushVirtualToHuman (static_cast <BYTE> (VK_RWIN),      L"Right Windows");
 
     _PushHumanToVirtual (L"Num Plus", static_cast <BYTE> (VK_ADD));
@@ -692,12 +692,14 @@ SK_Keybind::parse (void)
       BYTE vKey_ =
         humanToVirtual [hash_string (wszTok)];
 
-      if (vKey_ == VK_CONTROL)
+      if (     vKey_ == VK_CONTROL || vKey_ == VK_LCONTROL || vKey_ == VK_RCONTROL)
         ctrl  = true;
-      else if (vKey_ == VK_SHIFT)
+      else if (vKey_ == VK_SHIFT   || vKey_ == VK_LSHIFT   || vKey_ == VK_RSHIFT)
         shift = true;
-      else if (vKey_ == VK_MENU)
+      else if (vKey_ == VK_MENU    || vKey_ == VK_LMENU    || vKey_ == VK_RMENU)
         alt   = true;
+      else if (vKey_ == VK_LWIN    || vKey_ == VK_RWIN)
+        super = true;
       else
         vKey = vKey_;
     }
