@@ -4,6 +4,7 @@
 #include <typeindex>
 #include <sstream>
 #include <vector>
+#include "sk_utility.h"
 
 #ifndef RRF_SUBKEY_WOW6464KEY
 #define RRF_SUBKEY_WOW6464KEY  0x00010000
@@ -320,6 +321,10 @@ struct SKIF_RegistrySettings {
     SKIF_MakeRegKeyWS ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(Auto-Update Version)" );
 
+  KeyValue <std::wstring> regKVHotkeyCaptureRegion =
+    SKIF_MakeRegKeyWS ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(Hotkey Capture Region)" );
+
   // Multi wide Strings
 
   KeyValue <std::vector<std::wstring>> regKVCategories =
@@ -417,6 +422,14 @@ struct SKIF_RegistrySettings {
   bool _TouchDevice                 = false;
   bool _SnippingMode                = false;
   bool _SnippingModeExit            = false;
+
+  // Keybindings
+
+  SK_Keybind kbCaptureRegion = SK_Keybind {
+        "Capture Region",
+       L"Ctrl+Windows+Shift+P",
+        "Ctrl+Windows+Shift+P"
+  };
 
   // Functions
   bool isDevLogging (void) const;

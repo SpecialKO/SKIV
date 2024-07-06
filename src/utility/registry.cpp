@@ -364,6 +364,13 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
   bLoggingDeveloper        =   regKVLoggingDeveloper       .getData (&hKey);
   bImageDetails            =   regKVImageDetails           .getData (&hKey);
 
+  // Keybindings
+
+  if (regKVHotkeyCaptureRegion.hasData(&hKey))
+    kbCaptureRegion.human_readable = regKVHotkeyCaptureRegion.getData(&hKey);
+
+  kbCaptureRegion.parse();
+
   if (hKey != nullptr)
     RegCloseKey (hKey);
 
