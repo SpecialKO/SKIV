@@ -701,6 +701,8 @@ LoadLibraryTexture (image_s& image)
     // Check whether the image is a HDR image or not
     image.light_info.isHDR = stbi_is_hdr (szPath.c_str());
 
+    PLOG_VERBOSE << "STBI thinks the image is... " << ((image.light_info.isHDR) ? "HDR" : "SDR");
+
     float*                pixels = stbi_loadf (szPath.c_str(), &width, &height, &channels_in_file, desired_channels);
     typedef float         pixel_size;
     constexpr DXGI_FORMAT dxgi_format = DXGI_FORMAT::DXGI_FORMAT_R32G32B32A32_FLOAT;
@@ -719,6 +721,16 @@ LoadLibraryTexture (image_s& image)
 
     else
     {
+#ifdef _DEBUG
+
+      PLOG_VERBOSE << "SKIV_STBI_CICP:";
+      PLOG_VERBOSE << ".primaries    : " << (int)SKIV_STBI_CICP.primaries;
+      PLOG_VERBOSE << ".transfer_func: " << (int)SKIV_STBI_CICP.transfer_func;
+      PLOG_VERBOSE << ".primaries    : " << (int)SKIV_STBI_CICP.matrix_coeffs;
+      PLOG_VERBOSE << ".range        : " << (int)SKIV_STBI_CICP.range;
+
+#endif // _DEBUG
+
       if (SKIV_STBI_CICP.primaries != 0)
       {
         assert (SKIV_STBI_CICP.primaries     ==  9); // BT 2020
