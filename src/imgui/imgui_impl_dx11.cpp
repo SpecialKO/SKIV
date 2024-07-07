@@ -738,7 +738,7 @@ void ImGui_ImplDX11_RenderDrawData (ImDrawData *draw_data)
         CComPtr <ID3D11RenderTargetView> rtv;
         ctx->OMGetRenderTargets     (1, &rtv.p, nullptr);
 
-        if (SKIV_HDR_GamutCoverageUAV != nullptr)
+        if (SKIV_HDR_GamutCoverageUAV.p != nullptr)
         {
           if (texture_srv != SKIV_HDR_GamutCoverageSRV.p)
           {
@@ -746,7 +746,7 @@ void ImGui_ImplDX11_RenderDrawData (ImDrawData *draw_data)
             //   to allow a UAV and SRV to the same resource to be
             //     bound simultaneously.
             ctx->PSSetShaderResources                      (0, 1, &texture_srv);
-            ctx->OMSetRenderTargetsAndUnorderedAccessViews (1, &rtv.p, nullptr, 1, 1, &SKIV_HDR_GamutCoverageUAV, nullptr);
+            ctx->OMSetRenderTargetsAndUnorderedAccessViews (1, &rtv.p, nullptr, 1, 1, &SKIV_HDR_GamutCoverageUAV.p, nullptr);
           }
         }
 

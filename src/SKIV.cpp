@@ -2103,6 +2103,9 @@ wWinMain ( _In_     HINSTANCE hInstance,
             SKIF_ImGui_AutoScroll  (true, SKIF_ImGuiAxis_Both);
             SKIF_ImGui_UpdateScrollbarState ( );
 
+            // Dummy required here to solve ImGui::ErrorCheckUsingSetCursorPosToExtendParentBoundaries()
+            ImGui::Dummy (ImVec2 (0, 0));
+
             ImGui::EndChild        ( );
           }
 
@@ -2275,7 +2278,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
         ImGui::SetCursorPos (prevCursorPos);
 
-        ImGui::Dummy (ImVec2 (0, 0)); // Dummy required here to solve ImGui::ErrorCheckUsingSetCursorPosToExtendParentBoundaries()
+        // Dummy required here to solve ImGui::ErrorCheckUsingSetCursorPosToExtendParentBoundaries()
+        ImGui::Dummy (ImVec2 (0, 0));
       }
 
       // End of top right window buttons
