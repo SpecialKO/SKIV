@@ -89,6 +89,7 @@
 #define SKIF_Win32
 
 #include "imgui/imgui_internal.h"
+#include "../version.h"
 #include "../resource.h"
 #include <utility/utility.h>
 #include <utility/registry.h>
@@ -129,7 +130,7 @@ static void ImGui_ImplWin32_UpdateMonitors();
 void    SKIF_ImGui_ImplWin32_UpdateDWMBorders (void);
 void    SKIF_ImGui_ImplWin32_SetDWMBorders    (void* hWnd, DWM_WINDOW_CORNER_PREFERENCE dwmCornerPreference = DWMWCP_DEFAULT);
 bool    SKIF_ImGui_ImplWin32_IsFocused        (void);
-bool    SKIF_ImGui_ImplWin32_SetFullscreen    (int fullscreen);
+bool    SKIF_ImGui_ImplWin32_SetFullscreen    (HWND hWnd, int fullscreen, HMONITOR monitor = NULL);
 
 struct ImGui_ImplWin32_Data
 {
@@ -329,7 +330,7 @@ static void ImGui_ImplWin32_UpdateKeyModifiers()
     io.AddKeyEvent(ImGuiMod_Ctrl, IsVkDown(VK_CONTROL));
     io.AddKeyEvent(ImGuiMod_Shift, IsVkDown(VK_SHIFT));
     io.AddKeyEvent(ImGuiMod_Alt, IsVkDown(VK_MENU));
-    io.AddKeyEvent(ImGuiMod_Super, IsVkDown(VK_APPS));
+    io.AddKeyEvent(ImGuiMod_Super, IsVkDown(VK_LWIN) || IsVkDown(VK_RWIN));
 }
 
 // This code supports multi-viewports (multiple OS Windows mapped into different Dear ImGui viewports)
@@ -537,7 +538,7 @@ void    ImGui_ImplWin32_NewFrame()
 #define IM_VK_KEYPAD_ENTER      (VK_RETURN + 256)
 
 // Map VK_xxx to ImGuiKey_xxx.
-static ImGuiKey ImGui_ImplWin32_VirtualKeyToImGuiKey(WPARAM wParam)
+ImGuiKey ImGui_ImplWin32_VirtualKeyToImGuiKey(WPARAM wParam)
 {
     switch (wParam)
     {
@@ -1219,13 +1220,17 @@ static void ImGui_ImplWin32_CreateWindow(ImGuiViewport *viewport)
   ImGui_ImplWin32_Data* bd = ImGui_ImplWin32_GetBackendData();
   if (bd->hWnd == nullptr || SKIF_ImGui_hWnd == NULL)
   {
-    // Store the handle globally
     bd->hWnd        = vd->Hwnd;
-    SKIF_ImGui_hWnd = bd->hWnd;
 
-    // Update the main viewport as well, since that's apparently also required
-    //ImGuiViewport* main_viewport = ImGui::GetMainViewport();
-    //main_viewport->PlatformHandle = main_viewport->PlatformHandleRaw = (void*)bd->hWnd;
+    // Store the handle for our main window globally
+    ImGuiViewportP* vp = (ImGuiViewportP*)viewport;
+    if (ImGuiWindow* window = vp->Window)
+    {
+      if (window->ID == ImHashStr (SKIV_WINDOW_TITLE_HASH))
+      {
+        SKIF_ImGui_hWnd = bd->hWnd;
+      }
+    }
 
     // Retrieve the DPI scaling of the current display
     SKIF_ImGui_GlobalDPIScale = (_registry.bDPIScaling) ? ImGui_ImplWin32_GetDpiScaleForHwnd (vd->Hwnd) : 1.0f;
@@ -2038,7 +2043,7 @@ SKIF_ImGui_ImplWin32_SetDWMBorders (void* hWnd, DWM_WINDOW_CORNER_PREFERENCE dwm
     // Main window
     if (SKIF_ImGui_hWnd ==       NULL ||
         SKIF_ImGui_hWnd == (HWND)hWnd)
-      dwmCornerPreference = (! SKIF_ImGui_ImplWin32_SetFullscreen (-1)) ? DWMWCP_ROUND : DWMWCP_DONOTROUND; // Do not round the main window if we are in fullscreen mode
+      dwmCornerPreference = (! SKIF_ImGui_ImplWin32_SetFullscreen ((HWND)hWnd, -1)) ? DWMWCP_ROUND : DWMWCP_DONOTROUND; // Do not round the main window if we are in fullscreen mode
 
     // Popups (spanning outside of the main window)
     else
@@ -2143,9 +2148,11 @@ SKIF_ImGui_ImplWin32_WantUpdateMonitors (void)
 
 
 bool
-SKIF_ImGui_ImplWin32_SetFullscreen (int fullscreen)
+SKIF_ImGui_ImplWin32_SetFullscreen (HWND hWnd, int fullscreen, HMONITOR monitor)
 {
-  struct {
+  // Cached data structure to support tracking multiple windows
+  struct fullscreen_s {
+      HWND   hWnd;           // Used to tracking
       bool   Fullscreen = 0; // Current fullscreen state
 
       // Previous window state (before entering fullscreen)
@@ -2153,81 +2160,98 @@ SKIF_ImGui_ImplWin32_SetFullscreen (int fullscreen)
       LONG   dwStyle;
       LONG   dwExStyle;
       RECT   rcWindow;
-  } static _cached;
 
-  // -1 is used to retrieve the current state
-  if (fullscreen == -1)
-    return _cached.Fullscreen;
+      fullscreen_s (HWND _hWnd) : hWnd(_hWnd) { };
+  };
 
-  if (ImGuiWindow* window = ImGui::FindWindowByName (SKIV_WINDOW_TITLE_HASH))
+  static std::vector<fullscreen_s> _cache;
+
+  if (hWnd == NULL)
+    return false;
+
+  if (ImGuiViewportP* viewport = (ImGuiViewportP*) ImGui::FindViewportByPlatformHandle (hWnd))
   {
-    if (ImGuiViewport* viewport = window->Viewport)
+    ImGuiWindow* window = viewport->Window;
+
+    if (window == nullptr)
+      return false;
+
+    fullscreen_s* _cached = nullptr;
+
+    for (auto& cached : _cache)
+      if (cached.hWnd == hWnd)
+        _cached = &cached;
+
+    if (_cached == nullptr)
     {
-      HWND hwnd = (HWND)viewport->PlatformHandleRaw;
-
-      if (viewport->PlatformHandleRaw == NULL)
-        return false;
-
-      RECT rect = { };
-
-      // Cache the current state if we are about to enter fullscreen
-      if (! _cached.Fullscreen)
-      {
-        _cached.Maximized = !!::IsZoomed (hwnd);
-
-        if (_cached.Maximized) // Apparently we need to restore from a maximized state to get the taskbar to hide itself
-          ::SendMessage (hwnd, WM_SYSCOMMAND, SC_RESTORE, 0);
-
-        _cached.dwStyle   = GetWindowLong (hwnd, GWL_STYLE);
-        _cached.dwExStyle = GetWindowLong (hwnd, GWL_EXSTYLE);
-        GetWindowRect (hwnd, &_cached.rcWindow);
-      }
-
-      _cached.Fullscreen = static_cast<bool> (fullscreen);
-
-      // Entering fullscreen mode
-      if (_cached.Fullscreen)
-      {
-        SetWindowLong (hwnd, GWL_STYLE,   _cached.dwStyle   & ~(WS_CAPTION | WS_THICKFRAME));
-        SetWindowLong (hwnd, GWL_EXSTYLE, _cached.dwExStyle & ~(WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE | WS_EX_STATICEDGE));
-
-        MONITORINFO mi = { };
-        mi.cbSize = sizeof(mi);
-        GetMonitorInfo (MonitorFromWindow (hwnd, MONITOR_DEFAULTTONEAREST), &mi);
-        rect = mi.rcMonitor;
-
-        // Seems to be required to account for the border of the window
-        //rect.right  += 1;
-        //rect.bottom += 1;
-
-        SKIF_ImGui_ImplWin32_SetDWMBorders (hwnd, DWMWCP_DONOTROUND);
-      }
-
-      // Exiting fullscreen mode
-      else
-      {
-        SetWindowLong (hwnd, GWL_STYLE,   _cached.dwStyle);
-        SetWindowLong (hwnd, GWL_EXSTYLE, _cached.dwExStyle);
-
-        rect = _cached.rcWindow;
-
-        if (_cached.Maximized) // Restore maximized state (does not really work properly?)
-          ::SendMessage (hwnd, WM_SYSCOMMAND, SC_MAXIMIZE, 0);
-
-        SKIF_ImGui_ImplWin32_SetDWMBorders (hwnd);
-      }
-        
-      float top    = static_cast<float> (rect.top);
-      float left   = static_cast<float> (rect.left);
-      float width  = static_cast<float> (rect.right)  - left;
-      float height = static_cast<float> (rect.bottom) - top;
-
-      ImGui::SetWindowSize (window, ImVec2 (width, height));
-      ImGui::SetWindowPos  (window, ImVec2 (left,  top));
+      _cache.push_back (fullscreen_s (hWnd));
+      _cached = &_cache.back();
     }
+
+    // -1 is used to retrieve the current state
+    if (fullscreen == -1)
+      return _cached->Fullscreen;
+
+    RECT rect = { };
+
+    // Cache the current state if we are about to enter fullscreen
+    if (! _cached->Fullscreen)
+    {
+      _cached->Maximized = !!::IsZoomed (hWnd);
+
+      if (_cached->Maximized) // Apparently we need to restore from a maximized state to get the taskbar to hide itself
+        ::SendMessage (hWnd, WM_SYSCOMMAND, SC_RESTORE, 0);
+
+      _cached->dwStyle   = GetWindowLong (hWnd, GWL_STYLE);
+      _cached->dwExStyle = GetWindowLong (hWnd, GWL_EXSTYLE);
+      GetWindowRect (hWnd, &_cached->rcWindow);
+    }
+
+    _cached->Fullscreen = static_cast<bool> (fullscreen);
+
+    // Entering fullscreen mode
+    if (_cached->Fullscreen)
+    {
+      SetWindowLong (hWnd, GWL_STYLE,   _cached->dwStyle   & ~(WS_CAPTION | WS_THICKFRAME));
+      SetWindowLong (hWnd, GWL_EXSTYLE, _cached->dwExStyle & ~(WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE | WS_EX_STATICEDGE));
+
+      if (monitor == NULL)
+        monitor = MonitorFromWindow (hWnd, MONITOR_DEFAULTTONEAREST);
+
+      MONITORINFO mi = { };
+      mi.cbSize = sizeof(mi);
+      GetMonitorInfo (monitor, &mi);
+      rect = mi.rcMonitor;
+
+      SKIF_ImGui_ImplWin32_SetDWMBorders (hWnd, DWMWCP_DONOTROUND);
+    }
+
+    // Exiting fullscreen mode
+    else
+    {
+      SetWindowLong (hWnd, GWL_STYLE,   _cached->dwStyle);
+      SetWindowLong (hWnd, GWL_EXSTYLE, _cached->dwExStyle);
+
+      rect = _cached->rcWindow;
+
+      if (_cached->Maximized) // Restore maximized state (does not really work properly?)
+        ::SendMessage (hWnd, WM_SYSCOMMAND, SC_MAXIMIZE, 0);
+
+      SKIF_ImGui_ImplWin32_SetDWMBorders (hWnd);
+    }
+        
+    float top    = static_cast<float> (rect.top);
+    float left   = static_cast<float> (rect.left);
+    float width  = static_cast<float> (rect.right)  - left;
+    float height = static_cast<float> (rect.bottom) - top;
+
+    ImGui::SetWindowSize (window, ImVec2 (width, height));
+    ImGui::SetWindowPos  (window, ImVec2 (left,  top));
+
+    return _cached->Fullscreen;
   }
 
-  return _cached.Fullscreen;
+  return false;
 }
 
 //---------------------------------------------------------------------------------------------------------

@@ -16,6 +16,7 @@
 #include <utility/gamepad.h>
 #include "../../version.h"
 #include <tabs/common_ui.h>
+#include <set>
 
 extern bool allowShortcutCtrlA;
 
@@ -60,6 +61,45 @@ SKIF_UI_Tab_DrawSettings (void)
 
   ImGui::Spacing ();
   ImGui::Spacing ();
+
+#pragma region Section: Keybindings
+
+  if (ImGui::CollapsingHeader ("Keybindings###SKIF_SettingsHeader-0", ImGuiTreeNodeFlags_DefaultOpen))
+  {
+    struct kb_kv_bool_s
+    {
+      SK_Keybind*                                    _key;
+      SKIF_RegistrySettings::KeyValue<std::wstring>* _reg;
+      bool                                           _region;
+    };
+
+    static std::vector <kb_kv_bool_s>
+      keybinds = {
+      { &_registry.kbCaptureRegion, &_registry.regKVHotkeyCaptureRegion, true  },
+      { &_registry.kbCaptureScreen, &_registry.regKVHotkeyCaptureScreen, false }
+    };
+
+    ImGui::BeginGroup ();
+    for (auto& keybind : keybinds)
+    {
+      ImGui::Text          ( "%s:  ",
+                            keybind._key->bind_name );
+    }
+    ImGui::EndGroup   ();
+    ImGui::SameLine   ();
+    ImGui::BeginGroup ();
+    for (auto& keybind : keybinds)
+    {
+      if (SK_ImGui_Keybinding (keybind._key))
+      {
+        keybind._reg->putData           (keybind._key->human_readable);
+        SKIF_Util_RegisterHotKeyCapture (keybind._key, keybind._region);
+      }
+    }
+    ImGui::EndGroup   ();
+  }
+
+#pragma endregion
 
 #pragma region Section: Image
 
@@ -129,6 +169,53 @@ SKIF_UI_Tab_DrawSettings (void)
     ImGui::TreePop         ( );
 
     ImGui::PopStyleColor();
+
+    // nb:  Prefernece needs implementation
+    // 
+#if 0
+    ImGui::TextColored     (ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info), ICON_FA_LIGHTBULB);
+    SKIF_ImGui_SetHoverTip ("Used for Export to SDR and Save As...");
+    ImGui::SameLine        ( );
+    ImGui::TextColored (
+      ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextCaption),
+        "Default File Formats:"
+    );
+    ImGui::TreePush        ("FileFormats");
+    const char* HDRFormats [] = { ".png",
+                                  ".jxr",//".avif",".jxl"
+                                };
+    const char* SDRFormats [] = { ".png",
+                                  ".jpg",
+                                  ".bmp",
+                                  ".tiff"
+                                  //".dds",
+                                };
+
+    static const char* LogSeverityCurrent = LogSeverity[_registry.iLogging];
+
+    if (ImGui::BeginCombo  (" HDR Format###_registry.wsDefaultHDRExt", LogSeverityCurrent))
+    {
+      for (int n = 0; n < IM_ARRAYSIZE (LogSeverity); n++)
+      {
+        bool is_selected = (LogSeverityCurrent == LogSeverity[n]);
+        if (ImGui::Selectable (LogSeverity[n], is_selected))
+        {
+          _registry.iLogging = n;
+          _registry.regKVLogging.putData  (_registry.iLogging);
+          LogSeverityCurrent = LogSeverity[_registry.iLogging];
+          plog::get()->setMaxSeverity((plog::Severity)_registry.iLogging);
+
+          ImGui::GetCurrentContext()->DebugLogFlags = ImGuiDebugLogFlags_OutputToTTY | ((_registry.isDevLogging())
+                                                    ? ImGuiDebugLogFlags_EventMask_
+                                                    : ImGuiDebugLogFlags_EventViewport);
+        }
+        if (is_selected)
+          ImGui::SetItemDefaultFocus ( );
+      }
+      ImGui::EndCombo  ( );
+    }
+    ImGui::TreePop     ( );
+#endif
   }
 
   ImGui::Spacing ();
@@ -419,7 +506,7 @@ SKIF_UI_Tab_DrawSettings (void)
     if (SKIF_Util_IsHDRSupported ( )  )
     {
       ImGui::TextColored     (ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info), ICON_FA_LIGHTBULB);
-      SKIF_ImGui_SetHoverTip ("Makes the app pop more on HDR displays.");
+      SKIF_ImGui_SetHoverTip ("Required to properly display HDR content.");
       ImGui::SameLine        ( );
       ImGui::TextColored (
         ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextCaption),
@@ -584,6 +671,9 @@ SKIF_UI_Tab_DrawSettings (void)
         _registry.bMultipleInstances
         );
     }
+
+    if ( ImGui::Checkbox ( "Close to the notification area", &_registry.bCloseToTray ) )
+      _registry.regKVCloseToTray.putData (                    _registry.bCloseToTray );
 
     if ( ImGui::Checkbox ( "Always open this app on the same monitor as the mouse", &_registry.bOpenAtCursorPosition ) )
       _registry.regKVOpenAtCursorPosition.putData (                                  _registry.bOpenAtCursorPosition );

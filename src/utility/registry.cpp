@@ -356,12 +356,26 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
   // These defaults to false, so no need to check if the registry has another value
   //   since getData ( ) defaults to false for non-existent registry values
   bFirstLaunch             =   regKVFirstLaunch            .getData (&hKey);
+  bCloseToTray             =   regKVCloseToTray            .getData (&hKey);
   bMultipleInstances       =   regKVMultipleInstances      .getData (&hKey);
   bAutoUpdate              =   regKVAutoUpdate             .getData (&hKey);
   bOpenAtCursorPosition    =   regKVOpenAtCursorPosition   .getData (&hKey);
   bGhost                   =   regKVGhost                  .getData (&hKey);
   bLoggingDeveloper        =   regKVLoggingDeveloper       .getData (&hKey);
   bImageDetails            =   regKVImageDetails           .getData (&hKey);
+
+  // Keybindings
+  // All keybindings must first read the data from the registry,
+  //   then parse the human_readable data through .parse()
+
+  if (regKVHotkeyCaptureRegion.hasData(&hKey))
+    kbCaptureRegion.human_readable = regKVHotkeyCaptureRegion.getData (&hKey);
+
+  if (regKVHotkeyCaptureScreen.hasData(&hKey))
+    kbCaptureScreen.human_readable = regKVHotkeyCaptureScreen.getData (&hKey);
+
+  kbCaptureRegion.parse();
+  kbCaptureScreen.parse();
 
   if (hKey != nullptr)
     RegCloseKey (hKey);

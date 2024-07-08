@@ -76,6 +76,7 @@
 #include <shlobj.h>
 #include <netlistmgr.h>
 #include <html_coder.hpp>
+#include <utility/image.h>
 
 const int SKIF_STEAM_APPID      = 1157970;
 bool  RecreateSwapChains        = false;
@@ -150,11 +151,12 @@ static const GUID SKIF_NOTIFY_GUID = // {8142287D-5BC6-4131-95CD-709A2613E1F5}
 { 0x8142287d, 0x5bc6, 0x4131, { 0x95, 0xcd, 0x70, 0x9a, 0x26, 0x13, 0xe1, 0xf5 } };
 #define SKIF_NOTIFY_ICON                    0x1330 // 4912
 #define SKIF_NOTIFY_EXIT                    0x1331 // 4913
-#define SKIF_NOTIFY_START                   0x1332 // 4914
-#define SKIF_NOTIFY_STOP                    0x1333 // 4915
-#define SKIF_NOTIFY_STARTWITHSTOP           0x1334 // 4916
+#define SKIF_NOTIFY_OPEN                    0x1332 // 4914
+#define SKIF_NOTIFY_SNIP_REGION             0x1333 // 4915
+#define SKIF_NOTIFY_SNIP_SCREEN             0x1334 // 4916
 #define SKIF_NOTIFY_RUN_UPDATER             0x1335 // 4917
 #define WM_SKIF_NOTIFY_ICON      (WM_USER + 0x150) // 1360
+bool SKIF_isTrayed = false;
 NOTIFYICONDATA niData;
 HMENU hMenu;
 
@@ -166,7 +168,14 @@ PopupState HistoryPopup      = PopupState_Closed;
 PopupState AutoUpdatePopup   = PopupState_Closed;
 UITab SKIF_Tab_Selected      = UITab_Viewer,
       SKIF_Tab_ChangeTo      = UITab_None;
-extern PopupState  OpenFileDialog; // Viewer: open file dialog
+extern PopupState  OpenFileDialog;  // Viewer: open file dialog
+extern PopupState  SaveFileDialog;  // Viewer: save file dialog
+extern PopupState  ExportSDRDialog; // Viewer: export sdr dialog
+
+// Variables related to the display SKIF is visible on
+ImVec2  windowPos;
+ImRect  windowRect       = ImRect(0.0f, 0.0f, 0.0f, 0.0f);
+ImRect  monitor_extent   = ImRect(0.0f, 0.0f, 0.0f, 0.0f);
 
 HMODULE hModSKIF     = nullptr;
 HMODULE hModSpecialK = nullptr;
@@ -244,10 +253,16 @@ SKIF_Startup_ProcessCmdLineArgs (LPWSTR lpCmdLine)
 //  wcscmp (lpCmdLine, L"2") == NULL;
   _Signal.OpenFileDialog = 
     _wcsicmp (lpCmdLine, L"/OpenFileDialog") == NULL;
+  _Signal.CaptureRegion = 
+    _wcsicmp (lpCmdLine, L"/CaptureRegion") == NULL;
+  _Signal.CaptureScreen = 
+    _wcsicmp (lpCmdLine, L"/CaptureScreen") == NULL;
 
-  if (! _Signal.Quit     &&
-      ! _Signal.Minimize &&
-      ! _Signal.OpenFileDialog)
+  if (! _Signal.Quit           &&
+      ! _Signal.Minimize       &&
+      ! _Signal.OpenFileDialog &&
+      ! _Signal.CaptureRegion  &&
+      ! _Signal.CaptureScreen)
     _Signal._FilePath = std::wstring(lpCmdLine);
 
   SKIF_Util_TrimLeadingSpacesW (_Signal._FilePath);
@@ -346,6 +361,8 @@ SKIF_Startup_ProxyCommandLineArguments (void)
 
   if (! _Signal.Minimize         &&
       ! _Signal.OpenFileDialog   &&
+      ! _Signal.CaptureRegion    &&
+      ! _Signal.CaptureScreen    &&
       ! _Signal.CheckForUpdates  &&
       ! _Signal.Quit)
     return;
@@ -379,6 +396,40 @@ SKIF_Startup_ProxyCommandLineArguments (void)
         if (StrCmpIW ((LPWSTR)lParam, wszRealWindowClass) == 0)
         {
           PostMessage (hWnd, WM_SKIF_FILE_DIALOG, 0x0, 0x0);
+          return FALSE;
+        }
+      return TRUE;
+    }, (LPARAM)SKIF_NotifyIcoClass);
+  }
+
+  if (_Signal.CaptureRegion)
+  {
+    // Send WM_SKIF_SNIP_REGION to a single running instance (including ourselves)
+    EnumWindows ( []( HWND   hWnd,
+                      LPARAM lParam ) -> BOOL
+    {
+      wchar_t                         wszRealWindowClass [64] = { };
+      if (RealGetWindowClassW (hWnd,  wszRealWindowClass, 64))
+        if (StrCmpIW ((LPWSTR)lParam, wszRealWindowClass) == 0)
+        {
+          PostMessage (hWnd, WM_SKIF_SNIP_REGION, 0x0, 0x0);
+          return FALSE;
+        }
+      return TRUE;
+    }, (LPARAM)SKIF_NotifyIcoClass);
+  }
+
+  if (_Signal.CaptureScreen)
+  {
+    // Send WM_SKIF_SNIP_SCREEN to a single running instance (including ourselves)
+    EnumWindows ( []( HWND   hWnd,
+                      LPARAM lParam ) -> BOOL
+    {
+      wchar_t                         wszRealWindowClass [64] = { };
+      if (RealGetWindowClassW (hWnd,  wszRealWindowClass, 64))
+        if (StrCmpIW ((LPWSTR)lParam, wszRealWindowClass) == 0)
+        {
+          PostMessage (hWnd, WM_SKIF_SNIP_SCREEN, 0x0, 0x0);
           return FALSE;
         }
       return TRUE;
@@ -463,12 +514,16 @@ void SKIF_Shell_CreateUpdateNotifyMenu (void)
   hMenu = CreatePopupMenu ( );
   if (hMenu != NULL)
   {
-  //AppendMenu (hMenu, MF_STRING, SKIF_NOTIFY_RUN_UPDATER,   L"Open file...");
+    AppendMenu (hMenu, MF_STRING, SKIF_NOTIFY_SNIP_REGION,     L"Capture region");
+    AppendMenu (hMenu, MF_STRING, SKIF_NOTIFY_SNIP_SCREEN,     L"Capture screen");
+
   //AppendMenu (hMenu, MF_STRING | ((svcStopped)         ? MF_CHECKED | MF_GRAYED :                                    0x0), SKIF_NOTIFY_STOP,          L"Stop Service");
   //AppendMenu (hMenu, MF_SEPARATOR, 0, NULL);
-  //AppendMenu (hMenu, MF_STRING, SKIF_NOTIFY_RUN_UPDATER,   L"Check for updates...");
-  //AppendMenu (hMenu, MF_SEPARATOR, 0, NULL);
-    AppendMenu (hMenu, MF_STRING, SKIF_NOTIFY_EXIT,          L"Exit");
+  //AppendMenu (hMenu, MF_STRING, SKIF_NOTIFY_RUN_UPDATER,     L"Check for updates...");
+
+    AppendMenu (hMenu, MF_SEPARATOR, 0, NULL);
+    AppendMenu (hMenu, MF_STRING, SKIF_NOTIFY_OPEN,            L"Open");
+    AppendMenu (hMenu, MF_STRING, SKIF_NOTIFY_EXIT,            L"Exit");
   }
 }
 
@@ -483,7 +538,7 @@ void SKIF_Shell_CreateNotifyIcon (void)
   niData.hIcon        = LoadIcon (hModSKIF, MAKEINTRESOURCE (IDI_SKIV));
   niData.hWnd         = SKIF_Notify_hWnd;
   niData.uVersion     = NOTIFYICON_VERSION_4;
-  wcsncpy_s (niData.szTip,      128, L"Special K",   128);
+  wcsncpy_s (niData.szTip, 128, L"SKIV", 128);
 
   niData.uCallbackMessage = WM_SKIF_NOTIFY_ICON;
 
@@ -555,7 +610,39 @@ void SKIF_Shell_CreateJumpList (void)
 
     if   (SUCCEEDED (pObjColl.CoCreateInstance (CLSID_EnumerableObjectCollection)))
     {
-      // Task #1: /OpenFileDialog
+      // Task: /CaptureRegion
+      if (SUCCEEDED (pLink.CoCreateInstance (CLSID_ShellLink)))
+      {
+        CComQIPtr <IPropertyStore>   pPropStore = pLink.p;                      // The link title is kept in the object's property store, so QI for that interface.
+
+        pLink     ->SetPath         (_path_cache.skiv_executable);
+        pLink     ->SetArguments    (L"/CaptureRegion");                        // Set the arguments
+        pLink     ->SetIconLocation (_path_cache.skiv_executable, 0);           // Set the icon location.
+        pLink     ->SetDescription  (L"Starts a new region capture");           // Set the link description (tooltip on the jump list item)
+        InitPropVariantFromString   (L"Capture region", &pv);
+        pPropStore->SetValue                   (PKEY_Title, pv);                // Set the title property.
+        PropVariantClear                                  (&pv);
+        pPropStore->Commit          ( );                                        // Save the changes we made to the property store
+        pObjColl  ->AddObject       (pLink);                                    // Add this shell link to the object collection.
+        pPropStore .Release         ( );
+        pLink      .Release         ( );
+      }
+
+      // Separator
+      if (SUCCEEDED (pLink.CoCreateInstance (CLSID_ShellLink)))
+      {
+        CComQIPtr <IPropertyStore>   pPropStore = pLink.p;                      // The link title is kept in the object's property store, so QI for that interface.
+
+        InitPropVariantFromBoolean  (TRUE, &pv);
+        pPropStore->SetValue (PKEY_AppUserModel_IsDestListSeparator, pv);       // Set the separator property.
+        PropVariantClear                                  (&pv);
+        pPropStore->Commit          ( );                                        // Save the changes we made to the property store
+        pObjColl  ->AddObject       (pLink);                                    // Add this shell link to the object collection.
+        pPropStore .Release         ( );
+        pLink      .Release         ( );
+      }
+
+      // Task: /OpenFileDialog
       if (SUCCEEDED (pLink.CoCreateInstance (CLSID_ShellLink)))
       {
         CComQIPtr <IPropertyStore>   pPropStore = pLink.p;                      // The link title is kept in the object's property store, so QI for that interface.
@@ -572,22 +659,6 @@ void SKIF_Shell_CreateJumpList (void)
         pPropStore .Release         ( );
         pLink      .Release         ( );
       }
-
-      /*
-      // Separator
-      if (SUCCEEDED (pLink.CoCreateInstance (CLSID_ShellLink)))
-      {
-        CComQIPtr <IPropertyStore>   pPropStore = pLink.p;                      // The link title is kept in the object's property store, so QI for that interface.
-
-        InitPropVariantFromBoolean  (TRUE, &pv);
-        pPropStore->SetValue (PKEY_AppUserModel_IsDestListSeparator, pv);       // Set the separator property.
-        PropVariantClear                                  (&pv);
-        pPropStore->Commit          ( );                                        // Save the changes we made to the property store
-        pObjColl  ->AddObject       (pLink);                                    // Add this shell link to the object collection.
-        pPropStore .Release         ( );
-        pLink      .Release         ( );
-      }
-      */
 
       // Task #5: Exit -- Not actually needed since Windows exposes a "Close window" and "Close all windows" option in the jump list
       /*
@@ -755,7 +826,7 @@ void SKIF_Initialize (LPWSTR lpCmdLine)
                 fallbackDir.c_str(), _TRUNCATE);
         
     // Create any missing directories
-    if (! std::filesystem::exists (            fallbackDir, ec))
+    if (! std::filesystem::exists             (fallbackDir, ec))
           std::filesystem::create_directories (fallbackDir, ec);
   }
 
@@ -807,62 +878,63 @@ void SKIF_Initialize (LPWSTR lpCmdLine)
             << "\n|    > user data   | " << _path_cache.skiv_userdata
             << "\n+------------------+-------------------------------------+";
 
-  // SKIV also uses a folder to temporary internet files
+  // SKIV also uses a folder to temporary files
   const std::wstring tempDir =
-    std::wstring (_path_cache.app_data_local.path) + LR"(\Temp\skiv\)";
+    SKIF_Util_NormalizeFullPath (std::wstring (_path_cache.app_data_local.path) + LR"(\Temp\skiv\)");
 
   wcsncpy_s (_path_cache.skiv_temp, MAX_PATH,
                   tempDir.c_str(), _TRUNCATE);
 
+  // Create the folder for temporary files
+  if (! std::filesystem::exists         (_path_cache.skiv_temp, ec))
+    std::filesystem::create_directories (_path_cache.skiv_temp, ec);
+
   // Clear out any temp files older than a day
-  if (PathFileExists (_path_cache.skiv_temp))
+  auto _isDayOld = [&](FILETIME ftLastWriteTime) -> bool
   {
-    auto _isDayOld = [&](FILETIME ftLastWriteTime) -> bool
+    FILETIME ftSystemTime{}, ftAdjustedFileTime{};
+    SYSTEMTIME systemTime{};
+    GetSystemTime (&systemTime);
+
+    if (SystemTimeToFileTime(&systemTime, &ftSystemTime))
     {
-      FILETIME ftSystemTime{}, ftAdjustedFileTime{};
-      SYSTEMTIME systemTime{};
-      GetSystemTime (&systemTime);
+      ULARGE_INTEGER uintLastWriteTime{};
 
-      if (SystemTimeToFileTime(&systemTime, &ftSystemTime))
-      {
-        ULARGE_INTEGER uintLastWriteTime{};
+      // Copy to ULARGE_INTEGER union to perform 64-bit arithmetic
+      uintLastWriteTime.HighPart        = ftLastWriteTime.dwHighDateTime;
+      uintLastWriteTime.LowPart         = ftLastWriteTime.dwLowDateTime;
 
-        // Copy to ULARGE_INTEGER union to perform 64-bit arithmetic
-        uintLastWriteTime.HighPart        = ftLastWriteTime.dwHighDateTime;
-        uintLastWriteTime.LowPart         = ftLastWriteTime.dwLowDateTime;
+      // Perform 64-bit arithmetic to add 1 day to last modified timestamp
+      uintLastWriteTime.QuadPart        = uintLastWriteTime.QuadPart + ULONGLONG(1 * 24 * 60 * 60 * 1.0e+7);
 
-        // Perform 64-bit arithmetic to add 1 day to last modified timestamp
-        uintLastWriteTime.QuadPart        = uintLastWriteTime.QuadPart + ULONGLONG(1 * 24 * 60 * 60 * 1.0e+7);
+      // Copy the results to an FILETIME struct
+      ftAdjustedFileTime.dwHighDateTime = uintLastWriteTime.HighPart;
+      ftAdjustedFileTime.dwLowDateTime  = uintLastWriteTime.LowPart;
 
-        // Copy the results to an FILETIME struct
-        ftAdjustedFileTime.dwHighDateTime = uintLastWriteTime.HighPart;
-        ftAdjustedFileTime.dwLowDateTime  = uintLastWriteTime.LowPart;
+      // Compare with system time, and if system time is later (1), then return true
+      if (CompareFileTime (&ftSystemTime, &ftAdjustedFileTime) == 1)
+        return true;
+    }
 
-        // Compare with system time, and if system time is later (1), then return true
-        if (CompareFileTime (&ftSystemTime, &ftAdjustedFileTime) == 1)
-          return true;
-      }
+    return false;
+  };
 
-      return false;
-    };
+  HANDLE hFind        = INVALID_HANDLE_VALUE;
+  WIN32_FIND_DATA ffd = { };
 
-    HANDLE hFind        = INVALID_HANDLE_VALUE;
-    WIN32_FIND_DATA ffd = { };
+  hFind = 
+    FindFirstFileExW ((tempDir + L"*").c_str(), FindExInfoBasic, &ffd, FindExSearchNameMatch, NULL, NULL);
 
-    hFind = 
-      FindFirstFileExW ((tempDir + L"*").c_str(), FindExInfoBasic, &ffd, FindExSearchNameMatch, NULL, NULL);
+  if (INVALID_HANDLE_VALUE != hFind)
+  {
+    if (_isDayOld  (ffd.ftLastWriteTime))
+      DeleteFile  ((tempDir + ffd.cFileName).c_str());
 
-    if (INVALID_HANDLE_VALUE != hFind)
-    {
+    while (FindNextFile (hFind, &ffd))
       if (_isDayOld  (ffd.ftLastWriteTime))
         DeleteFile  ((tempDir + ffd.cFileName).c_str());
 
-      while (FindNextFile (hFind, &ffd))
-        if (_isDayOld  (ffd.ftLastWriteTime))
-          DeleteFile  ((tempDir + ffd.cFileName).c_str());
-
-      FindClose (hFind);
-    }
+    FindClose (hFind);
   }
 }
 
@@ -967,13 +1039,18 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
   //SKIF_Util_Debug_LogUserNames ( );
 
+  // First round
   if (_Signal.Minimize)
     nCmdShow = SW_SHOWMINNOACTIVE;
 
+  if (nCmdShow == SW_MINIMIZE && _registry.bCloseToTray)
+    nCmdShow = SW_HIDE;
+
+  // Second round
   if (nCmdShow == SW_SHOWMINNOACTIVE)
     startedMinimized = true;
   else if (nCmdShow == SW_HIDE)
-    startedMinimized = true;
+    startedMinimized = SKIF_isTrayed = true;
 
   SKIF_nCmdShow = nCmdShow;
 
@@ -1018,12 +1095,10 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
   hIcon = LoadIcon (hModSKIF, MAKEINTRESOURCE (IDI_SKIV));
 
-#if 0
   // The notify window has been created but not displayed.
   // Now we have a parent window to which a notification tray icon can be associated.
   SKIF_Shell_CreateNotifyIcon       ();
   SKIF_Shell_CreateUpdateNotifyMenu ();
-#endif
 
   // Initialize the gamepad input child thread
   static SKIF_GamePadInputHelper& _gamepad =
@@ -1098,8 +1173,9 @@ wWinMain ( _In_     HINSTANCE hInstance,
   ImGuiWindowClass SKIF_AppWindow;
   // This prevents the main window from ever being merged into the implicit Debug##Default fallback window...
   // ... which works around a pesky bug that occurs on OS snapping/resizing...
+  // ... and prevents the window from constantly being re-created infinitely...
   SKIF_AppWindow.ViewportFlagsOverrideSet |= ImGuiViewportFlags_NoAutoMerge;
-  SKIF_AppWindow.ViewportFlagsOverrideSet |= ImGuiViewportFlags_CanHostOtherWindows;
+//SKIF_AppWindow.ViewportFlagsOverrideSet |= ImGuiViewportFlags_CanHostOtherWindows;
 
   // Enable ImGui's debug logging output
   ImGui::GetCurrentContext()->DebugLogFlags = ImGuiDebugLogFlags_OutputToTTY | ((_registry.isDevLogging())
@@ -1134,10 +1210,6 @@ wWinMain ( _In_     HINSTANCE hInstance,
   // Message queue/pump
   MSG msg = { };
 
-  // Variables related to the display SKIF is visible on
-  ImVec2  windowPos;
-  ImRect  windowRect       = ImRect(0.0f, 0.0f, 0.0f, 0.0f);
-  ImRect  monitor_extent   = ImRect(0.0f, 0.0f, 0.0f, 0.0f);
   RepositionSKIF   = (! PathFileExistsW (L"SKIV.ini") || _registry.bOpenAtCursorPosition);
 
   // Add the status bar if it is not disabled
@@ -1155,14 +1227,20 @@ wWinMain ( _In_     HINSTANCE hInstance,
   bool repositionToCenter = false;
 
   // Do final checks and actions if we are expected to live longer than a few seconds
+  /*
   if (! _Signal.Launcher && ! _Signal.LauncherURI && ! _Signal.Quit && ! _Signal.ServiceMode)
   {
     // Register HDR toggle hotkey (if applicable)
     SKIF_Util_RegisterHotKeyHDRToggle ( );
 
     // Register service (auto-stop) hotkey
-    //SKIF_Util_RegisterHotKeySVCTemp   ( );
+    SKIF_Util_RegisterHotKeySVCTemp   ( );
   }
+  */
+
+  // Register snipping hotkey
+  SKIF_Util_RegisterHotKeyCapture (&_registry.kbCaptureRegion, true);
+  SKIF_Util_RegisterHotKeyCapture (&_registry.kbCaptureScreen, false);
 
   // Register the HTML Format for the clipboard
   CF_HTML = RegisterClipboardFormatW (L"HTML Format");
@@ -1180,7 +1258,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
   while (! SKIF_Shutdown.load() ) // && IsWindow (hWnd) )
   {
     // Reset on each frame
-    SKIF_MouseDragMoveAllowed = true;
+    SKIF_MouseDragMoveAllowed = (! _registry._SnippingMode && ! SKIF_ImGui_IsFullscreen (SKIF_ImGui_hWnd));
     imageFadeActive           = false; // Assume there's no cover fade effect active
     msg                       = { };
     static UINT uiLastMsg     = 0x0;
@@ -1222,7 +1300,13 @@ wWinMain ( _In_     HINSTANCE hInstance,
          hotkeyCtrlD = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_D     )->DownDuration == 0.0f), // Viewer: Toggle Image Details
          hotkeyCtrlF = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_F     )->DownDuration == 0.0f), // Toggle Fullscreen Mode
          hotkeyCtrlV = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_V     )->DownDuration == 0.0f), // Paste data through the clipboard
-         hotkeyCtrlN = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_N     )->DownDuration == 0.0f); // Minimize app
+         hotkeyCtrlN = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_N     )->DownDuration == 0.0f), // Minimize app
+         hotkeyCtrlS = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_S     )->DownDuration == 0.0f), // Save Current Image (in same Dynamic Range)
+         hotkeyCtrlX = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_X     )->DownDuration == 0.0f); // Export Current Image (HDR -> SDR)
+
+    // No more compiler warnings dammit!
+    std::ignore = hotkeyF5;
+    std::ignore = hotkeyCtrlR;
 
     // Handled in viewer.cpp
        //hotkeyCtrl1 = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_1     )->DownDuration == 0.0f), // Viewer -> Image Scaling: View actual size (1:1 / None)
@@ -1256,7 +1340,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
         DispatchMessage  (&msg);
 
         if (msg.hwnd == 0) // Don't redraw on thread messages
-          msgDontRedraw = true;
+          // Unless snipping
+          msgDontRedraw = (! _registry._SnippingMode);
 
         if (msg.message == WM_MOUSEMOVE)
         {
@@ -1377,7 +1462,15 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
     // F11 / Ctrl+F toggles fullscreen mode
     if (hotkeyF11 || hotkeyCtrlF)
-      SKIF_ImGui_SetFullscreen (! SKIF_ImGui_IsFullscreen( ));
+    {
+      POINT    ptCursor = {     };
+      HMONITOR monitor  = NULL;
+
+      if (GetCursorPos (&ptCursor))
+        monitor = MonitorFromPoint (ptCursor, MONITOR_DEFAULTTONULL);
+
+      SKIF_ImGui_SetFullscreen (SKIF_ImGui_hWnd, ! SKIF_ImGui_IsFullscreen (SKIF_ImGui_hWnd), monitor);
+    }
 
     if (hotkeyCtrlD)
     {
@@ -1416,31 +1509,6 @@ wWinMain ( _In_     HINSTANCE hInstance,
     //PLOG_INFO << "Operation took " << (temp_time - SKIF_Util_timeGetTime1()) << " ms.";
 
 #pragma region New UI Frame
-
-#if 0
-    if (RecreateSwapChains)
-    {
-      // If the device have been removed/reset/hung, we need to invalidate all resources
-      if (FAILED (SKIF_pd3dDevice->GetDeviceRemovedReason ( )))
-      {
-        // Invalidate resources
-        ImGui_ImplDX11_InvalidateDeviceObjects ( );
-        ImGui_ImplDX11_InvalidateDevice        ( );
-        CleanupDeviceD3D                       ( );
-
-        // Signal to ImGui_ImplDX11_NewFrame() that the swapchains needs recreating
-        RecreateSwapChains = true;
-
-        // Recreate
-        CreateDeviceD3D                        (SKIF_Notify_hWnd);
-        ImGui_ImplDX11_Init                    (SKIF_pd3dDevice, SKIF_pd3dDeviceContext);
-
-        // This is used to flag that rendering should not occur until
-        // any loaded textures and such also have been unloaded
-        invalidatedDevice = 1;
-      }
-    }
-#endif
     
     extern bool
       SKIF_ImGui_ImplWin32_WantUpdateMonitors (void);
@@ -1528,7 +1596,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
       // Resize app window based on the image resolution
       extern bool tryingToLoadImage;
-      bool resizeAppWindow = (_registry.bAdjustWindow && ! SKIF_ImGui_IsFullscreen ( ) && SKIF_ImGui_hWnd != NULL)
+      bool resizeAppWindow = (_registry.bAdjustWindow && SKIF_ImGui_hWnd != NULL && ! SKIF_ImGui_IsFullscreen (SKIF_ImGui_hWnd))
                            ? (! tryingToLoadImage && SKIV_ResizeApp.x != 0.0f && ! (GetWindowLongPtr (SKIF_ImGui_hWnd, GWL_STYLE) & WS_MAXIMIZE))
                            : false;
 
@@ -1558,12 +1626,32 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
         if (size_maximum.x < SKIV_ResizeApp.x || size_maximum.y < SKIV_ResizeApp.y)
         {
-          SKIF_ImGui_SetFullscreen (! SKIF_ImGui_IsFullscreen( ));
+          SKIF_ImGui_SetFullscreen (SKIF_ImGui_hWnd, ! SKIF_ImGui_IsFullscreen (SKIF_ImGui_hWnd));
           resizeAppWindow = false;
         }
 
         else
+        {
           ImGui::SetNextWindowSize (SKIV_ResizeApp);
+
+          ImVec2 topLeft      = windowPos,
+                 bottomRight  = windowPos + SKIV_ResizeApp,
+                 newWindowPos = windowPos;
+
+          if (      topLeft.x < monitor_extent.Min.x )
+               newWindowPos.x = monitor_extent.Min.x;
+          if (      topLeft.y < monitor_extent.Min.y )
+               newWindowPos.y = monitor_extent.Min.y;
+
+          if (  bottomRight.x > monitor_extent.Max.x )
+               newWindowPos.x = monitor_extent.Max.x - SKIV_ResizeApp.x;
+          if (  bottomRight.y > monitor_extent.Max.y )
+               newWindowPos.y = monitor_extent.Max.y - SKIV_ResizeApp.y;
+
+          if ( newWindowPos.x != windowPos.x ||
+               newWindowPos.y != windowPos.y )
+            ImGui::SetNextWindowPos (newWindowPos);
+        }
 
         SKIV_ResizeApp = ImVec2 (0.0f, 0.0f);
       }
@@ -1594,6 +1682,9 @@ wWinMain ( _In_     HINSTANCE hInstance,
       else
         ImGui::SetNextWindowSizeConstraints (wnd_minimum_size, ImVec2 (FLT_MAX, FLT_MAX));
 
+      const bool bNoMove =
+        (io.KeyCtrl || ! SKIF_MouseDragMoveAllowed);
+
       ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2());
       ImGui::PushStyleVar (ImGuiStyleVar_WindowBorderSize, 0.0f); // Disable ImGui's 1 px window border
       ImGui::Begin (SKIV_WINDOW_TITLE_HASH,
@@ -1603,7 +1694,10 @@ wWinMain ( _In_     HINSTANCE hInstance,
                          ImGuiWindowFlags_NoTitleBar        |
                          ImGuiWindowFlags_NoScrollbar       | // Hide the scrollbar for the main window
                          ImGuiWindowFlags_NoScrollWithMouse | // Prevent scrolling with the mouse as well
-           (io.KeyCtrl ? ImGuiWindowFlags_NoMove : ImGuiWindowFlags_None)              // This was added in #8bf06af, but I am unsure why.
+              (bNoMove ? ImGuiWindowFlags_NoMove       |
+                         ImGuiWindowFlags_NoResize     |
+                         ImGuiWindowFlags_NoDecoration :
+                         ImGuiWindowFlags_None)
                       // The only comment is that it was DPI related? This prevents Ctrl+Tab from moving the window so must not be used
       );
       ImGui::PopStyleVar (2);
@@ -1679,289 +1773,420 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
           OpenFileDialog = PopupState_Open;
         }
+
+        if (allowShortcutCtrlA && (hotkeyCtrlX || hotkeyCtrlS))
+        {
+          if (SKIF_Tab_Selected != UITab_Viewer)
+              SKIF_Tab_ChangeTo  = UITab_Viewer;
+
+          if (hotkeyCtrlX)
+            ExportSDRDialog = PopupState_Open;
+          if (hotkeyCtrlS)
+            SaveFileDialog = PopupState_Open;
+        }
       }
 
       allowShortcutCtrlA = true;
 
 
 
-      // Escape does situational stuff
-      if (hotkeyEsc)
+      ImGui::BeginGroup ();
+
+      static bool last_snip_state = false;
+
+      // Begin Snipping Mode
+      if (_registry._SnippingMode)
       {
-        if (PopupMessageInfo != PopupState_Closed)
-          SKIF_ImGui_PopBackInfoPopup ( );
 
-        else if
-          (UpdatePromptPopup != PopupState_Closed ||
-           HistoryPopup      != PopupState_Closed  )
+#pragma region UI: Snipping Mode
+
+        extern skiv_image_desktop_s SKIV_DesktopImage;
+
+        bool SKIV_HDR  = SKIF_ImGui_IsRendererHDR (SKIF_ImGui_hWnd);
+        bool HDR_Image = SKIV_DesktopImage._hdr_image;
+        bool sRGB_Hack = SKIV_DesktopImage._srgb_hack;
+
+        if (SKIV_DesktopImage._srv != nullptr)
         {
-          UpdatePromptPopup   = PopupState_Closed;
-          HistoryPopup        = PopupState_Closed;
 
-          ImGui::ClosePopupsOverWindow (ImGui::GetCurrentWindowRead ( ), false);
+          static const ImVec2 srgb_uv0       = ImVec2 (0, 0), // _SRGB format
+                              srgb_uv1       = ImVec2 (1, 1), // _SRGB format
+                              force_srgb_uv0 = ImVec2 (-4096.0f, -4096.0f), // Non-sRGB formats needs a hack to force them to appear properly
+                              force_srgb_uv1 = ImVec2 (-5120.0f, -5120.0f), // Non-sRGB formats needs a hack to force them to appear properly
+                              hdr_uv0        = ImVec2 (-1024.0f, -1024.0f), // HDR formats
+                              hdr_uv1        = ImVec2 (-2048.0f, -2048.0f); // HDR formats
+
+          SKIF_ImGui_OptImage (SKIV_DesktopImage._srv, SKIV_DesktopImage._resolution,
+                                                                (SKIV_HDR && HDR_Image) ? hdr_uv0 : (sRGB_Hack) ? force_srgb_uv0 : srgb_uv0,
+                                                                (SKIV_HDR && HDR_Image) ? hdr_uv1 : (sRGB_Hack) ? force_srgb_uv1 : srgb_uv1);
+
+          ImDrawList* draw_list =
+            ImGui::GetForegroundDrawList ();
+
+          draw_list->AddRectFilled (ImVec2 (0, 0), SKIV_DesktopImage._resolution, ImGui::GetColorU32 (IM_COL32(20, 20, 20, 80))); // Transparent Overlay
+        }
+
+        static ImRect selection;
+        static ImRect selection_auto;
+#if 0
+
+        static ImVec2 last_non_snip_pos;
+        static ImVec2 last_non_snip_size;
+
+        if (last_snip_state != _registry._SnippingMode)
+        {
+          last_non_snip_size = ImGui::GetWindowSize ();
+          last_non_snip_pos  = ImGui::GetWindowPos  ();
+          selection.Min      = ImGui::GetMousePos   ();
+
+          ImGui::SetWindowPos  (ImVec2 (0.0f, 0.0f)); // TODO
+          ImGui::SetWindowSize (vDesktopSize);
+        }
+#endif
+
+        if (GetForegroundWindow () != SKIF_ImGui_hWnd)
+            SetForegroundWindow (     SKIF_ImGui_hWnd);
+
+        auto _RestoreWindow = [&](void) -> void
+        {
+          _registry._SnippingMode       = false;
+          _registry._SnippingModeExit   = false;
+
+          SKIF_ImGui_SetFullscreen (SKIF_ImGui_hWnd, false);
+
+          //ImGui::SetWindowSize (last_non_snip_size);
+          //ImGui::SetWindowPos  (last_non_snip_pos);
+
+          extern HWND hwndBeforeSnip;
+          extern HWND hwndTopBeforeSnip;
+          extern bool iconicBeforeSnip;
+          extern bool trayedBeforeSnip;
+
+          if (iconicBeforeSnip)
+            ShowWindow (SKIF_ImGui_hWnd, SW_MINIMIZE);
+
+          if (trayedBeforeSnip)
+            ShowWindow (SKIF_ImGui_hWnd, SW_HIDE);
+
+          SetForegroundWindow (hwndBeforeSnip);
+
+          // Put SKIV back in the correct Z-order
+          SetWindowPos (SKIF_ImGui_hWnd, hwndTopBeforeSnip, 0,0,0,0, SWP_NOSIZE|SWP_NOMOVE|SWP_NOACTIVATE);
+
+          ImGui::GetIO ().MouseDown         [0] = false;
+          ImGui::GetIO ().MouseDownDuration [0] = -1.0f;
+        };
+
+        // Let us store all ignored windows in a vector for quick reuse
+        static std::vector<HWND> ignoredWindows = { };
+
+        auto _IgnoreWindow = [&](HWND hWnd) -> bool
+        {
+          if (std::find (ignoredWindows.begin(), ignoredWindows.end(), hWnd) != ignoredWindows.end())
+            return true;
+
+          // Window class names to ignore
+          static const std::vector<std::wstring> ignoreClassNames =
+          {
+            L"Progman",                   // Program Manager
+            L"Button",                    // Start button?
+          //L"ApplicationFrameWindow",    // UWP stuff (ignores HDR + WCG Image Viewer)
+            L"Windows.UI.Core.CoreWindow" // UWP stuff
+          };
+
+          wchar_t wszWindowTextBuffer [64] = { };
+
+          // Ignore windows of various characteristics
+          if (
+               SKIF_ImGui_hWnd  ==   hWnd
+            ||    ! IsWindowVisible (hWnd)
+            || (RealGetWindowClassW (hWnd, wszWindowTextBuffer, 64) && std::find (ignoreClassNames.begin(), ignoreClassNames.end(), wszWindowTextBuffer) != ignoreClassNames.end())
+            ||     ! GetWindowTextW (hWnd, wszWindowTextBuffer, 64)
+          //|| (GetWindowLongPtr (hWnd, GWL_EXSTYLE) & WS_EX_TOOLWINDOW)
+          //|| (GetWindowLongPtr (hWnd, GWL_STYLE)   & WS_POPUP)  // Ignores some games, but allows some invisible stupid windows (UWP)
+            )
+          {
+            ignoredWindows.push_back (hWnd);
+            return true;
+          }
+
+          return false;
+        };
+
+        auto _GetRectBelowCursor = [&](void) -> void
+        {
+          std::vector<HWND> vHWNDs;
+
+          // Retrieve the RECT of the window below the cursor
+          EnumWindows ( []( HWND   hWnd,
+                            LPARAM lParam ) -> BOOL
+          {
+            auto pVector = reinterpret_cast<std::vector<HWND>*>(lParam);
+            pVector->push_back (hWnd);
+
+            return TRUE;
+          }, reinterpret_cast<LPARAM>(&vHWNDs));
+
+          if (! vHWNDs.empty())
+          {
+            POINT point = { };
+
+            if (GetCursorPos (&point))
+            {
+              for (auto& hWnd : vHWNDs)
+              {
+                if (_IgnoreWindow (hWnd))
+                  continue;
+
+                RECT rect = { };
+
+                if (GetWindowRect (hWnd, &rect))
+                {
+                  HRGN hRgn = CreateRectRgn (rect.left, rect.top, rect.right, rect.bottom);
+                  bool breakLoop = false;
+
+                  if (PtInRegion (hRgn, point.x, point.y))
+                  {
+                    // Ensure the current selected window is the top-most
+                    /* Does not seem to be required
+                    HWND top_most = hWnd;
+                    HWND parent   = hWnd;
+
+                    while (false)
+                    {
+                      parent = GetNextWindow (parent, GW_HWNDPREV);
+
+                      if (parent != NULL && ! _IgnoreWindow (parent))
+                      {
+                        RECT new_rect = { };
+                        if (GetWindowRect (parent, &new_rect))
+                        {
+                          hRgn = CreateRectRgn (new_rect.left, new_rect.top, new_rect.right, new_rect.bottom);
+
+                          if (PtInRegion (hRgn, point.x, point.y))
+                          {
+                            rect     = new_rect;
+                            top_most = parent;
+                          }
+                        }
+                      }
+
+                      else
+                        break;
+                    }
+                    */
+
+                    selection_auto.Min.x = static_cast<float> (rect.left);
+                    selection_auto.Min.y = static_cast<float> (rect.top);
+                    selection_auto.Max.x = static_cast<float> (rect.right);
+                    selection_auto.Max.y = static_cast<float> (rect.bottom);
+
+                    /*
+                    PLOG_VERBOSE << "----------------------";
+                    PLOG_VERBOSE << "HWND:  " << top_most;
+                    wchar_t                         wszRealWindowClass [64] = { };
+                    if (RealGetWindowClassW (top_most,  wszRealWindowClass, 64))
+                    PLOG_VERBOSE << "Class: " << wszRealWindowClass;
+                    PLOG_VERBOSE << "Pos:   " << point.x << "," << point.y;
+                    PLOG_VERBOSE << "Min:   " << selection_auto.Min.x << "," << selection_auto.Min.y;
+                    PLOG_VERBOSE << "Max:   " << selection_auto.Max.x << "," << selection_auto.Max.y;
+                    */
+
+                    breakLoop = true;
+                  }
+ 
+                  DeleteObject (hRgn);
+
+                  if (breakLoop)
+                    break;
+                }
+              }
+            }
+          }
+        };
+
+                          // Desktop Pos,      Desktop Pos + Desktop Size
+        ImRect allowable (monitor_extent.Min, SKIV_DesktopImage._resolution);
+        ImRect capture_area;
+
+        static bool clicked = false;
+
+        if (! clicked && SKIF_ImGui_SelectionRect (&selection, allowable, 0, SelectionFlag_Filled))
+        {
+          _registry._SnippingModeExit = true;
+          capture_area = selection;
+        }
+
+        else if (! ImGui::IsMouseDragging (ImGuiMouseButton_Left))
+        {
+          _GetRectBelowCursor ( );
+
+          // Keep the selection within the allowed rectangle
+          selection_auto.ClipWithFull (allowable);
+
+          if (ImGui::IsMouseClicked (ImGuiMouseButton_Left))
+            clicked = true;
+
+          else if (ImGui::IsMouseReleased (ImGuiMouseButton_Left))
+          {
+            clicked = false;
+            _registry._SnippingModeExit = true;
+            capture_area = selection_auto;
+          }
+
+          else if (selection_auto.Min != selection_auto.Max)
+          {
+            ImDrawList* draw_list =
+              ImGui::GetForegroundDrawList ();
+
+            draw_list->AddRect       (selection_auto.Min, selection_auto.Max, ImGui::GetColorU32 (IM_COL32(0,130,216,255)), 0.0f, 0, 5.0f); // Border
+          //draw_list->AddRectFilled (selection_auto.Min, selection_auto.Max, ImGui::GetColorU32 (IM_COL32(0,130,216,50)));                 // Background
+          }
         }
 
         else
-        {
-          switch (SKIF_Tab_Selected)
-          {
-          case UITab_None:
-            break;
-          case UITab_Viewer:
-            if (SKIF_ImGui_IsFullscreen())
-              SKIF_ImGui_SetFullscreen(false);
-            else
-              bKeepWindowAlive = false;
-            break;
-          case UITab_Settings:
-            SKIF_Tab_ChangeTo = UITab_Viewer;
-            break;
-          case UITab_About:
-            break;
-          case UITab_ALL:
-            break;
-          default:
-            break;
-          }
-        }
-      }
+          clicked = false;
 
-      ImGui::BeginGroup ();
+        if (capture_area.GetArea() != 0)
+        {
+          ignoredWindows.clear();
+
+          PLOG_VERBOSE << "Attempting to capture region...";
+
+          SKIV_Image_CaptureRegion (capture_area);
+        }
+
+        if (_registry._SnippingModeExit)
+          _RestoreWindow ( );
+
+#pragma endregion
+
+      }
 
       // Begin Large Mode
+      else
+      {
 #pragma region UI: Large Mode
 
-      // TAB: Viewer
-      if (SKIF_Tab_Selected == UITab_Viewer ||
-          SKIF_Tab_ChangeTo == UITab_Viewer)
-      {
-        ImGui::PushStyleVar (ImGuiStyleVar_FramePadding, ImVec2());
-        bool show = SKIF_ImGui_BeginMainChildFrame (ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoScrollbar);
-        ImGui::PopStyleVar  ( );
-
-        /*
-        if (! _registry.bFirstLaunch)
+        // TAB: Viewer
+        if (SKIF_Tab_Selected == UITab_Viewer ||
+            SKIF_Tab_ChangeTo == UITab_Viewer)
         {
-          // Select the About tab on first launch
-          _registry.bFirstLaunch = ! _registry.bFirstLaunch;
-          SKIF_Tab_ChangeTo = UITab_About;
+          ImGui::PushStyleVar (ImGuiStyleVar_FramePadding, ImVec2());
+          bool show = SKIF_ImGui_BeginMainChildFrame (ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoScrollbar);
+          ImGui::PopStyleVar  ( );
 
-          // Store in the registry so this only occur once.
-          _registry.regKVFirstLaunch.putData(_registry.bFirstLaunch);
-        }
-        */
+          /*
+          if (! _registry.bFirstLaunch)
+          {
+            // Select the About tab on first launch
+            _registry.bFirstLaunch = ! _registry.bFirstLaunch;
+            SKIF_Tab_ChangeTo = UITab_About;
 
-        extern float fTint;
-        if (SKIF_Tab_ChangeTo == UITab_Viewer)
-        {
-          // Reset the dimmed cover when going back to the tab
-          if (_registry.iDarkenImages == 2)
-            fTint = 0.75f;
-        }
+            // Store in the registry so this only occur once.
+            _registry.regKVFirstLaunch.putData(_registry.bFirstLaunch);
+          }
+          */
 
-        if (show)
-        {
-          SKIF_UI_Tab_DrawViewer ( );
+          extern float fTint;
+          if (SKIF_Tab_ChangeTo == UITab_Viewer)
+          {
+            // Reset the dimmed cover when going back to the tab
+            if (_registry.iDarkenImages == 2)
+              fTint = 0.75f;
+          }
+
+          if (show)
+          {
+            SKIF_UI_Tab_DrawViewer ( );
           
-          SKIF_ImGui_AutoScroll  (true, SKIF_ImGuiAxis_Both);
-          SKIF_ImGui_UpdateScrollbarState ( );
+            SKIF_ImGui_AutoScroll  (true, SKIF_ImGuiAxis_Both);
+            SKIF_ImGui_UpdateScrollbarState ( );
 
-          ImGui::EndChild        ( );
+            // Dummy required here to solve ImGui::ErrorCheckUsingSetCursorPosToExtendParentBoundaries()
+            ImGui::Dummy (ImVec2 (0, 0));
+
+            ImGui::EndChild        ( );
+          }
+
+          if (SKIF_Tab_ChangeTo == UITab_Viewer)
+          {
+            PLOG_DEBUG << "Switched to tab: Library";
+            SKIF_Tab_Selected = UITab_Viewer;
+            SKIF_Tab_ChangeTo = UITab_None;
+          }
         }
 
-        if (SKIF_Tab_ChangeTo == UITab_Viewer)
+        // Change to Viewer tab on the next frame if a drop occurs on another tab
+        else if (! dragDroppedFilePath.empty()) {
+          SKIF_Tab_ChangeTo = UITab_Viewer;
+        }
+
+
+        // TAB: Settings
+        if (SKIF_Tab_Selected == UITab_Settings ||
+            SKIF_Tab_ChangeTo == UITab_Settings)
+
         {
-          PLOG_DEBUG << "Switched to tab: Library";
-          SKIF_Tab_Selected = UITab_Viewer;
-          SKIF_Tab_ChangeTo = UITab_None;
+          // Refresh things when visiting from another tab or when forced
+          if (SKIF_Tab_ChangeTo == UITab_Settings || RefreshSettingsTab)
+            SKIF_Util_IsHDRActive (true);
+
+          ImGui::PushStyleVar (ImGuiStyleVar_FramePadding, ImVec2 (15.0f, 15.0f) * SKIF_ImGui_GlobalDPIScale);
+          bool show = SKIF_ImGui_BeginMainChildFrame ( );
+          ImGui::PopStyleVar  ( );
+
+          if (show)
+          {
+            SKIF_UI_Tab_DrawSettings ( );
+
+            SKIF_ImGui_AutoScroll  (true, SKIF_ImGuiAxis_Both);
+            SKIF_ImGui_UpdateScrollbarState ( );
+
+            ImGui::EndChild        ( );
+          }
+
+          if (SKIF_Tab_ChangeTo == UITab_Settings)
+          {
+            PLOG_DEBUG << "Switched to tab: Settings";
+            SKIF_Tab_Selected  = UITab_Settings;
+            SKIF_Tab_ChangeTo  = UITab_None;
+            RefreshSettingsTab = false;
+
+          }
         }
-      }
-
-      // Change to Viewer tab on the next frame if a drop occurs on another tab
-      else if (! dragDroppedFilePath.empty()) {
-        SKIF_Tab_ChangeTo = UITab_Viewer;
-      }
-
-
-      // TAB: Settings
-      if (SKIF_Tab_Selected == UITab_Settings ||
-          SKIF_Tab_ChangeTo == UITab_Settings)
-
-      {
-        // Refresh things when visiting from another tab or when forced
-        if (SKIF_Tab_ChangeTo == UITab_Settings || RefreshSettingsTab)
-          SKIF_Util_IsHDRActive (true);
-
-        ImGui::PushStyleVar (ImGuiStyleVar_FramePadding, ImVec2 (15.0f, 15.0f) * SKIF_ImGui_GlobalDPIScale);
-        bool show = SKIF_ImGui_BeginMainChildFrame ( );
-        ImGui::PopStyleVar  ( );
-
-        if (show)
-        {
-          SKIF_UI_Tab_DrawSettings ( );
-
-          SKIF_ImGui_AutoScroll  (true, SKIF_ImGuiAxis_Both);
-          SKIF_ImGui_UpdateScrollbarState ( );
-
-          ImGui::EndChild        ( );
-        }
-
-        if (SKIF_Tab_ChangeTo == UITab_Settings)
-        {
-          PLOG_DEBUG << "Switched to tab: Settings";
-          SKIF_Tab_Selected  = UITab_Settings;
-          SKIF_Tab_ChangeTo  = UITab_None;
-          RefreshSettingsTab = false;
-
-        }
-      }
 
 
 #if 0
-      // TAB: About
-      if (SKIF_Tab_Selected == UITab_About ||
-          SKIF_Tab_ChangeTo == UITab_About)
-      {
-        SKIF_ImGui_BeginMainChildFrame ( );
-
-        SKIF_UI_Tab_DrawAbout( );
-
-        // Engages auto-scroll mode (left click drag on touch + middle click drag on non-touch)
-        SKIF_ImGui_AutoScroll  (true);
-
-        if (SKIF_Tab_ChangeTo == UITab_About)
+        // TAB: About
+        if (SKIF_Tab_Selected == UITab_About ||
+            SKIF_Tab_ChangeTo == UITab_About)
         {
-          PLOG_DEBUG << "Switched to tab: About";
-          SKIF_Tab_Selected = UITab_About;
-          SKIF_Tab_ChangeTo = UITab_None;
+          SKIF_ImGui_BeginMainChildFrame ( );
 
+          SKIF_UI_Tab_DrawAbout( );
+
+          // Engages auto-scroll mode (left click drag on touch + middle click drag on non-touch)
+          SKIF_ImGui_AutoScroll  (true);
+
+          if (SKIF_Tab_ChangeTo == UITab_About)
+          {
+            PLOG_DEBUG << "Switched to tab: About";
+            SKIF_Tab_Selected = UITab_About;
+            SKIF_Tab_ChangeTo = UITab_None;
+
+          }
+
+          ImGui::EndChild         ( );
         }
-
-        ImGui::EndChild         ( );
-      }
 #endif
 
 #pragma endregion
-
-      ImGui::EndGroup             ( );
-
-#pragma region StatusBar
-
-      if (false)
-      {
-        // This counteracts math performed on SKIF_vecRegularMode.y at the beginning of the frame
-        if (_registry.bUIStatusBar)
-          ImGui::SetCursorPosY (ImGui::GetCursorPosY ( ) - 2.0f * SKIF_ImGui_GlobalDPIScale);
-        
-        // Status Bar at the bottom
-        if (_registry.bUIStatusBar)
-        {
-          ImGui::PushStyleVar (ImGuiStyleVar_FrameBorderSize, 0.0f);
-
-          // Begin Add Game
-          ImVec2 tmpPos = ImGui::GetCursorPos ( );
-
-          // Prevents selecting the Add Game or Filter button with a keyboard or gamepad (fixes awkward and annoying nav selection)
-          if (SKIF_Tab_Selected == UITab_Viewer)
-            ImGui::PushItemFlag   (ImGuiItemFlags_NoNav, true);
-
-          static bool btnHovered  = false;
-          ImGui::PushStyleColor (ImGuiCol_Button,        ImGui::GetStyleColorVec4 (ImGuiCol_WindowBg));
-          ImGui::PushStyleColor (ImGuiCol_ButtonHovered, ImGui::GetStyleColorVec4 (ImGuiCol_WindowBg)); //ImColor (64,  69,  82).Value);
-          ImGui::PushStyleColor (ImGuiCol_ButtonActive,  ImGui::GetStyleColorVec4 (ImGuiCol_WindowBg)); //ImColor (56, 60, 74).Value);
-
-          if (btnHovered)
-            ImGui::PushStyleColor (ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextCaption)); //ImVec4(1, 1, 1, 1));
-          else
-            ImGui::PushStyleColor (ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextBase)); //ImVec4(0.5f, 0.5f, 0.5f, 1.f));
-
-          if (ImGui::Button   (ICON_FA_SQUARE_PLUS " Add Game"))
-          {
-            //AddGamePopup = PopupState_Open;
-            if (SKIF_Tab_Selected != UITab_Viewer)
-              SKIF_Tab_ChangeTo = UITab_Viewer;
-          }
-
-          btnHovered = ImGui::IsItemHovered() || ImGui::IsItemActive();
-
-          ImGui::PopStyleColor   (4); // ImGuiCol_Text, ImGuiCol_ButtonActive, ImGuiCol_ButtonHovered, ImGuiCol_Button
-
-          if (SKIF_Tab_Selected == UITab_Viewer)
-            ImGui::PopItemFlag     ( );
-
-          ImGui::SetCursorPos    (tmpPos);
-          // End Add Game
-
-          // Begin Pulsating Refresh Icon
-          if (_updater.IsRunning ( ))
-          {
-            ImGui::SetCursorPosX (
-              ImGui::GetCursorPosX () +
-              ImGui::GetWindowSize ().x -
-                ( ImGui::CalcTextSize ( ICON_FA_ROTATE ).x ) -
-              ImGui::GetCursorPosX () -
-              ImGui::GetStyle   ().ItemSpacing.x * 2
-            );
-
-            ImGui::SetCursorPosY ( ImGui::GetCursorPosY () + ImGui::GetStyle ( ).FramePadding.y);
-
-            ImGui::TextColored ( ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextCaption) *
-                                  ImVec4 (0.75f, 0.75f, 0.75f, 0.50f + 0.5f * (float)sin (SKIF_Util_timeGetTime() * 1 * 3.14 * 2)
-                                 ), ICON_FA_ROTATE );
-          }
-
-          ImGui::SetCursorPos(tmpPos);
-          // End Refresh Icon
-
-          // Begin Status Bar Text
-          auto _StatusPartSize = [&](std::string& part) -> float
-          {
-            return
-              part.empty () ?
-                        0.0f : ImGui::CalcTextSize (
-                                              part.c_str ()
-                                                  ).x;
-          };
-
-          float fStatusWidth = _StatusPartSize (SKIF_StatusBarText),
-                fHelpWidth   = _StatusPartSize (SKIF_StatusBarHelp);
-
-          ImGui::SetCursorPosX (
-            ImGui::GetCursorPosX () +
-            ImGui::GetWindowSize ().x -
-              ( fStatusWidth +
-                fHelpWidth ) -
-            ImGui::GetCursorPosX () -
-            ImGui::GetStyle   ().ItemSpacing.x * 2
-          );
-
-          ImGui::SetCursorPosY ( ImGui::GetCursorPosY () + ImGui::GetStyle ( ).FramePadding.y);
-
-          ImGui::TextColored ( ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextCaption) * ImVec4 (0.75f, 0.75f, 0.75f, 1.00f),
-                                  "%s", SKIF_StatusBarText.c_str ()
-          );
-
-          if (! SKIF_StatusBarHelp.empty ())
-          {
-            ImGui::SameLine ();
-            ImGui::SetCursorPosX (
-              ImGui::GetCursorPosX () -
-              ImGui::GetStyle      ().ItemSpacing.x
-            );
-            ImGui::TextDisabled ("%s", SKIF_StatusBarHelp.c_str ());
-          }
-
-          // Clear the status every frame, it's mostly used for mouse hover tooltips.
-          SKIF_StatusBarText.clear ();
-          SKIF_StatusBarHelp.clear ();
-
-          // End Status Bar Text
-
-          ImGui::PopStyleVar ();
-        }
       }
 
-#pragma endregion
+      last_snip_state = _registry._SnippingMode;
+
+      ImGui::EndGroup             ( );
 
 #pragma region Shelly the Ghost
 
@@ -2034,7 +2259,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
             ImGui::PushStyleColor (ImGuiCol_Text, ImGui::GetStyleColorVec4 (ImGuiCol_WindowBg)); //ImVec4 (0.9F, 0.9F, 0.9F, 1.0f));
 
           if (ImGui::Button (ICON_FA_XMARK, ImVec2 ( 30.0f * SKIF_ImGui_GlobalDPIScale, 0.0f ) )) // HotkeyEsc is situational
-            hotkeyCtrlQ = true;
+            hotkeyEsc = true;
       
           if (_registry._StyleLightMode)
           {
@@ -2053,7 +2278,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
         ImGui::SetCursorPos (prevCursorPos);
 
-        ImGui::Dummy (ImVec2 (0, 0)); // Dummy required here to solve ImGui::ErrorCheckUsingSetCursorPosToExtendParentBoundaries()
+        // Dummy required here to solve ImGui::ErrorCheckUsingSetCursorPosToExtendParentBoundaries()
+        ImGui::Dummy (ImVec2 (0, 0));
       }
 
       // End of top right window buttons
@@ -2061,6 +2287,60 @@ wWinMain ( _In_     HINSTANCE hInstance,
 #pragma endregion
 
 #pragma region CaptionActions
+
+      // Escape does situational stuff
+      if (hotkeyEsc)
+      {
+        if (_registry._SnippingMode)
+          _registry._SnippingModeExit = true;
+
+        else if (PopupMessageInfo != PopupState_Closed)
+          SKIF_ImGui_PopBackInfoPopup ( );
+
+        else if
+          (UpdatePromptPopup != PopupState_Closed ||
+           HistoryPopup      != PopupState_Closed  )
+        {
+          UpdatePromptPopup   = PopupState_Closed;
+          HistoryPopup        = PopupState_Closed;
+
+          ImGui::ClosePopupsOverWindow (ImGui::GetCurrentWindowRead ( ), false);
+        }
+
+        else
+        {
+          switch (SKIF_Tab_Selected)
+          {
+          case UITab_None:
+            break;
+          case UITab_Viewer:
+            if (SKIF_ImGui_IsFullscreen (SKIF_ImGui_hWnd))
+              SKIF_ImGui_SetFullscreen  (SKIF_ImGui_hWnd, false);
+
+            else if (_registry.bCloseToTray && bKeepWindowAlive && ! SKIF_isTrayed)
+            {
+              bKeepWindowAlive = true;
+              ShowWindow   (SKIF_ImGui_hWnd, SW_MINIMIZE);
+              ShowWindow   (SKIF_ImGui_hWnd, SW_HIDE);
+              UpdateWindow (SKIF_ImGui_hWnd);
+              SKIF_isTrayed = true;
+            }
+
+            else
+              bKeepProcessAlive = false;
+            break;
+          case UITab_Settings:
+            SKIF_Tab_ChangeTo = UITab_Viewer;
+            break;
+          case UITab_About:
+            break;
+          case UITab_ALL:
+            break;
+          default:
+            break;
+          }
+        }
+      }
 
       if (hotkeyCtrlN)
         ShowWindow (SKIF_ImGui_hWnd, SW_MINIMIZE);
@@ -2348,7 +2628,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
         ImGui::TextColored (ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Success), updateTxt.c_str());
         */
 
-        ImGui::Text        ("You are currently using");
+        ImGui::Text        ("You are using");
         ImGui::SameLine    ( );
         ImGui::TextColored (ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Info), "Special K Image Viewer v " SKIV_VERSION_STR_A);
 
@@ -2734,7 +3014,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
     }
 
     // Conditional rendering, but only if SKIF_ImGui_hWnd has actually been created
-    bool bRefresh = (SKIF_ImGui_hWnd != NULL && IsIconic (SKIF_ImGui_hWnd)) ? false : true;
+    bool bRefresh = (SKIF_ImGui_hWnd != NULL && (SKIF_isTrayed || IsIconic (SKIF_ImGui_hWnd))) ? false : true;
 
     if (invalidatedDevice > 0 && SKIF_Tab_Selected == UITab_Viewer)
       bRefresh = false;
@@ -3079,6 +3359,11 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
   PLOG_INFO << "Exited main loop...";
 
+  SKIF_Util_UnregisterHotKeyCapture    (true);
+  SKIF_Util_UnregisterHotKeyCapture    (false);
+  //SKIF_Util_UnregisterHotKeySVCTemp   ( );
+  //SKIF_Util_UnregisterHotKeyHDRToggle ( );
+
   PLOG_INFO << "Killing timers...";
   KillTimer (SKIF_Notify_hWnd, IDT_REFRESH_TOOLTIP);
   KillTimer (SKIF_Notify_hWnd, IDT_REFRESH_UPDATER);
@@ -3392,6 +3677,81 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
   // We don't define this here to ensure it doesn't get created before we are ready to handle it
 //static SKIF_Updater&          _updater    = SKIF_Updater         ::GetInstance ( );
 
+  auto _EnterSnippingMode = [&](bool region_) -> void
+  {
+    PLOG_VERBOSE << "Received request to capture desktop...";
+
+    if (! std::exchange (_registry._SnippingMode, true))
+    {
+      DirectX::ScratchImage        captured_img;
+      HRESULT hr =
+        SKIV_Image_CaptureDesktop (captured_img);
+
+      if (SUCCEEDED (hr))
+      {
+        PLOG_VERBOSE << "Desktop capture was successful!";
+
+        extern HWND hwndBeforeSnip;
+        extern HWND hwndTopBeforeSnip;
+        extern bool iconicBeforeSnip;
+        extern bool trayedBeforeSnip;
+
+        extern ImRect selection_rect;
+
+        if (! region_)
+        {
+          extern skiv_image_desktop_s SKIV_DesktopImage;
+          const ImRect screen = ImRect (ImVec2 (0, 0), SKIV_DesktopImage._resolution);
+          SKIV_Image_CaptureRegion (screen);
+          _registry._SnippingMode = false;
+        }
+
+        else
+        {
+          hwndBeforeSnip    = GetForegroundWindow ();
+          hwndTopBeforeSnip = GetWindow (SKIF_ImGui_hWnd, GW_HWNDNEXT);
+
+          trayedBeforeSnip = SKIF_isTrayed;
+          iconicBeforeSnip =
+            IsIconic (SKIF_ImGui_hWnd);
+
+          if (SKIF_isTrayed)
+          {   SKIF_isTrayed = false;
+            ShowWindow (SKIF_ImGui_hWnd, SW_SHOW);
+          }
+
+          if (iconicBeforeSnip)
+            ShowWindow (SKIF_ImGui_hWnd, SW_RESTORE);
+        
+          POINT    ptCursor = {     };
+          HMONITOR monitor  = NULL;
+
+          if (GetCursorPos (&ptCursor))
+            monitor = MonitorFromPoint (ptCursor, MONITOR_DEFAULTTONULL);
+
+          SKIF_ImGui_SetFullscreen (SKIF_ImGui_hWnd, true, monitor);
+
+          UpdateWindow (SKIF_ImGui_hWnd);
+
+          selection_rect.Min = ImVec2 (0.0f, 0.0f);
+          selection_rect.Max = ImVec2 (0.0f, 0.0f);
+
+          ImGui::GetIO ().MouseDown         [0] = false;
+          ImGui::GetIO ().MouseDownDuration [0] = -1.0f;
+        }
+      }
+
+      else
+        MessageBox (nullptr, L"Uh oh", L"Uh oh", MB_OK);
+    }
+
+    else
+    {
+      SetForegroundWindow (SKIF_ImGui_hWnd);
+    }
+  };
+
+
   switch (msg)
   {
     case WM_COPYDATA:
@@ -3478,9 +3838,15 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
       break;
 
     case WM_HOTKEY:
-      if (wParam == SKIF_HotKey_HDR)
-        SKIF_Util_EnableHDROutput ( );
-        
+      switch (wParam)
+      {
+      case SKIV_HotKey_CaptureRegion:
+        _EnterSnippingMode (true);
+        break;
+      case SKIV_HotKey_CaptureScreen:
+        _EnterSnippingMode (false);
+        break;
+      }
     break;
 
     // System wants to shut down and is asking if we can allow it
@@ -3569,7 +3935,19 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
     case WM_SKIF_MINIMIZE:
       if (SKIF_ImGui_hWnd != NULL)
-        ShowWindowAsync (SKIF_ImGui_hWnd, SW_MINIMIZE);
+      {
+        if (_registry.bCloseToTray && ! SKIF_isTrayed)
+        {
+          ShowWindow       (SKIF_ImGui_hWnd, SW_MINIMIZE);
+          ShowWindow       (SKIF_ImGui_hWnd, SW_HIDE);
+          UpdateWindow     (SKIF_ImGui_hWnd);
+          SKIF_isTrayed    = true;
+        }
+
+        else if (! _registry.bCloseToTray) {
+          ShowWindowAsync (SKIF_ImGui_hWnd, SW_MINIMIZE);
+        }
+      }
       break;
 
     case WM_SKIF_REFRESHFOCUS:
@@ -3633,6 +4011,14 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
       OpenFileDialog = PopupState_Open;
       break;
 
+    case WM_SKIF_SNIP_REGION:
+      _EnterSnippingMode (true);
+      break;
+
+    case WM_SKIF_SNIP_SCREEN:
+      _EnterSnippingMode (false);
+      break;
+
     case WM_SKIF_RUN_UPDATER:
       SKIF_Updater::GetInstance ( ).CheckForUpdates ( );
       break;
@@ -3688,8 +4074,13 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
     case WM_SKIF_RESTORE:
       if (SKIF_ImGui_hWnd != NULL)
       {
-        if (! IsIconic (SKIF_ImGui_hWnd))
+        if (! SKIF_isTrayed && ! IsIconic (SKIF_ImGui_hWnd))
           RepositionSKIF            = true;
+
+        if (SKIF_isTrayed)
+        {   SKIF_isTrayed           = false;
+          ShowWindow   (SKIF_ImGui_hWnd, SW_SHOW); // ShowWindowAsync
+        }
 
         ShowWindow     (SKIF_ImGui_hWnd, SW_RESTORE); // ShowWindowAsync
 
@@ -3860,8 +4251,14 @@ SKIF_Notify_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
     case WM_COMMAND:
       switch (LOWORD(wParam))
       {
-        case SKIF_NOTIFY_RUN_UPDATER:
-          PostMessage (SKIF_Notify_hWnd, WM_SKIF_RUN_UPDATER, 0, 0);
+        case SKIF_NOTIFY_SNIP_REGION:
+          PostMessage (SKIF_Notify_hWnd, WM_SKIF_SNIP_REGION, 0, 0);
+          break;
+        case SKIF_NOTIFY_SNIP_SCREEN:
+          PostMessage (SKIF_Notify_hWnd, WM_SKIF_SNIP_SCREEN, 0, 0);
+          break;
+        case SKIF_NOTIFY_OPEN:
+          PostMessage (SKIF_Notify_hWnd, WM_SKIF_FILE_DIALOG, 0, 0);
           break;
         case SKIF_NOTIFY_EXIT:
           if (SKIF_ImGui_hWnd != NULL)
@@ -3878,7 +4275,6 @@ SKIF_Notify_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
       break;
         
     default:
-#if 0
       // Taskbar was recreated (explorer.exe restarted),
       //   so we need to recreate the notification icon
       if (msg == SHELL_TASKBAR_RESTART)
@@ -3895,7 +4291,6 @@ SKIF_Notify_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         SKIF_Shell_CreateUpdateNotifyMenu ( );
         SKIF_Shell_UpdateNotifyIcon       ( );
       }
-#endif
       break;
   }
   return

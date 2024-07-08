@@ -57,6 +57,7 @@
 #include <atlbase.h>
 #include <utility/registry.h>
 #include <plog/Log.h>
+#include <tabs/viewer.h>
 
 #include <shaders/imgui_pix.h>
 #include <shaders/imgui_vtx.h>
@@ -161,7 +162,7 @@ static void ImGui_ImplDX11_DestroyWindow (ImGuiViewport* viewport       );
        void ImGui_ImplDX11_InvalidateDevice (void);
        
 static DXGI_FORMAT SKIF_ImplDX11_ViewPort_GetDXGIFormat    (ImGuiViewport* viewport);
-static bool        SKIF_ImplDX11_ViewPort_IsHDR            (ImGuiViewport* viewport);
+       bool        SKIF_ImplDX11_ViewPort_IsHDR            (ImGuiViewport* viewport);
 static int         SKIF_ImplDX11_ViewPort_GetHDRMode       (ImGuiViewport* viewport);
 static FLOAT       SKIF_ImplDX11_ViewPort_GetSDRWhiteLevel (ImGuiViewport* viewport);
 #endif
@@ -596,13 +597,13 @@ void ImGui_ImplDX11_RenderDrawData (ImDrawData *draw_data)
     pix_constant_buffer->font_dims [0]               = (float)ImGui::GetIO ().Fonts->TexWidth;
     pix_constant_buffer->font_dims [1]               = (float)ImGui::GetIO ().Fonts->TexHeight;
     pix_constant_buffer->hdr_max_luminance           = SKIV_HDR_MaxLuminance        / 80.0f;
-    pix_constant_buffer->display_max_luminance       = SKIV_HDR_DisplayMaxLuminance / 80.0f;//5.25f; // 420 nits
-    pix_constant_buffer->brightness                  = SKIV_HDR_BrightnessScale / 100.0f;
+    pix_constant_buffer->display_max_luminance       = SKIV_HDR_DisplayMaxLuminance / 80.0f;
+    pix_constant_buffer->brightness                  = SKIV_HDR_BrightnessScale     / 100.0f;
     if ((SKIV_HDR_BrightnessScale / 100.0f) * SKIV_HDR_MaxLuminance > SKIV_HDR_DisplayMaxLuminance)
       pix_constant_buffer->tonemap_type              = SKIV_HDR_TonemapType;
     else
-      pix_constant_buffer->tonemap_type              = 0;
-    //pix_constant_buffer->hdr_max_cll                 = SKIV_HDR_MaxCLL;
+      pix_constant_buffer->tonemap_type              = SKIV_HDR_TonemapType::SKIV_TONEMAP_TYPE_NONE;
+  //pix_constant_buffer->hdr_max_cll                 = SKIV_HDR_MaxCLL;
     pix_constant_buffer->hdr_visualization           = SKIV_HDR_VisualizationId;
     pix_constant_buffer->sdr_reference_white         = SKIV_HDR_SDRWhite;
     pix_constant_buffer->hdr_visualization_flags [3] = SKIV_HDR_VisualizationFlagsSDR;
@@ -613,6 +614,11 @@ void ImGui_ImplDX11_RenderDrawData (ImDrawData *draw_data)
     memcpy (pix_constant_buffer->ap1_gamut_hue,       SKIV_HDR_GamutHue_Ap1,       sizeof (float) * 4);
     memcpy (pix_constant_buffer->ap0_gamut_hue,       SKIV_HDR_GamutHue_Ap0,       sizeof (float) * 4);
     memcpy (pix_constant_buffer->undefined_gamut_hue, SKIV_HDR_GamutHue_Undefined, sizeof (float) * 4);
+
+    if (! (_registry.iHDRMode > 0 && SKIF_Util_IsHDRActive ( )))
+    {
+      pix_constant_buffer->tonemap_type = SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY;
+    }
 
     ctx->Unmap ( bd->pFontConstantBuffer, 0 );
 
@@ -631,12 +637,12 @@ void ImGui_ImplDX11_RenderDrawData (ImDrawData *draw_data)
     pix_constant_buffer->font_dims [0]               = 0.0f;
     pix_constant_buffer->font_dims [1]               = 0.0f;
     pix_constant_buffer->hdr_max_luminance           = SKIV_HDR_MaxLuminance        / 80.0f;
-    pix_constant_buffer->display_max_luminance       = SKIV_HDR_DisplayMaxLuminance / 80.0f;//5.25f; // 420 nits
-    pix_constant_buffer->brightness                  = SKIV_HDR_BrightnessScale / 100.0f;
+    pix_constant_buffer->display_max_luminance       = SKIV_HDR_DisplayMaxLuminance / 80.0f;
+    pix_constant_buffer->brightness                  = SKIV_HDR_BrightnessScale     / 100.0f;
     if ((SKIV_HDR_BrightnessScale / 100.0f) * SKIV_HDR_MaxLuminance > SKIV_HDR_DisplayMaxLuminance)
       pix_constant_buffer->tonemap_type              = SKIV_HDR_TonemapType;
     else
-      pix_constant_buffer->tonemap_type              = 0;
+      pix_constant_buffer->tonemap_type              = SKIV_HDR_TonemapType::SKIV_TONEMAP_TYPE_NONE;
   //pix_constant_buffer->hdr_max_cll                 = SKIV_HDR_MaxCLL;
     pix_constant_buffer->hdr_visualization           = SKIV_HDR_VisualizationId;
     pix_constant_buffer->sdr_reference_white         = SKIV_HDR_SDRWhite;
@@ -648,6 +654,11 @@ void ImGui_ImplDX11_RenderDrawData (ImDrawData *draw_data)
     memcpy (pix_constant_buffer->ap1_gamut_hue,       SKIV_HDR_GamutHue_Ap1,       sizeof (float) * 4);
     memcpy (pix_constant_buffer->ap0_gamut_hue,       SKIV_HDR_GamutHue_Ap0,       sizeof (float) * 4);
     memcpy (pix_constant_buffer->undefined_gamut_hue, SKIV_HDR_GamutHue_Undefined, sizeof (float) * 4);
+
+    if (! (_registry.iHDRMode > 0 && SKIF_Util_IsHDRActive ( )))
+    {
+      pix_constant_buffer->tonemap_type = SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY;
+    }
 
     ctx->Unmap ( bd->pPixelConstantBuffer, 0 );
   }
@@ -727,7 +738,7 @@ void ImGui_ImplDX11_RenderDrawData (ImDrawData *draw_data)
         CComPtr <ID3D11RenderTargetView> rtv;
         ctx->OMGetRenderTargets     (1, &rtv.p, nullptr);
 
-        if (SKIV_HDR_GamutCoverageUAV != nullptr)
+        if (SKIV_HDR_GamutCoverageUAV.p != nullptr)
         {
           if (texture_srv != SKIV_HDR_GamutCoverageSRV.p)
           {
@@ -735,7 +746,7 @@ void ImGui_ImplDX11_RenderDrawData (ImDrawData *draw_data)
             //   to allow a UAV and SRV to the same resource to be
             //     bound simultaneously.
             ctx->PSSetShaderResources                      (0, 1, &texture_srv);
-            ctx->OMSetRenderTargetsAndUnorderedAccessViews (1, &rtv.p, nullptr, 1, 1, &SKIV_HDR_GamutCoverageUAV, nullptr);
+            ctx->OMSetRenderTargetsAndUnorderedAccessViews (1, &rtv.p, nullptr, 1, 1, &SKIV_HDR_GamutCoverageUAV.p, nullptr);
           }
         }
 
@@ -2148,7 +2159,7 @@ static DXGI_FORMAT SKIF_ImplDX11_ViewPort_GetDXGIFormat(ImGuiViewport* viewport)
     return DXGI_FORMAT_UNKNOWN;
 }
 
-static bool SKIF_ImplDX11_ViewPort_IsHDR(ImGuiViewport* viewport)
+bool SKIF_ImplDX11_ViewPort_IsHDR(ImGuiViewport* viewport)
 {
     if (ImGui_ImplDX11_ViewportData* vd = (ImGui_ImplDX11_ViewportData*)viewport->RendererUserData)
         return vd->HDRMode;
