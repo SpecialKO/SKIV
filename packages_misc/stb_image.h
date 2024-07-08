@@ -817,11 +817,12 @@ typedef struct
    stbi_uc *img_buffer, *img_buffer_end;
    stbi_uc *img_buffer_original, *img_buffer_original_end;
 
+   // https://w3c.github.io/PNG-spec/#cICP-chunk
    struct cicp_s {
      stbi_uc primaries;
      stbi_uc transfer_func;
      stbi_uc matrix_coeffs;
-     stbi_uc range;
+     stbi_uc full_range;
    };
 } stbi__context;
 
@@ -5114,7 +5115,7 @@ static int stbi__parse_png_file(stbi__png *z, int scan, int req_comp)
             SKIV_STBI_CICP.primaries     = stbi__get8 (s);
             SKIV_STBI_CICP.transfer_func = stbi__get8 (s);
             SKIV_STBI_CICP.matrix_coeffs = stbi__get8 (s);
-            SKIV_STBI_CICP.range         = stbi__get8 (s);
+            SKIV_STBI_CICP.full_range    = stbi__get8 (s);
             break;
 
          //
