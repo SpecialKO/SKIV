@@ -68,15 +68,16 @@ SKIF_UI_Tab_DrawSettings (void)
   {
     struct kb_kv_bool_s
     {
-      SK_Keybind*                                    _key;
-      SKIF_RegistrySettings::KeyValue<std::wstring>* _reg;
-      bool                                           _region;
+      SK_Keybind*                                        _key;
+      SKIF_RegistrySettings::KeyValue<std::wstring>*     _reg;
+      std::function <void(kb_kv_bool_s*)> _callback;
     };
 
     static std::vector <kb_kv_bool_s>
       keybinds = {
-      { &_registry.kbCaptureRegion, &_registry.regKVHotkeyCaptureRegion, true  },
-      { &_registry.kbCaptureScreen, &_registry.regKVHotkeyCaptureScreen, false }
+      { &_registry.kbCaptureRegion,    &_registry.regKVHotkeyCaptureRegion,    { [](kb_kv_bool_s* ptr) { SKIF_Util_RegisterHotKeyCapture   (ptr->_key, true ); } } },
+      { &_registry.kbCaptureScreen,    &_registry.regKVHotkeyCaptureScreen,    { [](kb_kv_bool_s* ptr) { SKIF_Util_RegisterHotKeyCapture   (ptr->_key, false); } } },
+      { &_registry.kbToggleHDRDisplay, &_registry.regKVHotkeyToggleHDRDisplay, { [](kb_kv_bool_s* ptr) { SKIF_Util_RegisterHotKeyHDRToggle (ptr->_key);        } } }
     };
 
     ImGui::BeginGroup ();
@@ -92,8 +93,8 @@ SKIF_UI_Tab_DrawSettings (void)
     {
       if (SK_ImGui_Keybinding (keybind._key))
       {
-        keybind._reg->putData           (keybind._key->human_readable);
-        SKIF_Util_RegisterHotKeyCapture (keybind._key, keybind._region);
+        keybind._reg->putData (keybind._key->human_readable);
+        keybind._callback    (&keybind);
       }
     }
     ImGui::EndGroup   ();

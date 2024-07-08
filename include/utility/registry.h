@@ -329,6 +329,10 @@ struct SKIF_RegistrySettings {
     SKIF_MakeRegKeyWS ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(Hotkey Capture Screen)" );
 
+  KeyValue <std::wstring> regKVHotkeyToggleHDRDisplay =
+    SKIF_MakeRegKeyWS ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(Hotkey Toggle HDR Display)" );
+
   // Multi wide Strings
 
   KeyValue <std::vector<std::wstring>> regKVCategories =
@@ -439,6 +443,12 @@ struct SKIF_RegistrySettings {
         "Capture Screen",
        L"Ctrl+Windows+Shift+O",
         "Ctrl+Windows+Shift+O"
+  };
+
+  SK_Keybind kbToggleHDRDisplay = SK_Keybind {
+        "Toggle Display HDR",
+       L"Ctrl+Windows+Shift+H",
+        "Ctrl+Windows+Shift+H"
   };
 
   // Functions

@@ -785,7 +785,7 @@ struct SK_Keybind
 {
   const char*  bind_name           = nullptr;
   std::wstring human_readable      =     L"";
-  std:: string human_readable_utf8 =      "";
+  std:: string human_readable_utf8 =      ""; // Read-only UTF8 copy
 
   struct {
     BOOL ctrl  = false,

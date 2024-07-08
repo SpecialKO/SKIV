@@ -1226,17 +1226,11 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
   bool repositionToCenter = false;
 
-  // Do final checks and actions if we are expected to live longer than a few seconds
-  /*
-  if (! _Signal.Launcher && ! _Signal.LauncherURI && ! _Signal.Quit && ! _Signal.ServiceMode)
-  {
-    // Register HDR toggle hotkey (if applicable)
-    SKIF_Util_RegisterHotKeyHDRToggle ( );
+  // Check if the display supports HDR
+  SKIF_Util_IsHDRSupported (true);
 
-    // Register service (auto-stop) hotkey
-    SKIF_Util_RegisterHotKeySVCTemp   ( );
-  }
-  */
+  // Register HDR toggle hotkey (if applicable)
+  SKIF_Util_RegisterHotKeyHDRToggle (&_registry.kbToggleHDRDisplay);
 
   // Register snipping hotkey
   SKIF_Util_RegisterHotKeyCapture (&_registry.kbCaptureRegion, true);
@@ -3840,9 +3834,14 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
     case WM_HOTKEY:
       switch (wParam)
       {
+      case SKIF_HotKey_HDR:
+        SKIF_Util_EnableHDROutput ( );
+        break;
+
       case SKIV_HotKey_CaptureRegion:
         _EnterSnippingMode (true);
         break;
+
       case SKIV_HotKey_CaptureScreen:
         _EnterSnippingMode (false);
         break;

@@ -374,8 +374,12 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
   if (regKVHotkeyCaptureScreen.hasData(&hKey))
     kbCaptureScreen.human_readable = regKVHotkeyCaptureScreen.getData (&hKey);
 
+  if (regKVHotkeyToggleHDRDisplay.hasData(&hKey))
+    kbToggleHDRDisplay.human_readable = regKVHotkeyToggleHDRDisplay.getData (&hKey);
+
   kbCaptureRegion.parse();
   kbCaptureScreen.parse();
+  kbToggleHDRDisplay.parse();
 
   if (hKey != nullptr)
     RegCloseKey (hKey);
