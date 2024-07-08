@@ -1,9 +1,12 @@
 # <img src="https://sk-data.special-k.info/artwork/strangorth/24.png" width="24" alt="Animated eclipse icon for Special K Image Viewer (SKIV)"> Special K Image Viewer (SKIV)
 ![Screenshot of the app](https://sk-data.special-k.info/artwork/screens/skiv_initial.png)
 
-A companion image viewer for the [Special K Injection Frontend](https://github.com/SpecialKO/SKIF) (SKIF). Can also be used separately.
+An experimental companion image viewer for the [Special K Injection Frontend](https://github.com/SpecialKO/SKIF) (SKIF).
+Is also intended to be able to function separately, although not all planned features may be available when used in such a form.
 
-New versions will probably be distributed through their own packaged installer.
+The intention is to build a simple yet advanced screenshot/image viewer tool that handles HDR images properly as well as function as a testbed for features and functionality for the main Special K project.
+
+New versions will probably be distributed through their own packaged installer once the project reaches more maturity.
 
 ## Features
 
@@ -12,13 +15,14 @@ New versions will probably be distributed through their own packaged installer.
 - HDR visualization
 - Drag-n-drop support of both local and internet image links
 - Copy/paste support
+- Desktop/region screenshot capture
 
 ## Format support
 
 * JXR
 * AVIF* (Windows 11 only)
 * Radiance HDR (.hdr)
-* PNG*
+* PNG* (+ HDR support)
 * JPEG (JPG)
 * WebP*
 * PSD
@@ -32,11 +36,11 @@ New versions will probably be distributed through their own packaged installer.
 
 | Argument&ensp;&ensp;&ensp;&ensp;&ensp;&ensp;&ensp;&ensp; | What it does |
 | ------------------------------: | -------------- |
-| `<empty>`                       | Launches the app. |
+| `<empty>`                       | Launches the app.                         |
 | `"<path-to-local-image-file>"`  | Opens the provided image path in the app. |
 | `"<link-to-online-image-file>"` | Opens the provided image link in the app. |
-| `/OpenFileDialog`               | Open the file dialog of the app. |
-| `/Exit`                         | Closes all running instances of the app. |
+| `/OpenFileDialog`               | Open the file dialog of the app.          |
+| `/Exit`                         | Closes all running instances of the app.  |
 
 ## Keyboard shortcuts
 
@@ -49,6 +53,8 @@ New versions will probably be distributed through their own packaged installer.
 | `Ctrl+3`                  | Image Scaling: Fill the window (Fill)                   |
 | `Ctrl+W`                  | Close the currently opened image                        |
 | `Ctrl+E`                  | Browse folder / Open in File Explorer                   |
+| `Ctrl+Windows+Shift+P`    | Capture a screenshot of a region of the display.        |
+| `Ctrl+Windows+Shift+O`    | Capture a screenshot of the display.                    |
 | `F1`                      | Switch to the Viewer tab.                               |
 | `F2`                      | Switch to the Settings tab.                             |
 | `F6`                      | Appearance: Toggles DPI scaling.                        |
