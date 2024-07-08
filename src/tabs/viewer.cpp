@@ -723,11 +723,11 @@ LoadLibraryTexture (image_s& image)
     {
 #ifdef _DEBUG
 
-      PLOG_VERBOSE << "SKIV_STBI_CICP:";
+      PLOG_VERBOSE << "SKIV_STBI_cICP:";
       PLOG_VERBOSE << ".primaries    : " << (int)SKIV_STBI_CICP.primaries;
       PLOG_VERBOSE << ".transfer_func: " << (int)SKIV_STBI_CICP.transfer_func;
-      PLOG_VERBOSE << ".primaries    : " << (int)SKIV_STBI_CICP.matrix_coeffs;
-      PLOG_VERBOSE << ".range        : " << (int)SKIV_STBI_CICP.range;
+      PLOG_VERBOSE << ".matrix_coeffs: " << (int)SKIV_STBI_CICP.matrix_coeffs;
+      PLOG_VERBOSE << ".full_range   : " << (int)SKIV_STBI_CICP.full_range;
 
 #endif // _DEBUG
 
@@ -736,7 +736,11 @@ LoadLibraryTexture (image_s& image)
         assert (SKIV_STBI_CICP.primaries     ==  9); // BT 2020
         assert (SKIV_STBI_CICP.transfer_func == 16); // ST 2084
         assert (SKIV_STBI_CICP.matrix_coeffs ==  0); // Identity
-        // Matrix coeffs. may also presumably be:
+        // RGB is currently the only supported color model in PNG,
+        //   and as such Matrix Coefficients shall be set to 0.
+        // 
+        // But presumably it may eventually also be:
+        //    0 (RGB)
         //    9 (BT.2020 Non-Constant Luminance)
         //   10 (BT.2020 Constant Luminance)
         //   14 (BT.2100 ICtCp)
@@ -757,7 +761,6 @@ LoadLibraryTexture (image_s& image)
       {
         // Good grief this is inefficient, let's convert it to something reasonable...
         DirectX::ScratchImage raw_fp32_img;
-
 
         // Check for BT.2020 using ST.2084 (HDR10)
         if ( SKIV_STBI_CICP.primaries     ==  9 &&
