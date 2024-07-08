@@ -68,9 +68,9 @@ SKIF_UI_Tab_DrawSettings (void)
   {
     struct kb_kv_bool_s
     {
-      SK_Keybind*                                        _key;
-      SKIF_RegistrySettings::KeyValue<std::wstring>*     _reg;
-      std::function <void(kb_kv_bool_s*)> _callback;
+      SK_Keybind*                                    _key;
+      SKIF_RegistrySettings::KeyValue<std::wstring>* _reg;
+      std::function <void(kb_kv_bool_s*)>            _callback;
     };
 
     static std::vector <kb_kv_bool_s>
