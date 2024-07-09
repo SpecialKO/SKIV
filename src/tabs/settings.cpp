@@ -66,6 +66,8 @@ SKIF_UI_Tab_DrawSettings (void)
 
   if (ImGui::CollapsingHeader ("Keybindings###SKIF_SettingsHeader-0", ImGuiTreeNodeFlags_DefaultOpen))
   {
+    SKIF_ImGui_Spacing      ( );
+
     struct kb_kv_s
     {
       SK_Keybind*                                     _key;
