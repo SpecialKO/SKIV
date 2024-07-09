@@ -799,6 +799,9 @@ struct SK_Keybind
 
   void parse  (void);
   void update (void);
+
+private:
+  static void init (void);
 };
 
 // Adds a parameter to store and retrieve the keybind in an INI / XML file

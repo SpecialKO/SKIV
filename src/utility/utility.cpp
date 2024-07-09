@@ -2778,6 +2778,14 @@ SKIF_Util_IsHDRSupported (bool refresh)
   std::vector<DISPLAYCONFIG_PATH_INFO> pathArray;
   std::vector<DISPLAYCONFIG_MODE_INFO> modeArray;
   DWORD result = ERROR_SUCCESS;
+
+  // First check always executes
+  static bool
+      init  = false;
+  if (init == false)
+  {   init  = true;
+    refresh = true;
+  }
   
   static bool state = false;
 
@@ -2860,6 +2868,14 @@ SKIF_Util_IsHDRActive (bool refresh)
   std::vector<DISPLAYCONFIG_PATH_INFO> pathArray;
   std::vector<DISPLAYCONFIG_MODE_INFO> modeArray;
   DWORD result = ERROR_SUCCESS;
+
+  // First check always executes
+  static bool
+      init  = false;
+  if (init == false)
+  {   init  = true;
+    refresh = true;
+  }
   
   static bool state = false;
 
@@ -3162,13 +3178,13 @@ SKIF_Util_RegisterHotKeyHDRToggle (SK_Keybind* binding)
   if (binding->vKey == 0)
     return false;
 
-  if (! SKIF_Util_IsWindows10v1709OrGreater())
+  if (! SKIF_Util_IsWindows10v1709OrGreater ( ))
   {
     PLOG_INFO << "OS does not support HDR display output.";
     return false;
   }
 
-  if (! SKIF_Util_IsHDRSupported())
+  if (! SKIF_Util_IsHDRSupported ( ))
   {
     PLOG_INFO << "No HDR capable display detected on the system.";
     return false;
@@ -3179,41 +3195,25 @@ SKIF_Util_RegisterHotKeyHDRToggle (SK_Keybind* binding)
   *              Keyboard shortcuts that involve the WINDOWS key are reserved for use by the operating system.
   */
 
-  UINT fsModifiers = MOD_NOREPEAT;
-  std::string szModifiers = "";
+  UINT
+    fsModifiers  = MOD_NOREPEAT;
 
   if (binding->ctrl)
-  {
     fsModifiers |= MOD_CONTROL;
-    szModifiers += "Ctrl+";
-  }
 
   if (binding->super)
-  {
     fsModifiers |= MOD_WIN;
-    szModifiers += "Windows+";
-  }
 
   if (binding->shift)
-  {
     fsModifiers |= MOD_SHIFT;
-    szModifiers += "Shift+";
-  }
 
   if (binding->alt)
-  {
     fsModifiers |= MOD_ALT;
-    szModifiers += "Alt+";
-  }
-
-  szModifiers += (char)(binding->vKey);
-
-  PLOG_VERBOSE_IF(szModifiers != binding->human_readable_utf8) << "Misread input?! " << szModifiers << " vs. " << binding->human_readable_utf8;
 
   if (RegisterHotKey (SKIF_Notify_hWnd, SKIF_HotKey_HDR, fsModifiers, binding->vKey))
   {
     bHotKeyHDR = true;
-    PLOG_INFO << "Successfully registered hotkey (" << szModifiers << ") for toggling HDR for individual displays.";
+    PLOG_INFO << "Successfully registered hotkey (" << binding->human_readable_utf8 << ") for toggling HDR for individual displays.";
   }
   else
     PLOG_ERROR << "Failed to register hotkey for toggling HDR: " << SKIF_Util_GetErrorAsWStr ( );
@@ -3262,44 +3262,28 @@ SKIF_Util_RegisterHotKeyCapture (SK_Keybind* binding, bool region)
   if (binding->vKey == 0)
     return false;
 
-  UINT fsModifiers = MOD_NOREPEAT;
-  std::string szModifiers = "";
+  UINT
+    fsModifiers  = MOD_NOREPEAT;
 
   if (binding->ctrl)
-  {
     fsModifiers |= MOD_CONTROL;
-    szModifiers += "Ctrl+";
-  }
 
   if (binding->super)
-  {
     fsModifiers |= MOD_WIN;
-    szModifiers += "Windows+";
-  }
 
   if (binding->shift)
-  {
     fsModifiers |= MOD_SHIFT;
-    szModifiers += "Shift+";
-  }
 
   if (binding->alt)
-  {
     fsModifiers |= MOD_ALT;
-    szModifiers += "Alt+";
-  }
-
-  szModifiers += (char)(binding->vKey);
-
-  PLOG_VERBOSE_IF(szModifiers != binding->human_readable_utf8) << "Misread input?! " << szModifiers << " vs. " << binding->human_readable_utf8;
 
   if (RegisterHotKey (SKIF_Notify_hWnd, iHotkey, fsModifiers, binding->vKey))
   {
     *pbCapture = true;
-    PLOG_INFO << "Successfully registered hotkey (" << szModifiers << ") for snipping desktop screenshots.";
+    PLOG_INFO << "Successfully registered hotkey (" << binding->human_readable_utf8 << ") for capturing a " << ((region) ? "region" : "display") << " screenshot.";
   }
   else
-    PLOG_ERROR << "Failed to register hotkey for snipping desktop screenshots: " << SKIF_Util_GetErrorAsWStr ( );
+    PLOG_ERROR << "Failed to register hotkey for capturing a " << ((region) ? "region" : "display") << " screenshot: " << SKIF_Util_GetErrorAsWStr ( );
 
   return *pbCapture;
 }
