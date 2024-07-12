@@ -3170,7 +3170,7 @@ SKIF_Util_EnableHDROutput (void)
 
 // Register a hotkey for toggling HDR on a per-display basis (WinKey + Ctrl + Shift + H)
 bool
-SKIF_Util_RegisterHotKeyHDRToggle (SK_Keybind* binding)
+SKIF_Util_RegisterHotKeyHDRToggle (const SK_Keybind* binding)
 {
   if (bHotKeyHDR)
     SKIF_Util_UnregisterHotKeyHDRToggle ( );
@@ -3246,7 +3246,7 @@ SKIF_Util_GetHotKeyStateHDRToggle (void)
 
 // Register a hotkey for capturing a screenshot of the desktop (WinKey + Ctrl + Shift + P)
 bool
-SKIF_Util_RegisterHotKeyCapture (SK_Keybind* binding, bool region)
+SKIF_Util_RegisterHotKeyCapture (const SK_Keybind* binding, bool region)
 {
   bool*     pbCapture = (region) ? &bHotKeyCaptureRegion      : &bHotKeyCaptureScreen;
   const int iHotkey   = (region) ?  SKIV_HotKey_CaptureRegion :  SKIV_HotKey_CaptureScreen;

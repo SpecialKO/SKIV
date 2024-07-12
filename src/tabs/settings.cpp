@@ -70,17 +70,17 @@ SKIF_UI_Tab_DrawSettings (void)
 
     struct kb_kv_s
     {
-      SK_Keybind*                                     _key;
+      SK_KeybindMultiState*                           _key;
       SKIF_RegistrySettings::KeyValue <std::wstring>* _reg;
-      std::function <void (kb_kv_s*)>                 _callback;
+      std::function <void (SK_KeybindMultiState*)>    _callback;
       std::function <bool (void)>                     _show;
     };
 
     static std::vector <kb_kv_s>
       keybinds = {
-      { &_registry.kbCaptureRegion,    &_registry.regKVHotkeyCaptureRegion,    { [](kb_kv_s* ptr) { SKIF_Util_RegisterHotKeyCapture   (ptr->_key, true ); } }, { []() { return true;                                                                      } } },
-      { &_registry.kbCaptureScreen,    &_registry.regKVHotkeyCaptureScreen,    { [](kb_kv_s* ptr) { SKIF_Util_RegisterHotKeyCapture   (ptr->_key, false); } }, { []() { return true;                                                                      } } },
-      { &_registry.kbToggleHDRDisplay, &_registry.regKVHotkeyToggleHDRDisplay, { [](kb_kv_s* ptr) { SKIF_Util_RegisterHotKeyHDRToggle (ptr->_key);        } }, { []() { return (SKIF_Util_IsWindows10v1709OrGreater ( ) && SKIF_Util_IsHDRSupported ( )); } } }
+      { &_registry.kbCaptureRegion,    &_registry.regKVHotkeyCaptureRegion,    { [](SK_KeybindMultiState* ptr) { SKIF_Util_RegisterHotKeyCapture   (ptr->getKeybind(), true ); } }, { []() { return true;                                                                      } } },
+      { &_registry.kbCaptureScreen,    &_registry.regKVHotkeyCaptureScreen,    { [](SK_KeybindMultiState* ptr) { SKIF_Util_RegisterHotKeyCapture   (ptr->getKeybind(), false); } }, { []() { return true;                                                                      } } },
+      { &_registry.kbToggleHDRDisplay, &_registry.regKVHotkeyToggleHDRDisplay, { [](SK_KeybindMultiState* ptr) { SKIF_Util_RegisterHotKeyHDRToggle (ptr->getKeybind()       ); } }, { []() { return (SKIF_Util_IsWindows10v1709OrGreater ( ) && SKIF_Util_IsHDRSupported ( )); } } }
     };
 
     ImGui::BeginGroup ();
@@ -91,6 +91,7 @@ SKIF_UI_Tab_DrawSettings (void)
 
       ImGui::Text          ( "%s:  ",
                             keybind._key->bind_name );
+      ImGui::Spacing ();
     }
     ImGui::EndGroup   ();
     ImGui::SameLine   ();
@@ -102,9 +103,14 @@ SKIF_UI_Tab_DrawSettings (void)
 
       if (SK_ImGui_Keybinding (keybind._key))
       {
-        keybind._reg->putData (keybind._key->human_readable);
-        keybind._callback    (&keybind);
+        // Only update the registry if we are done assigning
+        if (! keybind._key->assigning)
+          keybind._reg->putData (keybind._key->saved.human_readable);
+
+        keybind._callback (keybind._key);
       }
+
+      ImGui::Spacing ();
     }
     ImGui::EndGroup   ();
   }
@@ -590,19 +596,14 @@ SKIF_UI_Tab_DrawSettings (void)
       if (SKIF_Util_GetHotKeyStateHDRToggle ( ) && _registry.iUIMode != 0)
       {
         ImGui::Spacing         ( );
-        /*
-        ImGui::PushStyleColor (ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-        ImGui::TextWrapped    ("FYI: Use " ICON_FA_WINDOWS " + Ctrl + Shift + H while this app is running to toggle "
-                               "HDR for the display the mouse cursor is currently located on.");
-        ImGui::PopStyleColor  ( );
-        */
-        
         ImGui::BeginGroup       ( );
         ImGui::TextDisabled     ("Use");
         ImGui::SameLine         ( );
         ImGui::TextColored      (
           ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextBase),
-          "Ctrl + " ICON_FA_WINDOWS " + Shift + H");
+          //"Ctrl + " ICON_FA_WINDOWS " + Shift + H");
+          _registry.kbToggleHDRDisplay.getKeybind()->human_readable_utf8.c_str()
+        );
         ImGui::SameLine         ( );
         ImGui::TextDisabled     ("to toggle HDR where the");
         ImGui::SameLine         ( );

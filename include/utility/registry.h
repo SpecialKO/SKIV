@@ -433,22 +433,22 @@ struct SKIF_RegistrySettings {
 
   // Keybindings
 
-  SK_Keybind kbCaptureRegion = SK_Keybind {
+  SK_KeybindMultiState kbCaptureRegion =
+  {
         "Capture Region",
-       L"Ctrl+Windows+Shift+P",
-        "Ctrl+Windows+Shift+P"
+       L"Ctrl+Windows+Shift+P"
   };
 
-  SK_Keybind kbCaptureScreen = SK_Keybind {
+  SK_KeybindMultiState kbCaptureScreen =
+  {
         "Capture Screen",
-       L"Ctrl+Windows+Shift+O",
-        "Ctrl+Windows+Shift+O"
+       L"Ctrl+Windows+Shift+O"
   };
 
-  SK_Keybind kbToggleHDRDisplay = SK_Keybind {
+  SK_KeybindMultiState kbToggleHDRDisplay =
+  {
         "Toggle Display HDR",
-       L"Ctrl+Windows+Shift+H",
-        "Ctrl+Windows+Shift+H"
+       L"Ctrl+Windows+Shift+H"
   };
 
   // Functions

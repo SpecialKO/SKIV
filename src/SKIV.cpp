@@ -102,6 +102,7 @@ int   addAdditionalFrames       = 0;
 DWORD dwDwmPeriod               = 16; // Assume 60 Hz by default
 bool  SteamOverlayDisabled      = false;
 bool  allowShortcutCtrlA        = true; // Used to disable the Ctrl+A when interacting with text input
+bool  allowEscape               = true;
 bool  SKIF_MouseDragMoveAllowed = true;
 bool  SKIF_debuggerPresent      = false;
 DWORD SKIF_startupTime          = 0; // Used as a basis of how long the initialization took
@@ -1230,11 +1231,11 @@ wWinMain ( _In_     HINSTANCE hInstance,
   SKIF_Util_IsHDRSupported (true);
 
   // Register HDR toggle hotkey (if applicable)
-  SKIF_Util_RegisterHotKeyHDRToggle (&_registry.kbToggleHDRDisplay);
+  SKIF_Util_RegisterHotKeyHDRToggle (_registry.kbToggleHDRDisplay.getKeybind());
 
   // Register snipping hotkey
-  SKIF_Util_RegisterHotKeyCapture (&_registry.kbCaptureRegion, true);
-  SKIF_Util_RegisterHotKeyCapture (&_registry.kbCaptureScreen, false);
+  SKIF_Util_RegisterHotKeyCapture (_registry.kbCaptureRegion.getKeybind(), true);
+  SKIF_Util_RegisterHotKeyCapture (_registry.kbCaptureScreen.getKeybind(), false);
 
   // Register the HTML Format for the clipboard
   CF_HTML = RegisterClipboardFormatW (L"HTML Format");
@@ -1277,36 +1278,36 @@ wWinMain ( _In_     HINSTANCE hInstance,
 #endif // DEBUG
 
     // Various hotkeys that SKIF supports (resets on every frame)
-    bool hotkeyF1    = (              ImGui::GetKeyData (ImGuiKey_F1    )->DownDuration == 0.0f), // Switch to Viewer
-         hotkeyF2    = (              ImGui::GetKeyData (ImGuiKey_F2    )->DownDuration == 0.0f), // Switch to Settings
-         hotkeyF3    = (              ImGui::GetKeyData (ImGuiKey_F3    )->DownDuration == 0.0f), // Switch to About
-         hotkeyF5    = (              ImGui::GetKeyData (ImGuiKey_F5    )->DownDuration == 0.0f), // Settings/About: Refresh data
-         hotkeyF6    = (              ImGui::GetKeyData (ImGuiKey_F6    )->DownDuration == 0.0f), // Appearance: Toggle DPI scaling
-         hotkeyF7    = (              ImGui::GetKeyData (ImGuiKey_F7    )->DownDuration == 0.0f), // Appearance: Cycle between color themes
-         hotkeyF8    = (              ImGui::GetKeyData (ImGuiKey_F8    )->DownDuration == 0.0f), // Appearance: Toggle UI borders
-         hotkeyF9    = (              ImGui::GetKeyData (ImGuiKey_F9    )->DownDuration == 0.0f), // Appearance: Toggle color depth
-         hotkeyF11   = (              ImGui::GetKeyData (ImGuiKey_F11   )->DownDuration == 0.0f), // Toggle Fullscreen Mode
-         hotkeyEsc   = (              ImGui::GetKeyData (ImGuiKey_Escape)->DownDuration == 0.0f), // Close the app
-         hotkeyCtrlQ = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_Q     )->DownDuration == 0.0f), // Close the app
-         hotkeyCtrlR = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_R     )->DownDuration == 0.0f), // Library/About: Refresh data
-         hotkeyCtrlO = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_O     )->DownDuration == 0.0f), // Viewer: Open File
-         hotkeyCtrlA = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_A     )->DownDuration == 0.0f), // Viewer: Open File
-         hotkeyCtrlD = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_D     )->DownDuration == 0.0f), // Viewer: Toggle Image Details
-         hotkeyCtrlF = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_F     )->DownDuration == 0.0f), // Toggle Fullscreen Mode
-         hotkeyCtrlV = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_V     )->DownDuration == 0.0f), // Paste data through the clipboard
-         hotkeyCtrlN = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_N     )->DownDuration == 0.0f), // Minimize app
-         hotkeyCtrlS = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_S     )->DownDuration == 0.0f), // Save Current Image (in same Dynamic Range)
-         hotkeyCtrlX = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_X     )->DownDuration == 0.0f); // Export Current Image (HDR -> SDR)
-
-    // No more compiler warnings dammit!
-    std::ignore = hotkeyF5;
-    std::ignore = hotkeyCtrlR;
+    static bool hotkeyF1    = false, // Switch to Viewer
+                hotkeyF2    = false, // Switch to Settings
+                hotkeyF3    = false, // Switch to About
+                hotkeyF5    = false, // Settings/About: Refresh data
+                hotkeyF6    = false, // Appearance: Toggle DPI scaling
+                hotkeyF7    = false, // Appearance: Cycle between color themes
+                hotkeyF8    = false, // Appearance: Toggle UI borders
+                hotkeyF9    = false, // Appearance: Toggle color depth
+                hotkeyF11   = false, // Toggle Fullscreen Mode
+                hotkeyEsc   = false, // Close the app
+                hotkeyCtrlQ = false, // Close the app
+                hotkeyCtrlR = false, // Library/About: Refresh data
+                hotkeyCtrlO = false, // Viewer: Open File
+                hotkeyCtrlA = false, // Viewer: Open File
+                hotkeyCtrlD = false, // Viewer: Toggle Image Details
+                hotkeyCtrlF = false, // Toggle Fullscreen Mode
+                hotkeyCtrlV = false, // Paste data through the clipboard
+                hotkeyCtrlN = false, // Minimize app
+                hotkeyCtrlS = false,
+                hotkeyCtrlX = false;
 
     // Handled in viewer.cpp
        //hotkeyCtrl1 = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_1     )->DownDuration == 0.0f), // Viewer -> Image Scaling: View actual size (1:1 / None)
        //hotkeyCtrl2 = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_2     )->DownDuration == 0.0f), // Viewer -> Image Scaling: Zoom to fit (Fit)
        //hotkeyCtrl3 = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_3     )->DownDuration == 0.0f); // Viewer -> Image Scaling: Fill the window (Fill)
        //hotkeyCtrlW = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_W     )->DownDuration == 0.0f), // Close the app
+
+    // No more compiler warnings dammit!
+    std::ignore = hotkeyF5;
+    std::ignore = hotkeyCtrlR;
 
     auto _TranslateAndDispatch = [&](void) -> bool
     {
@@ -1518,6 +1519,28 @@ wWinMain ( _In_     HINSTANCE hInstance,
     ImGui::NewFrame          ();
     {
       SKIF_FrameCount.store(ImGui::GetFrameCount());
+
+      // Update hotkey variables
+      hotkeyF1    = (              ImGui::GetKeyData (ImGuiKey_F1    )->DownDuration == 0.0f); // Switch to Viewer
+      hotkeyF2    = (              ImGui::GetKeyData (ImGuiKey_F2    )->DownDuration == 0.0f); // Switch to Settings
+      hotkeyF3    = (              ImGui::GetKeyData (ImGuiKey_F3    )->DownDuration == 0.0f); // Switch to About
+      hotkeyF5    = (              ImGui::GetKeyData (ImGuiKey_F5    )->DownDuration == 0.0f); // Settings/About: Refresh data
+      hotkeyF6    = (              ImGui::GetKeyData (ImGuiKey_F6    )->DownDuration == 0.0f); // Appearance: Toggle DPI scaling
+      hotkeyF7    = (              ImGui::GetKeyData (ImGuiKey_F7    )->DownDuration == 0.0f); // Appearance: Cycle between color themes
+      hotkeyF8    = (              ImGui::GetKeyData (ImGuiKey_F8    )->DownDuration == 0.0f); // Appearance: Toggle UI borders
+      hotkeyF9    = (              ImGui::GetKeyData (ImGuiKey_F9    )->DownDuration == 0.0f); // Appearance: Toggle color depth
+      hotkeyF11   = (              ImGui::GetKeyData (ImGuiKey_F11   )->DownDuration == 0.0f); // Toggle Fullscreen Mode
+      hotkeyEsc   = (              ImGui::GetKeyData (ImGuiKey_Escape)->DownDuration == 0.0f); // Close the app
+      hotkeyCtrlQ = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_Q     )->DownDuration == 0.0f); // Close the app
+      hotkeyCtrlR = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_R     )->DownDuration == 0.0f); // Library/About: Refresh data
+      hotkeyCtrlO = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_O     )->DownDuration == 0.0f); // Viewer: Open File
+      hotkeyCtrlA = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_A     )->DownDuration == 0.0f); // Viewer: Open File
+      hotkeyCtrlD = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_D     )->DownDuration == 0.0f); // Viewer: Toggle Image Details
+      hotkeyCtrlF = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_F     )->DownDuration == 0.0f); // Toggle Fullscreen Mode
+      hotkeyCtrlV = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_V     )->DownDuration == 0.0f); // Paste data through the clipboard
+      hotkeyCtrlN = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_N     )->DownDuration == 0.0f); // Minimize app
+      hotkeyCtrlS = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_S     )->DownDuration == 0.0f); // Save Current Image (in same Dynamic Range)
+      hotkeyCtrlX = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_X     )->DownDuration == 0.0f); // Export Current Image (HDR -> SDR)
 
       ImRect rectCursorMonitor; // RepositionSKIF
 
@@ -1781,6 +1804,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
       }
 
       allowShortcutCtrlA = true;
+      allowEscape        = true;
 
 
 
@@ -2283,7 +2307,9 @@ wWinMain ( _In_     HINSTANCE hInstance,
 #pragma region CaptionActions
 
       // Escape does situational stuff
-      if (hotkeyEsc)
+      //   ... but only if we allow it
+      //   ... and if when a popup is not opened
+      if (hotkeyEsc && allowEscape && ! SKIF_ImGui_IsAnyPopupOpen ( ) )
       {
         if (_registry._SnippingMode)
           _registry._SnippingModeExit = true;
