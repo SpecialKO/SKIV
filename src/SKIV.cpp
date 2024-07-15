@@ -3824,7 +3824,17 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
       }
 
       else
-        MessageBox (nullptr, L"Uh oh", L"Uh oh", MB_OK);
+      {
+        if (_registry._SnippingMode)
+        {
+          _registry._SnippingMode     = false;
+          _registry._SnippingModeExit = true;
+        }
+
+        MessageBox ( nullptr,
+                     SK_FormatStringW (L"HRESULT=%x", hr).c_str (),
+                     L"Screen Capture Failed", MB_ICONERROR|MB_OK );
+      }
     }
 
     else
