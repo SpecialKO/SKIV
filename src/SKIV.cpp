@@ -3831,9 +3831,12 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
           _registry._SnippingModeExit = true;
         }
 
-        MessageBox ( nullptr,
-                     SK_FormatStringW (L"HRESULT=%x", hr).c_str (),
-                     L"Screen Capture Failed", MB_ICONERROR|MB_OK );
+        ImGui::InsertNotification ({
+          ImGuiToastType::Error, 5000,
+            "Screen Capture Failed",
+            "%HRESULT=%x (%ws)", hr,
+              _com_error (hr).ErrorMessage ()
+        });
       }
     }
 
