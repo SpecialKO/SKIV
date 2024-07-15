@@ -1,5 +1,5 @@
 ﻿//
-// Copyright 2020 - 2022 Andon "Kaldaien" Coleman
+// Copyright 2020 - 2024 Andon "Kaldaien" Coleman
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to
@@ -1834,6 +1834,45 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
       static bool last_snip_state = false;
 
+      // Implicitly cancel snipping if focus changes during snipping
+      if (_registry._SnippingMode && last_snip_state && GetFocus () != SKIF_ImGui_hWnd)
+      {
+        _registry._SnippingMode     = false;
+        _registry._SnippingModeExit =  true;
+      }
+
+      auto _RestoreWindow = [&](void) -> void
+      {
+        _registry._SnippingMode       = false;
+        _registry._SnippingModeExit   = false;
+
+        SKIF_ImGui_SetFullscreen (SKIF_ImGui_hWnd, false);
+
+        //ImGui::SetWindowSize (last_non_snip_size);
+        //ImGui::SetWindowPos  (last_non_snip_pos);
+
+        extern HWND hwndBeforeSnip;
+        extern HWND hwndTopBeforeSnip;
+        extern bool iconicBeforeSnip;
+        extern bool trayedBeforeSnip;
+
+        if (iconicBeforeSnip)
+          ShowWindow (SKIF_ImGui_hWnd, SW_MINIMIZE);
+
+        if (trayedBeforeSnip)
+          ShowWindow (SKIF_ImGui_hWnd, SW_HIDE);
+
+        SetForegroundWindow (hwndBeforeSnip);
+
+        // Put SKIV back in the correct Z-order
+        SetWindowPos (SKIF_ImGui_hWnd, hwndTopBeforeSnip, 0,0,0,0, SWP_NOSIZE|SWP_NOMOVE|SWP_NOACTIVATE);
+
+        ImGui::GetIO ().MouseDown         [0] = false;
+        ImGui::GetIO ().MouseDownDuration [0] = -1.0f;
+
+        last_snip_state = false;
+      };
+
       // Begin Snipping Mode
       if (_registry._SnippingMode)
       {
@@ -1886,36 +1925,6 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
         if (GetForegroundWindow () != SKIF_ImGui_hWnd)
             SetForegroundWindow (     SKIF_ImGui_hWnd);
-
-        auto _RestoreWindow = [&](void) -> void
-        {
-          _registry._SnippingMode       = false;
-          _registry._SnippingModeExit   = false;
-
-          SKIF_ImGui_SetFullscreen (SKIF_ImGui_hWnd, false);
-
-          //ImGui::SetWindowSize (last_non_snip_size);
-          //ImGui::SetWindowPos  (last_non_snip_pos);
-
-          extern HWND hwndBeforeSnip;
-          extern HWND hwndTopBeforeSnip;
-          extern bool iconicBeforeSnip;
-          extern bool trayedBeforeSnip;
-
-          if (iconicBeforeSnip)
-            ShowWindow (SKIF_ImGui_hWnd, SW_MINIMIZE);
-
-          if (trayedBeforeSnip)
-            ShowWindow (SKIF_ImGui_hWnd, SW_HIDE);
-
-          SetForegroundWindow (hwndBeforeSnip);
-
-          // Put SKIV back in the correct Z-order
-          SetWindowPos (SKIF_ImGui_hWnd, hwndTopBeforeSnip, 0,0,0,0, SWP_NOSIZE|SWP_NOMOVE|SWP_NOACTIVATE);
-
-          ImGui::GetIO ().MouseDown         [0] = false;
-          ImGui::GetIO ().MouseDownDuration [0] = -1.0f;
-        };
 
         // Let us store all ignored windows in a vector for quick reuse
         static std::vector<HWND> ignoredWindows = { };
@@ -2095,16 +2104,15 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
           SKIV_Image_CaptureRegion (capture_area);
         }
-
-        if (_registry._SnippingModeExit)
-          _RestoreWindow ( );
-
 #pragma endregion
 
       }
 
+      if (_registry._SnippingModeExit)
+        _RestoreWindow ();
+
       // Begin Large Mode
-      else
+      if (! _registry._SnippingMode)
       {
 #pragma region UI: Large Mode
 
