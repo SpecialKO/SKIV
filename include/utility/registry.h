@@ -4,6 +4,7 @@
 #include <typeindex>
 #include <sstream>
 #include <vector>
+#include "sk_utility.h"
 
 #ifndef RRF_SUBKEY_WOW6464KEY
 #define RRF_SUBKEY_WOW6464KEY  0x00010000
@@ -200,6 +201,10 @@ struct SKIF_RegistrySettings {
     SKIF_MakeRegKeyB ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(First Launch)" );
 
+  KeyValue <bool> regKVCloseToTray =
+    SKIF_MakeRegKeyB ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(Close To Notification Area)" );
+
   KeyValue <bool> regKVMultipleInstances =
     SKIF_MakeRegKeyB ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(Multiple Instances)" );
@@ -316,6 +321,22 @@ struct SKIF_RegistrySettings {
     SKIF_MakeRegKeyWS ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(Auto-Update Version)" );
 
+  KeyValue <std::wstring> regKVHotkeyCaptureWindow =
+    SKIF_MakeRegKeyWS ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(Hotkey Capture Window)" );
+
+  KeyValue <std::wstring> regKVHotkeyCaptureRegion =
+    SKIF_MakeRegKeyWS ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(Hotkey Capture Region)" );
+
+  KeyValue <std::wstring> regKVHotkeyCaptureScreen =
+    SKIF_MakeRegKeyWS ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(Hotkey Capture Screen)" );
+
+  KeyValue <std::wstring> regKVHotkeyToggleHDRDisplay =
+    SKIF_MakeRegKeyWS ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(Hotkey Toggle HDR Display)" );
+
   // Multi wide Strings
 
   KeyValue <std::vector<std::wstring>> regKVCategories =
@@ -376,6 +397,7 @@ struct SKIF_RegistrySettings {
   bool bImageDetails            = false;
 
   bool bFirstLaunch             = false;
+  bool bCloseToTray             = false;
   bool bMultipleInstances       = false;
   bool bOpenAtCursorPosition    = false;
 #if 0
@@ -394,6 +416,8 @@ struct SKIF_RegistrySettings {
   std::wstring wsPathViewer;
   std::wstring wsPathSpecialK;
   std::wstring wsAutoUpdateVersion; // Holds the version the auto-updater is trying to install
+  std::wstring wsDefaultHDRExt = L".png";
+  std::wstring wsDefaultSDRExt = L".png";
 
   // Windows stuff
   std::wstring wsAppRegistration;
@@ -408,6 +432,34 @@ struct SKIF_RegistrySettings {
   bool _RendererCanHDR              = false; // High Dynamic Range            Windows 10 1709+ (Build 16299)
   bool _RendererHDREnabled          = false; // HDR Enabled
   bool _TouchDevice                 = false;
+  bool _SnippingMode                = false;
+  bool _SnippingModeExit            = false;
+
+  // Keybindings
+
+  SK_KeybindMultiState kbCaptureWindow =
+  {
+        "Capture Window",
+       L"Ctrl+Windows+Shift+I"
+  };
+
+  SK_KeybindMultiState kbCaptureRegion =
+  {
+        "Capture Region",
+       L"Ctrl+Windows+Shift+O"
+  };
+
+  SK_KeybindMultiState kbCaptureScreen =
+  {
+        "Capture Screen",
+       L"Ctrl+Windows+Shift+P"
+  };
+
+  SK_KeybindMultiState kbToggleHDRDisplay =
+  {
+        "Toggle Display HDR",
+       L"Ctrl+Windows+Shift+H"
+  };
 
   // Functions
   bool isDevLogging (void) const;

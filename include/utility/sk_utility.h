@@ -779,5 +779,49 @@ SK_make_unique_nothrow (Args && ... args) noexcept
 (  T ( std::forward   < Args >     (args)   ... ))
 );
 
+// Keybindings
+
+// Core keybind structure for a single instance of a keybind
+struct SK_Keybind {
+  std::wstring human_readable      =   L"";
+  std:: string human_readable_utf8 =    ""; // Read-only UTF8 copy
+          bool ctrl                = false;
+          bool shift               = false;
+          bool alt                 = false;
+          bool super               = false; // Cmd/Super/Windows
+         SHORT vKey                =     0;
+          UINT masked_code         =   0x0; // For fast comparison
+
+  void parse    (void);
+  void update   (void);
+  void makeMask (void);
+
+private:
+  static void init (void);
+};
+
+// Wrapper to handle various states of the keybinding
+struct SK_KeybindMultiState
+{
+  const char*  bind_name = nullptr;
+  bool         assigning = false,
+               state     = false;
+  SK_Keybind   saved, pending;
+
+  // This empty object is used during assignment to disable hotkeys temporarily
+  static constexpr SK_Keybind disabled = { };
+
+  SK_KeybindMultiState (const char* _n, std::wstring _h) {
+    bind_name                   = _n;
+    pending.human_readable      = _h;
+    pending.human_readable_utf8 = SK_WideCharToUTF8 (pending.human_readable);
+  };
+
+              bool  applyChanges (void); // This applies the pending changes
+              bool  hasNewState  (void); // Lousy naming, but this indicates if the object has changed state (e.g. from active -> assigning (pending) -> saved (changes applied)...)
+  const SK_Keybind* getKeybind   (void); // This retrieves the currently "active" keybind (so either saved or disabled, whether we are currently assining one or not)
+};
+
+bool SK_ImGui_Keybinding    (SK_KeybindMultiState* binding);
 
 #endif /* __SK__UTILITY_H__ */

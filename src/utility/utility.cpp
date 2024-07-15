@@ -33,8 +33,11 @@ UINT CF_HTML = NULL;
 std::vector<HANDLE> vWatchHandles[UITab_ALL];
 INT64               SKIF_TimeInMilliseconds = 0;
 
-bool bHotKeyHDR = false,
-     bHotKeySVC = false;
+bool bHotKeyHDR           = false,
+     bHotKeySVC           = false,
+     bHotKeyCaptureWindow = false,
+     bHotKeyCaptureRegion = false,
+     bHotKeyCaptureScreen = false;
 
 CRITICAL_SECTION CriticalSectionDbgHelp = { };
 
@@ -2776,6 +2779,14 @@ SKIF_Util_IsHDRSupported (bool refresh)
   std::vector<DISPLAYCONFIG_PATH_INFO> pathArray;
   std::vector<DISPLAYCONFIG_MODE_INFO> modeArray;
   DWORD result = ERROR_SUCCESS;
+
+  // First check always executes
+  static bool
+      init  = false;
+  if (init == false)
+  {   init  = true;
+    refresh = true;
+  }
   
   static bool state = false;
 
@@ -2858,6 +2869,14 @@ SKIF_Util_IsHDRActive (bool refresh)
   std::vector<DISPLAYCONFIG_PATH_INFO> pathArray;
   std::vector<DISPLAYCONFIG_MODE_INFO> modeArray;
   DWORD result = ERROR_SUCCESS;
+
+  // First check always executes
+  static bool
+      init  = false;
+  if (init == false)
+  {   init  = true;
+    refresh = true;
+  }
   
   static bool state = false;
 
@@ -3152,38 +3171,60 @@ SKIF_Util_EnableHDROutput (void)
 
 // Register a hotkey for toggling HDR on a per-display basis (WinKey + Ctrl + Shift + H)
 bool
-SKIF_Util_RegisterHotKeyHDRToggle (void)
+SKIF_Util_RegisterHotKeyHDRToggle (const SK_Keybind* binding)
 {
   if (bHotKeyHDR)
-    return true;
+    SKIF_Util_UnregisterHotKeyHDRToggle ( );
+
+  if (binding->vKey == 0)
+    return false;
+
+  if (! SKIF_Util_IsWindows10v1709OrGreater ( ))
+  {
+    PLOG_INFO << "OS does not support HDR display output.";
+    return false;
+  }
+
+  if (! SKIF_Util_IsHDRSupported ( ))
+  {
+    PLOG_INFO << "No HDR capable display detected on the system.";
+    return false;
+  }
 
   /*
   * Re. MOD_WIN: Either WINDOWS key was held down. These keys are labeled with the Windows logo.
   *              Keyboard shortcuts that involve the WINDOWS key are reserved for use by the operating system.
   */
 
-constexpr auto VK_H = 0x48;
+  UINT
+    fsModifiers  = MOD_NOREPEAT;
 
-  if (SKIF_Util_IsWindows10v1709OrGreater ( ))
-    if (SKIF_Util_IsHDRSupported (true))
-      if (RegisterHotKey (SKIF_Notify_hWnd, SKIF_HotKey_HDR, MOD_WIN | MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, VK_H))
-      {
-        bHotKeyHDR = true;
-        PLOG_INFO << "Successfully registered hotkey (WinKey + Ctrl + Shift + H) for toggling HDR for individual displays.";
-      }
-      else
-        PLOG_ERROR << "Failed to register hotkey for toggling HDR: " << SKIF_Util_GetErrorAsWStr ( );
-    else
-      PLOG_INFO << "No HDR capable display detected on the system.";
+  if (binding->ctrl)
+    fsModifiers |= MOD_CONTROL;
+
+  if (binding->super)
+    fsModifiers |= MOD_WIN;
+
+  if (binding->shift)
+    fsModifiers |= MOD_SHIFT;
+
+  if (binding->alt)
+    fsModifiers |= MOD_ALT;
+
+  if (RegisterHotKey (SKIF_Notify_hWnd, SKIF_HotKey_HDR, fsModifiers, binding->vKey))
+  {
+    bHotKeyHDR = true;
+    PLOG_INFO << "Successfully registered hotkey (" << binding->human_readable_utf8 << ") for toggling HDR for individual displays.";
+  }
   else
-    PLOG_INFO << "OS does not support HDR display output.";
+    PLOG_ERROR << "Failed to register hotkey for toggling HDR: " << SKIF_Util_GetErrorAsWStr ( );
 
   return bHotKeyHDR;
 }
 
 // Unregisters a hotkey for toggling HDR on a per-display basis (WinKey + Ctrl + Shift + H)
 bool
-SKIF_Util_UnregisterHotKeyHDRToggle(void)
+SKIF_Util_UnregisterHotKeyHDRToggle (void)
 {
   if (! bHotKeyHDR)
     return true;
@@ -3202,6 +3243,111 @@ bool
 SKIF_Util_GetHotKeyStateHDRToggle (void)
 {
   return bHotKeyHDR;
+}
+
+// Register a hotkey for capturing a screenshot of the desktop (WinKey + Ctrl + Shift + P)
+bool
+SKIF_Util_RegisterHotKeyCapture (const CaptureMode mode, const SK_Keybind* binding)
+{
+  bool*   pbCapture = (mode == CaptureMode_Window)
+                    ? &bHotKeyCaptureWindow :
+                      (mode == CaptureMode_Region)
+                    ? &bHotKeyCaptureRegion :
+                      &bHotKeyCaptureScreen ;
+
+  const int iHotkey = (mode == CaptureMode_Window)
+                    ?  SKIV_HotKey_CaptureWindow :
+                      (mode == CaptureMode_Region)
+                    ?  SKIV_HotKey_CaptureRegion :
+                       SKIV_HotKey_CaptureScreen ;
+
+  const char* sMode = (mode == CaptureMode_Window)
+                    ?  "window" :
+                      (mode == CaptureMode_Region)
+                    ?  "region" :
+                       "screen" ;
+
+  /*
+  * Re. MOD_WIN: Either WINDOWS key was held down. These keys are labeled with the Windows logo.
+  *              Keyboard shortcuts that involve the WINDOWS key are reserved for use by the operating system.
+  */
+
+  if (*pbCapture)
+    SKIF_Util_UnregisterHotKeyCapture (mode);
+
+  if (binding->vKey == 0)
+    return false;
+
+  UINT
+    fsModifiers  = MOD_NOREPEAT;
+
+  if (binding->ctrl)
+    fsModifiers |= MOD_CONTROL;
+
+  if (binding->super)
+    fsModifiers |= MOD_WIN;
+
+  if (binding->shift)
+    fsModifiers |= MOD_SHIFT;
+
+  if (binding->alt)
+    fsModifiers |= MOD_ALT;
+
+  if (RegisterHotKey (SKIF_Notify_hWnd, iHotkey, fsModifiers, binding->vKey))
+  {
+    *pbCapture = true;
+    PLOG_INFO << "Successfully registered hotkey (" << binding->human_readable_utf8 << ") for capturing a " << sMode << " screenshot.";
+  }
+  else
+    PLOG_ERROR << "Failed to register hotkey for capturing a " << sMode << " screenshot: " << SKIF_Util_GetErrorAsWStr ( );
+
+  return *pbCapture;
+}
+
+// Unregisters a hotkey for snipping a screenshot of the desktop (WinKey + Ctrl + Shift + P)
+bool
+SKIF_Util_UnregisterHotKeyCapture (const CaptureMode mode)
+{
+  bool*   pbCapture = (mode == CaptureMode_Window)
+                    ? &bHotKeyCaptureWindow :
+                      (mode == CaptureMode_Region)
+                    ? &bHotKeyCaptureRegion :
+                      &bHotKeyCaptureScreen ;
+
+  const int iHotkey = (mode == CaptureMode_Window)
+                    ?  SKIV_HotKey_CaptureWindow :
+                      (mode == CaptureMode_Region)
+                    ?  SKIV_HotKey_CaptureRegion :
+                       SKIV_HotKey_CaptureScreen ;
+
+  const char* sMode = (mode == CaptureMode_Window)
+                    ?  "window" :
+                      (mode == CaptureMode_Region)
+                    ?  "region" :
+                       "screen" ;
+
+  if (! *pbCapture)
+    return true;
+
+  if (UnregisterHotKey (SKIF_Notify_hWnd, iHotkey))
+  {
+    *pbCapture = false;
+    PLOG_INFO << "Removed the hotkey for capturing a " << sMode << " screenshot.";
+  }
+
+  return ! *pbCapture;
+}
+
+// Get the registration state of the hotkey for snipping a screenshot of the desktop (WinKey + Ctrl + Shift + P)
+bool
+SKIF_Util_GetHotKeyStateCapture (const CaptureMode mode)
+{
+  bool*   pbCapture = (mode == CaptureMode_Window)
+                    ? &bHotKeyCaptureWindow :
+                      (mode == CaptureMode_Region)
+                    ? &bHotKeyCaptureRegion :
+                      &bHotKeyCaptureScreen ;
+  return *pbCapture;
 }
 
 // Register a hotkey for starting the service with auto-stop (WinKey + Shift + Insert)

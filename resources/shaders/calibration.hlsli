@@ -1,5 +1,5 @@
 //
-// Copyright 2020 Andon "Kaldaien" Coleman
+// Copyright 2024 Andon "Kaldaien" Coleman
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to
@@ -20,30 +20,29 @@
 // DEALINGS IN THE SOFTWARE.
 //
 
-#pragma once
-
-void SKIF_UI_Tab_DrawViewer (void);
-
-enum SKIV_HDR_Visualizations
+float4 DrawMaxClipPattern (float clipLevel_scRGB, float2 uv)
 {
-  SKIV_HDR_VISUALIZTION_NONE    = 0,
-  SKIV_HDR_VISUALIZTION_HEATMAP = 1,
-  SKIV_HDR_VISUALIZTION_GAMUT   = 2,
-  SKIV_HDR_VISUALIZTION_SDR     = 3
-};
+  float2 texDims;
 
-enum SKIV_HDR_VisualizationFlags
-{
-  SKIV_VIZ_FLAG_SDR_CONSIDER_LUMINANCE  = 0x1,
-  SKIV_VIZ_FLAG_SDR_CONSIDER_GAMUT      = 0x2,
-  SKIV_VIZ_FLAG_SDR_CONSIDER_OVERBRIGHT = 0x4
-};
+  texture0.
+    GetDimensions ( texDims.x,
+                    texDims.y );
 
-enum SKIV_HDR_TonemapType
-{
-  SKIV_TONEMAP_TYPE_NONE               = 0x0, // Let the display figure it out
-  SKIV_TONEMAP_TYPE_CLIP               = 0x1, // Truncate the image before display
-  SKIV_TONEMAP_TYPE_INFINITE_ROLLOFF   = 0x2, // Reduce to finite range (i.e. x/(1+x))
-  SKIV_TONEMAP_TYPE_NORMALIZE_TO_CLL   = 0x4, // Content range mapped to [0,1]
-  SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY = 0x8  // Content range mapped to display range
-};
+  float2 scale  =
+    float2 ( texDims.x / 10.0,
+             texDims.y / 10.0 );
+
+  float2 size   = texDims.xy / scale;
+  float  total  =
+      floor (uv.x * size.x) +
+      floor (uv.y * size.y);
+
+  bool   isEven =
+    fmod (total, 2.0f) == 0.0f;
+
+  float4 color1 = float4 ((clipLevel_scRGB).xxx, 1.0);
+  float4 color2 = float4 (          (125.0).xxx, 1.0);
+
+  return isEven ?
+         color1 : color2;
+}

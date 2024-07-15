@@ -13,6 +13,7 @@
 #include <shellapi.h>
 #include <stdexcept>
 #include <DirectXTex.h>
+#include "sk_utility.h"
 
 #pragma comment(lib, "wininet.lib")
 
@@ -56,6 +57,12 @@ enum UITab {
   UITab_ALL      // Total number of elements in enum (technically against Microsoft's enum design guidelines, but whatever)
 };
 
+enum CaptureMode {
+  CaptureMode_Window,
+  CaptureMode_Region,
+  CaptureMode_Screen
+};
+
 struct FileSignature {
   std::wstring               mime_type       = L"";
   std::vector <std::wstring> file_extensions = { };
@@ -75,8 +82,11 @@ struct FileSignature {
   };
 };
 
-constexpr  int     SKIF_HotKey_HDR        = 1337; // Win + Ctrl + Shift + H
-constexpr  int     SKIF_HotKey_SVC        = 1338; // Win + Shift + Insert
+constexpr  int     SKIF_HotKey_HDR           = 1337; // Win + Ctrl + Shift + H
+constexpr  int     SKIF_HotKey_SVC           = 1338; // Win + Shift + Insert
+constexpr  int     SKIV_HotKey_CaptureWindow = 1339; // Win + Ctrl + Shift + I
+constexpr  int     SKIV_HotKey_CaptureRegion = 1340; // Win + Ctrl + Shift + O
+constexpr  int     SKIV_HotKey_CaptureScreen = 1341; // Win + Ctrl + Shift + P
 
 extern UITab       SKIF_Tab_Selected; // Current selected tab
 extern UITab       SKIF_Tab_ChangeTo; // Tab we want to change to
@@ -221,12 +231,15 @@ bool            SKIF_Util_IsHDRSupported              (bool refresh = false);
 bool            SKIF_Util_IsHDRActive                 (bool refresh = false);
 float           SKIF_Util_GetSDRWhiteLevelForHMONITOR (HMONITOR hMonitor);
 bool            SKIF_Util_EnableHDROutput             (void);
-bool            SKIF_Util_RegisterHotKeyHDRToggle     (void);
+bool            SKIF_Util_RegisterHotKeyHDRToggle     (const SK_Keybind* binding);
 bool            SKIF_Util_UnregisterHotKeyHDRToggle   (void);
 bool            SKIF_Util_GetHotKeyStateHDRToggle     (void);
 bool            SKIF_Util_RegisterHotKeySVCTemp       (void);
 bool            SKIF_Util_UnregisterHotKeySVCTemp     (void);
 bool            SKIF_Util_GetHotKeyStateSVCTemp       (void);
+bool            SKIF_Util_RegisterHotKeyCapture       (const CaptureMode mode, const SK_Keybind* binding);
+bool            SKIF_Util_UnregisterHotKeyCapture     (const CaptureMode mode);
+bool            SKIF_Util_GetHotKeyStateCapture       (const CaptureMode mode);
 
 
 // Web

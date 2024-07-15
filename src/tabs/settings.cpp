@@ -16,6 +16,7 @@
 #include <utility/gamepad.h>
 #include "../../version.h"
 #include <tabs/common_ui.h>
+#include <set>
 
 extern bool allowShortcutCtrlA;
 
@@ -60,6 +61,65 @@ SKIF_UI_Tab_DrawSettings (void)
 
   ImGui::Spacing ();
   ImGui::Spacing ();
+
+#pragma region Section: Keybindings
+
+  if (ImGui::CollapsingHeader ("Keybindings###SKIF_SettingsHeader-0", ImGuiTreeNodeFlags_DefaultOpen))
+  {
+    SKIF_ImGui_Spacing      ( );
+
+    struct kb_kv_s
+    {
+      SK_KeybindMultiState*                           _key;
+      SKIF_RegistrySettings::KeyValue <std::wstring>* _reg;
+      std::function <void (SK_KeybindMultiState*)>    _callback;
+      std::function <bool (void)>                     _show;
+    };
+
+    static std::vector <kb_kv_s>
+      keybinds = {
+      { &_registry.kbCaptureWindow,    &_registry.regKVHotkeyCaptureWindow,    { [](SK_KeybindMultiState* ptr) { SKIF_Util_RegisterHotKeyCapture   (CaptureMode_Window, ptr->getKeybind()); } }, { []() { return true; } } },
+      { &_registry.kbCaptureRegion,    &_registry.regKVHotkeyCaptureRegion,    { [](SK_KeybindMultiState* ptr) { SKIF_Util_RegisterHotKeyCapture   (CaptureMode_Region, ptr->getKeybind()); } }, { []() { return true; } } },
+      { &_registry.kbCaptureScreen,    &_registry.regKVHotkeyCaptureScreen,    { [](SK_KeybindMultiState* ptr) { SKIF_Util_RegisterHotKeyCapture   (CaptureMode_Screen, ptr->getKeybind()); } }, { []() { return true; } } },
+      { &_registry.kbToggleHDRDisplay, &_registry.regKVHotkeyToggleHDRDisplay, { [](SK_KeybindMultiState* ptr) { SKIF_Util_RegisterHotKeyHDRToggle (ptr->getKeybind()                    ); } }, { []() { return (SKIF_Util_IsWindows10v1709OrGreater ( ) && SKIF_Util_IsHDRSupported ( )); } } }
+    };
+
+    ImGui::BeginGroup ();
+    for (auto& keybind : keybinds)
+    {
+      if (! keybind._show())
+        continue;
+
+      ImGui::Text          ( "%s:  ",
+                            keybind._key->bind_name );
+      ImGui::Spacing ();
+    }
+    ImGui::EndGroup   ();
+    ImGui::SameLine   ();
+    ImGui::BeginGroup ();
+    for (auto& keybind : keybinds)
+    {
+      if (! keybind._show())
+        continue;
+
+      if (SK_ImGui_Keybinding (keybind._key))
+      {
+        // Only update the registry if we are done assigning
+        if (! keybind._key->assigning)
+          keybind._reg->putData (keybind._key->saved.human_readable);
+
+        keybind._callback (keybind._key);
+      }
+
+      ImGui::Spacing ();
+    }
+    ImGui::EndGroup   ();
+  }
+
+  ImGui::Spacing ();
+  ImGui::Spacing ();
+
+#pragma endregion
 
 #pragma region Section: Image
 
@@ -129,6 +189,53 @@ SKIF_UI_Tab_DrawSettings (void)
     ImGui::TreePop         ( );
 
     ImGui::PopStyleColor();
+
+    // nb:  Prefernece needs implementation
+    // 
+#if 0
+    ImGui::TextColored     (ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info), ICON_FA_LIGHTBULB);
+    SKIF_ImGui_SetHoverTip ("Used for Export to SDR and Save As...");
+    ImGui::SameLine        ( );
+    ImGui::TextColored (
+      ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextCaption),
+        "Default File Formats:"
+    );
+    ImGui::TreePush        ("FileFormats");
+    const char* HDRFormats [] = { ".png",
+                                  ".jxr",//".avif",".jxl"
+                                };
+    const char* SDRFormats [] = { ".png",
+                                  ".jpg",
+                                  ".bmp",
+                                  ".tiff"
+                                  //".dds",
+                                };
+
+    static const char* LogSeverityCurrent = LogSeverity[_registry.iLogging];
+
+    if (ImGui::BeginCombo  (" HDR Format###_registry.wsDefaultHDRExt", LogSeverityCurrent))
+    {
+      for (int n = 0; n < IM_ARRAYSIZE (LogSeverity); n++)
+      {
+        bool is_selected = (LogSeverityCurrent == LogSeverity[n]);
+        if (ImGui::Selectable (LogSeverity[n], is_selected))
+        {
+          _registry.iLogging = n;
+          _registry.regKVLogging.putData  (_registry.iLogging);
+          LogSeverityCurrent = LogSeverity[_registry.iLogging];
+          plog::get()->setMaxSeverity((plog::Severity)_registry.iLogging);
+
+          ImGui::GetCurrentContext()->DebugLogFlags = ImGuiDebugLogFlags_OutputToTTY | ((_registry.isDevLogging())
+                                                    ? ImGuiDebugLogFlags_EventMask_
+                                                    : ImGuiDebugLogFlags_EventViewport);
+        }
+        if (is_selected)
+          ImGui::SetItemDefaultFocus ( );
+      }
+      ImGui::EndCombo  ( );
+    }
+    ImGui::TreePop     ( );
+#endif
   }
 
   ImGui::Spacing ();
@@ -419,7 +526,7 @@ SKIF_UI_Tab_DrawSettings (void)
     if (SKIF_Util_IsHDRSupported ( )  )
     {
       ImGui::TextColored     (ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info), ICON_FA_LIGHTBULB);
-      SKIF_ImGui_SetHoverTip ("Makes the app pop more on HDR displays.");
+      SKIF_ImGui_SetHoverTip ("Required to properly display HDR content.");
       ImGui::SameLine        ( );
       ImGui::TextColored (
         ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextCaption),
@@ -490,19 +597,14 @@ SKIF_UI_Tab_DrawSettings (void)
       if (SKIF_Util_GetHotKeyStateHDRToggle ( ) && _registry.iUIMode != 0)
       {
         ImGui::Spacing         ( );
-        /*
-        ImGui::PushStyleColor (ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-        ImGui::TextWrapped    ("FYI: Use " ICON_FA_WINDOWS " + Ctrl + Shift + H while this app is running to toggle "
-                               "HDR for the display the mouse cursor is currently located on.");
-        ImGui::PopStyleColor  ( );
-        */
-        
         ImGui::BeginGroup       ( );
         ImGui::TextDisabled     ("Use");
         ImGui::SameLine         ( );
         ImGui::TextColored      (
           ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextBase),
-          "Ctrl + " ICON_FA_WINDOWS " + Shift + H");
+          //"Ctrl + " ICON_FA_WINDOWS " + Shift + H");
+          _registry.kbToggleHDRDisplay.getKeybind()->human_readable_utf8.c_str()
+        );
         ImGui::SameLine         ( );
         ImGui::TextDisabled     ("to toggle HDR where the");
         ImGui::SameLine         ( );
@@ -584,6 +686,9 @@ SKIF_UI_Tab_DrawSettings (void)
         _registry.bMultipleInstances
         );
     }
+
+    if ( ImGui::Checkbox ( "Close to the notification area", &_registry.bCloseToTray ) )
+      _registry.regKVCloseToTray.putData (                    _registry.bCloseToTray );
 
     if ( ImGui::Checkbox ( "Always open this app on the same monitor as the mouse", &_registry.bOpenAtCursorPosition ) )
       _registry.regKVOpenAtCursorPosition.putData (                                  _registry.bOpenAtCursorPosition );

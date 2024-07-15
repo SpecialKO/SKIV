@@ -356,12 +356,41 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
   // These defaults to false, so no need to check if the registry has another value
   //   since getData ( ) defaults to false for non-existent registry values
   bFirstLaunch             =   regKVFirstLaunch            .getData (&hKey);
+  bCloseToTray             =   regKVCloseToTray            .getData (&hKey);
   bMultipleInstances       =   regKVMultipleInstances      .getData (&hKey);
   bAutoUpdate              =   regKVAutoUpdate             .getData (&hKey);
   bOpenAtCursorPosition    =   regKVOpenAtCursorPosition   .getData (&hKey);
   bGhost                   =   regKVGhost                  .getData (&hKey);
   bLoggingDeveloper        =   regKVLoggingDeveloper       .getData (&hKey);
   bImageDetails            =   regKVImageDetails           .getData (&hKey);
+
+  // Keybindings
+  // All keybindings must first read the data from the registry,
+  //   then parse the human_readable data through .parse()
+
+  if (regKVHotkeyCaptureWindow.hasData(&hKey))
+    kbCaptureWindow.pending.human_readable = regKVHotkeyCaptureWindow.getData (&hKey);
+
+  if (regKVHotkeyCaptureRegion.hasData(&hKey))
+    kbCaptureRegion.pending.human_readable = regKVHotkeyCaptureRegion.getData (&hKey);
+
+  if (regKVHotkeyCaptureScreen.hasData(&hKey))
+    kbCaptureScreen.pending.human_readable = regKVHotkeyCaptureScreen.getData (&hKey);
+
+  if (regKVHotkeyToggleHDRDisplay.hasData(&hKey))
+    kbToggleHDRDisplay.pending.human_readable = regKVHotkeyToggleHDRDisplay.getData (&hKey);
+
+  // Parse registry/default keybinding
+  kbCaptureWindow   .pending.parse();
+  kbCaptureRegion   .pending.parse();
+  kbCaptureScreen   .pending.parse();
+  kbToggleHDRDisplay.pending.parse();
+
+  // Apply changes
+  kbCaptureWindow   .applyChanges ();
+  kbCaptureRegion   .applyChanges ();
+  kbCaptureScreen   .applyChanges ();
+  kbToggleHDRDisplay.applyChanges ();
 
   if (hKey != nullptr)
     RegCloseKey (hKey);

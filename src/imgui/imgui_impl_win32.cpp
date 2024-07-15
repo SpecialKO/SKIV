@@ -89,6 +89,7 @@
 #define SKIF_Win32
 
 #include "imgui/imgui_internal.h"
+#include "../version.h"
 #include "../resource.h"
 #include <utility/utility.h>
 #include <utility/registry.h>
@@ -129,7 +130,7 @@ static void ImGui_ImplWin32_UpdateMonitors();
 void    SKIF_ImGui_ImplWin32_UpdateDWMBorders (void);
 void    SKIF_ImGui_ImplWin32_SetDWMBorders    (void* hWnd, DWM_WINDOW_CORNER_PREFERENCE dwmCornerPreference = DWMWCP_DEFAULT);
 bool    SKIF_ImGui_ImplWin32_IsFocused        (void);
-bool    SKIF_ImGui_ImplWin32_SetFullscreen    (int fullscreen);
+bool    SKIF_ImGui_ImplWin32_SetFullscreen    (HWND hWnd, int fullscreen, HMONITOR monitor = NULL);
 
 struct ImGui_ImplWin32_Data
 {
@@ -329,7 +330,7 @@ static void ImGui_ImplWin32_UpdateKeyModifiers()
     io.AddKeyEvent(ImGuiMod_Ctrl, IsVkDown(VK_CONTROL));
     io.AddKeyEvent(ImGuiMod_Shift, IsVkDown(VK_SHIFT));
     io.AddKeyEvent(ImGuiMod_Alt, IsVkDown(VK_MENU));
-    io.AddKeyEvent(ImGuiMod_Super, IsVkDown(VK_APPS));
+    io.AddKeyEvent(ImGuiMod_Super, IsVkDown(VK_LWIN) || IsVkDown(VK_RWIN));
 }
 
 // This code supports multi-viewports (multiple OS Windows mapped into different Dear ImGui viewports)
@@ -537,7 +538,7 @@ void    ImGui_ImplWin32_NewFrame()
 #define IM_VK_KEYPAD_ENTER      (VK_RETURN + 256)
 
 // Map VK_xxx to ImGuiKey_xxx.
-static ImGuiKey ImGui_ImplWin32_VirtualKeyToImGuiKey(WPARAM wParam)
+ImGuiKey ImGui_ImplWin32_VirtualKeyToImGuiKey(WPARAM wParam)
 {
     switch (wParam)
     {
@@ -660,6 +661,134 @@ static ImGuiKey ImGui_ImplWin32_VirtualKeyToImGuiKey(WPARAM wParam)
         case VK_BROWSER_BACK: return ImGuiKey_AppBack;
         case VK_BROWSER_FORWARD: return ImGuiKey_AppForward;
         default: return ImGuiKey_None;
+    }
+}
+
+// Map ImGuiKey_xxx to VK_xxx.
+// SKIF CUSTOM -- just the straight opposite of ImGui_ImplWin32_VirtualKeyToImGuiKey
+int ImGui_ImplWin32_ImGuiKeyToVirtualKey(ImGuiKey key)
+{
+    switch (key)
+    {
+        case ImGuiKey_Tab: return VK_TAB;
+        case ImGuiKey_LeftArrow: return VK_LEFT;
+        case ImGuiKey_RightArrow: return VK_RIGHT;
+        case ImGuiKey_UpArrow: return VK_UP;
+        case ImGuiKey_DownArrow: return VK_DOWN;
+        case ImGuiKey_PageUp: return VK_PRIOR;
+        case ImGuiKey_PageDown: return VK_NEXT;
+        case ImGuiKey_Home: return VK_HOME;
+        case ImGuiKey_End: return VK_END;
+        case ImGuiKey_Insert: return VK_INSERT;
+        case ImGuiKey_Delete: return VK_DELETE;
+        case ImGuiKey_Backspace: return VK_BACK;
+        case ImGuiKey_Space: return VK_SPACE;
+        case ImGuiKey_Enter: return VK_RETURN;
+        case ImGuiKey_Escape: return VK_ESCAPE;
+        case ImGuiKey_Apostrophe: return VK_OEM_7;
+        case ImGuiKey_Comma: return VK_OEM_COMMA;
+        case ImGuiKey_Minus: return VK_OEM_MINUS;
+        case ImGuiKey_Period: return VK_OEM_PERIOD;
+        case ImGuiKey_Slash: return VK_OEM_2;
+        case ImGuiKey_Semicolon: return VK_OEM_1;
+        case ImGuiKey_Equal: return VK_OEM_PLUS;
+        case ImGuiKey_LeftBracket: return VK_OEM_4;
+        case ImGuiKey_Backslash: return VK_OEM_5;
+        case ImGuiKey_RightBracket: return VK_OEM_6;
+        case ImGuiKey_GraveAccent: return VK_OEM_3;
+        case ImGuiKey_CapsLock: return VK_CAPITAL;
+        case ImGuiKey_ScrollLock: return VK_SCROLL;
+        case ImGuiKey_NumLock: return VK_NUMLOCK;
+        case ImGuiKey_PrintScreen: return VK_SNAPSHOT;
+        case ImGuiKey_Pause: return VK_PAUSE;
+        case ImGuiKey_Keypad0: return VK_NUMPAD0;
+        case ImGuiKey_Keypad1: return VK_NUMPAD1;
+        case ImGuiKey_Keypad2: return VK_NUMPAD2;
+        case ImGuiKey_Keypad3: return VK_NUMPAD3;
+        case ImGuiKey_Keypad4: return VK_NUMPAD4;
+        case ImGuiKey_Keypad5: return VK_NUMPAD5;
+        case ImGuiKey_Keypad6: return VK_NUMPAD6;
+        case ImGuiKey_Keypad7: return VK_NUMPAD7;
+        case ImGuiKey_Keypad8: return VK_NUMPAD8;
+        case ImGuiKey_Keypad9: return VK_NUMPAD9;
+        case ImGuiKey_KeypadDecimal: return VK_DECIMAL;
+        case ImGuiKey_KeypadDivide: return VK_DIVIDE;
+        case ImGuiKey_KeypadMultiply: return VK_MULTIPLY;
+        case ImGuiKey_KeypadSubtract: return VK_SUBTRACT;
+        case ImGuiKey_KeypadAdd: return VK_ADD;
+        case ImGuiKey_KeypadEnter: return IM_VK_KEYPAD_ENTER;
+        case ImGuiKey_LeftShift: return VK_LSHIFT;
+        case ImGuiKey_LeftCtrl: return VK_LCONTROL;
+        case ImGuiKey_LeftAlt: return VK_LMENU;
+        case ImGuiKey_LeftSuper: return VK_LWIN;
+        case ImGuiKey_RightShift: return VK_RSHIFT;
+        case ImGuiKey_RightCtrl: return VK_RCONTROL;
+        case ImGuiKey_RightAlt: return VK_RMENU;
+        case ImGuiKey_RightSuper: return VK_RWIN;
+        case ImGuiKey_Menu: return VK_APPS;
+        case ImGuiKey_0: return '0';
+        case ImGuiKey_1: return '1';
+        case ImGuiKey_2: return '2';
+        case ImGuiKey_3: return '3';
+        case ImGuiKey_4: return '4';
+        case ImGuiKey_5: return '5';
+        case ImGuiKey_6: return '6';
+        case ImGuiKey_7: return '7';
+        case ImGuiKey_8: return '8';
+        case ImGuiKey_9: return '9';
+        case ImGuiKey_A: return 'A';
+        case ImGuiKey_B: return 'B';
+        case ImGuiKey_C: return 'C';
+        case ImGuiKey_D: return 'D';
+        case ImGuiKey_E: return 'E';
+        case ImGuiKey_F: return 'F';
+        case ImGuiKey_G: return 'G';
+        case ImGuiKey_H: return 'H';
+        case ImGuiKey_I: return 'I';
+        case ImGuiKey_J: return 'J';
+        case ImGuiKey_K: return 'K';
+        case ImGuiKey_L: return 'L';
+        case ImGuiKey_M: return 'M';
+        case ImGuiKey_N: return 'N';
+        case ImGuiKey_O: return 'O';
+        case ImGuiKey_P: return 'P';
+        case ImGuiKey_Q: return 'Q';
+        case ImGuiKey_R: return 'R';
+        case ImGuiKey_S: return 'S';
+        case ImGuiKey_T: return 'T';
+        case ImGuiKey_U: return 'U';
+        case ImGuiKey_V: return 'V';
+        case ImGuiKey_W: return 'W';
+        case ImGuiKey_X: return 'X';
+        case ImGuiKey_Y: return 'Y';
+        case ImGuiKey_Z: return 'Z';
+        case ImGuiKey_F1: return VK_F1;
+        case ImGuiKey_F2: return VK_F2;
+        case ImGuiKey_F3: return VK_F3;
+        case ImGuiKey_F4: return VK_F4;
+        case ImGuiKey_F5: return VK_F5;
+        case ImGuiKey_F6: return VK_F6;
+        case ImGuiKey_F7: return VK_F7;
+        case ImGuiKey_F8: return VK_F8;
+        case ImGuiKey_F9: return VK_F9;
+        case ImGuiKey_F10: return VK_F10;
+        case ImGuiKey_F11: return VK_F11;
+        case ImGuiKey_F12: return VK_F12;
+        case ImGuiKey_F13: return VK_F13;
+        case ImGuiKey_F14: return VK_F14;
+        case ImGuiKey_F15: return VK_F15;
+        case ImGuiKey_F16: return VK_F16;
+        case ImGuiKey_F17: return VK_F17;
+        case ImGuiKey_F18: return VK_F18;
+        case ImGuiKey_F19: return VK_F19;
+        case ImGuiKey_F20: return VK_F20;
+        case ImGuiKey_F21: return VK_F21;
+        case ImGuiKey_F22: return VK_F22;
+        case ImGuiKey_F23: return VK_F23;
+        case ImGuiKey_F24: return VK_F24;
+        case ImGuiKey_AppBack: return VK_BROWSER_BACK;
+        case ImGuiKey_AppForward: return VK_BROWSER_FORWARD;
+        default: return 0x00;
     }
 }
 
@@ -1219,13 +1348,17 @@ static void ImGui_ImplWin32_CreateWindow(ImGuiViewport *viewport)
   ImGui_ImplWin32_Data* bd = ImGui_ImplWin32_GetBackendData();
   if (bd->hWnd == nullptr || SKIF_ImGui_hWnd == NULL)
   {
-    // Store the handle globally
     bd->hWnd        = vd->Hwnd;
-    SKIF_ImGui_hWnd = bd->hWnd;
 
-    // Update the main viewport as well, since that's apparently also required
-    //ImGuiViewport* main_viewport = ImGui::GetMainViewport();
-    //main_viewport->PlatformHandle = main_viewport->PlatformHandleRaw = (void*)bd->hWnd;
+    // Store the handle for our main window globally
+    ImGuiViewportP* vp = (ImGuiViewportP*)viewport;
+    if (ImGuiWindow* window = vp->Window)
+    {
+      if (window->ID == ImHashStr (SKIV_WINDOW_TITLE_HASH))
+      {
+        SKIF_ImGui_hWnd = bd->hWnd;
+      }
+    }
 
     // Retrieve the DPI scaling of the current display
     SKIF_ImGui_GlobalDPIScale = (_registry.bDPIScaling) ? ImGui_ImplWin32_GetDpiScaleForHwnd (vd->Hwnd) : 1.0f;
@@ -2038,7 +2171,7 @@ SKIF_ImGui_ImplWin32_SetDWMBorders (void* hWnd, DWM_WINDOW_CORNER_PREFERENCE dwm
     // Main window
     if (SKIF_ImGui_hWnd ==       NULL ||
         SKIF_ImGui_hWnd == (HWND)hWnd)
-      dwmCornerPreference = (! SKIF_ImGui_ImplWin32_SetFullscreen (-1)) ? DWMWCP_ROUND : DWMWCP_DONOTROUND; // Do not round the main window if we are in fullscreen mode
+      dwmCornerPreference = (! SKIF_ImGui_ImplWin32_SetFullscreen ((HWND)hWnd, -1)) ? DWMWCP_ROUND : DWMWCP_DONOTROUND; // Do not round the main window if we are in fullscreen mode
 
     // Popups (spanning outside of the main window)
     else
@@ -2143,9 +2276,11 @@ SKIF_ImGui_ImplWin32_WantUpdateMonitors (void)
 
 
 bool
-SKIF_ImGui_ImplWin32_SetFullscreen (int fullscreen)
+SKIF_ImGui_ImplWin32_SetFullscreen (HWND hWnd, int fullscreen, HMONITOR monitor)
 {
-  struct {
+  // Cached data structure to support tracking multiple windows
+  struct fullscreen_s {
+      HWND   hWnd;           // Used to tracking
       bool   Fullscreen = 0; // Current fullscreen state
 
       // Previous window state (before entering fullscreen)
@@ -2153,81 +2288,98 @@ SKIF_ImGui_ImplWin32_SetFullscreen (int fullscreen)
       LONG   dwStyle;
       LONG   dwExStyle;
       RECT   rcWindow;
-  } static _cached;
 
-  // -1 is used to retrieve the current state
-  if (fullscreen == -1)
-    return _cached.Fullscreen;
+      fullscreen_s (HWND _hWnd) : hWnd(_hWnd) { };
+  };
 
-  if (ImGuiWindow* window = ImGui::FindWindowByName (SKIV_WINDOW_TITLE_HASH))
+  static std::vector<fullscreen_s> _cache;
+
+  if (hWnd == NULL)
+    return false;
+
+  if (ImGuiViewportP* viewport = (ImGuiViewportP*) ImGui::FindViewportByPlatformHandle (hWnd))
   {
-    if (ImGuiViewport* viewport = window->Viewport)
+    ImGuiWindow* window = viewport->Window;
+
+    if (window == nullptr)
+      return false;
+
+    fullscreen_s* _cached = nullptr;
+
+    for (auto& cached : _cache)
+      if (cached.hWnd == hWnd)
+        _cached = &cached;
+
+    if (_cached == nullptr)
     {
-      HWND hwnd = (HWND)viewport->PlatformHandleRaw;
-
-      if (viewport->PlatformHandleRaw == NULL)
-        return false;
-
-      RECT rect = { };
-
-      // Cache the current state if we are about to enter fullscreen
-      if (! _cached.Fullscreen)
-      {
-        _cached.Maximized = !!::IsZoomed (hwnd);
-
-        if (_cached.Maximized) // Apparently we need to restore from a maximized state to get the taskbar to hide itself
-          ::SendMessage (hwnd, WM_SYSCOMMAND, SC_RESTORE, 0);
-
-        _cached.dwStyle   = GetWindowLong (hwnd, GWL_STYLE);
-        _cached.dwExStyle = GetWindowLong (hwnd, GWL_EXSTYLE);
-        GetWindowRect (hwnd, &_cached.rcWindow);
-      }
-
-      _cached.Fullscreen = static_cast<bool> (fullscreen);
-
-      // Entering fullscreen mode
-      if (_cached.Fullscreen)
-      {
-        SetWindowLong (hwnd, GWL_STYLE,   _cached.dwStyle   & ~(WS_CAPTION | WS_THICKFRAME));
-        SetWindowLong (hwnd, GWL_EXSTYLE, _cached.dwExStyle & ~(WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE | WS_EX_STATICEDGE));
-
-        MONITORINFO mi = { };
-        mi.cbSize = sizeof(mi);
-        GetMonitorInfo (MonitorFromWindow (hwnd, MONITOR_DEFAULTTONEAREST), &mi);
-        rect = mi.rcMonitor;
-
-        // Seems to be required to account for the border of the window
-        //rect.right  += 1;
-        //rect.bottom += 1;
-
-        SKIF_ImGui_ImplWin32_SetDWMBorders (hwnd, DWMWCP_DONOTROUND);
-      }
-
-      // Exiting fullscreen mode
-      else
-      {
-        SetWindowLong (hwnd, GWL_STYLE,   _cached.dwStyle);
-        SetWindowLong (hwnd, GWL_EXSTYLE, _cached.dwExStyle);
-
-        rect = _cached.rcWindow;
-
-        if (_cached.Maximized) // Restore maximized state (does not really work properly?)
-          ::SendMessage (hwnd, WM_SYSCOMMAND, SC_MAXIMIZE, 0);
-
-        SKIF_ImGui_ImplWin32_SetDWMBorders (hwnd);
-      }
-        
-      float top    = static_cast<float> (rect.top);
-      float left   = static_cast<float> (rect.left);
-      float width  = static_cast<float> (rect.right)  - left;
-      float height = static_cast<float> (rect.bottom) - top;
-
-      ImGui::SetWindowSize (window, ImVec2 (width, height));
-      ImGui::SetWindowPos  (window, ImVec2 (left,  top));
+      _cache.push_back (fullscreen_s (hWnd));
+      _cached = &_cache.back();
     }
+
+    // -1 is used to retrieve the current state
+    if (fullscreen == -1)
+      return _cached->Fullscreen;
+
+    RECT rect = { };
+
+    // Cache the current state if we are about to enter fullscreen
+    if (! _cached->Fullscreen)
+    {
+      _cached->Maximized = !!::IsZoomed (hWnd);
+
+      if (_cached->Maximized) // Apparently we need to restore from a maximized state to get the taskbar to hide itself
+        ::SendMessage (hWnd, WM_SYSCOMMAND, SC_RESTORE, 0);
+
+      _cached->dwStyle   = GetWindowLong (hWnd, GWL_STYLE);
+      _cached->dwExStyle = GetWindowLong (hWnd, GWL_EXSTYLE);
+      GetWindowRect (hWnd, &_cached->rcWindow);
+    }
+
+    _cached->Fullscreen = static_cast<bool> (fullscreen);
+
+    // Entering fullscreen mode
+    if (_cached->Fullscreen)
+    {
+      SetWindowLong (hWnd, GWL_STYLE,   _cached->dwStyle   & ~(WS_CAPTION | WS_THICKFRAME));
+      SetWindowLong (hWnd, GWL_EXSTYLE, _cached->dwExStyle & ~(WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE | WS_EX_STATICEDGE));
+
+      if (monitor == NULL)
+        monitor = MonitorFromWindow (hWnd, MONITOR_DEFAULTTONEAREST);
+
+      MONITORINFO mi = { };
+      mi.cbSize = sizeof(mi);
+      GetMonitorInfo (monitor, &mi);
+      rect = mi.rcMonitor;
+
+      SKIF_ImGui_ImplWin32_SetDWMBorders (hWnd, DWMWCP_DONOTROUND);
+    }
+
+    // Exiting fullscreen mode
+    else
+    {
+      SetWindowLong (hWnd, GWL_STYLE,   _cached->dwStyle);
+      SetWindowLong (hWnd, GWL_EXSTYLE, _cached->dwExStyle);
+
+      rect = _cached->rcWindow;
+
+      if (_cached->Maximized) // Restore maximized state (does not really work properly?)
+        ::SendMessage (hWnd, WM_SYSCOMMAND, SC_MAXIMIZE, 0);
+
+      SKIF_ImGui_ImplWin32_SetDWMBorders (hWnd);
+    }
+        
+    float top    = static_cast<float> (rect.top);
+    float left   = static_cast<float> (rect.left);
+    float width  = static_cast<float> (rect.right)  - left;
+    float height = static_cast<float> (rect.bottom) - top;
+
+    ImGui::SetWindowSize (window, ImVec2 (width, height));
+    ImGui::SetWindowPos  (window, ImVec2 (left,  top));
+
+    return _cached->Fullscreen;
   }
 
-  return _cached.Fullscreen;
+  return false;
 }
 
 //---------------------------------------------------------------------------------------------------------
