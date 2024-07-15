@@ -3834,8 +3834,9 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         ImGui::InsertNotification ({
           ImGuiToastType::Error, 5000,
             "Screen Capture Failed",
-            "%HRESULT=%x (%ws)", hr,
-              _com_error (hr).ErrorMessage ()
+            "%ws (HRESULT=%x)",
+              _com_error (hr).ErrorMessage (),
+                          hr
         });
       }
     }
