@@ -102,12 +102,12 @@ int   addAdditionalFrames       = 0;
 DWORD dwDwmPeriod               = 16; // Assume 60 Hz by default
 bool  SteamOverlayDisabled      = false;
 bool  allowShortcutCtrlA        = true; // Used to disable the Ctrl+A when interacting with text input
-bool  allowEscape               = true;
 bool  SKIF_MouseDragMoveAllowed = true;
 bool  SKIF_debuggerPresent      = false;
 DWORD SKIF_startupTime          = 0; // Used as a basis of how long the initialization took
 DWORD SKIF_firstFrameTime       = 0; // Used as a basis of how long the initialization took
 HANDLE SteamProcessHandle       = NULL;
+extern bool SK_Keybind_g_isAssigning;
 
 // Shell messages (registered window messages)
 UINT SHELL_TASKBAR_RESTART        = 0; // TaskbarCreated
@@ -254,6 +254,8 @@ SKIF_Startup_ProcessCmdLineArgs (LPWSTR lpCmdLine)
 //  wcscmp (lpCmdLine, L"2") == NULL;
   _Signal.OpenFileDialog = 
     _wcsicmp (lpCmdLine, L"/OpenFileDialog") == NULL;
+  _Signal.CaptureWindow = 
+    _wcsicmp (lpCmdLine, L"/CaptureWindow") == NULL;
   _Signal.CaptureRegion = 
     _wcsicmp (lpCmdLine, L"/CaptureRegion") == NULL;
   _Signal.CaptureScreen = 
@@ -262,6 +264,7 @@ SKIF_Startup_ProcessCmdLineArgs (LPWSTR lpCmdLine)
   if (! _Signal.Quit           &&
       ! _Signal.Minimize       &&
       ! _Signal.OpenFileDialog &&
+      ! _Signal.CaptureWindow  &&
       ! _Signal.CaptureRegion  &&
       ! _Signal.CaptureScreen)
     _Signal._FilePath = std::wstring(lpCmdLine);
@@ -362,6 +365,7 @@ SKIF_Startup_ProxyCommandLineArguments (void)
 
   if (! _Signal.Minimize         &&
       ! _Signal.OpenFileDialog   &&
+      ! _Signal.CaptureWindow    &&
       ! _Signal.CaptureRegion    &&
       ! _Signal.CaptureScreen    &&
       ! _Signal.CheckForUpdates  &&
@@ -397,6 +401,23 @@ SKIF_Startup_ProxyCommandLineArguments (void)
         if (StrCmpIW ((LPWSTR)lParam, wszRealWindowClass) == 0)
         {
           PostMessage (hWnd, WM_SKIF_FILE_DIALOG, 0x0, 0x0);
+          return FALSE;
+        }
+      return TRUE;
+    }, (LPARAM)SKIF_NotifyIcoClass);
+  }
+
+  if (_Signal.CaptureWindow)
+  {
+    // Send WM_SKIF_SNIP_WINDOW to a single running instance (including ourselves)
+    EnumWindows ( []( HWND   hWnd,
+                      LPARAM lParam ) -> BOOL
+    {
+      wchar_t                         wszRealWindowClass [64] = { };
+      if (RealGetWindowClassW (hWnd,  wszRealWindowClass, 64))
+        if (StrCmpIW ((LPWSTR)lParam, wszRealWindowClass) == 0)
+        {
+          PostMessage (hWnd, WM_SKIF_SNIP_WINDOW, 0x0, 0x0);
           return FALSE;
         }
       return TRUE;
@@ -1234,8 +1255,9 @@ wWinMain ( _In_     HINSTANCE hInstance,
   SKIF_Util_RegisterHotKeyHDRToggle (_registry.kbToggleHDRDisplay.getKeybind());
 
   // Register snipping hotkey
-  SKIF_Util_RegisterHotKeyCapture (_registry.kbCaptureRegion.getKeybind(), true);
-  SKIF_Util_RegisterHotKeyCapture (_registry.kbCaptureScreen.getKeybind(), false);
+  SKIF_Util_RegisterHotKeyCapture (CaptureMode_Window, _registry.kbCaptureWindow.getKeybind());
+  SKIF_Util_RegisterHotKeyCapture (CaptureMode_Region, _registry.kbCaptureRegion.getKeybind());
+  SKIF_Util_RegisterHotKeyCapture (CaptureMode_Screen, _registry.kbCaptureScreen.getKeybind());
 
   // Register the HTML Format for the clipboard
   CF_HTML = RegisterClipboardFormatW (L"HTML Format");
@@ -1804,7 +1826,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
       }
 
       allowShortcutCtrlA = true;
-      allowEscape        = true;
+      SK_Keybind_g_isAssigning = false;
 
 
 
@@ -1838,10 +1860,10 @@ wWinMain ( _In_     HINSTANCE hInstance,
                                                                 (SKIV_HDR && HDR_Image) ? hdr_uv0 : (sRGB_Hack) ? force_srgb_uv0 : srgb_uv0,
                                                                 (SKIV_HDR && HDR_Image) ? hdr_uv1 : (sRGB_Hack) ? force_srgb_uv1 : srgb_uv1);
 
-          ImDrawList* draw_list =
-            ImGui::GetForegroundDrawList ();
+          //ImDrawList* draw_list =
+          //  ImGui::GetForegroundDrawList ();
 
-          draw_list->AddRectFilled (ImVec2 (0, 0), SKIV_DesktopImage._resolution, ImGui::GetColorU32 (IM_COL32(20, 20, 20, 80))); // Transparent Overlay
+          //draw_list->AddRectFilled (ImVec2 (0, 0), SKIV_DesktopImage._resolution, ImGui::GetColorU32 (IM_COL32(20, 20, 20, 80))); // Transparent Overlay
         }
 
         static ImRect selection;
@@ -2309,7 +2331,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
       // Escape does situational stuff
       //   ... but only if we allow it
       //   ... and if when a popup is not opened
-      if (hotkeyEsc && allowEscape && ! SKIF_ImGui_IsAnyPopupOpen ( ) )
+      if (hotkeyEsc && ! SKIF_ImGui_IsAnyPopupOpen ( ) )
       {
         if (_registry._SnippingMode)
           _registry._SnippingModeExit = true;
@@ -3378,9 +3400,10 @@ wWinMain ( _In_     HINSTANCE hInstance,
   }
 
   PLOG_INFO << "Exited main loop...";
-
-  SKIF_Util_UnregisterHotKeyCapture    (true);
-  SKIF_Util_UnregisterHotKeyCapture    (false);
+  
+  SKIF_Util_UnregisterHotKeyCapture     (CaptureMode_Screen);
+  SKIF_Util_UnregisterHotKeyCapture     (CaptureMode_Region);
+  SKIF_Util_UnregisterHotKeyCapture     (CaptureMode_Window);
   //SKIF_Util_UnregisterHotKeySVCTemp   ( );
   //SKIF_Util_UnregisterHotKeyHDRToggle ( );
 
@@ -3697,38 +3720,72 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
   // We don't define this here to ensure it doesn't get created before we are ready to handle it
 //static SKIF_Updater&          _updater    = SKIF_Updater         ::GetInstance ( );
 
-  auto _EnterSnippingMode = [&](bool region_) -> void
+  auto _EnterSnippingMode = [&](CaptureMode mode) -> void
   {
-    PLOG_VERBOSE << "Received request to capture desktop...";
+    PLOG_VERBOSE << "Received request to capture " << ((mode == CaptureMode_Window) ? "window" : (mode == CaptureMode_Region) ? "region" : "screen") << "...";
 
     if (! std::exchange (_registry._SnippingMode, true))
     {
-      DirectX::ScratchImage        captured_img;
+      extern HWND hwndBeforeSnip;
+      hwndBeforeSnip = GetForegroundWindow ();
+
+      POINT capture_point = { };
+      RECT  capture_rect  = { };
+
+      if (mode == CaptureMode_Window)
+      {
+        if (GetWindowRect (hwndBeforeSnip, &capture_rect))
+        {
+          capture_point.x = capture_rect.left;
+          capture_point.y = capture_rect.top;
+        }
+      }
+
+      else
+        GetCursorPos (&capture_point);
+
+      DirectX::ScratchImage captured_img;
       HRESULT hr =
-        SKIV_Image_CaptureDesktop (captured_img);
+        SKIV_Image_CaptureDesktop (captured_img, capture_point);
 
       if (SUCCEEDED (hr))
       {
-        PLOG_VERBOSE << "Desktop capture was successful!";
+        PLOG_VERBOSE << "Capture was successful!";
 
-        extern HWND hwndBeforeSnip;
         extern HWND hwndTopBeforeSnip;
         extern bool iconicBeforeSnip;
         extern bool trayedBeforeSnip;
 
         extern ImRect selection_rect;
 
-        if (! region_)
+        if (mode == CaptureMode_Window)
         {
-          extern skiv_image_desktop_s SKIV_DesktopImage;
-          const ImRect screen = ImRect (ImVec2 (0, 0), SKIV_DesktopImage._resolution);
-          SKIV_Image_CaptureRegion (screen);
+          const ImRect area = ImRect (static_cast<float> (capture_rect.left  ),
+                                      static_cast<float> (capture_rect.top   ),
+                                      static_cast<float> (capture_rect.right ),
+                                      static_cast<float> (capture_rect.bottom)
+          );
+
+          //PLOG_VERBOSE << "capture_rect.left  : " << capture_rect.left;
+          //PLOG_VERBOSE << "capture_rect.top   : " << capture_rect.top;
+          //PLOG_VERBOSE << "capture_rect.right : " << capture_rect.right;
+          //PLOG_VERBOSE << "capture_rect.bottom: " << capture_rect.bottom;
+
+          SKIV_Image_CaptureRegion (area);
           _registry._SnippingMode = false;
         }
 
+        else if (mode == CaptureMode_Screen)
+        {
+          extern skiv_image_desktop_s SKIV_DesktopImage;
+          const ImRect area = ImRect (ImVec2 (0, 0), SKIV_DesktopImage._resolution);
+          SKIV_Image_CaptureRegion (area);
+          _registry._SnippingMode = false;
+        }
+
+        // CaptureMode_Region
         else
         {
-          hwndBeforeSnip    = GetForegroundWindow ();
           hwndTopBeforeSnip = GetWindow (SKIF_ImGui_hWnd, GW_HWNDNEXT);
 
           trayedBeforeSnip = SKIF_isTrayed;
@@ -3742,12 +3799,9 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
           if (iconicBeforeSnip)
             ShowWindow (SKIF_ImGui_hWnd, SW_RESTORE);
-        
-          POINT    ptCursor = {     };
-          HMONITOR monitor  = NULL;
 
-          if (GetCursorPos (&ptCursor))
-            monitor = MonitorFromPoint (ptCursor, MONITOR_DEFAULTTONULL);
+          HMONITOR monitor =
+            MonitorFromPoint (capture_point, MONITOR_DEFAULTTONULL);
 
           SKIF_ImGui_SetFullscreen (SKIF_ImGui_hWnd, true, monitor);
 
@@ -3864,12 +3918,16 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         SKIF_Util_EnableHDROutput ( );
         break;
 
+      case SKIV_HotKey_CaptureWindow:
+        _EnterSnippingMode (CaptureMode_Window);
+        break;
+
       case SKIV_HotKey_CaptureRegion:
-        _EnterSnippingMode (true);
+        _EnterSnippingMode (CaptureMode_Region);
         break;
 
       case SKIV_HotKey_CaptureScreen:
-        _EnterSnippingMode (false);
+        _EnterSnippingMode (CaptureMode_Screen);
         break;
       }
     break;
@@ -4036,12 +4094,16 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
       OpenFileDialog = PopupState_Open;
       break;
 
+    case WM_SKIF_SNIP_WINDOW:
+      _EnterSnippingMode (CaptureMode_Window);
+      break;
+
     case WM_SKIF_SNIP_REGION:
-      _EnterSnippingMode (true);
+      _EnterSnippingMode (CaptureMode_Region);
       break;
 
     case WM_SKIF_SNIP_SCREEN:
-      _EnterSnippingMode (false);
+      _EnterSnippingMode (CaptureMode_Screen);
       break;
 
     case WM_SKIF_RUN_UPDATER:

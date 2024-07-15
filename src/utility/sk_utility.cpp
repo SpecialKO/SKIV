@@ -361,6 +361,7 @@ SK_RemoveTrailingDecimalZeros (char* szNum, size_t bufLen)
 
 using wstring_hash = size_t;
 
+bool SK_Keybind_g_isAssigning = false;
 std::unordered_map <wstring_hash, BYTE> humanKeyNameToVirtKeyCode;
 std::unordered_map <BYTE, wchar_t [32]> virtKeyCodeToHumanKeyName;
 std::unordered_map <BYTE, wchar_t [32]> virtKeyCodeToFullyLocalizedKeyName;
@@ -368,18 +369,6 @@ std::unordered_map <BYTE, wchar_t [32]> virtKeyCodeToFullyLocalizedKeyName;
 static auto& humanToVirtual = humanKeyNameToVirtKeyCode;
 static auto& virtualToHuman = virtKeyCodeToHumanKeyName;
 static auto& virtualToLocal = virtKeyCodeToFullyLocalizedKeyName;
-
-void
-SK_Keybind::makeMask (void)
-{
-  masked_code =
-    static_cast <UINT> (
-      (vKey | ( (ctrl  != 0) <<  9 ) |
-              ( (shift != 0) << 10 ) |
-              ( (alt   != 0) << 11 ) |
-              ( (super != 0) << 12 ))
-    );
-}
  
 char* SK_CharNextA (const char *szInput, int n = 1);
 
@@ -536,6 +525,18 @@ SK_Keybind::update (void)
   }
 
   human_readable_utf8 = SK_WideCharToUTF8 (human_readable);
+}
+
+void
+SK_Keybind::makeMask (void)
+{
+  masked_code =
+    static_cast <UINT> (
+      (vKey | ( (ctrl  != 0) <<  9 ) |
+              ( (shift != 0) << 10 ) |
+              ( (alt   != 0) << 11 ) |
+              ( (super != 0) << 12 ))
+    );
 }
 
 void
@@ -790,9 +791,7 @@ SK_ImGui_KeybindDialog (SK_KeybindMultiState* keybind)
 
     // Indicate that we are assigning (this disables the keybinding while the popup is opened)
     keybind->assigning = true;
-
-    extern bool allowEscape;
-    allowEscape = false;
+    SK_Keybind_g_isAssigning = true;
 
     int  vKey = 256;
 
@@ -897,4 +896,5 @@ SK_ImGui_Keybinding (SK_KeybindMultiState* binding)
     ImGui::OpenPopup (         binding->bind_name);
 
   return SK_ImGui_KeybindDialog (binding);
-};
+}
+;

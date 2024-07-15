@@ -1324,10 +1324,11 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
 skiv_image_desktop_s SKIV_DesktopImage;
 
 HRESULT
-SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, int flags)
+SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
 {
   SKIV_DesktopImage.clear();
 
+  std::ignore = image;
   std::ignore = flags;
 
   HRESULT res = E_NOT_VALID_STATE;
@@ -1347,9 +1348,6 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, int flags)
   CComPtr <IDXGIAdapter> pAdapter;
   UINT                  uiAdapter = 0;
 
-  POINT          cursor_pos;
-  GetCursorPos (&cursor_pos);
-
   CComPtr <IDXGIOutput> pCursorOutput;
 
   while (SUCCEEDED (pFactory->EnumAdapters (uiAdapter++, &pAdapter.p)))
@@ -1362,7 +1360,7 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, int flags)
       DXGI_OUTPUT_DESC   out_desc;
       pOutput->GetDesc (&out_desc);
 
-      if (out_desc.AttachedToDesktop && PtInRect (&out_desc.DesktopCoordinates, cursor_pos))
+      if (out_desc.AttachedToDesktop && PtInRect (&out_desc.DesktopCoordinates, point))
       {
         pCursorOutput = pOutput;
         break;
@@ -1560,12 +1558,11 @@ SKIV_Image_CaptureRegion (ImRect capture_area)
   CComPtr <ID3D11DeviceContext>  pDevCtx;
   pDevice->GetImmediateContext (&pDevCtx.p);
 
-  DirectX::ScratchImage                                                    captured_img;
+  DirectX::ScratchImage captured_img;
   if (SUCCEEDED (DirectX::CaptureTexture (pDevice, pDevCtx, SKIV_DesktopImage._res, captured_img)))
   {
     PLOG_VERBOSE << "DirectX::CaptureTexture    ( ): SUCCEEDED";
-    DirectX::ScratchImage
-                    subrect;
+    DirectX::ScratchImage subrect;
 
     if (SUCCEEDED (subrect.Initialize2D   ( captured_img.GetMetadata ().format, width, height, 1, 1)))
     {

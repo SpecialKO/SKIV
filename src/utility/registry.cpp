@@ -368,6 +368,9 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
   // All keybindings must first read the data from the registry,
   //   then parse the human_readable data through .parse()
 
+  if (regKVHotkeyCaptureWindow.hasData(&hKey))
+    kbCaptureWindow.pending.human_readable = regKVHotkeyCaptureWindow.getData (&hKey);
+
   if (regKVHotkeyCaptureRegion.hasData(&hKey))
     kbCaptureRegion.pending.human_readable = regKVHotkeyCaptureRegion.getData (&hKey);
 
@@ -377,11 +380,16 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
   if (regKVHotkeyToggleHDRDisplay.hasData(&hKey))
     kbToggleHDRDisplay.pending.human_readable = regKVHotkeyToggleHDRDisplay.getData (&hKey);
 
-  kbCaptureRegion.pending.parse();
-  kbCaptureRegion.applyChanges ();
-  kbCaptureScreen.pending.parse();
-  kbCaptureScreen.applyChanges ();
+  // Parse registry/default keybinding
+  kbCaptureWindow   .pending.parse();
+  kbCaptureRegion   .pending.parse();
+  kbCaptureScreen   .pending.parse();
   kbToggleHDRDisplay.pending.parse();
+
+  // Apply changes
+  kbCaptureWindow   .applyChanges ();
+  kbCaptureRegion   .applyChanges ();
+  kbCaptureScreen   .applyChanges ();
   kbToggleHDRDisplay.applyChanges ();
 
   if (hKey != nullptr)

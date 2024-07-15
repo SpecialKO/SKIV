@@ -57,6 +57,12 @@ enum UITab {
   UITab_ALL      // Total number of elements in enum (technically against Microsoft's enum design guidelines, but whatever)
 };
 
+enum CaptureMode {
+  CaptureMode_Window,
+  CaptureMode_Region,
+  CaptureMode_Screen
+};
+
 struct FileSignature {
   std::wstring               mime_type       = L"";
   std::vector <std::wstring> file_extensions = { };
@@ -78,8 +84,9 @@ struct FileSignature {
 
 constexpr  int     SKIF_HotKey_HDR           = 1337; // Win + Ctrl + Shift + H
 constexpr  int     SKIF_HotKey_SVC           = 1338; // Win + Shift + Insert
-constexpr  int     SKIV_HotKey_CaptureRegion = 1339; // Win + Ctrl + Shift + P
-constexpr  int     SKIV_HotKey_CaptureScreen = 1340; // 
+constexpr  int     SKIV_HotKey_CaptureWindow = 1339; // Win + Ctrl + Shift + I
+constexpr  int     SKIV_HotKey_CaptureRegion = 1340; // Win + Ctrl + Shift + O
+constexpr  int     SKIV_HotKey_CaptureScreen = 1341; // Win + Ctrl + Shift + P
 
 extern UITab       SKIF_Tab_Selected; // Current selected tab
 extern UITab       SKIF_Tab_ChangeTo; // Tab we want to change to
@@ -230,9 +237,9 @@ bool            SKIF_Util_GetHotKeyStateHDRToggle     (void);
 bool            SKIF_Util_RegisterHotKeySVCTemp       (void);
 bool            SKIF_Util_UnregisterHotKeySVCTemp     (void);
 bool            SKIF_Util_GetHotKeyStateSVCTemp       (void);
-bool            SKIF_Util_RegisterHotKeyCapture       (const SK_Keybind* binding, bool region);
-bool            SKIF_Util_UnregisterHotKeyCapture     (bool region);
-bool            SKIF_Util_GetHotKeyStateCapture       (bool region);
+bool            SKIF_Util_RegisterHotKeyCapture       (const CaptureMode mode, const SK_Keybind* binding);
+bool            SKIF_Util_UnregisterHotKeyCapture     (const CaptureMode mode);
+bool            SKIF_Util_GetHotKeyStateCapture       (const CaptureMode mode);
 
 
 // Web

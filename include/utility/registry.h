@@ -321,6 +321,10 @@ struct SKIF_RegistrySettings {
     SKIF_MakeRegKeyWS ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(Auto-Update Version)" );
 
+  KeyValue <std::wstring> regKVHotkeyCaptureWindow =
+    SKIF_MakeRegKeyWS ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(Hotkey Capture Window)" );
+
   KeyValue <std::wstring> regKVHotkeyCaptureRegion =
     SKIF_MakeRegKeyWS ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(Hotkey Capture Region)" );
@@ -433,16 +437,22 @@ struct SKIF_RegistrySettings {
 
   // Keybindings
 
+  SK_KeybindMultiState kbCaptureWindow =
+  {
+        "Capture Window",
+       L"Ctrl+Windows+Shift+I"
+  };
+
   SK_KeybindMultiState kbCaptureRegion =
   {
         "Capture Region",
-       L"Ctrl+Windows+Shift+P"
+       L"Ctrl+Windows+Shift+O"
   };
 
   SK_KeybindMultiState kbCaptureScreen =
   {
         "Capture Screen",
-       L"Ctrl+Windows+Shift+O"
+       L"Ctrl+Windows+Shift+P"
   };
 
   SK_KeybindMultiState kbToggleHDRDisplay =

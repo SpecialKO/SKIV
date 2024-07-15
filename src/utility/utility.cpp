@@ -35,6 +35,7 @@ INT64               SKIF_TimeInMilliseconds = 0;
 
 bool bHotKeyHDR           = false,
      bHotKeySVC           = false,
+     bHotKeyCaptureWindow = false,
      bHotKeyCaptureRegion = false,
      bHotKeyCaptureScreen = false;
 
@@ -3246,10 +3247,25 @@ SKIF_Util_GetHotKeyStateHDRToggle (void)
 
 // Register a hotkey for capturing a screenshot of the desktop (WinKey + Ctrl + Shift + P)
 bool
-SKIF_Util_RegisterHotKeyCapture (const SK_Keybind* binding, bool region)
+SKIF_Util_RegisterHotKeyCapture (const CaptureMode mode, const SK_Keybind* binding)
 {
-  bool*     pbCapture = (region) ? &bHotKeyCaptureRegion      : &bHotKeyCaptureScreen;
-  const int iHotkey   = (region) ?  SKIV_HotKey_CaptureRegion :  SKIV_HotKey_CaptureScreen;
+  bool*   pbCapture = (mode == CaptureMode_Window)
+                    ? &bHotKeyCaptureWindow :
+                      (mode == CaptureMode_Region)
+                    ? &bHotKeyCaptureRegion :
+                      &bHotKeyCaptureScreen ;
+
+  const int iHotkey = (mode == CaptureMode_Window)
+                    ?  SKIV_HotKey_CaptureWindow :
+                      (mode == CaptureMode_Region)
+                    ?  SKIV_HotKey_CaptureRegion :
+                       SKIV_HotKey_CaptureScreen ;
+
+  const char* sMode = (mode == CaptureMode_Window)
+                    ?  "window" :
+                      (mode == CaptureMode_Region)
+                    ?  "region" :
+                       "screen" ;
 
   /*
   * Re. MOD_WIN: Either WINDOWS key was held down. These keys are labeled with the Windows logo.
@@ -3257,7 +3273,7 @@ SKIF_Util_RegisterHotKeyCapture (const SK_Keybind* binding, bool region)
   */
 
   if (*pbCapture)
-    SKIF_Util_UnregisterHotKeyCapture (region);
+    SKIF_Util_UnregisterHotKeyCapture (mode);
 
   if (binding->vKey == 0)
     return false;
@@ -3280,20 +3296,35 @@ SKIF_Util_RegisterHotKeyCapture (const SK_Keybind* binding, bool region)
   if (RegisterHotKey (SKIF_Notify_hWnd, iHotkey, fsModifiers, binding->vKey))
   {
     *pbCapture = true;
-    PLOG_INFO << "Successfully registered hotkey (" << binding->human_readable_utf8 << ") for capturing a " << ((region) ? "region" : "display") << " screenshot.";
+    PLOG_INFO << "Successfully registered hotkey (" << binding->human_readable_utf8 << ") for capturing a " << sMode << " screenshot.";
   }
   else
-    PLOG_ERROR << "Failed to register hotkey for capturing a " << ((region) ? "region" : "display") << " screenshot: " << SKIF_Util_GetErrorAsWStr ( );
+    PLOG_ERROR << "Failed to register hotkey for capturing a " << sMode << " screenshot: " << SKIF_Util_GetErrorAsWStr ( );
 
   return *pbCapture;
 }
 
 // Unregisters a hotkey for snipping a screenshot of the desktop (WinKey + Ctrl + Shift + P)
 bool
-SKIF_Util_UnregisterHotKeyCapture (bool region)
+SKIF_Util_UnregisterHotKeyCapture (const CaptureMode mode)
 {
-  bool*     pbCapture = (region) ? &bHotKeyCaptureRegion : &bHotKeyCaptureScreen;
-  const int iHotkey   = (region) ?  SKIV_HotKey_CaptureRegion :  SKIV_HotKey_CaptureScreen;
+  bool*   pbCapture = (mode == CaptureMode_Window)
+                    ? &bHotKeyCaptureWindow :
+                      (mode == CaptureMode_Region)
+                    ? &bHotKeyCaptureRegion :
+                      &bHotKeyCaptureScreen ;
+
+  const int iHotkey = (mode == CaptureMode_Window)
+                    ?  SKIV_HotKey_CaptureWindow :
+                      (mode == CaptureMode_Region)
+                    ?  SKIV_HotKey_CaptureRegion :
+                       SKIV_HotKey_CaptureScreen ;
+
+  const char* sMode = (mode == CaptureMode_Window)
+                    ?  "window" :
+                      (mode == CaptureMode_Region)
+                    ?  "region" :
+                       "screen" ;
 
   if (! *pbCapture)
     return true;
@@ -3301,7 +3332,7 @@ SKIF_Util_UnregisterHotKeyCapture (bool region)
   if (UnregisterHotKey (SKIF_Notify_hWnd, iHotkey))
   {
     *pbCapture = false;
-    PLOG_INFO << "Removed the desktop snipping hotkey.";
+    PLOG_INFO << "Removed the hotkey for capturing a " << sMode << " screenshot.";
   }
 
   return ! *pbCapture;
@@ -3309,9 +3340,13 @@ SKIF_Util_UnregisterHotKeyCapture (bool region)
 
 // Get the registration state of the hotkey for snipping a screenshot of the desktop (WinKey + Ctrl + Shift + P)
 bool
-SKIF_Util_GetHotKeyStateCapture (bool region)
+SKIF_Util_GetHotKeyStateCapture (const CaptureMode mode)
 {
-  bool*   pbCapture = (region) ? &bHotKeyCaptureRegion : &bHotKeyCaptureScreen;
+  bool*   pbCapture = (mode == CaptureMode_Window)
+                    ? &bHotKeyCaptureWindow :
+                      (mode == CaptureMode_Region)
+                    ? &bHotKeyCaptureRegion :
+                      &bHotKeyCaptureScreen ;
   return *pbCapture;
 }
 
