@@ -281,8 +281,9 @@ struct image_s {
 
   float        width       = 0.0f;
   float        height      = 0.0f;
-  float        zoom        = 1.0f; // 1.0f = 100%; max: 5.0f; min: 0.05f
-  ImageScaling scaling     = ImageScaling_Auto;
+  static float zoom;//     = 1.0f; // 1.0f = 100%; max: 5.0f; min: 0.05f
+  static
+  ImageScaling scaling     ;//= ImageScaling_Auto;
   ImVec2       uv0 = ImVec2 (0, 0);
   ImVec2       uv1 = ImVec2 (1, 1);
   ImVec2       avail_size;        // Holds the frame size used (affected by the scaling method)
@@ -348,8 +349,8 @@ struct image_s {
     file_info           = { };
     width               = 0.0f;
     height              = 0.0f;
-    zoom                = 1.0f;
-    scaling             = ImageScaling_Auto;
+  //zoom                = 1.0f;
+  //scaling             = ImageScaling_Auto;
     uv0                 = ImVec2 (0, 0);
     uv1                 = ImVec2 (1, 1);
     avail_size          = { };
@@ -362,6 +363,9 @@ struct image_s {
     colorimetry         = { };
   }
 };
+
+float        image_s::zoom    = 1.0f;
+ImageScaling image_s::scaling = ImageScaling_Auto;
 
 float
 image_s::gamut_info_s::pixel_samples_s::getPercentRec709 (void) const
