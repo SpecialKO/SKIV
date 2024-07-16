@@ -113,6 +113,9 @@ private:
 	std::function<void()>						onButtonPress = nullptr; // A lambda variable, which will be executed when button in notification is pressed
 	char 										buttonLabel[NOTIFY_MAX_MSG_LENGTH];
 
+	static int32_t maxAssignedId;
+	       int32_t      uniqueId = 0;
+
 private:
 	// Setters
 
@@ -393,6 +396,23 @@ public:
 		return this->buttonLabel;
 	}
 
+	/**
+	 * @return The notification Id for this notification
+	*/
+	inline const int32_t getId (void) const
+	{
+		return uniqueId;
+	}
+
+	/**
+	 * @return The notification Id for this notification
+	*/
+	inline const int32_t assignUniqueId (void)
+	{
+		uniqueId = this->maxAssignedId++;
+		return uniqueId;
+	}
+
 public:
 	// Constructors
 
@@ -484,9 +504,12 @@ namespace ImGui
 	 * Inserts a new notification into the notification queue.
 	 * @param toast The notification to be inserted.
 	 */
-	inline void InsertNotification(const ImGuiToast& toast)
+	inline int32_t InsertNotification(const ImGuiToast& toast)
 	{
-		notifications.push_back(toast);
+		notifications.push_back (toast);
+
+		return
+			notifications.back ().assignUniqueId ();
 	}
 
 	/**
@@ -497,6 +520,30 @@ namespace ImGui
 	inline void RemoveNotification(int index)
 	{
 		notifications.erase(notifications.begin() + index);
+	}
+
+ /**
+	 * @brief Removes a notification from the list of notifications.
+	 * 
+	 * @param index The index of the notification to remove.
+	 */
+	inline bool DismissNotificationById(int32_t id)
+	{
+		int idx = 0;
+
+		for ( auto& notification : notifications )
+		{
+			if (notification.getId () == id)
+			{
+				notifications.erase (notifications.begin () + idx);
+
+				return true;
+			}
+
+			++idx;
+		}
+
+		return false;
 	}
 
 

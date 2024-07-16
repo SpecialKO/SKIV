@@ -267,16 +267,6 @@ PopupState SaveFileDialog  = PopupState_Closed;
 PopupState ExportSDRDialog = PopupState_Closed;
 PopupState ContextMenu     = PopupState_Closed;
 
-enum ImageScaling {
-  ImageScaling_Auto,
-  ImageScaling_None,
-  ImageScaling_Fit,
-  ImageScaling_Fill,
-#ifdef _DEBUG
-  ImageScaling_Stretch
-#endif
-};
-
 struct image_s {
   struct file_s {
     std::wstring filename         = { }; // Image filename
@@ -1302,21 +1292,88 @@ GetCurrentAspectRatio (image_s& image)
 
 
 
+SKIF_CommonPathsCache& _path_cache = SKIF_CommonPathsCache::GetInstance ( );
+SKIF_RegistrySettings& _registry   = SKIF_RegistrySettings::GetInstance ( );
+DirectX::TexMetadata     meta      = { };
+DirectX::ScratchImage    img       = { };
+std::wstring             new_path  = L"";
+image_s                  cover     = { },
+                         cover_old = { };
+int              tmp_iDarkenImages = _registry.iDarkenImages;
+
+int32_t ImGuiToast::maxAssignedId = 0;
+
+uint32_t
+SKIV_Viewer_CycleVisualizationModes (void)
+{
+  static int32_t last_toast_id = -1;
+
+  if (cover.is_hdr)
+  {
+    if (++SKIV_HDR_VisualizationId >= SKIV_HDR_NUM_VISUALIZTIONS)
+          SKIV_HDR_VisualizationId  = SKIV_HDR_VISUALIZTION_NONE;
+
+    ImGuiToast toast = {
+      ImGuiToastType::Info, 2500,
+        "HDR Visualization Mode Changed",
+        "New Mode:\t%hs",
+          SKIV_HDR_VisualizationId == SKIV_HDR_VISUALIZTION_NONE    ? "None" :
+          SKIV_HDR_VisualizationId == SKIV_HDR_VISUALIZTION_HEATMAP ? "Luminance Heatmap" :
+          SKIV_HDR_VisualizationId == SKIV_HDR_VISUALIZTION_GAMUT   ? "Gamut Coverage"    :
+          SKIV_HDR_VisualizationId == SKIV_HDR_VISUALIZTION_SDR     ? "SDR Grayscale"     :
+                                                                      "Invalid"
+    };
+
+    // Dismiss any previous mode change notifications that may still be visible
+    if (last_toast_id >= 0)
+    {
+      ImGui::DismissNotificationById (last_toast_id);
+    }
+
+    last_toast_id =
+      ImGui::InsertNotification (toast);
+  }
+
+  return SKIV_HDR_VisualizationId;
+}
+
+ImageScaling
+SKIV_Viewer_CycleScalingModes (void)
+{
+  static int32_t last_toast_id = -1;
+
+  if (++(uint8_t&)cover.scaling >= ImageScaling_MaxValue)
+                  cover.scaling  = ImageScaling_Auto;
+
+  ImGuiToast toast = {
+    ImGuiToastType::Info, 2500,
+      "Scaling Mode Changed",
+      "New Mode:\t%hs",
+        cover.scaling == ImageScaling_Auto ? "Auto"        :
+        cover.scaling == ImageScaling_None ? "Actual Size" :
+        cover.scaling == ImageScaling_Fit  ? "Zoom to Fit" :
+        cover.scaling == ImageScaling_Fill ? "Fill Window" :
+                                             "Invalid"
+  };
+
+  // Dismiss any previous mode change notifications that may still be visible
+  if (last_toast_id >= 0)
+  {
+    ImGui::DismissNotificationById (last_toast_id);
+  }
+
+  last_toast_id =
+    ImGui::InsertNotification (toast);
+
+  return cover.scaling;
+}
+
 // Main UI function
 
 void
 SKIF_UI_Tab_DrawViewer (void)
 {
   extern bool imageFadeActive;
-
-  static SKIF_CommonPathsCache& _path_cache = SKIF_CommonPathsCache::GetInstance ( );
-  static SKIF_RegistrySettings& _registry   = SKIF_RegistrySettings::GetInstance ( );
-  static DirectX::TexMetadata     meta = { };
-  static DirectX::ScratchImage    img  = { };
-  static std::wstring new_path = L"";
-  static int  tmp_iDarkenImages = _registry.iDarkenImages;
-  static image_s cover, cover_old;
-
 
   // ** Move this code somewhere more sensible
   //
@@ -1876,12 +1933,64 @@ SKIF_UI_Tab_DrawViewer (void)
     auto& io =
       ImGui::GetIO ();
 
-    // Using 4.975f and 0.075f to work around some floating point shenanigans
-    if (     io.MouseWheel > 0 && cover.zoom < 4.975f && io.KeyCtrl)
-      cover.zoom += 0.05f;
+    bool         changed_zoom = false;
+    static float last_zoom    = cover.zoom;
 
-    else if (io.MouseWheel < 0 && cover.zoom > 0.075f && io.KeyCtrl)
+    static constexpr float ZOOM_MAX = 4.975f;
+    static constexpr float ZOOM_MIN = 0.075f;
+
+    // Using 4.975f and 0.075f to work around some floating point shenanigans
+    if (     io.MouseWheel > 0 && cover.zoom < ZOOM_MAX && io.KeyCtrl)
+    {
+      cover.zoom += 0.05f;
+    }
+
+    else if (io.MouseWheel < 0 && cover.zoom > ZOOM_MIN && io.KeyCtrl)
+    {
       cover.zoom -= 0.05f;
+    }
+
+    if (ImGui::IsKeyDown (ImGuiKey_GamepadL2))
+    {
+      float delta =
+        ImGui::GetKeyData (ImGuiKey_GamepadLStickUp  )->AnalogValue >  0.00f ?
+        ImGui::GetKeyData (ImGuiKey_GamepadLStickUp  )->AnalogValue *  0.05f :
+        ImGui::GetKeyData (ImGuiKey_GamepadLStickDown)->AnalogValue >  0.00f ?
+        ImGui::GetKeyData (ImGuiKey_GamepadLStickDown)->AnalogValue * -0.05f : 0.0f;
+
+      if (delta != 0.0f)
+      {
+        cover.zoom =
+          std::clamp (cover.zoom + 0.1f * delta, ZOOM_MIN, ZOOM_MAX);
+      }
+    }
+
+    if (last_zoom != cover.zoom)
+    {
+      changed_zoom = true;
+      last_zoom    = cover.zoom;
+    }
+
+    if (changed_zoom)
+    {
+      static int32_t last_toast_id = -1;
+
+      ImGuiToast toast = {
+        ImGuiToastType::Info, 500,
+          cover.zoom == 1.0f ? "Zoom Level Reset"
+                             : "Zoom Level Changed",
+          "New Scale:\t%3.0f%%", cover.zoom * 100.0f
+      };
+
+      if (last_toast_id >= 0)
+      {
+        // Dismiss any previous scaling change notifications that may still be visible
+        ImGui::DismissNotificationById (last_toast_id);
+      }
+
+      last_toast_id =
+        ImGui::InsertNotification (toast);
+    }
 
     if ((io.KeyCtrl && SKIF_ImGui_SelectionRect (&selection_rect, image_rect)))
     {
@@ -2471,8 +2580,41 @@ SKIF_UI_Tab_DrawViewer (void)
 
 #pragma region ContextMenu
 
+  auto _IsRightClicked = [&](void) -> bool
+  {
+    if (ImGui::IsMouseClicked (ImGuiMouseButton_Right))
+    {
+      return true;
+    }
+
+    // Activate button held for >= .4 seconds -> right-click
+    if (ImGui::GetKeyData (ImGuiKey_GamepadFaceDown)->DownDuration > 0.4f &&
+        ImGui::GetKeyData (ImGuiKey_GamepadFaceDown)->DownDuration < 5.0f)
+    {
+      ImGui::GetKeyData (ImGuiKey_GamepadFaceDown)->DownDuration     = 5.0f;
+      ImGui::GetKeyData (ImGuiKey_GamepadFaceDown)->DownDurationPrev = 0.0f;
+
+      ImGui::ClearActiveID ( );
+
+      return true;
+    }
+
+    // Start button = Menu
+    if (ImGui::IsKeyPressed (ImGuiKey_GamepadStart))
+    {
+      ImGui::GetKeyData (ImGuiKey_GamepadStart)->DownDuration     =  0.01f;
+      ImGui::GetKeyData (ImGuiKey_GamepadStart)->DownDurationPrev =  0.00f;
+
+      ImGui::ClearActiveID ( );
+
+      return true;
+    }
+
+    return false;
+  };
+
   // Act on all right clicks, because why not? :D
-  if (! SKIF_ImGui_IsAnyPopupOpen ( ) && ImGui::IsMouseClicked (ImGuiMouseButton_Right))
+  if (! SKIF_ImGui_IsAnyPopupOpen ( ) && _IsRightClicked ())
     ContextMenu = PopupState_Open;
 
   // Open the Empty Space Menu
@@ -2990,12 +3132,14 @@ SKIF_UI_Tab_DrawViewer (void)
 
   if (! tryingToLoadImage && ! tryingToDownImage)
   {
-    if (ImGui::IsKeyPressed (ImGuiKey_RightArrow))
+    if (ImGui::IsKeyPressed (ImGuiKey_RightArrow) ||
+        ImGui::IsKeyPressed (ImGuiKey_GamepadR1))
     {
       dragDroppedFilePath = _current_folder.nextImage ( );
     }
 
-    else if (ImGui::IsKeyPressed (ImGuiKey_LeftArrow))
+    else if (ImGui::IsKeyPressed (ImGuiKey_LeftArrow) ||
+             ImGui::IsKeyPressed (ImGuiKey_GamepadL1))
     {
       dragDroppedFilePath = _current_folder.prevImage ( );
     }

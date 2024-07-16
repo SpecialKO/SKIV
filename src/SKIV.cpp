@@ -1489,10 +1489,9 @@ wWinMain ( _In_     HINSTANCE hInstance,
       SKIF_ImGui_SetFullscreen (SKIF_ImGui_hWnd, ! SKIF_ImGui_IsFullscreen (SKIF_ImGui_hWnd), monitor);
     }
 
-    if (hotkeyCtrlD)
+    if (hotkeyCtrlD || ImGui::IsKeyPressed (ImGuiKey_GamepadBack, false))
     {
-      _registry.bImageDetails = ! _registry.bImageDetails;
-      _registry.regKVImageDetails.putData (_registry.bImageDetails);
+      _registry.bImageDetails = (! _registry.bImageDetails);
     }
 
     // Should we invalidate the fonts and/or recreate them?
@@ -1535,6 +1534,11 @@ wWinMain ( _In_     HINSTANCE hInstance,
     // Reset the state of tracked scrollbars
     //SKIF_ImGui_UpdateScrollbarState ( );
 
+    // Handle dynamic pausing
+    bool pause = false;
+    static int
+      processAdditionalFrames = 0;
+
     // Start the Dear ImGui frame
     ImGui_ImplDX11_NewFrame  (); // (Re)create individual swapchain windows
     ImGui_ImplWin32_NewFrame (); // Handle input
@@ -1563,6 +1567,24 @@ wWinMain ( _In_     HINSTANCE hInstance,
       hotkeyCtrlN = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_N     )->DownDuration == 0.0f); // Minimize app
       hotkeyCtrlS = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_S     )->DownDuration == 0.0f); // Save Current Image (in same Dynamic Range)
       hotkeyCtrlX = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_X     )->DownDuration == 0.0f); // Export Current Image (HDR -> SDR)
+
+      const bool hotkeyCycleScaling       = ImGui::IsKeyPressed (ImGuiKey_GamepadL3);
+      const bool hotkeyCycleVisualization = ImGui::IsKeyPressed (ImGuiKey_GamepadR3);
+
+      // Cycle Scaling Modes
+      if (hotkeyCycleScaling)
+      {
+        SKIV_Viewer_CycleScalingModes ();
+        addAdditionalFrames += 3; // Force a re-paint to change scaling
+      }
+
+      // Cycle Visualization Modes
+      if (hotkeyCycleVisualization)
+      {
+        SKIV_Viewer_CycleVisualizationModes ();
+        addAdditionalFrames += 3; // Force a re-paint to change visualization
+      }
+
 
       ImRect rectCursorMonitor; // RepositionSKIF
 
@@ -3102,6 +3124,9 @@ wWinMain ( _In_     HINSTANCE hInstance,
             bRefresh = true;
           }
 
+          if (processAdditionalFrames > 0)
+            bRefresh = true;
+
           if (previousVtxData.size() < offset + cmdList->VtxBuffer.size() * sizeof(ImDrawVert)) {
             previousVtxData.resize(offset + cmdList->VtxBuffer.size() * sizeof(ImDrawVert));
           }
@@ -3202,11 +3227,6 @@ wWinMain ( _In_     HINSTANCE hInstance,
     if ((! bKeepProcessAlive))// && SKIF_ImGui_hWnd != 0)
       PostQuitMessage (0);
       //PostMessage (hWnd, WM_QUIT, 0x0, 0x0);
-
-    // Handle dynamic pausing
-    bool pause = false;
-    static int
-      processAdditionalFrames = 0;
 
     bool input = SKIF_ImGui_IsAnyInputDown ( ) || uiLastMsg == WM_SKIF_GAMEPAD ||
                    (uiLastMsg >= WM_MOUSEFIRST && uiLastMsg <= WM_MOUSELAST)   ||

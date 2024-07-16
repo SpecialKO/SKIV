@@ -1,5 +1,5 @@
 //
-// Copyright 2020 Andon "Kaldaien" Coleman
+// Copyright 2024 Andon "Kaldaien" Coleman
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to
@@ -22,6 +22,8 @@
 
 #pragma once
 
+#include <cstdint>
+
 void SKIF_UI_Tab_DrawViewer (void);
 
 enum SKIV_HDR_Visualizations
@@ -29,7 +31,9 @@ enum SKIV_HDR_Visualizations
   SKIV_HDR_VISUALIZTION_NONE    = 0,
   SKIV_HDR_VISUALIZTION_HEATMAP = 1,
   SKIV_HDR_VISUALIZTION_GAMUT   = 2,
-  SKIV_HDR_VISUALIZTION_SDR     = 3
+  SKIV_HDR_VISUALIZTION_SDR     = 3,
+
+  SKIV_HDR_NUM_VISUALIZTIONS
 };
 
 enum SKIV_HDR_VisualizationFlags
@@ -47,3 +51,17 @@ enum SKIV_HDR_TonemapType
   SKIV_TONEMAP_TYPE_NORMALIZE_TO_CLL   = 0x4, // Content range mapped to [0,1]
   SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY = 0x8  // Content range mapped to display range
 };
+
+enum ImageScaling {
+  ImageScaling_Auto,
+  ImageScaling_None,
+  ImageScaling_Fit,
+  ImageScaling_Fill,
+#ifdef _DEBUG
+  ImageScaling_Stretch,
+#endif
+  ImageScaling_MaxValue
+};
+
+uint32_t     SKIV_Viewer_CycleVisualizationModes (void);
+ImageScaling SKIV_Viewer_CycleScalingModes       (void);
