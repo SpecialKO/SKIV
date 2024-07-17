@@ -2649,7 +2649,7 @@ SKIF_Util_FileExplorer_SelectFile (PCWSTR filePath)
 }
 
 
-
+#if NTDDI_VERSION < NTDDI_WIN10_RS5
 // Effective Power Mode (Windows 10 1809+)
 typedef enum EFFECTIVE_POWER_MODE {
     EffectivePowerModeNone    = -1,   // Used as default value if querying failed
@@ -2662,10 +2662,13 @@ typedef enum EFFECTIVE_POWER_MODE {
     EffectivePowerModeMixedReality,   // EFFECTIVE_POWER_MODE_V2
 } EFFECTIVE_POWER_MODE;
 
-std::atomic<EFFECTIVE_POWER_MODE> enumEffectivePowerMode          = EffectivePowerModeNone;
-
 #define EFFECTIVE_POWER_MODE_V1 (0x00000001)
 #define EFFECTIVE_POWER_MODE_V2 (0x00000002)
+#else
+#define EffectivePowerModeNone -1
+#endif
+
+std::atomic<int> enumEffectivePowerMode          = EffectivePowerModeNone;
 
 typedef VOID WINAPI EFFECTIVE_POWER_MODE_CALLBACK (
     _In_     EFFECTIVE_POWER_MODE  Mode,
@@ -2769,6 +2772,98 @@ void SKIF_Util_SetEffectivePowerModeNotifications (bool enable)
 
 // High Dynamic Range (HDR)
 
+#include <winrt/Windows.Graphics.Display.h>
+#include <winrt/Windows.Devices.Display.Core.h>
+
+#if (NTDDI_VERSION >= NTDDI_WIN10_NI)
+#include <Windows.Graphics.Display.Interop.h>
+#endif
+
+using namespace winrt::Windows::Devices::Display::Core;
+using namespace winrt::Windows::Graphics::Display;
+
+HRESULT
+SKIF_Display_IsHDRActive (HMONITOR hMonitor)
+{
+  MONITORINFO monInfo =
+    { .cbSize = sizeof (MONITORINFO) };
+
+  if (! GetMonitorInfo (hMonitor, &monInfo))
+  {
+    return E_INVALIDARG;
+  }
+
+  HRESULT hr = E_NOTIMPL;
+
+#if (NTDDI_VERSION >= NTDDI_WIN10_NI)
+  auto pDisplayInfoFactory =
+    winrt::try_get_activation_factory <DisplayInformation, IDisplayInformationStaticsInterop> ();
+
+  if (pDisplayInfoFactory != nullptr)
+  {
+    IDisplayInformation5 display_info = nullptr;
+
+    hr =
+      pDisplayInfoFactory->GetForMonitor (hMonitor, winrt::guid_of <IDisplayInformation5>(),
+                                                    winrt::put_abi (display_info));
+
+    if (SUCCEEDED (hr))
+    {
+      if (display_info.GetAdvancedColorInfo ().CurrentAdvancedColorKind () ==
+                                                      AdvancedColorKind::HighDynamicRange)
+      {
+        return S_OK;
+      }
+
+      return S_FALSE;
+    }
+  }
+#endif
+
+  return E_NOTIMPL;
+}
+
+HRESULT
+SKIF_Display_IsHDRCapable (HMONITOR hMonitor)
+{
+  MONITORINFO monInfo =
+    { .cbSize = sizeof (MONITORINFO) };
+
+  if (! GetMonitorInfo (hMonitor, &monInfo))
+  {
+    return E_INVALIDARG;
+  }
+
+  HRESULT hr = E_NOTIMPL;
+
+#if (NTDDI_VERSION >= NTDDI_WIN10_NI)
+  auto pDisplayInfoFactory =
+    winrt::try_get_activation_factory <DisplayInformation, IDisplayInformationStaticsInterop> ();
+
+  if (pDisplayInfoFactory != nullptr)
+  {
+    IDisplayInformation5 display_info = nullptr;
+
+    hr =
+      pDisplayInfoFactory->GetForMonitor (hMonitor, winrt::guid_of <IDisplayInformation5>(),
+                                                    winrt::put_abi (display_info));
+
+    if (SUCCEEDED (hr))
+    {  
+      if (display_info.GetAdvancedColorInfo ().IsAdvancedColorKindAvailable (
+                                                 AdvancedColorKind::HighDynamicRange))
+      {
+        return S_OK;
+      }
+
+      return S_FALSE;
+    }
+  }
+#endif
+
+  return E_NOTIMPL;
+}
+
 // Check if one of the connected displays supports HDR
 bool
 SKIF_Util_IsHDRSupported (bool refresh)
@@ -2847,8 +2942,39 @@ SKIF_Util_IsHDRSupported (bool refresh)
       {
         // Technically incomplete since this also returns true
         //   for Advanced Color capable SDR displays!
-        state = true;
-        break;
+
+        // Use WinRT interop to do a more thorough check...
+        if (EnumDisplayMonitors (0, nullptr, [](HMONITOR hMonitor,
+                                                HDC, LPRECT, LPARAM pUserParam) -> BOOL
+        {
+          bool* pState =
+            (bool *)pUserParam;
+
+          HRESULT hr =
+            SKIF_Display_IsHDRCapable (hMonitor);
+
+          if (SUCCEEDED (hr))
+          {
+            if (hr == S_OK)
+            {
+              *pState = true;
+              return FALSE;
+            }
+
+            // S_FALSE indicates WinRT API works, but HDR is not supported.
+            return TRUE;
+          }
+
+          // Assume Advanced Color means HDR...
+          *pState = true;
+          return FALSE;
+        }, (LPARAM)&state))
+        {
+          if (state)
+          {
+            break;
+          }
+        }
       }
     }
     else {
@@ -2935,6 +3061,39 @@ SKIF_Util_IsHDRActive (bool refresh)
     {
       if (getDisplayHDR.advancedColorSupported && getDisplayHDR.advancedColorEnabled)
       {
+        // Use WinRT interop to do a more thorough check...
+        if (EnumDisplayMonitors (0, nullptr, [](HMONITOR hMonitor,
+                                                HDC, LPRECT, LPARAM pUserParam) -> BOOL
+        {
+          bool* pState =
+            (bool *)pUserParam;
+
+          HRESULT hr =
+            SKIF_Display_IsHDRActive (hMonitor);
+
+          if (SUCCEEDED (hr))
+          {
+            if (hr == S_OK)
+            {
+              *pState = true;
+              return FALSE;
+            }
+
+            // S_FALSE indicates WinRT API works, but HDR is not active.
+            return TRUE;
+          }
+
+          // Assume Advanced Color means HDR...
+          *pState = true;
+          return FALSE;
+        }, (LPARAM)&state))
+        {
+          if (state)
+          {
+            break;
+          }
+        }
+        
         state = true;
         break;
       }
