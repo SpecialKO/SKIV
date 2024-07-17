@@ -2975,6 +2975,9 @@ SKIF_Util_IsHDRSupported (bool refresh)
             break;
           }
         }
+
+        // Couldn't enum individual monitors, assume HDR is supported
+        else state = true;
       }
     }
     else {
@@ -3093,8 +3096,9 @@ SKIF_Util_IsHDRActive (bool refresh)
             break;
           }
         }
-        
-        state = true;
+
+        // Couldn't enum individual monitors, assume HDR is active
+        else state = true;
         break;
       }
     }
