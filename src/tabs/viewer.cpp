@@ -92,9 +92,9 @@ float SKIV_HDR_GamutHue_Undefined [4] = { 1.0f, 0.0f, 0.0f, 1.0f }; // Red
 
 uint32_t SKIV_HDR_VisualizationId       = SKIV_HDR_VISUALIZTION_NONE;
 uint32_t SKIV_HDR_VisualizationFlagsSDR = 0xFFFFFFFFU;
-float    SKIV_HDR_MaxCLL                = 1.0f;
-float    SKIV_HDR_MaxLuminance          = 80.0f;
-float    SKIV_HDR_DisplayMaxLuminance   = 426.0f;
+float    SKIV_HDR_MaxCLL                =   1.0f;
+float    SKIV_HDR_MaxLuminance          =  80.0f;
+float    SKIV_HDR_DisplayMaxLuminance   =   0.0f;
 float    SKIV_HDR_BrightnessScale       = 100.0f;
 int      SKIV_HDR_TonemapType           = SKIV_HDR_TonemapType::SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY;
 
@@ -2358,10 +2358,6 @@ SKIF_UI_Tab_DrawViewer (void)
 
       if (_registry._RendererHDREnabled && _registry.iHDRMode == 2)
       {
-        // We need to get the luminance capabilities for the current viewport from DXGI
-        ImGui_ImplDX11_ViewportData* vd =
-          (ImGui_ImplDX11_ViewportData *)ImGui::GetWindowViewport ()->RendererUserData;
-
         float fCursorX1 =
           ImGui::GetCursorPosX ();
 
@@ -2395,9 +2391,9 @@ SKIF_UI_Tab_DrawViewer (void)
         float fCursorX2 =
           ImGui::GetCursorPosX ();
 
-        if (fCalibrationOverride == 0.0f) SKIV_HDR_DisplayMaxLuminance = vd->HDRLuma;
-        else                              SKIV_HDR_DisplayMaxLuminance = bLockCalibration ? abs (fCalibrationOverride)
-                                                                                          :      fCalibrationOverride;
+        if (fCalibrationOverride != 0.0f)
+          SKIV_HDR_DisplayMaxLuminance = bLockCalibration ? abs (fCalibrationOverride)
+                                                          :      fCalibrationOverride;
 
         ImGui::SetNextItemWidth (
           (slider_width - (fCursorX2 - fCursorX1))

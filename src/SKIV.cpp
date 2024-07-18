@@ -107,6 +107,7 @@ bool  SKIF_debuggerPresent      = false;
 DWORD SKIF_startupTime          = 0; // Used as a basis of how long the initialization took
 DWORD SKIF_firstFrameTime       = 0; // Used as a basis of how long the initialization took
 HANDLE SteamProcessHandle       = NULL;
+
 extern bool SK_Keybind_g_isAssigning;
 
 // Shell messages (registered window messages)
@@ -1895,52 +1896,45 @@ wWinMain ( _In_     HINSTANCE hInstance,
       // Begin Snipping Mode
       if (_registry._SnippingMode)
       {
-
 #pragma region UI: Snipping Mode
 
         extern skiv_image_desktop_s SKIV_DesktopImage;
 
-        bool SKIV_HDR  = SKIF_ImGui_IsRendererHDR (SKIF_ImGui_hWnd);
         bool HDR_Image = SKIV_DesktopImage._hdr_image;
         bool sRGB_Hack = SKIV_DesktopImage._srgb_hack;
+        bool SKIV_HDR  = (HDR_Image ? SKIF_ImGui_IsViewportHDR (SKIF_ImGui_hWnd) : false);
+
+        // Temporarily engage HDR mode for SKIV during snipping mode
+        if (HDR_Image && ! SKIV_HDR && SKIF_ImGui_IsViewportHDRCapable (SKIF_ImGui_hWnd))
+        {
+          _registry._SnippingModeTempHDR = true;
+          _registry.iHDRMode = 2;
+          RecreateSwapChains = true;
+        }
 
         if (SKIV_DesktopImage._srv != nullptr)
         {
 
-          static const ImVec2 srgb_uv0       = ImVec2 (0, 0), // _SRGB format
-                              srgb_uv1       = ImVec2 (1, 1), // _SRGB format
+          static const ImVec2 srgb_uv0       = ImVec2 (0, 0),               // _SRGB format
+                              srgb_uv1       = ImVec2 (1, 1),               // _SRGB format
                               force_srgb_uv0 = ImVec2 (-4096.0f, -4096.0f), // Non-sRGB formats needs a hack to force them to appear properly
                               force_srgb_uv1 = ImVec2 (-5120.0f, -5120.0f), // Non-sRGB formats needs a hack to force them to appear properly
                               hdr_uv0        = ImVec2 (-1024.0f, -1024.0f), // HDR formats
                               hdr_uv1        = ImVec2 (-2048.0f, -2048.0f); // HDR formats
 
           SKIF_ImGui_OptImage (SKIV_DesktopImage._srv, SKIV_DesktopImage._resolution,
-                                                                (SKIV_HDR && HDR_Image) ? hdr_uv0 : (sRGB_Hack) ? force_srgb_uv0 : srgb_uv0,
-                                                                (SKIV_HDR && HDR_Image) ? hdr_uv1 : (sRGB_Hack) ? force_srgb_uv1 : srgb_uv1);
+                                                                (HDR_Image && SKIV_HDR) ? hdr_uv0 : (sRGB_Hack) ? force_srgb_uv0 : srgb_uv0,
+                                                                (HDR_Image && SKIV_HDR) ? hdr_uv1 : (sRGB_Hack) ? force_srgb_uv1 : srgb_uv1);
 
-          //ImDrawList* draw_list =
-          //  ImGui::GetForegroundDrawList ();
+          ImDrawList* draw_list =
+            ImGui::GetForegroundDrawList ();
 
-          //draw_list->AddRectFilled (ImVec2 (0, 0), SKIV_DesktopImage._resolution, ImGui::GetColorU32 (IM_COL32(20, 20, 20, 80))); // Transparent Overlay
+          // Draw a slightly dark transparent overlay on top of the captured image
+          draw_list->AddRectFilled (ImVec2 (0, 0), SKIV_DesktopImage._resolution, ImGui::GetColorU32 (IM_COL32(20, 20, 20, 80)));
         }
 
         static ImRect selection;
         static ImRect selection_auto;
-#if 0
-
-        static ImVec2 last_non_snip_pos;
-        static ImVec2 last_non_snip_size;
-
-        if (last_snip_state != _registry._SnippingMode)
-        {
-          last_non_snip_size = ImGui::GetWindowSize ();
-          last_non_snip_pos  = ImGui::GetWindowPos  ();
-          selection.Min      = ImGui::GetMousePos   ();
-
-          ImGui::SetWindowPos  (ImVec2 (0.0f, 0.0f)); // TODO
-          ImGui::SetWindowSize (vDesktopSize);
-        }
-#endif
 
         if (GetForegroundWindow () != SKIF_ImGui_hWnd)
             SetForegroundWindow (     SKIF_ImGui_hWnd);
@@ -2124,7 +2118,6 @@ wWinMain ( _In_     HINSTANCE hInstance,
           SKIV_Image_CaptureRegion (capture_area);
         }
 #pragma endregion
-
       }
 
       if (_registry._SnippingModeExit)
@@ -2134,6 +2127,13 @@ wWinMain ( _In_     HINSTANCE hInstance,
       if (! _registry._SnippingMode)
       {
 #pragma region UI: Large Mode
+
+        if (_registry._SnippingModeTempHDR)
+        {
+          _registry._SnippingModeTempHDR = false;
+          _registry.iHDRMode = 0;
+          RecreateSwapChains = true;
+        }
 
         // TAB: Viewer
         if (SKIF_Tab_Selected == UITab_Viewer ||
@@ -3648,7 +3648,7 @@ bool CreateDeviceD3D (HWND hWnd)
         swap_desc.Flags        = 0x0;
         _registry._RendererCanHDR           = false;
         _registry._RendererCanWaitSwapchain = false;
-        _registry._RendererCanAllowTearing = false;
+        _registry._RendererCanAllowTearing  = false;
         _registry.iUIMode      = 0;
       }
 

@@ -2,6 +2,7 @@
 
 #include <DirectXTex.h>
 #include <imgui/imgui_internal.h>
+#include <ImGuiNotify.hpp>
 #include <atlbase.h>
 
 #pragma warning( push )
@@ -162,6 +163,15 @@ struct skiv_image_desktop_s {
                     texDesc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT ||
                     texDesc.Format == DXGI_FORMAT_R32G32B32A32_FLOAT)
             _hdr_image = true;
+
+#ifdef _DEBUG
+          ImGui::InsertNotification ({
+            ImGuiToastType::Info, 5000,
+              "Screen Capture Data",
+              "HDR: %i\nsRGB Hack: %i",
+              _hdr_image, _srgb_hack
+          });
+#endif
 
           return true;
         }

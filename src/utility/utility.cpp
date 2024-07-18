@@ -3013,7 +3013,7 @@ SKIF_UtilInt_UpdateMonitors (void)
 
 // Return true if one of the connected displays supports HDR
 bool
-SKIF_Util_IsHDRSupported (void)
+SKIF_Util_IsHDRSupported (HMONITOR hMonitor)
 {
   if (! SKIF_Util_IsWindows10v1709OrGreater ( ))
     return false;
@@ -3022,8 +3022,11 @@ SKIF_Util_IsHDRSupported (void)
 
   for (auto& monitor : g_Monitors)
   {
-    if (monitor.hdr.supported)
+    if (hMonitor == NULL && monitor.hdr.supported)
       return true;
+
+    else if (hMonitor != NULL && hMonitor == monitor.handle )
+      return monitor.hdr.supported;
   }
 
   return false;
@@ -3143,7 +3146,7 @@ SKIF_Util_RegisterHotKeyHDRToggle (const SK_Keybind* binding)
     return false;
   }
 
-  if (! SKIF_Util_IsHDRSupported ( ))
+  if (! SKIF_Util_IsHDRSupported (NULL))
   {
     PLOG_INFO << "No HDR capable display detected on the system.";
     return false;

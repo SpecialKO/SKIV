@@ -81,7 +81,7 @@ SKIF_UI_Tab_DrawSettings (void)
       { &_registry.kbCaptureWindow,    &_registry.regKVHotkeyCaptureWindow,    { [](SK_KeybindMultiState* ptr) { SKIF_Util_RegisterHotKeyCapture   (CaptureMode_Window, ptr->getKeybind()); } }, { []() { return true; } } },
       { &_registry.kbCaptureRegion,    &_registry.regKVHotkeyCaptureRegion,    { [](SK_KeybindMultiState* ptr) { SKIF_Util_RegisterHotKeyCapture   (CaptureMode_Region, ptr->getKeybind()); } }, { []() { return true; } } },
       { &_registry.kbCaptureScreen,    &_registry.regKVHotkeyCaptureScreen,    { [](SK_KeybindMultiState* ptr) { SKIF_Util_RegisterHotKeyCapture   (CaptureMode_Screen, ptr->getKeybind()); } }, { []() { return true; } } },
-      { &_registry.kbToggleHDRDisplay, &_registry.regKVHotkeyToggleHDRDisplay, { [](SK_KeybindMultiState* ptr) { SKIF_Util_RegisterHotKeyHDRToggle (ptr->getKeybind()                    ); } }, { []() { return (SKIF_Util_IsWindows10v1709OrGreater ( ) && SKIF_Util_IsHDRSupported ( )); } } }
+      { &_registry.kbToggleHDRDisplay, &_registry.regKVHotkeyToggleHDRDisplay, { [](SK_KeybindMultiState* ptr) { SKIF_Util_RegisterHotKeyHDRToggle (ptr->getKeybind()                    ); } }, { []() { return (SKIF_Util_IsWindows10v1709OrGreater ( ) && SKIF_Util_IsHDRSupported (NULL)); } } }
     };
 
     ImGui::BeginGroup ();
@@ -523,7 +523,7 @@ SKIF_UI_Tab_DrawSettings (void)
 
     ImGui::Spacing         ( );
     
-    if (SKIF_Util_IsHDRSupported ( )  )
+    if (SKIF_Util_IsHDRSupported (NULL))
     {
       ImGui::TextColored     (ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info), ICON_FA_LIGHTBULB);
       SKIF_ImGui_SetHoverTip ("Required to properly display HDR content.");

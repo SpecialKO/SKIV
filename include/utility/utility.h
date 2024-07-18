@@ -227,11 +227,11 @@ void            SKIF_Util_SetEffectivePowerModeNotifications (bool enable);
 
 // High Dynamic Range (HDR)
 
-bool            SKIF_Util_IsHDRSupported              (void);
+bool            SKIF_Util_IsHDRSupported              (HMONITOR hMonitor);
 bool            SKIF_Util_IsHDRActive                 (HMONITOR hMonitor);
 float           SKIF_Util_GetSDRWhiteLevel            (HMONITOR hMonitor);
 bool            SKIF_Util_EnableHDROutput             (void);
-void            SKIF_Util_UpdateMonitors              (void); // Triggers a refresh of the data that feeds all of the above
+void            SKIF_Util_UpdateMonitors              (void); // Triggers a refresh of the data that feeds all of the above; called by WM_DISPLAYCHANGE
 bool            SKIF_Util_RegisterHotKeyHDRToggle     (const SK_Keybind* binding);
 bool            SKIF_Util_UnregisterHotKeyHDRToggle   (void);
 bool            SKIF_Util_GetHotKeyStateHDRToggle     (void);

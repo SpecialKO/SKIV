@@ -78,7 +78,8 @@ void     SKIF_ImGui_SetFullscreen         (HWND hWnd, bool fullscreen, HMONITOR 
 void     SKIF_ImGui_InvalidateFonts       (void);
 ImGuiKey SKIF_ImGui_CharToImGuiKey        (char c);
 
-bool     SKIF_ImGui_IsRendererHDR         (HWND hWnd);
+bool     SKIF_ImGui_IsViewportHDR         (HWND hWnd);
+bool     SKIF_ImGui_IsViewportHDRCapable  (HWND hWnd);
 
 // SKIF_ImGui_ImDerp, named as such as it is not a linear interpolation/lerp, is used
 //   to among other things force 1.0f for the alpha color channel (w)

@@ -45,14 +45,15 @@ struct ImGui_ImplDX11_ViewportData
     HANDLE                  WaitHandle;
     int                     SDRMode;       // 0 = 8 bpc,   1 = 10 bpc,      2 = 16 bpc scRGB
     FLOAT                   SDRWhiteLevel; // SDR white level in nits for the display
-    int                     HDRMode;       // 0 = No HDR,  1 = 10 bpc HDR,  2 = 16 bpc scRGB HDR
     bool                    HDR;
+    bool                    HDRCapable;
+    int                     HDRMode;       // 0 = No HDR,  1 = 10 bpc HDR,  2 = 16 bpc scRGB HDR
     FLOAT                   HDRLuma;
     FLOAT                   HDRMinLuma;
     DXGI_OUTPUT_DESC1       DXGIDesc;
     DXGI_FORMAT             DXGIFormat;
 
-     ImGui_ImplDX11_ViewportData (void) {            SwapChain  = nullptr;   RTView  = nullptr;   WaitHandle  = 0;  PresentCount = 0; SDRMode = 0; SDRWhiteLevel = 80.0f; HDRMode = 0; HDR = false; HDRLuma = 0.0f; HDRMinLuma = 0.0f; DXGIDesc = {   }; DXGIFormat = DXGI_FORMAT_UNKNOWN; }
+     ImGui_ImplDX11_ViewportData (void) {            SwapChain  = nullptr;   RTView  = nullptr;   WaitHandle  = 0;  PresentCount = 0; SDRMode = 0; SDRWhiteLevel = 80.0f; HDRMode = 0; HDR = false; HDRCapable = false; HDRLuma = 0.0f; HDRMinLuma = 0.0f; DXGIDesc = {   }; DXGIFormat = DXGI_FORMAT_UNKNOWN; }
     ~ImGui_ImplDX11_ViewportData (void) { IM_ASSERT (SwapChain == nullptr && RTView == nullptr && WaitHandle == 0); }
 };
 #endif

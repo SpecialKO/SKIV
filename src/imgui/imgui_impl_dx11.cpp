@@ -67,7 +67,7 @@ extern DWORD   SKIF_Util_timeGetTime1                (void);
 extern bool    SKIF_Util_IsWindows8Point1OrGreater   (void);
 extern bool    SKIF_Util_IsWindows10OrGreater        (void);
 extern bool    SKIF_Util_IsWindowsVersionOrGreater   (DWORD dwMajorVersion, DWORD dwMinorVersion, DWORD dwBuildNumber);
-extern bool    SKIF_Util_IsHDRSupported              (void);
+extern bool    SKIF_Util_IsHDRSupported              (HMONITOR hMonitor);
 extern bool    SKIF_Util_IsHDRActive                 (HMONITOR hMonitor);
 extern float   SKIF_Util_GetSDRWhiteLevel            (HMONITOR hMonitor);
 extern std::vector<HANDLE> vSwapchainWaitHandles;
@@ -487,6 +487,8 @@ void ImGui_ImplDX11_RenderDrawData (ImDrawData *draw_data)
   ctx->Unmap (bd->pVB, 0);
   ctx->Unmap (bd->pIB, 0);
 
+  float display_max_luminance = 203.0f;
+
   // Setup orthographic projection matrix into our constant buffer
   // Our visible imgui space lies from draw_data->DisplayPos (top left) to draw_data->DisplayPos+data_data->DisplaySize (bottom right). DisplayPos is (0,0) for single viewport apps.
   {
@@ -563,6 +565,11 @@ void ImGui_ImplDX11_RenderDrawData (ImDrawData *draw_data)
         // SDR 10 bpc on SDR display
         constant_buffer->luminance_scale [2] = 1.0f;
       }
+
+      ImGui_ImplDX11_ViewportData* vd =
+        (ImGui_ImplDX11_ViewportData*)vp->RendererUserData;
+
+      display_max_luminance = vd->HDRLuma;
     }
 
     ctx->Unmap ( bd->pVertexConstantBuffer, 0 );
@@ -593,13 +600,16 @@ void ImGui_ImplDX11_RenderDrawData (ImDrawData *draw_data)
     extern float SKIV_HDR_BrightnessScale;
     extern int   SKIV_HDR_TonemapType;
 
+    if (SKIV_HDR_DisplayMaxLuminance != display_max_luminance)
+      display_max_luminance = SKIV_HDR_DisplayMaxLuminance;
+
     *pix_constant_buffer = PIXEL_CONSTANT_BUFFER_DX11 ();
     pix_constant_buffer->font_dims [0]               = (float)ImGui::GetIO ().Fonts->TexWidth;
     pix_constant_buffer->font_dims [1]               = (float)ImGui::GetIO ().Fonts->TexHeight;
-    pix_constant_buffer->hdr_max_luminance           = SKIV_HDR_MaxLuminance        / 80.0f;
-    pix_constant_buffer->display_max_luminance       = SKIV_HDR_DisplayMaxLuminance / 80.0f;
-    pix_constant_buffer->brightness                  = SKIV_HDR_BrightnessScale     / 100.0f;
-    if ((SKIV_HDR_BrightnessScale / 100.0f) * SKIV_HDR_MaxLuminance > SKIV_HDR_DisplayMaxLuminance)
+    pix_constant_buffer->hdr_max_luminance           = SKIV_HDR_MaxLuminance    /  80.0f;
+    pix_constant_buffer->display_max_luminance       = display_max_luminance    /  80.0f;
+    pix_constant_buffer->brightness                  = SKIV_HDR_BrightnessScale / 100.0f;
+    if ((SKIV_HDR_BrightnessScale / 100.0f) * SKIV_HDR_MaxLuminance > display_max_luminance)
       pix_constant_buffer->tonemap_type              = SKIV_HDR_TonemapType;
     else
       pix_constant_buffer->tonemap_type              = SKIV_HDR_TonemapType::SKIV_TONEMAP_TYPE_NONE;
@@ -637,10 +647,10 @@ void ImGui_ImplDX11_RenderDrawData (ImDrawData *draw_data)
     *pix_constant_buffer = PIXEL_CONSTANT_BUFFER_DX11 ();
     pix_constant_buffer->font_dims [0]               = 0.0f;
     pix_constant_buffer->font_dims [1]               = 0.0f;
-    pix_constant_buffer->hdr_max_luminance           = SKIV_HDR_MaxLuminance        / 80.0f;
-    pix_constant_buffer->display_max_luminance       = SKIV_HDR_DisplayMaxLuminance / 80.0f;
-    pix_constant_buffer->brightness                  = SKIV_HDR_BrightnessScale     / 100.0f;
-    if ((SKIV_HDR_BrightnessScale / 100.0f) * SKIV_HDR_MaxLuminance > SKIV_HDR_DisplayMaxLuminance)
+    pix_constant_buffer->hdr_max_luminance           = SKIV_HDR_MaxLuminance    /  80.0f;
+    pix_constant_buffer->display_max_luminance       = display_max_luminance    /  80.0f;
+    pix_constant_buffer->brightness                  = SKIV_HDR_BrightnessScale / 100.0f;
+    if ((SKIV_HDR_BrightnessScale / 100.0f) * SKIV_HDR_MaxLuminance > display_max_luminance)
       pix_constant_buffer->tonemap_type              = SKIV_HDR_TonemapType;
     else
       pix_constant_buffer->tonemap_type              = SKIV_HDR_TonemapType::SKIV_TONEMAP_TYPE_NONE;
@@ -2004,17 +2014,20 @@ ImGui_ImplDX11_CreateWindow (ImGuiViewport *viewport)
           UINT uiHdrFlags = 0x0;
 
           pOutput6->GetDesc1 (&vd->DXGIDesc);
-    
+
+          vd->HDRCapable    = SKIF_Util_IsHDRSupported   (vd->DXGIDesc.Monitor);
           vd->SDRWhiteLevel = SKIF_Util_GetSDRWhiteLevel (vd->DXGIDesc.Monitor);
           vd->HDRLuma       = vd->DXGIDesc.MaxLuminance;
 
-  #pragma region Enable HDR
+          extern float SKIV_HDR_DisplayMaxLuminance;
+          SKIV_HDR_DisplayMaxLuminance = vd->HDRLuma;
+
+#pragma region Enable HDR
           // DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709    - SDR display with no Advanced Color capabilities
           // DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709    - Standard definition for scRGB, and is usually used with 16 bit integer, 16 bit floating point, or 32 bit floating point color channels.
           // DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020 - HDR display with all Advanced Color capabilities
 
-          if (_registry._RendererCanHDR          && // Does the system support HDR?
-              _registry.iHDRMode  > 0) // HDR support is not disabled, is it?
+          if (vd->HDRCapable && _registry.iHDRMode > 0)
           {
             DXGI_COLOR_SPACE_TYPE dxgi_cst =
               (_registry.iHDRMode == 2)
@@ -2166,7 +2179,15 @@ bool SKIF_ImplDX11_ViewPort_IsHDR(ImGuiViewport* viewport)
     if (ImGui_ImplDX11_ViewportData* vd = (ImGui_ImplDX11_ViewportData*)viewport->RendererUserData)
         return vd->HDRMode;
 
-    return 0;
+    return false;
+}
+
+bool SKIF_ImplDX11_ViewPort_IsHDRCapable(ImGuiViewport* viewport)
+{
+    if (ImGui_ImplDX11_ViewportData* vd = (ImGui_ImplDX11_ViewportData*)viewport->RendererUserData)
+        return vd->HDRCapable;
+
+    return false;
 }
 
 static int SKIF_ImplDX11_ViewPort_GetHDRMode(ImGuiViewport* viewport)

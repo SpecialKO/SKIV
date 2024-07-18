@@ -434,6 +434,7 @@ struct SKIF_RegistrySettings {
   bool _TouchDevice                 = false;
   bool _SnippingMode                = false;
   bool _SnippingModeExit            = false;
+  bool _SnippingModeTempHDR         = false;
 
   // Keybindings
 
