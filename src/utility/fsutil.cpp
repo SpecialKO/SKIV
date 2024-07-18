@@ -397,7 +397,7 @@ SK_GetFontsDir (void)
 }
 
 HRESULT
-SK_FileOpenDialog (LPWSTR *pszPath, const COMDLG_FILTERSPEC* fileTypes, UINT cFileTypes, FILEOPENDIALOGOPTIONS dialogOptions, const GUID defaultFolder, const wchar_t* setFolder)
+SK_FileOpenDialog (LPWSTR *pszPath, const COMDLG_FILTERSPEC* fileTypes, UINT cFileTypes, HWND hWndParent, FILEOPENDIALOGOPTIONS dialogOptions, const GUID defaultFolder, const wchar_t* setFolder)
 {
   IFileOpenDialog  *pFileOpen = nullptr;
   HRESULT hr = E_UNEXPECTED;
@@ -425,7 +425,7 @@ SK_FileOpenDialog (LPWSTR *pszPath, const COMDLG_FILTERSPEC* fileTypes, UINT cFi
     pFileOpen->SetFileTypes (cFileTypes, fileTypes);
     pFileOpen->SetOptions   (dialogOptions);
 
-    hr = pFileOpen->Show(NULL);
+    hr = pFileOpen->Show (hWndParent);
 
     if (S_OK == hr)
     {
@@ -454,7 +454,7 @@ SK_FileOpenDialog (LPWSTR *pszPath, const COMDLG_FILTERSPEC* fileTypes, UINT cFi
 }
 
 HRESULT
-SK_FileSaveDialog (LPWSTR *pszPath, LPCWSTR wszDefaultName, const wchar_t* wszDefaultExtension, const COMDLG_FILTERSPEC* fileTypes, UINT cFileTypes, FILEOPENDIALOGOPTIONS dialogOptions, const GUID defaultFolder, const wchar_t* setFolder)
+SK_FileSaveDialog (LPWSTR *pszPath, LPCWSTR wszDefaultName, const wchar_t* wszDefaultExtension, const COMDLG_FILTERSPEC* fileTypes, UINT cFileTypes, HWND hWndParent, FILEOPENDIALOGOPTIONS dialogOptions, const GUID defaultFolder, const wchar_t* setFolder)
 {
   IFileSaveDialog  *pFileSave = nullptr;
   HRESULT hr = E_UNEXPECTED;
@@ -486,7 +486,7 @@ SK_FileSaveDialog (LPWSTR *pszPath, LPCWSTR wszDefaultName, const wchar_t* wszDe
     pFileSave->SetFileTypes (cFileTypes, fileTypes);
     pFileSave->SetOptions   (dialogOptions);
 
-    hr = pFileSave->Show(NULL);
+    hr = pFileSave->Show (hWndParent);
 
     if (S_OK == hr)
     {

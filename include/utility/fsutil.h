@@ -121,6 +121,6 @@ void
 SKIF_GetFolderPath (SKIF_CommonPathsCache::win_path_s* path);
 
 HRESULT
-SK_FileOpenDialog (LPWSTR *pszPath, const COMDLG_FILTERSPEC* fileTypes, UINT cFileTypes, FILEOPENDIALOGOPTIONS dialogOptions = _FILEOPENDIALOGOPTIONS::FOS_FILEMUSTEXIST, const GUID defaultFolder = FOLDERID_StartMenu, const wchar_t* setFolder = nullptr);
+SK_FileOpenDialog (LPWSTR *pszPath, const COMDLG_FILTERSPEC* fileTypes, UINT cFileTypes, HWND hWndParent = 0, FILEOPENDIALOGOPTIONS dialogOptions = _FILEOPENDIALOGOPTIONS::FOS_FILEMUSTEXIST, const GUID defaultFolder = FOLDERID_StartMenu, const wchar_t* setFolder = nullptr);
 HRESULT
-SK_FileSaveDialog (LPWSTR *pszPath, LPCWSTR wszDefaultName, const wchar_t* wszDefaultExtension, const COMDLG_FILTERSPEC* fileTypes, UINT cFileTypes, FILEOPENDIALOGOPTIONS dialogOptions = FOS_STRICTFILETYPES|FOS_FILEMUSTEXIST|FOS_OVERWRITEPROMPT, const GUID defaultFolder = FOLDERID_StartMenu, const wchar_t* setFolder = nullptr);
+SK_FileSaveDialog (LPWSTR *pszPath, LPCWSTR wszDefaultName, const wchar_t* wszDefaultExtension, const COMDLG_FILTERSPEC* fileTypes, UINT cFileTypes, HWND hWndParent = 0, FILEOPENDIALOGOPTIONS dialogOptions = FOS_STRICTFILETYPES|FOS_FILEMUSTEXIST|FOS_OVERWRITEPROMPT, const GUID defaultFolder = FOLDERID_StartMenu, const wchar_t* setFolder = nullptr);
