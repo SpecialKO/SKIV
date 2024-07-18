@@ -1490,6 +1490,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
     if (hotkeyCtrlD || ImGui::IsKeyPressed (ImGuiKey_GamepadBack, false))
     {
       _registry.bImageDetails = (! _registry.bImageDetails);
+      _registry.regKVImageDetails.putData (_registry.bImageDetails);
     }
 
     // Should we invalidate the fonts and/or recreate them?
