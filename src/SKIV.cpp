@@ -1248,9 +1248,6 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
   bool repositionToCenter = false;
 
-  // Check if the display supports HDR
-  SKIF_Util_IsHDRSupported (true);
-
   // Register HDR toggle hotkey (if applicable)
   SKIF_Util_RegisterHotKeyHDRToggle (_registry.kbToggleHDRDisplay.getKeybind());
 
@@ -1469,7 +1466,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
     // F9 to cycle between color depths
     if (hotkeyF9)
     {
-      if (_registry.iHDRMode > 0 && SKIF_Util_IsHDRActive())
+      if (_registry.iHDRMode > 0 && SKIF_Util_IsHDRActive (NULL))
         _registry.iHDRMode = 1 + (_registry.iHDRMode % 2); // Cycle between 1 (10 bpc) and 2 (16 bpc)
       else 
         _registry.iSDRMode = (_registry.iSDRMode + 1) % 3; // Cycle between 0 (8 bpc), 1 (10 bpc), and 2 (16 bpc)
@@ -2200,7 +2197,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
         {
           // Refresh things when visiting from another tab or when forced
           if (SKIF_Tab_ChangeTo == UITab_Settings || RefreshSettingsTab)
-            SKIF_Util_IsHDRActive (true);
+            SKIF_Util_IsHDRActive (NULL); // true
 
           ImGui::PushStyleVar (ImGuiStyleVar_FramePadding, ImVec2 (15.0f, 15.0f) * SKIF_ImGui_GlobalDPIScale);
           bool show = SKIF_ImGui_BeginMainChildFrame ( );
@@ -3533,8 +3530,7 @@ bool CreateDeviceD3D (HWND hWnd)
 
   // Windows 10 1709+ (Build 16299)
   _registry._RendererCanHDR                =
-    SKIF_Util_IsWindows10v1709OrGreater (    ) &&
-    SKIF_Util_IsHDRActive               (true);
+    SKIF_Util_IsHDRActive (NULL); // true
 
   CComQIPtr <IDXGIFactory5>
                   pFactory5 (pFactory2.p);
@@ -4052,6 +4048,7 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
       break;
 
     case WM_DISPLAYCHANGE:
+      SKIF_Util_UpdateMonitors     ( );
       SKIF_Util_GetMonitorHzPeriod (SKIF_ImGui_hWnd, MONITOR_DEFAULTTONEAREST, dwDwmPeriod);
 
       if (SKIF_Tab_Selected == UITab_Settings)

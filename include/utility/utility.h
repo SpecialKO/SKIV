@@ -227,10 +227,11 @@ void            SKIF_Util_SetEffectivePowerModeNotifications (bool enable);
 
 // High Dynamic Range (HDR)
 
-bool            SKIF_Util_IsHDRSupported              (bool refresh = false);
-bool            SKIF_Util_IsHDRActive                 (bool refresh = false);
-float           SKIF_Util_GetSDRWhiteLevelForHMONITOR (HMONITOR hMonitor);
+bool            SKIF_Util_IsHDRSupported              (void);
+bool            SKIF_Util_IsHDRActive                 (HMONITOR hMonitor);
+float           SKIF_Util_GetSDRWhiteLevel            (HMONITOR hMonitor);
 bool            SKIF_Util_EnableHDROutput             (void);
+void            SKIF_Util_UpdateMonitors              (void); // Triggers a refresh of the data that feeds all of the above
 bool            SKIF_Util_RegisterHotKeyHDRToggle     (const SK_Keybind* binding);
 bool            SKIF_Util_UnregisterHotKeyHDRToggle   (void);
 bool            SKIF_Util_GetHotKeyStateHDRToggle     (void);
@@ -281,7 +282,7 @@ struct SKIF_DirectoryWatch
                                     DWORD dwNotifyFilter = FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_LAST_WRITE);
   ~SKIF_DirectoryWatch (void);
 
-  bool isSignaled      (void);
+  bool isSignaled      (void) const;
 
   bool isSignaled      (std::wstring_view wstrPath,
                                     UITab waitTab        = UITab_None,
@@ -316,7 +317,7 @@ struct SKIF_RegistryWatch {
 
   ~SKIF_RegistryWatch    (void);
 
-  LSTATUS registerNotify (void);
+  LSTATUS registerNotify (void) const;
   void reset             (void);
   bool isSignaled        (void);
 

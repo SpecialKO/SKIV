@@ -39,6 +39,27 @@ bool bHotKeyHDR           = false,
      bHotKeyCaptureRegion = false,
      bHotKeyCaptureScreen = false;
 
+struct SKIF_Util_Monitor_s {
+  HMONITOR     handle         = NULL;
+  RECT         display_rect   = { };
+  std::wstring gdi_devicename = L"";
+  float        sdr_whitelevel = 80.0f;
+
+  struct {
+    bool supported = false;
+    bool active    = false;
+  } hdr, wcg;
+
+  // A subset of DISPLAYCONFIG_PATH_TARGET_INFO
+  struct {
+    UINT32 id        =  0 ;
+    LUID   adapterId = { };
+  } path_targetInfo;
+};
+
+std::vector <SKIF_Util_Monitor_s> g_Monitors           = {  };
+bool                              g_WantUpdateMonitors = true;
+
 CRITICAL_SECTION CriticalSectionDbgHelp = { };
 
 // Generic Utilities
@@ -1825,6 +1846,16 @@ SKIF_Util_IsWindows10v1709OrGreater (void)
   return bResult;
 }
 
+// Windows 10 1803+ (Build 17134) or newer
+bool
+SKIF_Util_IsWindows10v1803OrGreater (void)
+{
+  static bool bResult =
+    SKIF_Util_IsWindowsVersionOrGreater (10, 0, 17134);
+
+  return bResult;
+}
+
 // Windows 10 1903+ (Build 18362) or newer
 bool
 SKIF_Util_IsWindows10v1903OrGreater (void)
@@ -2779,116 +2810,24 @@ void SKIF_Util_SetEffectivePowerModeNotifications (bool enable)
 #include <Windows.Graphics.Display.Interop.h>
 #endif
 
-using namespace winrt::Windows::Devices::Display::Core;
-using namespace winrt::Windows::Graphics::Display;
-
-HRESULT
-SKIF_Display_IsHDRActive (HMONITOR hMonitor)
+// This actually updates the underlying vector
+static void
+SKIF_UtilInt_UpdateMonitors (void)
 {
-  MONITORINFO monInfo =
-    { .cbSize = sizeof (MONITORINFO) };
+  if (! g_WantUpdateMonitors)
+    return;
 
-  if (! GetMonitorInfo (hMonitor, &monInfo))
-  {
-    return E_INVALIDARG;
-  }
+  g_WantUpdateMonitors = false;
 
-  HRESULT hr = E_NOTIMPL;
-
-#if (NTDDI_VERSION >= NTDDI_WIN10_NI)
-  auto pDisplayInfoFactory =
-    winrt::try_get_activation_factory <DisplayInformation, IDisplayInformationStaticsInterop> ();
-
-  if (pDisplayInfoFactory != nullptr)
-  {
-    IDisplayInformation5 display_info = nullptr;
-
-    hr =
-      pDisplayInfoFactory->GetForMonitor (hMonitor, winrt::guid_of <IDisplayInformation5>(),
-                                                    winrt::put_abi (display_info));
-
-    if (SUCCEEDED (hr))
-    {
-      if (display_info.GetAdvancedColorInfo ().CurrentAdvancedColorKind () ==
-                                                      AdvancedColorKind::HighDynamicRange)
-      {
-        return S_OK;
-      }
-
-      return S_FALSE;
-    }
-  }
-#endif
-
-  return E_NOTIMPL;
-}
-
-HRESULT
-SKIF_Display_IsHDRCapable (HMONITOR hMonitor)
-{
-  MONITORINFO monInfo =
-    { .cbSize = sizeof (MONITORINFO) };
-
-  if (! GetMonitorInfo (hMonitor, &monInfo))
-  {
-    return E_INVALIDARG;
-  }
-
-  HRESULT hr = E_NOTIMPL;
-
-#if (NTDDI_VERSION >= NTDDI_WIN10_NI)
-  auto pDisplayInfoFactory =
-    winrt::try_get_activation_factory <DisplayInformation, IDisplayInformationStaticsInterop> ();
-
-  if (pDisplayInfoFactory != nullptr)
-  {
-    IDisplayInformation5 display_info = nullptr;
-
-    hr =
-      pDisplayInfoFactory->GetForMonitor (hMonitor, winrt::guid_of <IDisplayInformation5>(),
-                                                    winrt::put_abi (display_info));
-
-    if (SUCCEEDED (hr))
-    {  
-      if (display_info.GetAdvancedColorInfo ().IsAdvancedColorKindAvailable (
-                                                 AdvancedColorKind::HighDynamicRange))
-      {
-        return S_OK;
-      }
-
-      return S_FALSE;
-    }
-  }
-#endif
-
-  return E_NOTIMPL;
-}
-
-// Check if one of the connected displays supports HDR
-bool
-SKIF_Util_IsHDRSupported (bool refresh)
-{
   if (! SKIF_Util_IsWindows10v1709OrGreater ( ))
-    return false;
+    return;
+
+  // Remove any cached data
+  g_Monitors.clear();
 
   std::vector<DISPLAYCONFIG_PATH_INFO> pathArray;
   std::vector<DISPLAYCONFIG_MODE_INFO> modeArray;
   DWORD result = ERROR_SUCCESS;
-
-  // First check always executes
-  static bool
-      init  = false;
-  if (init == false)
-  {   init  = true;
-    refresh = true;
-  }
-  
-  static bool state = false;
-
-  if (! refresh)
-    return state;
-  
-  state = false;
 
   do
   {
@@ -2899,7 +2838,7 @@ SKIF_Util_IsHDRSupported (bool refresh)
     if (result != ERROR_SUCCESS)
     {
       PLOG_ERROR << "GetDisplayConfigBufferSizes failed: " << SKIF_Util_GetErrorAsWStr (result);
-      state = false;
+      return;
     }
 
     // Allocate the path and mode arrays
@@ -2921,236 +2860,7 @@ SKIF_Util_IsHDRSupported (bool refresh)
   if (result != ERROR_SUCCESS)
   {
     PLOG_ERROR << "QueryDisplayConfig failed: " << SKIF_Util_GetErrorAsWStr (result);
-    state = false;
-  }
-
-  // For each active path
-  for (auto& path : pathArray)
-  {
-    DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO
-      getDisplayHDR                   = { };
-      getDisplayHDR.header.adapterId  = path.targetInfo.adapterId;
-      getDisplayHDR.header.id         = path.targetInfo.id;
-      getDisplayHDR.header.type       = DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO;
-      getDisplayHDR.header.size       = sizeof (getDisplayHDR);
-
-    result = DisplayConfigGetDeviceInfo (&getDisplayHDR.header);
-
-    if (result == ERROR_SUCCESS)
-    {
-      if (getDisplayHDR.advancedColorSupported)
-      {
-        // Technically incomplete since this also returns true
-        //   for Advanced Color capable SDR displays!
-
-        // Use WinRT interop to do a more thorough check...
-        if (EnumDisplayMonitors (0, nullptr, [](HMONITOR hMonitor,
-                                                HDC, LPRECT, LPARAM pUserParam) -> BOOL
-        {
-          bool* pState =
-            (bool *)pUserParam;
-
-          HRESULT hr =
-            SKIF_Display_IsHDRCapable (hMonitor);
-
-          if (SUCCEEDED (hr))
-          {
-            if (hr == S_OK)
-            {
-              *pState = true;
-              return FALSE;
-            }
-
-            // S_FALSE indicates WinRT API works, but HDR is not supported.
-            return TRUE;
-          }
-
-          // Assume Advanced Color means HDR...
-          *pState = true;
-          return FALSE;
-        }, (LPARAM)&state))
-        {
-          if (state)
-          {
-            break;
-          }
-        }
-
-        // Couldn't enum individual monitors, assume HDR is supported
-        else state = true;
-      }
-    }
-    else {
-      PLOG_ERROR << "DisplayConfigGetDeviceInfo failed: " << SKIF_Util_GetErrorAsWStr(result);
-    }
-  }
-
-  return state;
-}
-
-// Check if one of the connected displays supports HDR
-bool
-SKIF_Util_IsHDRActive (bool refresh)
-{
-  if (! SKIF_Util_IsWindows10v1709OrGreater ( ))
-    return false;
-
-  std::vector<DISPLAYCONFIG_PATH_INFO> pathArray;
-  std::vector<DISPLAYCONFIG_MODE_INFO> modeArray;
-  DWORD result = ERROR_SUCCESS;
-
-  // First check always executes
-  static bool
-      init  = false;
-  if (init == false)
-  {   init  = true;
-    refresh = true;
-  }
-  
-  static bool state = false;
-
-  if (! refresh)
-    return state;
-  
-  state = false;
-
-  do
-  {
-    // Determine how many path and mode structures to allocate
-    UINT32 pathCount, modeCount;
-    result = GetDisplayConfigBufferSizes (QDC_ONLY_ACTIVE_PATHS, &pathCount, &modeCount);
-
-    if (result != ERROR_SUCCESS)
-    {
-      PLOG_ERROR << "GetDisplayConfigBufferSizes failed: " << SKIF_Util_GetErrorAsWStr (result);
-      state = false;
-    }
-
-    // Allocate the path and mode arrays
-    pathArray.resize(pathCount);
-    modeArray.resize(modeCount);
-
-    // Get all active paths and their modes
-    result = QueryDisplayConfig ( QDC_ONLY_ACTIVE_PATHS, &pathCount, pathArray.data(),
-                                                         &modeCount, modeArray.data(), nullptr);
-
-    // The function may have returned fewer paths/modes than estimated
-    pathArray.resize(pathCount);
-    modeArray.resize(modeCount);
-
-    // It's possible that between the call to GetDisplayConfigBufferSizes and QueryDisplayConfig
-    // that the display state changed, so loop on the case of ERROR_INSUFFICIENT_BUFFER.
-  } while (result == ERROR_INSUFFICIENT_BUFFER);
-
-  if (result != ERROR_SUCCESS)
-  {
-    PLOG_ERROR << "QueryDisplayConfig failed: " << SKIF_Util_GetErrorAsWStr (result);
-    state = false;
-  }
-
-  // For each active path
-  for (auto& path : pathArray)
-  {
-    DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO
-      getDisplayHDR                   = { };
-      getDisplayHDR.header.adapterId  = path.targetInfo.adapterId;
-      getDisplayHDR.header.id         = path.targetInfo.id;
-      getDisplayHDR.header.type       = DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO;
-      getDisplayHDR.header.size       = sizeof (getDisplayHDR);
-
-    result = DisplayConfigGetDeviceInfo (&getDisplayHDR.header);
-
-    if (result == ERROR_SUCCESS)
-    {
-      if (getDisplayHDR.advancedColorSupported && getDisplayHDR.advancedColorEnabled)
-      {
-        // Use WinRT interop to do a more thorough check...
-        if (EnumDisplayMonitors (0, nullptr, [](HMONITOR hMonitor,
-                                                HDC, LPRECT, LPARAM pUserParam) -> BOOL
-        {
-          bool* pState =
-            (bool *)pUserParam;
-
-          HRESULT hr =
-            SKIF_Display_IsHDRActive (hMonitor);
-
-          if (SUCCEEDED (hr))
-          {
-            if (hr == S_OK)
-            {
-              *pState = true;
-              return FALSE;
-            }
-
-            // S_FALSE indicates WinRT API works, but HDR is not active.
-            return TRUE;
-          }
-
-          // Assume Advanced Color means HDR...
-          *pState = true;
-          return FALSE;
-        }, (LPARAM)&state))
-        {
-          if (state)
-          {
-            break;
-          }
-        }
-
-        // Couldn't enum individual monitors, assume HDR is active
-        else state = true;
-        break;
-      }
-    }
-    else {
-      PLOG_ERROR << "DisplayConfigGetDeviceInfo failed: " << SKIF_Util_GetErrorAsWStr(result);
-    }
-  }
-
-  return state;
-}
-
-// Get the SDR white level for a display
-// Parts of this is CC BY-SA 4.0, https://stackoverflow.com/a/74605112
-float
-SKIF_Util_GetSDRWhiteLevelForHMONITOR (HMONITOR hMonitor)
-{
-  std::vector<DISPLAYCONFIG_PATH_INFO> pathArray;
-  std::vector<DISPLAYCONFIG_MODE_INFO> modeArray;
-  DWORD result = ERROR_SUCCESS;
-
-  do
-  {
-    // Determine how many path and mode structures to allocate
-    UINT32 pathCount, modeCount;
-    result = GetDisplayConfigBufferSizes (QDC_ONLY_ACTIVE_PATHS, &pathCount, &modeCount);
-
-    if (result != ERROR_SUCCESS)
-    {
-      PLOG_ERROR << "GetDisplayConfigBufferSizes failed: " << SKIF_Util_GetErrorAsWStr (result);
-      return 80.0f;
-    }
-
-    // Allocate the path and mode arrays
-    pathArray.resize(pathCount);
-    modeArray.resize(modeCount);
-
-    // Get all active paths and their modes
-    result = QueryDisplayConfig ( QDC_ONLY_ACTIVE_PATHS, &pathCount, pathArray.data(),
-                                                         &modeCount, modeArray.data(), nullptr);
-
-    // The function may have returned fewer paths/modes than estimated
-    pathArray.resize(pathCount);
-    modeArray.resize(modeCount);
-
-    // It's possible that between the call to GetDisplayConfigBufferSizes and QueryDisplayConfig
-    // that the display state changed, so loop on the case of ERROR_INSUFFICIENT_BUFFER.
-  } while (result == ERROR_INSUFFICIENT_BUFFER);
-
-  if (result != ERROR_SUCCESS)
-  {
-    PLOG_ERROR << "QueryDisplayConfig failed: " << SKIF_Util_GetErrorAsWStr (result);
-    return 80.0f;
+    return;
   }
 
   // Enumerate all monitors => (handle, device name)>
@@ -3171,6 +2881,25 @@ SKIF_Util_GetSDRWhiteLevelForHMONITOR (HMONITOR hMonitor)
   // For each active path
   for (auto& path : pathArray)
   {
+    // Virtual Display Area
+    UINT32 idx = (path.flags & DISPLAYCONFIG_PATH_SUPPORT_VIRTUAL_MODE)
+                ? path.sourceInfo.sourceModeInfoIdx
+                : path.sourceInfo.modeInfoIdx;
+
+    DISPLAYCONFIG_SOURCE_MODE *pSourceMode =
+                &modeArray [idx].sourceMode;
+
+    RECT displayRect {
+      pSourceMode->position.x, // Left
+      pSourceMode->position.y, // Top
+      pSourceMode->position.x, // Right
+      pSourceMode->position.y  // Bottom
+    };
+
+    displayRect.right  += pSourceMode->width;
+    displayRect.bottom += pSourceMode->height;
+
+    // GDI Device Name
     DISPLAYCONFIG_SOURCE_DEVICE_NAME
       sourceName                  = {};
       sourceName.header.adapterId = path.targetInfo.adapterId;
@@ -3181,34 +2910,160 @@ SKIF_Util_GetSDRWhiteLevelForHMONITOR (HMONITOR hMonitor)
     if (ERROR_SUCCESS != DisplayConfigGetDeviceInfo ((DISPLAYCONFIG_DEVICE_INFO_HEADER*)&sourceName))
         continue;
 
-    // Find the monitor with this device name
-    auto mon = std::find_if(monitors.begin(), monitors.end(), [&sourceName](std::tuple<HMONITOR, std::wstring> t)
+    bool success = false;
+
+    // Find the monitor handle with the same device name
+    auto tup_mon = std::find_if (monitors.begin(), monitors.end(), [&sourceName](std::tuple<HMONITOR, std::wstring> t)
     {
-        return !std::get<1>(t).compare(sourceName.viewGdiDeviceName);
+      return ! std::get<1>(t).compare (sourceName.viewGdiDeviceName);
     });
 
-    if (std::get<0>(*mon) != hMonitor)
-      continue;
+    SKIF_Util_Monitor_s
+      monitor { .handle = std::get<0>(*tup_mon), .display_rect = displayRect, .gdi_devicename = std::get<1>(*tup_mon) };
 
-    // At this point we are working with the correct monitor
+    // DISPLAYCONFIG_PATH_TARGET_INFO
+    monitor.path_targetInfo.id        = path.targetInfo.id;
+    monitor.path_targetInfo.adapterId = path.targetInfo.adapterId;
 
-    DISPLAYCONFIG_SDR_WHITE_LEVEL
-      getSDRWhiteLevel                  = { };
-      getSDRWhiteLevel.header.adapterId = path.targetInfo.adapterId;
-      getSDRWhiteLevel.header.id        = path.targetInfo.id;
-      getSDRWhiteLevel.header.type      = DISPLAYCONFIG_DEVICE_INFO_GET_SDR_WHITE_LEVEL;
-      getSDRWhiteLevel.header.size      =         sizeof (DISPLAYCONFIG_SDR_WHITE_LEVEL);
+    // Windows 10 1803+ (Build 17134) or newer
+    if (SKIF_Util_IsWindows10v1803OrGreater ( ))
+    {
+      using namespace winrt::Windows::Devices::Display::Core;
+      using namespace winrt::Windows::Graphics::Display;
+
+      if (auto pDisplayInfoFactory { winrt::try_get_activation_factory <DisplayInformation, IDisplayInformationStaticsInterop> () })
+      {
+        IDisplayInformation5 display_info = nullptr;
+
+        if (SUCCEEDED (pDisplayInfoFactory->GetForMonitor (monitor.handle, winrt::guid_of <IDisplayInformation5>(), winrt::put_abi (display_info))))
+        {
+          auto acinfo = display_info.GetAdvancedColorInfo ();
+
+          monitor.hdr.supported = (acinfo.IsAdvancedColorKindAvailable  (AdvancedColorKind::HighDynamicRange));
+          monitor.wcg.supported = (acinfo.IsAdvancedColorKindAvailable  (AdvancedColorKind::WideColorGamut  ));
+
+          if (monitor.hdr.supported)
+            monitor.hdr.active  = (acinfo.CurrentAdvancedColorKind () == AdvancedColorKind::HighDynamicRange );
+
+          if (monitor.wcg.supported)
+            monitor.wcg.active  = (acinfo.CurrentAdvancedColorKind () == AdvancedColorKind::WideColorGamut   );
+
+          monitor.sdr_whitelevel = acinfo.SdrWhiteLevelInNits ( );
+
+          success = true;
+        }
+      }
+    }
+
+    // Windows 10 1709+ (Build 16299) fallback
+    if (! success || (! SKIF_Util_IsWindows10v1803OrGreater ( ) && SKIF_Util_IsWindows10v1709OrGreater ( )))
+    {
+      DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO
+        getDisplayHDR                   = { };
+        getDisplayHDR.header.adapterId  = path.targetInfo.adapterId;
+        getDisplayHDR.header.id         = path.targetInfo.id;
+        getDisplayHDR.header.type       = DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO;
+        getDisplayHDR.header.size       = sizeof (getDisplayHDR);
+
+      if (ERROR_SUCCESS == DisplayConfigGetDeviceInfo (&getDisplayHDR.header))
+      {
+        // Technically incomplete since this also returns true
+        //   for WCG capable SDR displays!
+        if (getDisplayHDR.advancedColorSupported)
+          monitor.hdr.supported = true;
+
+        if (getDisplayHDR.advancedColorEnabled)
+          monitor.hdr.active    = true;
+      }
+
+      if (monitor.hdr.supported)
+      {
+        DISPLAYCONFIG_SDR_WHITE_LEVEL
+          getSDRWhiteLevel                  = { };
+          getSDRWhiteLevel.header.adapterId = path.targetInfo.adapterId;
+          getSDRWhiteLevel.header.id        = path.targetInfo.id;
+          getSDRWhiteLevel.header.type      = DISPLAYCONFIG_DEVICE_INFO_GET_SDR_WHITE_LEVEL;
+          getSDRWhiteLevel.header.size      =         sizeof (DISPLAYCONFIG_SDR_WHITE_LEVEL);
         
-    if (ERROR_SUCCESS != DisplayConfigGetDeviceInfo ((DISPLAYCONFIG_DEVICE_INFO_HEADER*)&getSDRWhiteLevel))
-        break;
+        if (ERROR_SUCCESS == DisplayConfigGetDeviceInfo (&getSDRWhiteLevel.header))
+        {
+          // SDRWhiteLevel represents a multiplier for standard SDR white
+          // peak value i.e. 80 nits represented as fixed point.
+          // To get value in nits use the following conversion
+          // SDRWhiteLevel in nits = (SDRWhiteLevel / 1000) * 80
+          if (getSDRWhiteLevel.SDRWhiteLevel)
+            monitor.sdr_whitelevel = (static_cast<float> (getSDRWhiteLevel.SDRWhiteLevel) / 1000.0f) * 80.0f;
+        }
+      }
+    }
 
-    // SDRWhiteLevel represents a multiplier for standard SDR white
-    // peak value i.e. 80 nits represented as fixed point.
-    // To get value in nits use the following conversion
-    // SDRWhiteLevel in nits = (SDRWhiteLevel / 1000) * 80
-    if (getSDRWhiteLevel.SDRWhiteLevel)
-      return (static_cast<float> (getSDRWhiteLevel.SDRWhiteLevel) / 1000.0f) * 80.0f;
+    g_Monitors.push_back (monitor);
   }
+
+  for (auto& monitor : g_Monitors)
+  {
+    PLOG_VERBOSE << "Display        : " << monitor.gdi_devicename;
+    PLOG_VERBOSE << "HDR Support    : " << monitor.hdr.supported;
+    PLOG_VERBOSE << "HDR Active     : " << monitor.hdr.active;
+    PLOG_VERBOSE << "WCG Support    : " << monitor.wcg.supported;
+    PLOG_VERBOSE << "WCG Active     : " << monitor.wcg.active;
+    PLOG_VERBOSE << "SDR Whitepoint : " << monitor.sdr_whitelevel;
+  }
+}
+
+// Return true if one of the connected displays supports HDR
+bool
+SKIF_Util_IsHDRSupported (void)
+{
+  if (! SKIF_Util_IsWindows10v1709OrGreater ( ))
+    return false;
+
+  SKIF_UtilInt_UpdateMonitors ( );
+
+  for (auto& monitor : g_Monitors)
+  {
+    if (monitor.hdr.supported)
+      return true;
+  }
+
+  return false;
+}
+
+// Return true if one of the connected displays has an active HDR mode
+bool
+SKIF_Util_IsHDRActive (HMONITOR hMonitor)
+{
+  if (! SKIF_Util_IsWindows10v1709OrGreater ( ))
+    return false;
+
+  SKIF_UtilInt_UpdateMonitors ( );
+
+  for (auto& monitor : g_Monitors)
+  {
+    if (hMonitor == NULL && monitor.hdr.active)
+      return true;
+
+    else if (hMonitor != NULL && hMonitor == monitor.handle )
+      return monitor.hdr.active;
+  }
+
+  return false;
+}
+
+// Get the SDR white level for a display
+// Parts of this is CC BY-SA 4.0, https://stackoverflow.com/a/74605112
+float
+SKIF_Util_GetSDRWhiteLevel (HMONITOR hMonitor)
+{
+  SKIF_UtilInt_UpdateMonitors ( );
+
+  for (auto& monitor : g_Monitors)
+  {
+    if (monitor.handle == hMonitor)
+      return monitor.sdr_whitelevel;
+  }
+
+  g_WantUpdateMonitors = true;
 
   return 80.0f;
 }
@@ -3220,8 +3075,6 @@ SKIF_Util_EnableHDROutput (void)
   if (! SKIF_Util_IsWindows10v1709OrGreater ( ))
     return false;
 
-  std::vector<DISPLAYCONFIG_PATH_INFO> pathArray;
-  std::vector<DISPLAYCONFIG_MODE_INFO> modeArray;
   POINT mousePosition;
 
   // Retrieve the monitor the mouse cursor is currently located on
@@ -3231,69 +3084,28 @@ SKIF_Util_EnableHDROutput (void)
   {
     DWORD result = ERROR_SUCCESS;
 
-    do
+    SKIF_UtilInt_UpdateMonitors ( );
+
+    for (auto& monitor : g_Monitors)
     {
-      // Determine how many path and mode structures to allocate
-      UINT32 pathCount, modeCount;
-      result = GetDisplayConfigBufferSizes (QDC_ONLY_ACTIVE_PATHS, &pathCount, &modeCount);
-
-      if (result != ERROR_SUCCESS)
-        PLOG_ERROR << "GetDisplayConfigBufferSizes failed: " << SKIF_Util_GetErrorAsWStr (result);
-
-      // Allocate the path and mode arrays
-      pathArray.resize(pathCount);
-      modeArray.resize(modeCount);
-
-      // Get all active paths and their modes
-      result = QueryDisplayConfig ( QDC_ONLY_ACTIVE_PATHS, &pathCount, pathArray.data(),
-                                                           &modeCount, modeArray.data(), nullptr);
-
-      // The function may have returned fewer paths/modes than estimated
-      pathArray.resize(pathCount);
-      modeArray.resize(modeCount);
-
-      // It's possible that between the call to GetDisplayConfigBufferSizes and QueryDisplayConfig
-      // that the display state changed, so loop on the case of ERROR_INSUFFICIENT_BUFFER.
-    } while (result == ERROR_INSUFFICIENT_BUFFER);
-
-    if (result != ERROR_SUCCESS)
-    {
-      PLOG_ERROR << "QueryDisplayConfig failed: " << SKIF_Util_GetErrorAsWStr (result);
-      return false;
-    }
-
-    // For each active path
-    for (auto& path : pathArray)
-    {
-      UINT32 idx = (path.flags & DISPLAYCONFIG_PATH_SUPPORT_VIRTUAL_MODE)
-                  ? path.sourceInfo.sourceModeInfoIdx
-                  : path.sourceInfo.modeInfoIdx;
-
-      DISPLAYCONFIG_SOURCE_MODE *pSourceMode =
-                 &modeArray [idx].sourceMode;
-
-      RECT displayRect {
-        pSourceMode->position.x, // Left
-        pSourceMode->position.y, // Top
-        pSourceMode->position.x, // Right
-        pSourceMode->position.y  // Bottom
-      };
-
-      displayRect.right  += pSourceMode->width;
-      displayRect.bottom += pSourceMode->height;
-
-      if (! PtInRect (&displayRect, mousePosition))
+      if (! PtInRect (&monitor.display_rect, mousePosition))
         continue;
 
-      // At this point we are working with the correct monitor
-      DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO
-        getHDRSupport                     = { };
-        getHDRSupport.header.adapterId    = path.targetInfo.adapterId;
-        getHDRSupport.header.id           = path.targetInfo.id;
-        getHDRSupport.header.type         = DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO;
-        getHDRSupport.header.size         =     sizeof (DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO);
-      
-      result = DisplayConfigGetDeviceInfo ((DISPLAYCONFIG_DEVICE_INFO_HEADER*)&getHDRSupport);
+      if (! monitor.hdr.supported)
+      {
+        PLOG_WARNING << "HDR display output is not supported on the current display";
+        return false;
+      }
+
+      DISPLAYCONFIG_SET_ADVANCED_COLOR_STATE
+        setHDRState                     = { };
+        setHDRState.enableAdvancedColor = ! monitor.hdr.active;
+        setHDRState.header.adapterId    = monitor.path_targetInfo.adapterId;
+        setHDRState.header.id           = monitor.path_targetInfo.id;
+        setHDRState.header.type         = DISPLAYCONFIG_DEVICE_INFO_SET_ADVANCED_COLOR_STATE;
+        setHDRState.header.size         =     sizeof (DISPLAYCONFIG_SET_ADVANCED_COLOR_STATE);
+
+      result = DisplayConfigSetDeviceInfo ((DISPLAYCONFIG_DEVICE_INFO_HEADER*)&setHDRState);
 
       if (ERROR_SUCCESS != result)
       {
@@ -3301,35 +3113,18 @@ SKIF_Util_EnableHDROutput (void)
         break;
       }
 
-      if (getHDRSupport.advancedColorSupported)
-      {
-        bool NewHDRState = (getHDRSupport.advancedColorEnabled == false);
-
-        DISPLAYCONFIG_SET_ADVANCED_COLOR_STATE
-          setHDRState                     = { };
-          setHDRState.enableAdvancedColor = NewHDRState;
-          setHDRState.header.adapterId    = path.targetInfo.adapterId;
-          setHDRState.header.id           = path.targetInfo.id;
-          setHDRState.header.type         = DISPLAYCONFIG_DEVICE_INFO_SET_ADVANCED_COLOR_STATE;
-          setHDRState.header.size         =     sizeof (DISPLAYCONFIG_SET_ADVANCED_COLOR_STATE);
-
-        result = DisplayConfigSetDeviceInfo ((DISPLAYCONFIG_DEVICE_INFO_HEADER*)&setHDRState);
-
-        if (ERROR_SUCCESS != result)
-        {
-          PLOG_ERROR << "DisplayConfigGetDeviceInfo failed: " << SKIF_Util_GetErrorAsWStr (result);
-          break;
-        }
-
-        PLOG_INFO << "Toggled HDR HDR display output on the current display to " << NewHDRState;
-        return true;
-      }
-
-      PLOG_WARNING << "HDR display output is not supported on the current display";
+      PLOG_INFO << "Toggled HDR HDR display output on the current display to " << (! monitor.hdr.active);
+      return true;
     }
   }
 
   return false;
+}
+
+void
+SKIF_Util_UpdateMonitors (void)
+{
+  g_WantUpdateMonitors = true;
 }
 
 // Register a hotkey for toggling HDR on a per-display basis (WinKey + Ctrl + Shift + H)
@@ -3839,7 +3634,7 @@ SKIF_DirectoryWatch::SKIF_DirectoryWatch (std::wstring_view wstrPath, UITab wait
 }
 
 bool
-SKIF_DirectoryWatch::isSignaled (void)
+SKIF_DirectoryWatch::isSignaled (void) const
 {
   bool bRet = false;
 
@@ -3995,7 +3790,7 @@ SKIF_RegistryWatch::~SKIF_RegistryWatch (void)
 }
 
 LSTATUS
-SKIF_RegistryWatch::registerNotify (void)
+SKIF_RegistryWatch::registerNotify (void) const
 {
   return RegNotifyChangeKeyValue (_hKeyBase, _init.watch_subtree, _init.filter_mask, _hEvent, TRUE);
 }

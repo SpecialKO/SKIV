@@ -63,13 +63,13 @@
 #include <shaders/imgui_vtx.h>
 
 // External declarations
-extern DWORD SKIF_Util_timeGetTime1                (void);
-extern bool  SKIF_Util_IsWindows8Point1OrGreater   (void);
-extern bool  SKIF_Util_IsWindows10OrGreater        (void);
-extern bool  SKIF_Util_IsWindowsVersionOrGreater   (DWORD dwMajorVersion, DWORD dwMinorVersion, DWORD dwBuildNumber);
-extern bool  SKIF_Util_IsHDRSupported              (bool refresh = false);
-extern bool  SKIF_Util_IsHDRActive                 (bool refresh = false);
-extern float SKIF_Util_GetSDRWhiteLevelForHMONITOR (HMONITOR hMonitor);
+extern DWORD   SKIF_Util_timeGetTime1                (void);
+extern bool    SKIF_Util_IsWindows8Point1OrGreater   (void);
+extern bool    SKIF_Util_IsWindows10OrGreater        (void);
+extern bool    SKIF_Util_IsWindowsVersionOrGreater   (DWORD dwMajorVersion, DWORD dwMinorVersion, DWORD dwBuildNumber);
+extern bool    SKIF_Util_IsHDRSupported              (void);
+extern bool    SKIF_Util_IsHDRActive                 (HMONITOR hMonitor);
+extern float   SKIF_Util_GetSDRWhiteLevel            (HMONITOR hMonitor);
 extern std::vector<HANDLE> vSwapchainWaitHandles;
 extern bool  RecreateSwapChains;
 extern bool  RecreateSwapChainsPending;
@@ -615,7 +615,8 @@ void ImGui_ImplDX11_RenderDrawData (ImDrawData *draw_data)
     memcpy (pix_constant_buffer->ap0_gamut_hue,       SKIV_HDR_GamutHue_Ap0,       sizeof (float) * 4);
     memcpy (pix_constant_buffer->undefined_gamut_hue, SKIV_HDR_GamutHue_Undefined, sizeof (float) * 4);
 
-    if (! (_registry.iHDRMode > 0 && SKIF_Util_IsHDRActive ( )))
+    // TODO: Move over to using HMONITOR for the current viewport
+    if (! (_registry.iHDRMode > 0 && SKIF_Util_IsHDRActive (NULL)))
     {
       pix_constant_buffer->tonemap_type = SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY;
     }
@@ -655,7 +656,8 @@ void ImGui_ImplDX11_RenderDrawData (ImDrawData *draw_data)
     memcpy (pix_constant_buffer->ap0_gamut_hue,       SKIV_HDR_GamutHue_Ap0,       sizeof (float) * 4);
     memcpy (pix_constant_buffer->undefined_gamut_hue, SKIV_HDR_GamutHue_Undefined, sizeof (float) * 4);
 
-    if (! (_registry.iHDRMode > 0 && SKIF_Util_IsHDRActive ( )))
+    // TODO: Move over to using HMONITOR for the current viewport
+    if (! (_registry.iHDRMode > 0 && SKIF_Util_IsHDRActive (NULL)))
     {
       pix_constant_buffer->tonemap_type = SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY;
     }
@@ -1425,7 +1427,7 @@ void ImGui_ImplDX11_NewFrame()
         invalidatedDevice = 1;
       }
 
-      _registry._RendererCanHDR = SKIF_Util_IsHDRActive (true);
+      _registry._RendererCanHDR = SKIF_Util_IsHDRActive (NULL); // true
     
       PLOG_DEBUG << "Recreating any necessary swapchains and their wait objects...";
       for (int i = 0; i < g.Viewports.Size; i++)
@@ -2003,7 +2005,7 @@ ImGui_ImplDX11_CreateWindow (ImGuiViewport *viewport)
 
           pOutput6->GetDesc1 (&vd->DXGIDesc);
     
-          vd->SDRWhiteLevel = SKIF_Util_GetSDRWhiteLevelForHMONITOR (vd->DXGIDesc.Monitor);
+          vd->SDRWhiteLevel = SKIF_Util_GetSDRWhiteLevel (vd->DXGIDesc.Monitor);
           vd->HDRLuma       = vd->DXGIDesc.MaxLuminance;
 
   #pragma region Enable HDR

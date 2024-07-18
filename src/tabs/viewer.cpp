@@ -2280,7 +2280,7 @@ SKIF_UI_Tab_DrawViewer (void)
       extern bool RecreateSwapChains;
       static int* ptrSDR = nullptr;
 
-      if ((_registry.iHDRMode > 0 && SKIF_Util_IsHDRActive ( )))
+      if ((_registry.iHDRMode > 0 && SKIF_Util_IsHDRActive (NULL)))
       {
         ptrSDR = &_registry.iHDRMode;
       }
@@ -2310,7 +2310,7 @@ SKIF_UI_Tab_DrawViewer (void)
           RecreateSwapChains = true;
         }
       }
-      if (SKIF_Util_IsHDRActive ())
+      if (SKIF_Util_IsHDRActive (NULL))
       {
         if (ImGui::RadioButton ("16 bpc HDR", &_registry.iHDRMode, 2))
         {

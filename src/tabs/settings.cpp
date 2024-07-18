@@ -473,7 +473,7 @@ SKIF_UI_Tab_DrawSettings (void)
     static int placeholder = 0;
     static int* ptrSDR = nullptr;
 
-    if ((_registry.iHDRMode > 0 && SKIF_Util_IsHDRActive ( )))
+    if ((_registry.iHDRMode > 0 && SKIF_Util_IsHDRActive (NULL)))
     {
       SKIF_ImGui_PushDisableState ( );
 
@@ -516,7 +516,7 @@ SKIF_UI_Tab_DrawSettings (void)
 
     ImGui::TreePop         ( );
     
-    if ((_registry.iHDRMode > 0 && SKIF_Util_IsHDRActive ( )))
+    if ((_registry.iHDRMode > 0 && SKIF_Util_IsHDRActive (NULL)))
     {
       SKIF_ImGui_PopDisableState  ( );
     }
@@ -540,7 +540,7 @@ SKIF_UI_Tab_DrawSettings (void)
         ImGui::TextDisabled   ("HDR support is disabled while the UI is in Safe Mode.");
       }
 
-      else if (SKIF_Util_IsHDRActive ( ))
+      else if (SKIF_Util_IsHDRActive (NULL))
       {
         if (ImGui::RadioButton ("No",             &_registry.iHDRMode, 0))
         {
