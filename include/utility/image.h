@@ -120,7 +120,7 @@ float             SKIV_Image_LinearToPQY   (float N);
 DirectX::XMVECTOR SKIV_Image_Rec709toICtCp (DirectX::XMVECTOR N);
 DirectX::XMVECTOR SKIV_Image_ICtCptoRec709 (DirectX::XMVECTOR N);
 
-bool    SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped, bool isHDR, bool force_sRGB);
+bool    SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped, bool isHDR);
 HRESULT SKIV_Image_SaveToDisk_HDR  (const DirectX::Image& image, const wchar_t* wszFileName);
 HRESULT SKIV_Image_SaveToDisk_SDR  (const DirectX::Image& image, const wchar_t* wszFileName, bool force_sRGB);
 HRESULT SKIV_Image_CaptureDesktop  (DirectX::ScratchImage& image, POINT pos, int flags = 0x0);
@@ -132,7 +132,6 @@ struct skiv_image_desktop_s {
   CComPtr <ID3D11ShaderResourceView> _srv        = nullptr;
   CComPtr <ID3D11Resource>           _res        = nullptr;
   bool                               _hdr_image  =   false;
-  bool                               _srgb_hack  =   false;
   ImVec2                             _resolution = ImVec2 (0.0f, 0.0f);
 
   bool process (void)
@@ -153,23 +152,18 @@ struct skiv_image_desktop_s {
           _resolution.x = static_cast <float> (texDesc.Width);
           _resolution.y = static_cast <float> (texDesc.Height);
 
-          // Non-sRGB DXGI formats still use sRGB gamma so they need a hack to appear properly
-          if (texDesc.Format == DXGI_FORMAT_R8G8B8A8_UNORM ||
-              texDesc.Format == DXGI_FORMAT_B8G8R8X8_UNORM)
-            _srgb_hack = true;
-
           // HDR formats indicates we are working with a HDR capture
-          else if (texDesc.Format == DXGI_FORMAT_R10G10B10A2_UNORM  ||
-                    texDesc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT ||
-                    texDesc.Format == DXGI_FORMAT_R32G32B32A32_FLOAT)
+          if (texDesc.Format == DXGI_FORMAT_R10G10B10A2_UNORM  ||
+              texDesc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT ||
+              texDesc.Format == DXGI_FORMAT_R32G32B32A32_FLOAT)
             _hdr_image = true;
 
 #ifdef _DEBUG
           ImGui::InsertNotification ({
             ImGuiToastType::Info, 5000,
               "Screen Capture Data",
-              "HDR: %i\nsRGB Hack: %i",
-              _hdr_image, _srgb_hack
+              "HDR: %i",
+              _hdr_image
           });
 #endif
 
@@ -186,7 +180,6 @@ struct skiv_image_desktop_s {
     _res        = nullptr;
     _srv        = nullptr;
     _hdr_image  =   false;
-    _srgb_hack  =   false;
     _resolution = ImVec2 (0.0f, 0.0f);
   }
 };

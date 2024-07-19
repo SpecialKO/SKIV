@@ -8,6 +8,7 @@
 #include <utility/fsutil.h>
 #include <dxgi1_5.h>
 #include <Shlwapi.h>
+#include <windowsx.h>
 #include <ImGuiNotify.hpp>
 #include <utility/skif_imgui.h>
 #include <utility/utility.h>
@@ -947,7 +948,7 @@ SKIV_PNG_CopyToClipboard (const DirectX::Image& image, const void *pData, size_t
   return false;
 }
 
-bool SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped, bool isHDR, bool force_sRGB)
+bool SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped, bool isHDR)
 {
   if (pImage == nullptr)
     return false;
@@ -978,20 +979,102 @@ bool SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped, boo
       PLOG_VERBOSE << "SKIF_Image_SaveToDisk_HDR ( ): FAILED";
   }
 
-  else {
-    if (SUCCEEDED (SKIV_Image_SaveToDisk_SDR (*pImage, wsPNGPath.c_str(), force_sRGB)))
+  else
+  {
+    if (OpenClipboard (nullptr))
     {
-      PLOG_VERBOSE << "SKIF_Image_SaveToDisk_SDR ( ): SUCCEEDED";
+      const int
+          _bpc    =
+        (int)(DirectX::BitsPerPixel (pImage->format)),
+          _width  =
+        (int)(                       pImage->width),
+          _height =
+        (int)(                       pImage->height);
 
-      if (SKIV_PNG_CopyToClipboard (*pImage, wsPNGPath.c_str(), 0))
+      DirectX::ScratchImage swizzled_sdr;
+      // Swizzle the image and handle gamma if necessary
+      if (pImage->format != DXGI_FORMAT_B8G8R8X8_UNORM_SRGB)
       {
-        PLOG_VERBOSE << "SKIV_PNG_CopyToClipboard ( ): TRUE";
+        if (SUCCEEDED (DirectX::Convert (*pImage, DXGI_FORMAT_B8G8R8X8_UNORM_SRGB, DirectX::TEX_FILTER_DEFAULT, 0.0f, swizzled_sdr)))
+        {
+          pImage = swizzled_sdr.GetImage (0,0,0);
+        }
+      }
+      ////SK_ReleaseAssert (pImage->format == DXGI_FORMAT_B8G8R8X8_UNORM ||
+      ////                  pImage->format == DXGI_FORMAT_B8G8R8A8_UNORM ||
+      ////                  pImage->format == DXGI_FORMAT_B8G8R8X8_UNORM_SRGB);
+
+      HBITMAP hBitmapCopy =
+         CreateBitmap (
+           _width, _height, 1,
+             _bpc, pImage->pixels
+         );
+
+      BITMAPINFOHEADER
+        bmh                 = { };
+        bmh.biSize          = sizeof (BITMAPINFOHEADER);
+        bmh.biWidth         =   _width;
+        bmh.biHeight        =  -_height;
+        bmh.biPlanes        =  1;
+        bmh.biBitCount      = (WORD)_bpc;
+        bmh.biCompression   = BI_RGB;
+        bmh.biXPelsPerMeter = 10;
+        bmh.biYPelsPerMeter = 10;
+
+      BITMAPINFO
+        bmi                 = { };
+        bmi.bmiHeader       = bmh;
+
+      HDC hdcDIB =
+        CreateCompatibleDC (GetDC (nullptr));
+
+      void* bitplane = nullptr;
+
+      HBITMAP
+        hBitmap =
+          CreateDIBSection ( hdcDIB, &bmi, DIB_RGB_COLORS,
+              &bitplane, nullptr, 0 );
+      memcpy ( bitplane,
+                 pImage->pixels,
+          static_cast <size_t> (_bpc / 8) *
+          static_cast <size_t> (_width  ) *
+          static_cast <size_t> (_height )
+             );
+
+      HDC hdcSrc = CreateCompatibleDC (GetDC (nullptr));
+      HDC hdcDst = CreateCompatibleDC (GetDC (nullptr));
+
+      if ( hBitmap    != nullptr &&
+          hBitmapCopy != nullptr )
+      {
+        auto hbmpSrc = (HBITMAP)SelectObject (hdcSrc, hBitmap);
+        auto hbmpDst = (HBITMAP)SelectObject (hdcDst, hBitmapCopy);
+
+        BitBlt (hdcDst, 0, 0, _width,
+                              _height, hdcSrc, 0, 0, SRCCOPY);
+
+        SelectObject     (hdcSrc, hbmpSrc);
+        SelectObject     (hdcDst, hbmpDst);
+
+        EmptyClipboard   ();
+        SetClipboardData (CF_BITMAP, hBitmapCopy);
+      }
+
+      CloseClipboard   ();
+
+      DeleteDC         (hdcSrc);
+      DeleteDC         (hdcDst);
+      DeleteDC         (hdcDIB);
+
+      if ( hBitmap     != nullptr &&
+           hBitmapCopy != nullptr )
+      {
+        DeleteBitmap   (hBitmap);
+        DeleteBitmap   (hBitmapCopy);
+
         return true;
       }
     }
-
-    else
-      PLOG_VERBOSE << "SKIF_Image_SaveToDisk_SDR ( ): FAILED";
   }
 
   return false;
@@ -1410,11 +1493,20 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
     //DXGI_FORMAT_B8G8R8A8_UNORM
   };
 
+  static constexpr int num_sdr_formats = 4;
+  static constexpr int num_all_formats = 7;
+
+  HMONITOR hMon = MonitorFromPoint (point, MONITOR_DEFAULTTONEAREST);
+
+  extern bool SKIF_Util_IsHDRActive (HMONITOR hMonitor);
+  bool bHDR = SKIF_Util_IsHDRActive (hMon);
+
   CComPtr <IDXGIOutputDuplication> pDuplicator;
 
   if (pOutput5)
-    pOutput5->DuplicateOutput1 (pDevice, 0x0, _ARRAYSIZE (capture_formats),
-                                                          capture_formats, &pDuplicator.p);
+    pOutput5->DuplicateOutput1 (pDevice, 0x0, bHDR ? num_all_formats
+                                                   : num_sdr_formats,
+                                                     capture_formats, &pDuplicator.p);
   else if (pOutput1)
     pOutput1->DuplicateOutput  (pDevice, &pDuplicator.p);
 
@@ -1617,9 +1709,7 @@ SKIV_Image_CaptureRegion (ImRect capture_area)
       {
         PLOG_VERBOSE << "DirectX::CopyRectangle     ( ): SUCCEEDED";
 
-        extern bool
-            SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped, bool isHDR, bool force_sRGB);
-        if (SKIV_Image_CopyToClipboard (subrect.GetImages (), true, SKIV_DesktopImage._hdr_image, SKIV_DesktopImage._srgb_hack))
+        if (SKIV_Image_CopyToClipboard (subrect.GetImages (), true, SKIV_DesktopImage._hdr_image))
         {
           PLOG_VERBOSE << "SKIV_Image_CopyToClipboard ( ): SUCCEEDED";
 

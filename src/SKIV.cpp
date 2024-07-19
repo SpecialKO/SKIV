@@ -1922,7 +1922,6 @@ wWinMain ( _In_     HINSTANCE hInstance,
         extern skiv_image_desktop_s SKIV_DesktopImage;
 
         bool HDR_Image = SKIV_DesktopImage._hdr_image;
-        bool sRGB_Hack = SKIV_DesktopImage._srgb_hack;
         bool SKIV_HDR  = (HDR_Image ? SKIF_ImGui_IsViewportHDR (SKIF_ImGui_hWnd) : false);
 
         // Temporarily engage HDR mode for SKIV during snipping mode
@@ -1936,22 +1935,23 @@ wWinMain ( _In_     HINSTANCE hInstance,
         if (SKIV_DesktopImage._srv != nullptr)
         {
 
-          static const ImVec2 srgb_uv0       = ImVec2 (0, 0),               // _SRGB format
-                              srgb_uv1       = ImVec2 (1, 1),               // _SRGB format
-                              force_srgb_uv0 = ImVec2 (-4096.0f, -4096.0f), // Non-sRGB formats needs a hack to force them to appear properly
-                              force_srgb_uv1 = ImVec2 (-5120.0f, -5120.0f), // Non-sRGB formats needs a hack to force them to appear properly
+          static const ImVec2 srgb_uv0       = ImVec2 (0, 0),
+                              srgb_uv1       = ImVec2 (1, 1),
                               hdr_uv0        = ImVec2 (-1024.0f, -1024.0f), // HDR formats
                               hdr_uv1        = ImVec2 (-2048.0f, -2048.0f); // HDR formats
 
           SKIF_ImGui_OptImage (SKIV_DesktopImage._srv, SKIV_DesktopImage._resolution,
-                                                                (HDR_Image && SKIV_HDR) ? hdr_uv0 : (sRGB_Hack) ? force_srgb_uv0 : srgb_uv0,
-                                                                (HDR_Image && SKIV_HDR) ? hdr_uv1 : (sRGB_Hack) ? force_srgb_uv1 : srgb_uv1);
+                                                                (HDR_Image && SKIV_HDR) ? hdr_uv0 : srgb_uv0,
+                                                                (HDR_Image && SKIV_HDR) ? hdr_uv1 : srgb_uv1);
 
-          ImDrawList* draw_list =
-            ImGui::GetForegroundDrawList ();
+          // This visual feedback is unnecessary given snipping now defaults to drawing a rectangle around
+          //   the nearest window to the cursor when initiated...
+          //
+          //ImDrawList* draw_list =
+          //  ImGui::GetForegroundDrawList ();
 
-          // Draw a slightly dark transparent overlay on top of the captured image
-          draw_list->AddRectFilled (ImVec2 (0, 0), SKIV_DesktopImage._resolution, ImGui::GetColorU32 (IM_COL32(20, 20, 20, 80)));
+          //// Draw a slightly dark transparent overlay on top of the captured image
+          //draw_list->AddRectFilled (ImVec2 (0, 0), SKIV_DesktopImage._resolution, ImGui::GetColorU32 (IM_COL32(20, 20, 20, 80)));
         }
 
         static ImRect selection;
