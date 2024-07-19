@@ -2367,11 +2367,14 @@ SKIF_ImGui_ImplWin32_SetFullscreen (HWND hWnd, int fullscreen, HMONITOR monitor)
 
       SKIF_ImGui_ImplWin32_SetDWMBorders (hWnd);
     }
-        
+
     float top    = static_cast<float> (rect.top);
     float left   = static_cast<float> (rect.left);
     float width  = static_cast<float> (rect.right)  - left;
     float height = static_cast<float> (rect.bottom) - top;
+
+    SetWindowPos (hWnd, 0, rect.left,              rect.top,
+                           rect.right - rect.left, rect.bottom - rect.top, 0);
 
     ImGui::SetWindowSize (window, ImVec2 (width, height));
     ImGui::SetWindowPos  (window, ImVec2 (left,  top));

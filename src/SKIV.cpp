@@ -641,7 +641,7 @@ void SKIF_Shell_CreateJumpList (void)
         pLink     ->SetPath         (_path_cache.skiv_executable);
         pLink     ->SetArguments    (L"/CaptureRegion");                        // Set the arguments
         pLink     ->SetIconLocation (_path_cache.skiv_executable, 0);           // Set the icon location.
-      //pLink     ->SetDescription  (L"Start a new region capture");           // Set the link description (tooltip on the jump list item)
+      //pLink     ->SetDescription  (L"Starts a new region capture");           // Set the link description (tooltip on the jump list item)
         InitPropVariantFromString   (L"Capture region", &pv);
         pPropStore->SetValue                   (PKEY_Title, pv);                // Set the title property.
         PropVariantClear                                  (&pv);
@@ -1887,9 +1887,6 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
         SKIF_ImGui_SetFullscreen (SKIF_ImGui_hWnd, false);
 
-        //ImGui::SetWindowSize (last_non_snip_size);
-        //ImGui::SetWindowPos  (last_non_snip_pos);
-
         extern HWND hwndBeforeSnip;
         extern HWND hwndTopBeforeSnip;
         extern bool iconicBeforeSnip;
@@ -1899,7 +1896,12 @@ wWinMain ( _In_     HINSTANCE hInstance,
           ShowWindow (SKIF_ImGui_hWnd, SW_MINIMIZE);
 
         if (trayedBeforeSnip)
-          ShowWindow (SKIF_ImGui_hWnd, SW_HIDE);
+        {
+          ShowWindow   (SKIF_ImGui_hWnd, SW_MINIMIZE);
+          ShowWindow   (SKIF_ImGui_hWnd, SW_HIDE);
+          UpdateWindow (SKIF_ImGui_hWnd);
+          SKIF_isTrayed = true;
+        }
 
         SetForegroundWindow (hwndBeforeSnip);
 
@@ -3845,14 +3847,6 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
           HMONITOR monitor =
             MonitorFromPoint (capture_point, MONITOR_DEFAULTTONEAREST);
-
-          MONITORINFO               minfo = { .cbSize = sizeof (MONITORINFO) };
-          GetMonitorInfo (monitor, &minfo);
-
-          SetWindowPos (SKIF_ImGui_hWnd, 0, minfo.rcMonitor.left,    minfo.rcMonitor.top,
-                                            minfo.rcMonitor.right  - minfo.rcMonitor.left,
-                                            minfo.rcMonitor.bottom - minfo.rcMonitor.top,
-                                            SWP_ASYNCWINDOWPOS);
 
           SKIF_ImGui_SetFullscreen (SKIF_ImGui_hWnd, true, monitor);
           UpdateWindow             (SKIF_ImGui_hWnd);
