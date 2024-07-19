@@ -641,8 +641,26 @@ void SKIF_Shell_CreateJumpList (void)
         pLink     ->SetPath         (_path_cache.skiv_executable);
         pLink     ->SetArguments    (L"/CaptureRegion");                        // Set the arguments
         pLink     ->SetIconLocation (_path_cache.skiv_executable, 0);           // Set the icon location.
-        pLink     ->SetDescription  (L"Starts a new region capture");           // Set the link description (tooltip on the jump list item)
+      //pLink     ->SetDescription  (L"Start a new region capture");           // Set the link description (tooltip on the jump list item)
         InitPropVariantFromString   (L"Capture region", &pv);
+        pPropStore->SetValue                   (PKEY_Title, pv);                // Set the title property.
+        PropVariantClear                                  (&pv);
+        pPropStore->Commit          ( );                                        // Save the changes we made to the property store
+        pObjColl  ->AddObject       (pLink);                                    // Add this shell link to the object collection.
+        pPropStore .Release         ( );
+        pLink      .Release         ( );
+      }
+
+      // Task: /CaptureScreen
+      if (SUCCEEDED (pLink.CoCreateInstance (CLSID_ShellLink)))
+      {
+        CComQIPtr <IPropertyStore>   pPropStore = pLink.p;                      // The link title is kept in the object's property store, so QI for that interface.
+
+        pLink     ->SetPath         (_path_cache.skiv_executable);
+        pLink     ->SetArguments    (L"/CaptureScreen");                        // Set the arguments
+        pLink     ->SetIconLocation (_path_cache.skiv_executable, 0);           // Set the icon location.
+      //pLink     ->SetDescription  (L"Start a new screen capture");           // Set the link description (tooltip on the jump list item)
+        InitPropVariantFromString   (L"Capture screen", &pv);
         pPropStore->SetValue                   (PKEY_Title, pv);                // Set the title property.
         PropVariantClear                                  (&pv);
         pPropStore->Commit          ( );                                        // Save the changes we made to the property store
