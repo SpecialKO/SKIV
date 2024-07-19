@@ -560,7 +560,7 @@ namespace ImGui
 
 		float height = 0.f;
 
-		for (int i = 0; i < notifications.size(); ++i)
+		for (unsigned int i = 0; i < notifications.size(); ++i)
 		{
 			ImGuiToast* currentToast = &notifications[i];
 
