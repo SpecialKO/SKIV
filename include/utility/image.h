@@ -155,13 +155,14 @@ struct skiv_image_desktop_s {
 
           // Non-sRGB DXGI formats still use sRGB gamma so they need a hack to appear properly
           if (texDesc.Format == DXGI_FORMAT_R8G8B8A8_UNORM ||
-              texDesc.Format == DXGI_FORMAT_B8G8R8X8_UNORM)
+              texDesc.Format == DXGI_FORMAT_B8G8R8X8_UNORM ||
+              texDesc.Format == DXGI_FORMAT_B8G8R8A8_UNORM)
             _srgb_hack = true;
 
           // HDR formats indicates we are working with a HDR capture
           else if (texDesc.Format == DXGI_FORMAT_R10G10B10A2_UNORM  ||
-                    texDesc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT ||
-                    texDesc.Format == DXGI_FORMAT_R32G32B32A32_FLOAT)
+                   texDesc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT ||
+                   texDesc.Format == DXGI_FORMAT_R32G32B32A32_FLOAT)
             _hdr_image = true;
 
 #ifdef _DEBUG
