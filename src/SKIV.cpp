@@ -3826,11 +3826,18 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             ShowWindow (SKIF_ImGui_hWnd, SW_RESTORE);
 
           HMONITOR monitor =
-            MonitorFromPoint (capture_point, MONITOR_DEFAULTTONULL);
+            MonitorFromPoint (capture_point, MONITOR_DEFAULTTONEAREST);
+
+          MONITORINFO               minfo = { .cbSize = sizeof (MONITORINFO) };
+          GetMonitorInfo (monitor, &minfo);
+
+          SetWindowPos (SKIF_ImGui_hWnd, 0, minfo.rcMonitor.left,    minfo.rcMonitor.top,
+                                            minfo.rcMonitor.right  - minfo.rcMonitor.left,
+                                            minfo.rcMonitor.bottom - minfo.rcMonitor.top,
+                                            SWP_ASYNCWINDOWPOS);
 
           SKIF_ImGui_SetFullscreen (SKIF_ImGui_hWnd, true, monitor);
-
-          UpdateWindow (SKIF_ImGui_hWnd);
+          UpdateWindow             (SKIF_ImGui_hWnd);
 
           selection_rect.Min = ImVec2 (0.0f, 0.0f);
           selection_rect.Max = ImVec2 (0.0f, 0.0f);
