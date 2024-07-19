@@ -10,6 +10,7 @@
 #include <Shlwapi.h>
 #include <ImGuiNotify.hpp>
 #include <utility/skif_imgui.h>
+#include <utility/utility.h>
 
 extern std::wstring defaultHDRFileExt;
 extern std::wstring defaultSDRFileExt;
@@ -1376,67 +1377,103 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
   }
 
   if (! pCursorOutput)
-  {
     return E_UNEXPECTED;
-  }
 
   CComQIPtr <IDXGIOutput5> pOutput5 (pCursorOutput);
+  CComQIPtr <IDXGIOutput1> pOutput1; // Always DXGI_FORMAT_B8G8R8A8_UNORM
 
   // Down-level interfaces support duplication, but for HDR we want Output5
-  if (! pOutput5)
+  if (! pOutput5 ) //&& ! pOutput1)
   {
-    return E_NOTIMPL;
+    PLOG_VERBOSE << "IDXGIOutput5 is unavailable, falling back to using IDXGIOutput1.";
+    pOutput1 = pCursorOutput;
+
+    if (! pOutput1)
+      return E_NOTIMPL;
   }
 
   // The ordering goes from the highest prioritized format to the lowest
   DXGI_FORMAT capture_formats [] = {
     // SDR:
     DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, // Prefer SRGB formats as even non-SRGB formats use sRGB gamma
-    DXGI_FORMAT_R8G8B8A8_UNORM,      // The most common format for the desktop
+    DXGI_FORMAT_R8G8B8A8_UNORM,
     DXGI_FORMAT_B8G8R8X8_UNORM_SRGB,
     DXGI_FORMAT_B8G8R8X8_UNORM,
 
     // HDR:
     DXGI_FORMAT_R10G10B10A2_UNORM,
     DXGI_FORMAT_R16G16B16A16_FLOAT,
-    DXGI_FORMAT_R32G32B32A32_FLOAT
+    DXGI_FORMAT_R32G32B32A32_FLOAT,
+
+    // The list of supported formats should always contain DXGI_FORMAT_B8G8R8A8_UNORM,
+    //   as this is the most common format for the desktop.
+    //DXGI_FORMAT_B8G8R8A8_UNORM
   };
 
   CComPtr <IDXGIOutputDuplication> pDuplicator;
-  pOutput5->DuplicateOutput1 (pDevice, 0x0, _ARRAYSIZE (capture_formats),
-                                                        capture_formats, &pDuplicator.p);
+
+  if (pOutput5)
+    pOutput5->DuplicateOutput1 (pDevice, 0x0, _ARRAYSIZE (capture_formats),
+                                                          capture_formats, &pDuplicator.p);
+  else if (pOutput1)
+    pOutput1->DuplicateOutput  (pDevice, &pDuplicator.p);
 
   if (! pDuplicator)
-  {
     return E_NOTIMPL;
-  }
 
   DXGI_OUTDUPL_FRAME_INFO frame_info = { };
   CComPtr <IDXGIResource> pDuplicatedResource;
+  DWORD timeout = SKIF_Util_timeGetTime1 ( ) + 5000;
 
-  int    tries = 0;
-  while (tries++ < 3)
+  while (true)
   {
-    pDuplicator->AcquireNextFrame (150, &frame_info, &pDuplicatedResource.p);
+    // Capture the next frame
+    HRESULT hr = pDuplicator->AcquireNextFrame (150, &frame_info, &pDuplicatedResource.p);
 
+    // DXGI_ERROR_ACCESS_LOST if the desktop duplication interface is invalid.
+    // The desktop duplication interface typically becomes invalid when a different
+    //   type of image is displayed on the desktop.
+    // In this situation, the application must release the IDXGIOutputDuplication interface
+    //   and create a new IDXGIOutputDuplication for the new content.
+    if (hr == DXGI_ERROR_ACCESS_LOST)
+    {
+      pDuplicator.Release();
+
+      if (pOutput5)
+        pOutput5->DuplicateOutput1 (pDevice, 0x0, _ARRAYSIZE (capture_formats),
+                                                              capture_formats, &pDuplicator.p);
+      else if (pOutput1)
+        pOutput1->DuplicateOutput  (pDevice, &pDuplicator.p);
+    }
+
+    else if (FAILED (hr))
+      PLOG_WARNING.printf ("Unexpected failure: %ws (HRESULT=%x)", _com_error(hr).ErrorMessage(), hr);
+
+    // A non-zero value indicates that the desktop image was updated since an application last called the
+    //   IDXGIOutputDuplication::AcquireNextFrame method to acquire the next frame of the desktop image.
     if (frame_info.LastPresentTime.QuadPart)
       break;
 
+    // Release the prior captured frame, since it's invalid for our usage
     pDuplicator->ReleaseFrame ();
+
+    // Fail after we have attempted to capture a new frame of the desktop for 5 seconds
+    if (SKIF_Util_timeGetTime1 ( ) > timeout)
+      break;
   }
 
-  if (! pDuplicatedResource)
-  {
+  // This means the timeout was reached without a successful capture
+  if (! frame_info.LastPresentTime.QuadPart)
     return E_UNEXPECTED;
-  }
+
+  if (! pDuplicatedResource)
+    return E_UNEXPECTED;
 
   CComQIPtr <IDXGISurface>    pSurface       (pDuplicatedResource);
   CComQIPtr <ID3D11Texture2D> pDuplicatedTex (pSurface);
 
   if (! pDuplicatedTex)
-  {
     return E_NOTIMPL;
-  }
 
   DXGI_SURFACE_DESC   surfDesc;
   pSurface->GetDesc (&surfDesc);
@@ -1460,6 +1497,13 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
 
   if (pDevCtx == nullptr)
     return E_UNEXPECTED;
+
+  // DXGI_FORMAT_B8G8R8A8_UNORM (Windows 8.1 fallback code)
+  // TODO: Blip from BGR -> RGB
+  if (surfDesc.Format == DXGI_FORMAT_B8G8R8A8_UNORM) // ! pOutput5
+  {
+    PLOG_WARNING << "Windows 8.1 always captures in a BGR format, which this app currently does not support properly.";
+  }
 
 #if 0
   if (FAILED (pDevice->CreateTexture2D (&texDesc, nullptr, &pStagingTex.p)))
