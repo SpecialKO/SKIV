@@ -2699,7 +2699,7 @@ typedef enum EFFECTIVE_POWER_MODE {
 #define EffectivePowerModeNone -1
 #endif
 
-std::atomic<int> enumEffectivePowerMode          = EffectivePowerModeNone;
+std::atomic<int> enumEffectivePowerMode = EffectivePowerModeNone;
 
 typedef VOID WINAPI EFFECTIVE_POWER_MODE_CALLBACK (
     _In_     EFFECTIVE_POWER_MODE  Mode,
@@ -2803,12 +2803,11 @@ void SKIF_Util_SetEffectivePowerModeNotifications (bool enable)
 
 // High Dynamic Range (HDR)
 
+//#if (NTDDI_VERSION >= NTDDI_WIN10_NI)
 #include <winrt/Windows.Graphics.Display.h>
 #include <winrt/Windows.Devices.Display.Core.h>
-
-#if (NTDDI_VERSION >= NTDDI_WIN10_NI)
 #include <Windows.Graphics.Display.Interop.h>
-#endif
+//#endif
 
 // This actually updates the underlying vector
 static void
@@ -2926,6 +2925,7 @@ SKIF_UtilInt_UpdateMonitors (void)
     monitor.path_targetInfo.adapterId = path.targetInfo.adapterId;
 
     // Windows 10 1803+ (Build 17134) or newer
+//#if (NTDDI_VERSION >= NTDDI_WIN10_NI)
     if (SKIF_Util_IsWindows10v1803OrGreater ( ))
     {
       using namespace winrt::Windows::Devices::Display::Core;
@@ -2954,6 +2954,7 @@ SKIF_UtilInt_UpdateMonitors (void)
         }
       }
     }
+//#endif
 
     // Windows 10 1709+ (Build 16299) fallback
     if (! success || (! SKIF_Util_IsWindows10v1803OrGreater ( ) && SKIF_Util_IsWindows10v1709OrGreater ( )))
