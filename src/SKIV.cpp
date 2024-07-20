@@ -1869,6 +1869,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
 
 
+      bool bHoveringSnipToolbar = false;
+
       ImGui::BeginGroup ();
 
       static bool last_snip_state = false;
@@ -1934,11 +1936,10 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
         if (SKIV_DesktopImage._srv != nullptr)
         {
-
-          static const ImVec2 srgb_uv0       = ImVec2 (0, 0),
-                              srgb_uv1       = ImVec2 (1, 1),
-                              hdr_uv0        = ImVec2 (-1024.0f, -1024.0f), // HDR formats
-                              hdr_uv1        = ImVec2 (-2048.0f, -2048.0f); // HDR formats
+          static const ImVec2 srgb_uv0 = ImVec2 (0, 0),
+                              srgb_uv1 = ImVec2 (1, 1),
+                              hdr_uv0  = ImVec2 (-1024.0f, -1024.0f), // HDR formats
+                              hdr_uv1  = ImVec2 (-2048.0f, -2048.0f); // HDR formats
 
           SKIF_ImGui_OptImage (SKIV_DesktopImage._srv, SKIV_DesktopImage._resolution,
                                                                 (HDR_Image && SKIV_HDR) ? hdr_uv0 : srgb_uv0,
@@ -1974,7 +1975,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
             L"Progman",                   // Program Manager
             L"Button",                    // Start button?
           //L"ApplicationFrameWindow",    // UWP stuff (ignores HDR + WCG Image Viewer)
-            L"Windows.UI.Core.CoreWindow" // UWP stuff
+          //L"Windows.UI.Core.CoreWindow" // UWP stuff
           };
 
           wchar_t wszWindowTextBuffer [64] = { };
@@ -2094,49 +2095,113 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
         static bool clicked = false;
 
-        if (! clicked && SKIF_ImGui_SelectionRect (&selection, allowable, 0, SelectionFlag_Filled))
+        if (HDR_Image && SKIV_HDR)
         {
-          _registry._SnippingModeExit = true;
-          capture_area = selection;
+          static ImVec2 vSnippingToolbarSize = ImVec2 (128.0f, 32.0f);
+
+          ImGui::SetNextWindowPos  (ImVec2 (ImGui::GetCurrentWindow ()->Size.x / 2.0f -
+                                                        vSnippingToolbarSize.x / 2.0f,
+                                              ImGui::GetStyle ().ItemSpacing.y        +
+                                                        vSnippingToolbarSize.y / 2.0f));
+
+          ImGui::PushStyleColor    (ImGuiCol_ChildBg, ImGui::GetStyleColorVec4 (ImGuiCol_WindowBg));
+          ImGui::BeginChild        ("Snipping Tool###SnippingToolbar", ImVec2 (0.0f, 0.0f),
+                                      ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_AutoResizeX |
+                                      ImGuiChildFlags_AutoResizeY | ((_registry.bUIBorders) ? ImGuiChildFlags_Border
+                                                                                            : ImGuiChildFlags_None
+                                                                  | ImGuiChildFlags_FrameStyle),
+                                      ImGuiWindowFlags_NoScrollbar  |
+                                      ImGuiWindowFlags_NoDecoration |
+                                      ImGuiWindowFlags_AlwaysAutoResize);
+
+          ImGui::BringWindowToDisplayFront (ImGui::GetCurrentWindow ());
+
+          ImGui::PopStyleColor     ();
+          ImGui::BeginGroup        ();
+          ImGui::PushStyleColor    (ImGuiCol_Text,    ImColor (1.0f, 1.0f, 1.0f, 1.0f).Value);
+          ImGui::TextUnformatted   (ICON_FA_SCISSORS " Snipping Tool");
+          ImGui::Separator         ();
+          ImGui::PopStyleColor     ();
+          ImGui::TreePush          ("");
+          ImGui::RadioButton       ("Capture HDR PNG",    &_registry._SnippingTonemapsHDR, 0);
+          if (ImGui::IsItemHovered ())
+          {
+            ImGui::BeginTooltip    ();
+            ImGui::TextUnformatted ("HDR PNG may have Compatibility Issues");
+            ImGui::Separator       ();
+            ImGui::BulletText      ("Generally the clipboard contents can only be pasted into browser-derived software (i.e. built using Chromium, Electron) and SKIV.");
+            ImGui::BulletText      ("Some browsers cannot interpret HDR10 PNG correctly and the image will not render in HDR when pasted.");
+            ImGui::EndTooltip      ();
+          }
+          ImGui::SameLine          ();
+          ImGui::RadioButton       ("Tonemap HDR to SDR", &_registry._SnippingTonemapsHDR, 1);
+          if (ImGui::IsItemHovered ())
+          {
+            ImGui::BeginTooltip    ();
+            ImGui::TextUnformatted ("High Quality HDR to SDR Tonemap");
+            ImGui::Separator       ();
+            ImGui::BulletText      ("Stored in the clipboard as a Bitmap for maximum compatibility with SDR software.");
+            ImGui::EndTooltip      ();
+          }
+          ImGui::TreePop           ();
+          ImGui::EndGroup          ();
+          if ( ImGui::IsWindowHovered () ||
+               ImGui::IsItemActive    () )
+          {
+            bHoveringSnipToolbar = true;
+          }
+
+          vSnippingToolbarSize = ImGui::GetWindowSize ();
+          ImGui::EndChild          ();
+
         }
 
-        else if (! ImGui::IsMouseDragging (ImGuiMouseButton_Left))
+        if (! bHoveringSnipToolbar)
         {
-          _GetRectBelowCursor ( );
-
-          // Keep the selection within the allowed rectangle
-          selection_auto.ClipWithFull (allowable);
-
-          if (ImGui::IsMouseClicked (ImGuiMouseButton_Left))
-            clicked = true;
-
-          else if (ImGui::IsMouseReleased (ImGuiMouseButton_Left))
+          if (! clicked && SKIF_ImGui_SelectionRect (&selection, allowable, 0, SelectionFlag_Filled))
           {
-            clicked = false;
             _registry._SnippingModeExit = true;
-            capture_area = selection_auto;
+            capture_area = selection;
           }
 
-          else if (selection_auto.Min != selection_auto.Max)
+          else if (! ImGui::IsMouseDragging (ImGuiMouseButton_Left))
           {
-            ImDrawList* draw_list =
-              ImGui::GetForegroundDrawList ();
+            _GetRectBelowCursor ( );
 
-            draw_list->AddRect       (selection_auto.Min, selection_auto.Max, ImGui::GetColorU32 (IM_COL32(0,130,216,255)), 0.0f, 0, 5.0f); // Border
-          //draw_list->AddRectFilled (selection_auto.Min, selection_auto.Max, ImGui::GetColorU32 (IM_COL32(0,130,216,50)));                 // Background
+            // Keep the selection within the allowed rectangle
+            selection_auto.ClipWithFull (allowable);
+
+            if (ImGui::IsMouseClicked (ImGuiMouseButton_Left))
+              clicked = true;
+
+            else if (ImGui::IsMouseReleased (ImGuiMouseButton_Left))
+            {
+              clicked = false;
+              _registry._SnippingModeExit = true;
+              capture_area = selection_auto;
+            }
+
+            else if (selection_auto.Min != selection_auto.Max)
+            {
+              ImDrawList* draw_list =
+                ImGui::GetForegroundDrawList ();
+
+              draw_list->AddRect       (selection_auto.Min, selection_auto.Max, ImGui::GetColorU32 (IM_COL32(0,130,216,255)), 0.0f, 0, 5.0f); // Border
+            //draw_list->AddRectFilled (selection_auto.Min, selection_auto.Max, ImGui::GetColorU32 (IM_COL32(0,130,216,50)));                 // Background
+            }
           }
-        }
 
-        else
-          clicked = false;
+          else
+            clicked = false;
 
-        if (capture_area.GetArea() != 0)
-        {
-          ignoredWindows.clear();
+          if (capture_area.GetArea() != 0)
+          {
+            ignoredWindows.clear();
 
-          PLOG_VERBOSE << "Attempting to capture region...";
+            PLOG_VERBOSE << "Attempting to capture region...";
 
-          SKIV_Image_CaptureRegion (capture_area);
+            SKIV_Image_CaptureRegion (capture_area);
+          }
         }
 #pragma endregion
       }

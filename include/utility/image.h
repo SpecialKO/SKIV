@@ -125,6 +125,7 @@ HRESULT SKIV_Image_SaveToDisk_HDR  (const DirectX::Image& image, const wchar_t* 
 HRESULT SKIV_Image_SaveToDisk_SDR  (const DirectX::Image& image, const wchar_t* wszFileName, bool force_sRGB);
 HRESULT SKIV_Image_CaptureDesktop  (DirectX::ScratchImage& image, POINT pos, int flags = 0x0);
 void    SKIV_Image_CaptureRegion   (ImRect capture_area);
+HRESULT SKIV_Image_TonemapToSDR    (const DirectX::Image& image, DirectX::ScratchImage& final_sdr);
 
 // Structs
 
