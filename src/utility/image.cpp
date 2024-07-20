@@ -1675,6 +1675,7 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
   if (! pOutput5 ) //&& ! pOutput1)
   {
     PLOG_VERBOSE << "IDXGIOutput5 is unavailable, falling back to using IDXGIOutput1.";
+
     pOutput1 = pCursorOutput;
 
     if (! pOutput1)
@@ -1684,10 +1685,10 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
   // The ordering goes from the highest prioritized format to the lowest
   DXGI_FORMAT capture_formats [] = {
     // SDR:
-    DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, // Prefer SRGB formats as even non-SRGB formats use sRGB gamma
-    DXGI_FORMAT_R8G8B8A8_UNORM,
     DXGI_FORMAT_B8G8R8X8_UNORM_SRGB,
+    DXGI_FORMAT_B8G8R8A8_UNORM_SRGB, // Prefer SRGB formats as even non-SRGB formats use sRGB gamma
     DXGI_FORMAT_B8G8R8X8_UNORM,
+    DXGI_FORMAT_R8G8B8A8_UNORM,
 
     // HDR:
     DXGI_FORMAT_R10G10B10A2_UNORM,
@@ -1780,6 +1781,10 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
   CComPtr <ID3D11Texture2D> pStagingTex;
   CComPtr <ID3D11Texture2D> pDesktopImage; // For rendering during snipping
 
+  // DXGI_FORMAT_B8G8R8A8_UNORM (Windows 8.1 fallback code)
+  if (surfDesc.Format == DXGI_FORMAT_B8G8R8A8_UNORM) // ! pOutput5
+      surfDesc.Format  = DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
+
   D3D11_TEXTURE2D_DESC
     texDesc                = { };
     texDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
@@ -1797,60 +1802,6 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
   if (pDevCtx == nullptr)
     return E_UNEXPECTED;
 
-  // DXGI_FORMAT_B8G8R8A8_UNORM (Windows 8.1 fallback code)
-  // TODO: Blip from BGR -> RGB
-  if (surfDesc.Format == DXGI_FORMAT_B8G8R8A8_UNORM) // ! pOutput5
-  {
-    PLOG_WARNING << "Windows 8.1 always captures in a BGR format, which this app currently does not support properly.";
-  }
-
-#if 0
-  if (FAILED (pDevice->CreateTexture2D (&texDesc, nullptr, &pStagingTex.p)))
-  {
-    pDuplicator->ReleaseFrame ();
-    return E_UNEXPECTED;
-  }
-
-  pDevCtx->CopyResource (pStagingTex,   pDuplicatedTex);
-
-  D3D11_MAPPED_SUBRESOURCE mapped;
-
-  if (SUCCEEDED (pDevCtx->Map (pStagingTex, 0, D3D11_MAP_READ, 0x0, &mapped)))
-  {
-    image.Initialize2D (surfDesc.Format,
-                        surfDesc.Width,
-                        surfDesc.Height, 1, 1
-    );
-
-    if (! image.GetPixels ())
-    {
-      pSurface->Unmap ();
-      return E_POINTER;
-    }
-
-    auto pImg =
-      image.GetImages ();
-
-    const uint8_t* src = (const uint8_t *)mapped.pData;
-          uint8_t* dst = pImg->pixels;
-
-    for (size_t h = 0; h < surfDesc.Height; ++h)
-    {
-      size_t msize =
-        std::min <size_t> (pImg->rowPitch, mapped.RowPitch);
-
-      memcpy_s (dst, pImg->rowPitch, src, msize);
-
-      src += mapped.RowPitch;
-      dst += pImg->rowPitch;
-    }
-
-    if (FAILED (pSurface->Unmap ()))
-    {
-      return E_UNEXPECTED;
-    }
-  }
-#else
   texDesc.CPUAccessFlags = 0x0;
   texDesc.Usage          = D3D11_USAGE_DEFAULT;
   texDesc.BindFlags      = D3D11_BIND_SHADER_RESOURCE;
@@ -1876,7 +1827,6 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
   pDuplicator->ReleaseFrame ();
 
   SKIV_DesktopImage.process ();
-#endif
 
   return S_OK;
 }
