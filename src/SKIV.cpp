@@ -1945,14 +1945,11 @@ wWinMain ( _In_     HINSTANCE hInstance,
                                                                 (HDR_Image && SKIV_HDR) ? hdr_uv0 : srgb_uv0,
                                                                 (HDR_Image && SKIV_HDR) ? hdr_uv1 : srgb_uv1);
 
-          // This visual feedback is unnecessary given snipping now defaults to drawing a rectangle around
-          //   the nearest window to the cursor when initiated...
-          //
-          //ImDrawList* draw_list =
-          //  ImGui::GetForegroundDrawList ();
+          ImDrawList* draw_list =
+            ImGui::GetForegroundDrawList ();
 
-          //// Draw a slightly dark transparent overlay on top of the captured image
-          //draw_list->AddRectFilled (ImVec2 (0, 0), SKIV_DesktopImage._resolution, ImGui::GetColorU32 (IM_COL32(20, 20, 20, 80)));
+          // Draw a slightly dark transparent overlay on top of the captured image
+          draw_list->AddRectFilled (ImVec2 (0, 0), SKIV_DesktopImage._resolution, ImGui::GetColorU32 (IM_COL32 (0, 0, 0, 20)));
         }
 
         static ImRect selection;
