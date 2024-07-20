@@ -2096,8 +2096,10 @@ wWinMain ( _In_     HINSTANCE hInstance,
         {
           static ImVec2 vSnippingToolbarSize = ImVec2 (128.0f, 32.0f);
 
-          ImGui::SetNextWindowPos  (ImVec2 (ImGui::GetCurrentWindow ()->Size.x / 2.0f -
+          ImGui::SetNextWindowPos  (ImVec2 (ImGui::GetCurrentWindow ()->Pos.x         +
+                                            ImGui::GetCurrentWindow ()->Size.x / 2.0f -
                                                         vSnippingToolbarSize.x / 2.0f,
+                                             ImGui::GetCurrentWindow ()->Pos.y        +
                                               ImGui::GetStyle ().ItemSpacing.y        +
                                                         vSnippingToolbarSize.y / 2.0f));
 
