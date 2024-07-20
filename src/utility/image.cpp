@@ -1834,6 +1834,25 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
 void
 SKIV_Image_CaptureRegion (ImRect capture_area)
 {
+  // Fixes snipping rectangles on non-primary (origin != 0,0) displays
+  auto _AdjustCaptureAreaRelativeToDisplayOrigin = [&](void)
+  {
+    HMONITOR hMonCaptured =
+      MonitorFromPoint ({ static_cast <long> (capture_area.Min.x),
+                          static_cast <long> (capture_area.Min.y) }, MONITOR_DEFAULTTONEAREST);
+
+    MONITORINFO                    minfo = { .cbSize = sizeof (MONITORINFO) };
+    GetMonitorInfo (hMonCaptured, &minfo);
+
+    capture_area.Min.x -= minfo.rcMonitor.left;
+    capture_area.Max.x -= minfo.rcMonitor.left;
+
+    capture_area.Min.y -= minfo.rcMonitor.top;
+    capture_area.Max.y -= minfo.rcMonitor.top;
+  };
+
+  _AdjustCaptureAreaRelativeToDisplayOrigin ();
+
   const size_t
     x      = static_cast <size_t> (std::max (0.0f, capture_area.Min.x)),
     y      = static_cast <size_t> (std::max (0.0f, capture_area.Min.y)),
@@ -1861,8 +1880,8 @@ SKIV_Image_CaptureRegion (ImRect capture_area)
     {
       PLOG_VERBOSE << "subrect.Initialize2D       ( ): SUCCEEDED";
 
-      if (SUCCEEDED (DirectX::CopyRectangle (*captured_img.GetImages   (), src_rect,
-                                                                            *subrect.GetImages (), DirectX::TEX_FILTER_DEFAULT, 0, 0)))
+      if (SUCCEEDED (DirectX::CopyRectangle (*captured_img.GetImages (), src_rect,
+                                                  *subrect.GetImages (), DirectX::TEX_FILTER_DEFAULT, 0, 0)))
       {
         PLOG_VERBOSE << "DirectX::CopyRectangle     ( ): SUCCEEDED";
 
