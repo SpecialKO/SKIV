@@ -3845,8 +3845,25 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
       {
         if (GetWindowRect (hwndBeforeSnip, &capture_rect))
         {
-          capture_point.x = capture_rect.left;
-          capture_point.y = capture_rect.top;
+          // Use the window's centroid in case it spans multiple monitors
+          capture_point.x = static_cast <long> (capture_rect.left)  +
+                            static_cast <long> (capture_rect.right  - capture_rect.left) / 2;
+          capture_point.y = static_cast <long> (capture_rect.top)   +
+                            static_cast <long> (capture_rect.bottom - capture_rect.top)  / 2;
+
+          HMONITOR hMonCaptured =
+            MonitorFromPoint (capture_point, MONITOR_DEFAULTTONEAREST);
+
+          MONITORINFO                    minfo = { .cbSize = sizeof (MONITORINFO) };
+          GetMonitorInfo (hMonCaptured, &minfo);
+
+          // Clamp the capture rect to the window's primary monitor
+          //   ... it's the only one we have an image captured for!
+          capture_rect.left   = std::max (capture_rect.left,   minfo.rcMonitor.left);
+          capture_rect.top    = std::max (capture_rect.top,    minfo.rcMonitor.top);
+
+          capture_rect.right  = std::min (capture_rect.right,  minfo.rcMonitor.right);
+          capture_rect.bottom = std::min (capture_rect.bottom, minfo.rcMonitor.bottom);
         }
       }
 
