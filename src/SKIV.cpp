@@ -108,6 +108,13 @@ DWORD SKIF_startupTime          = 0; // Used as a basis of how long the initiali
 DWORD SKIF_firstFrameTime       = 0; // Used as a basis of how long the initialization took
 HANDLE SteamProcessHandle       = NULL;
 
+// Exporting RTSSHooksCompatibility set to 0x0 prevents RTSS from drawing.
+//
+//  * If it becomes necessary to test with RTSS active, then create
+//      a profile for this application with "ForceHooking" set.
+extern "C" __declspec (dllexport)
+DWORD RTSSHooksCompatibility = 0x0;
+
 extern bool SK_Keybind_g_isAssigning;
 
 // Shell messages (registered window messages)
