@@ -1977,9 +1977,11 @@ wWinMain ( _In_     HINSTANCE hInstance,
                               hdr_uv0  = ImVec2 (-1024.0f, -1024.0f), // HDR formats
                               hdr_uv1  = ImVec2 (-2048.0f, -2048.0f); // HDR formats
 
-          SKIF_ImGui_OptImage (SKIV_DesktopImage._srv, SKIV_DesktopImage._resolution,
-                                                                (HDR_Image && SKIV_HDR) ? hdr_uv0 : srgb_uv0,
-                                                                (HDR_Image && SKIV_HDR) ? hdr_uv1 : srgb_uv1);
+          SKIF_ImGui_OptImage ( SKIV_DesktopImage._srv,
+                                SKIV_DesktopImage._resolution, (HDR_Image && SKIV_HDR) ? hdr_uv0 : srgb_uv0,
+                                                               (HDR_Image && SKIV_HDR) ? hdr_uv1 : srgb_uv1,
+                                  ImVec4 (1,1,1,1),
+                                  ImVec4 (0,0,0,0), SKIV_DesktopImage._rotation );
 
           ImDrawList* draw_list =
             ImGui::GetForegroundDrawList ();
@@ -2122,8 +2124,17 @@ wWinMain ( _In_     HINSTANCE hInstance,
           }
         };
 
-                          // Desktop Pos,      Desktop Pos + Desktop Size
-        ImRect allowable (monitor_extent.Min, SKIV_DesktopImage._resolution);
+        ImVec2 resolution =
+          SKIV_DesktopImage._resolution;
+
+        if (SKIV_DesktopImage._rotation == DXGI_MODE_ROTATION_ROTATE90 ||
+            SKIV_DesktopImage._rotation == DXGI_MODE_ROTATION_ROTATE270)
+        {
+          std::swap (resolution.x, resolution.y);
+        }
+
+                          // Desktop Pos,     Desktop Pos + Desktop Size
+        ImRect allowable (monitor_extent.Min, resolution);
         ImRect capture_area;
 
         static bool clicked = false;

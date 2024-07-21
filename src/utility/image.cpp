@@ -1750,7 +1750,11 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
   if (! pDuplicator)
     return E_NOTIMPL;
 
+  DXGI_OUTDUPL_DESC       dup_desc   = { };
   DXGI_OUTDUPL_FRAME_INFO frame_info = { };
+
+  pDuplicator->GetDesc (&dup_desc);
+
   CComPtr <IDXGIResource> pDuplicatedResource;
   DWORD timeout = SKIF_Util_timeGetTime1 ( ) + 5000;
 
@@ -1852,6 +1856,8 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
   pDevCtx->CopyResource             (pDesktopImage, pDuplicatedTex);
   pDevice->CreateShaderResourceView (pDesktopImage, &srvDesc, &SKIV_DesktopImage._srv);
 
+  SKIV_DesktopImage._rotation = dup_desc.Rotation;
+
   pDevCtx->Flush ();
 
   pDuplicator->ReleaseFrame ();
@@ -1864,6 +1870,13 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
 void
 SKIV_Image_CaptureRegion (ImRect capture_area)
 {
+  if (SKIV_DesktopImage._rotation == DXGI_MODE_ROTATION_ROTATE90 ||
+      SKIV_DesktopImage._rotation == DXGI_MODE_ROTATION_ROTATE270)
+  {
+    std::swap (capture_area.Min.x, capture_area.Min.y);
+    std::swap (capture_area.Max.x, capture_area.Max.y);
+  }
+
   // Fixes snipping rectangles on non-primary (origin != 0,0) displays
   auto _AdjustCaptureAreaRelativeToDisplayOrigin = [&](void)
   {

@@ -134,6 +134,7 @@ struct skiv_image_desktop_s {
   CComPtr <ID3D11Resource>           _res        = nullptr;
   bool                               _hdr_image  =   false;
   ImVec2                             _resolution = ImVec2 (0.0f, 0.0f);
+  DXGI_MODE_ROTATION                 _rotation   = DXGI_MODE_ROTATION_UNSPECIFIED;
 
   bool process (void)
   {
@@ -182,5 +183,6 @@ struct skiv_image_desktop_s {
     _srv        = nullptr;
     _hdr_image  =   false;
     _resolution = ImVec2 (0.0f, 0.0f);
+    _rotation   = DXGI_MODE_ROTATION_UNSPECIFIED;
   }
 };
