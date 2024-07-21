@@ -1887,28 +1887,57 @@ wWinMain ( _In_     HINSTANCE hInstance,
         _registry._SnippingMode       = false;
         _registry._SnippingModeExit   = false;
 
-        SKIF_ImGui_SetFullscreen (SKIF_ImGui_hWnd, false);
-
         extern HWND hwndBeforeSnip;
         extern HWND hwndTopBeforeSnip;
         extern bool iconicBeforeSnip;
         extern bool trayedBeforeSnip;
+
+        SetForegroundWindow (hwndBeforeSnip);
+
+        // Clear the SwapChain backbuffer to black before restoring, otherwise
+        //   old garbage from a previous snip will briefly appear on screen...
+        if (ImGuiViewport *vp = ImGui::FindViewportByPlatformHandle ((void *)SKIF_ImGui_hWnd))
+        {
+          if (ImGui_ImplDX11_ViewportData* vd = (ImGui_ImplDX11_ViewportData*)vp->RendererUserData)
+          {
+            CComPtr <ID3D11Device> pDev;
+            if (SUCCEEDED (vd->SwapChain->GetDevice (IID_ID3D11Device, (void **)&pDev.p)))
+            {
+              CComPtr <ID3D11DeviceContext> pDevCtx;
+              pDev->GetImmediateContext   (&pDevCtx.p);
+
+              FLOAT                                       fClearColor [4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+              pDevCtx->ClearRenderTargetView (vd->RTView, fClearColor);
+              vd->SwapChain->Present (0,0);
+            }
+          }
+        }
+
+        if (iconicBeforeSnip || trayedBeforeSnip)
+        {
+          // Hide the window while we do this so that it doesn't
+          //   briefly appear in the wrong place...
+          ShowWindow (SKIF_ImGui_hWnd, SW_HIDE);
+        }
+
+        SKIF_ImGui_SetFullscreen (SKIF_ImGui_hWnd, false);
+
+        // Put SKIV back in the correct Z-order
+        SetWindowPos (SKIF_ImGui_hWnd, hwndTopBeforeSnip, 0,0,0,0, SWP_NOSIZE|SWP_NOMOVE|SWP_NOACTIVATE);
 
         if (iconicBeforeSnip)
           ShowWindow (SKIF_ImGui_hWnd, SW_MINIMIZE);
 
         if (trayedBeforeSnip)
         {
-          ShowWindow   (SKIF_ImGui_hWnd, SW_MINIMIZE);
-          ShowWindow   (SKIF_ImGui_hWnd, SW_HIDE);
-          UpdateWindow (SKIF_ImGui_hWnd);
+          ShowWindow (SKIF_ImGui_hWnd, SW_MINIMIZE);
           SKIF_isTrayed = true;
         }
 
-        SetForegroundWindow (hwndBeforeSnip);
-
-        // Put SKIV back in the correct Z-order
-        SetWindowPos (SKIF_ImGui_hWnd, hwndTopBeforeSnip, 0,0,0,0, SWP_NOSIZE|SWP_NOMOVE|SWP_NOACTIVATE);
+        else
+        {
+          ShowWindow (SKIF_ImGui_hWnd, SW_SHOWNA);
+        }
 
         ImGui::GetIO ().MouseDown         [0] = false;
         ImGui::GetIO ().MouseDownDuration [0] = -1.0f;

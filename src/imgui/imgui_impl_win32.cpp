@@ -2278,6 +2278,10 @@ SKIF_ImGui_ImplWin32_WantUpdateMonitors (void)
 bool
 SKIF_ImGui_ImplWin32_SetFullscreen (HWND hWnd, int fullscreen, HMONITOR monitor)
 {
+  // Disable minimize/restore animations, they're obnoxious when snipping.
+  BOOL                                                           bDisableAnimation = TRUE;
+  DwmSetWindowAttribute (hWnd, DWMWA_TRANSITIONS_FORCEDISABLED, &bDisableAnimation, sizeof (BOOL));
+
   // Cached data structure to support tracking multiple windows
   struct fullscreen_s {
       HWND   hWnd;           // Used to tracking
@@ -2373,8 +2377,18 @@ SKIF_ImGui_ImplWin32_SetFullscreen (HWND hWnd, int fullscreen, HMONITOR monitor)
     float width  = static_cast<float> (rect.right)  - left;
     float height = static_cast<float> (rect.bottom) - top;
 
-    SetWindowPos (hWnd, 0, rect.left,              rect.top,
-                           rect.right - rect.left, rect.bottom - rect.top, 0);
+    static SKIF_RegistrySettings& _registry = SKIF_RegistrySettings::GetInstance ( );
+
+    if (_registry._SnippingMode || _registry._SnippingModeExit)
+    {
+      // Required during snipping to place the window correctly after
+      //   restoring it from the system tray or taskbar...
+      SetWindowPos (
+        hWnd, 0, rect.left,              rect.top,
+                 rect.right - rect.left, rect.bottom - rect.top,
+                   SWP_NOSENDCHANGING | SWP_NOACTIVATE | SWP_NOZORDER | SWP_ASYNCWINDOWPOS
+      );
+    }
 
     ImGui::SetWindowSize (window, ImVec2 (width, height));
     ImGui::SetWindowPos  (window, ImVec2 (left,  top));
