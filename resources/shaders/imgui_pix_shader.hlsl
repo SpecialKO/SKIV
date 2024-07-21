@@ -323,8 +323,19 @@ float4 main (PS_INPUT input) : SV_Target
 
     if (Y_out + Y_in > 0.0)
     {
+      float I0      = ICtCp.x;
+      float I_scale = 0.0f;
+
       ICtCp.x *=
         max ((Y_out / Y_in), 0.0f);
+
+      if (ICtCp.x != 0.0f && I0 != 0.0f)
+      {
+        I_scale =
+          min (I0 / ICtCp.x, ICtCp.x / I0);
+      }
+
+      ICtCp.yz *= I_scale;
     }
 
     else
@@ -364,11 +375,3 @@ float4 main (PS_INPUT input) : SV_Target
 };
 
 #endif
-
-
-
-
-
-
-
-

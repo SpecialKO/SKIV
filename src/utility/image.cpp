@@ -1212,8 +1212,23 @@ SKIV_Image_TonemapToSDR (const DirectX::Image& image, DirectX::ScratchImage& fin
 
           if (Y_out + Y_in > 0.0f)
           {
+            float I0      = XMVectorGetX (ICtCp);
+            float I1      = 0.0f;
+            float I_scale = 0.0f;
+
             ICtCp.m128_f32 [0] *=
               std::max ((Y_out / Y_in), 0.0f);
+
+            I1 = XMVectorGetX (ICtCp);
+
+            if (I0 != 0.0f && I1 != 0.0f)
+            {
+              I_scale =
+                std::min (I0 / I1, I1 / I0);
+            }
+
+            ICtCp.m128_f32 [1] *= I_scale;
+            ICtCp.m128_f32 [2] *= I_scale;
           }
 
           value =
@@ -1405,8 +1420,23 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
 
           if (Y_out + Y_in > 0.0f)
           {
+            float I0      = XMVectorGetX (ICtCp);
+            float I1      = 0.0f;
+            float I_scale = 0.0f;
+
             ICtCp.m128_f32 [0] *=
               std::max ((Y_out / Y_in), 0.0f);
+
+            I1 = XMVectorGetX (ICtCp);
+
+            if (I0 != 0.0f && I1 != 0.0f)
+            {
+              I_scale =
+                std::min (I0 / I1, I1 / I0);
+            }
+
+            ICtCp.m128_f32 [1] *= I_scale;
+            ICtCp.m128_f32 [2] *= I_scale;
           }
 
           value =
@@ -1697,7 +1727,7 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
 
     // The list of supported formats should always contain DXGI_FORMAT_B8G8R8A8_UNORM,
     //   as this is the most common format for the desktop.
-    DXGI_FORMAT_B8G8R8A8_UNORM
+    //DXGI_FORMAT_B8G8R8A8_UNORM
   };
 
   static constexpr int num_sdr_formats = 4;
