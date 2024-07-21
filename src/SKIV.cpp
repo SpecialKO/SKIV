@@ -1869,6 +1869,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
 
 
+      bool bHoveringSnipToolbar = false;
+
       ImGui::BeginGroup ();
 
       static bool last_snip_state = false;
@@ -1885,28 +1887,57 @@ wWinMain ( _In_     HINSTANCE hInstance,
         _registry._SnippingMode       = false;
         _registry._SnippingModeExit   = false;
 
-        SKIF_ImGui_SetFullscreen (SKIF_ImGui_hWnd, false);
-
         extern HWND hwndBeforeSnip;
         extern HWND hwndTopBeforeSnip;
         extern bool iconicBeforeSnip;
         extern bool trayedBeforeSnip;
+
+        SetForegroundWindow (hwndBeforeSnip);
+
+        // Clear the SwapChain backbuffer to black before restoring, otherwise
+        //   old garbage from a previous snip will briefly appear on screen...
+        if (ImGuiViewport *vp = ImGui::FindViewportByPlatformHandle ((void *)SKIF_ImGui_hWnd))
+        {
+          if (ImGui_ImplDX11_ViewportData* vd = (ImGui_ImplDX11_ViewportData*)vp->RendererUserData)
+          {
+            CComPtr <ID3D11Device> pDev;
+            if (SUCCEEDED (vd->SwapChain->GetDevice (IID_ID3D11Device, (void **)&pDev.p)))
+            {
+              CComPtr <ID3D11DeviceContext> pDevCtx;
+              pDev->GetImmediateContext   (&pDevCtx.p);
+
+              FLOAT                                       fClearColor [4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+              pDevCtx->ClearRenderTargetView (vd->RTView, fClearColor);
+              vd->SwapChain->Present (0,0);
+            }
+          }
+        }
+
+        if (iconicBeforeSnip || trayedBeforeSnip)
+        {
+          // Hide the window while we do this so that it doesn't
+          //   briefly appear in the wrong place...
+          ShowWindow (SKIF_ImGui_hWnd, SW_HIDE);
+        }
+
+        SKIF_ImGui_SetFullscreen (SKIF_ImGui_hWnd, false);
+
+        // Put SKIV back in the correct Z-order
+        SetWindowPos (SKIF_ImGui_hWnd, hwndTopBeforeSnip, 0,0,0,0, SWP_NOSIZE|SWP_NOMOVE|SWP_NOACTIVATE);
 
         if (iconicBeforeSnip)
           ShowWindow (SKIF_ImGui_hWnd, SW_MINIMIZE);
 
         if (trayedBeforeSnip)
         {
-          ShowWindow   (SKIF_ImGui_hWnd, SW_MINIMIZE);
-          ShowWindow   (SKIF_ImGui_hWnd, SW_HIDE);
-          UpdateWindow (SKIF_ImGui_hWnd);
+          ShowWindow (SKIF_ImGui_hWnd, SW_MINIMIZE);
           SKIF_isTrayed = true;
         }
 
-        SetForegroundWindow (hwndBeforeSnip);
-
-        // Put SKIV back in the correct Z-order
-        SetWindowPos (SKIF_ImGui_hWnd, hwndTopBeforeSnip, 0,0,0,0, SWP_NOSIZE|SWP_NOMOVE|SWP_NOACTIVATE);
+        else
+        {
+          ShowWindow (SKIF_ImGui_hWnd, SW_SHOWNA);
+        }
 
         ImGui::GetIO ().MouseDown         [0] = false;
         ImGui::GetIO ().MouseDownDuration [0] = -1.0f;
@@ -1922,7 +1953,6 @@ wWinMain ( _In_     HINSTANCE hInstance,
         extern skiv_image_desktop_s SKIV_DesktopImage;
 
         bool HDR_Image = SKIV_DesktopImage._hdr_image;
-        bool sRGB_Hack = SKIV_DesktopImage._srgb_hack;
         bool SKIV_HDR  = (HDR_Image ? SKIF_ImGui_IsViewportHDR (SKIF_ImGui_hWnd) : false);
 
         // Temporarily engage HDR mode for SKIV during snipping mode
@@ -1935,23 +1965,20 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
         if (SKIV_DesktopImage._srv != nullptr)
         {
-
-          static const ImVec2 srgb_uv0       = ImVec2 (0, 0),               // _SRGB format
-                              srgb_uv1       = ImVec2 (1, 1),               // _SRGB format
-                              force_srgb_uv0 = ImVec2 (-4096.0f, -4096.0f), // Non-sRGB formats needs a hack to force them to appear properly
-                              force_srgb_uv1 = ImVec2 (-5120.0f, -5120.0f), // Non-sRGB formats needs a hack to force them to appear properly
-                              hdr_uv0        = ImVec2 (-1024.0f, -1024.0f), // HDR formats
-                              hdr_uv1        = ImVec2 (-2048.0f, -2048.0f); // HDR formats
+          static const ImVec2 srgb_uv0 = ImVec2 (0, 0),
+                              srgb_uv1 = ImVec2 (1, 1),
+                              hdr_uv0  = ImVec2 (-1024.0f, -1024.0f), // HDR formats
+                              hdr_uv1  = ImVec2 (-2048.0f, -2048.0f); // HDR formats
 
           SKIF_ImGui_OptImage (SKIV_DesktopImage._srv, SKIV_DesktopImage._resolution,
-                                                                (HDR_Image && SKIV_HDR) ? hdr_uv0 : (sRGB_Hack) ? force_srgb_uv0 : srgb_uv0,
-                                                                (HDR_Image && SKIV_HDR) ? hdr_uv1 : (sRGB_Hack) ? force_srgb_uv1 : srgb_uv1);
+                                                                (HDR_Image && SKIV_HDR) ? hdr_uv0 : srgb_uv0,
+                                                                (HDR_Image && SKIV_HDR) ? hdr_uv1 : srgb_uv1);
 
           ImDrawList* draw_list =
             ImGui::GetForegroundDrawList ();
 
           // Draw a slightly dark transparent overlay on top of the captured image
-          draw_list->AddRectFilled (ImVec2 (0, 0), SKIV_DesktopImage._resolution, ImGui::GetColorU32 (IM_COL32(20, 20, 20, 80)));
+          draw_list->AddRectFilled (ImVec2 (0, 0), SKIV_DesktopImage._resolution, ImGui::GetColorU32 (IM_COL32 (0, 0, 0, 20)));
         }
 
         static ImRect selection;
@@ -1974,7 +2001,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
             L"Progman",                   // Program Manager
             L"Button",                    // Start button?
           //L"ApplicationFrameWindow",    // UWP stuff (ignores HDR + WCG Image Viewer)
-            L"Windows.UI.Core.CoreWindow" // UWP stuff
+          //L"Windows.UI.Core.CoreWindow" // UWP stuff
           };
 
           wchar_t wszWindowTextBuffer [64] = { };
@@ -2094,49 +2121,115 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
         static bool clicked = false;
 
-        if (! clicked && SKIF_ImGui_SelectionRect (&selection, allowable, 0, SelectionFlag_Filled))
+        if (HDR_Image && SKIV_HDR)
         {
-          _registry._SnippingModeExit = true;
-          capture_area = selection;
+          static ImVec2 vSnippingToolbarSize = ImVec2 (128.0f, 32.0f);
+
+          ImGui::SetNextWindowPos  (ImVec2 (ImGui::GetCurrentWindow ()->Pos.x         +
+                                            ImGui::GetCurrentWindow ()->Size.x / 2.0f -
+                                                        vSnippingToolbarSize.x / 2.0f,
+                                             ImGui::GetCurrentWindow ()->Pos.y        +
+                                              ImGui::GetStyle ().ItemSpacing.y        +
+                                                        vSnippingToolbarSize.y / 2.0f));
+
+          ImGui::PushStyleColor    (ImGuiCol_ChildBg, ImGui::GetStyleColorVec4 (ImGuiCol_WindowBg));
+          ImGui::BeginChild        ("Snipping Tool###SnippingToolbar", ImVec2 (0.0f, 0.0f),
+                                      ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_AutoResizeX |
+                                      ImGuiChildFlags_AutoResizeY | ((_registry.bUIBorders) ? ImGuiChildFlags_Border
+                                                                                            : ImGuiChildFlags_None
+                                                                  | ImGuiChildFlags_FrameStyle),
+                                      ImGuiWindowFlags_NoScrollbar  |
+                                      ImGuiWindowFlags_NoDecoration |
+                                      ImGuiWindowFlags_AlwaysAutoResize);
+
+          ImGui::BringWindowToDisplayFront (ImGui::GetCurrentWindow ());
+
+          ImGui::PopStyleColor     ();
+          ImGui::BeginGroup        ();
+          ImGui::PushStyleColor    (ImGuiCol_Text,    ImColor (1.0f, 1.0f, 1.0f, 1.0f).Value);
+          ImGui::TextUnformatted   (ICON_FA_SCISSORS " Snipping Tool");
+          ImGui::Separator         ();
+          ImGui::PopStyleColor     ();
+          ImGui::TreePush          ("");
+          ImGui::RadioButton       ("Capture HDR PNG",    &_registry._SnippingTonemapsHDR, 0);
+          if (ImGui::IsItemHovered ())
+          {
+            ImGui::BeginTooltip    ();
+            ImGui::TextUnformatted ("HDR PNG may have Compatibility Issues");
+            ImGui::Separator       ();
+            ImGui::BulletText      ("Generally the clipboard contents can only be pasted into browser-derived software (i.e. built using Chromium, Electron) and SKIV.");
+            ImGui::BulletText      ("Some browsers cannot interpret HDR10 PNG correctly and the image will not render in HDR when pasted.");
+            ImGui::EndTooltip      ();
+          }
+          ImGui::SameLine          ();
+          ImGui::RadioButton       ("Tonemap HDR to SDR", &_registry._SnippingTonemapsHDR, 1);
+          if (ImGui::IsItemHovered ())
+          {
+            ImGui::BeginTooltip    ();
+            ImGui::TextUnformatted ("High Quality HDR to SDR Tonemap");
+            ImGui::Separator       ();
+            ImGui::BulletText      ("Stored in the clipboard as a Bitmap for maximum compatibility with SDR software.");
+            ImGui::EndTooltip      ();
+          }
+          ImGui::TreePop           ();
+          ImGui::EndGroup          ();
+          if ( ImGui::IsWindowHovered () ||
+               ImGui::IsItemActive    () )
+          {
+            bHoveringSnipToolbar = true;
+          }
+
+          vSnippingToolbarSize = ImGui::GetWindowSize ();
+          ImGui::EndChild          ();
+
         }
 
-        else if (! ImGui::IsMouseDragging (ImGuiMouseButton_Left))
+        if (! bHoveringSnipToolbar)
         {
-          _GetRectBelowCursor ( );
-
-          // Keep the selection within the allowed rectangle
-          selection_auto.ClipWithFull (allowable);
-
-          if (ImGui::IsMouseClicked (ImGuiMouseButton_Left))
-            clicked = true;
-
-          else if (ImGui::IsMouseReleased (ImGuiMouseButton_Left))
+          if (! clicked && SKIF_ImGui_SelectionRect (&selection, allowable, 0, SelectionFlag_Filled))
           {
-            clicked = false;
             _registry._SnippingModeExit = true;
-            capture_area = selection_auto;
+            capture_area = selection;
           }
 
-          else if (selection_auto.Min != selection_auto.Max)
+          else if (! ImGui::IsMouseDragging (ImGuiMouseButton_Left))
           {
-            ImDrawList* draw_list =
-              ImGui::GetForegroundDrawList ();
+            _GetRectBelowCursor ( );
 
-            draw_list->AddRect       (selection_auto.Min, selection_auto.Max, ImGui::GetColorU32 (IM_COL32(0,130,216,255)), 0.0f, 0, 5.0f); // Border
-          //draw_list->AddRectFilled (selection_auto.Min, selection_auto.Max, ImGui::GetColorU32 (IM_COL32(0,130,216,50)));                 // Background
+            // Keep the selection within the allowed rectangle
+            selection_auto.ClipWithFull (allowable);
+
+            if (ImGui::IsMouseClicked (ImGuiMouseButton_Left))
+              clicked = true;
+
+            else if (ImGui::IsMouseReleased (ImGuiMouseButton_Left))
+            {
+              clicked = false;
+              _registry._SnippingModeExit = true;
+              capture_area = selection_auto;
+            }
+
+            else if (selection_auto.Min != selection_auto.Max)
+            {
+              ImDrawList* draw_list =
+                ImGui::GetForegroundDrawList ();
+
+              draw_list->AddRect       (selection_auto.Min, selection_auto.Max, ImGui::GetColorU32 (IM_COL32(0,130,216,255)), 0.0f, 0, 5.0f); // Border
+            //draw_list->AddRectFilled (selection_auto.Min, selection_auto.Max, ImGui::GetColorU32 (IM_COL32(0,130,216,50)));                 // Background
+            }
           }
-        }
 
-        else
-          clicked = false;
+          else
+            clicked = false;
 
-        if (capture_area.GetArea() != 0)
-        {
-          ignoredWindows.clear();
+          if (capture_area.GetArea() != 0)
+          {
+            ignoredWindows.clear();
 
-          PLOG_VERBOSE << "Attempting to capture region...";
+            PLOG_VERBOSE << "Attempting to capture region...";
 
-          SKIV_Image_CaptureRegion (capture_area);
+            SKIV_Image_CaptureRegion (capture_area);
+          }
         }
 #pragma endregion
       }
@@ -3781,8 +3874,25 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
       {
         if (GetWindowRect (hwndBeforeSnip, &capture_rect))
         {
-          capture_point.x = capture_rect.left;
-          capture_point.y = capture_rect.top;
+          // Use the window's centroid in case it spans multiple monitors
+          capture_point.x = static_cast <long> (capture_rect.left)  +
+                            static_cast <long> (capture_rect.right  - capture_rect.left) / 2;
+          capture_point.y = static_cast <long> (capture_rect.top)   +
+                            static_cast <long> (capture_rect.bottom - capture_rect.top)  / 2;
+
+          HMONITOR hMonCaptured =
+            MonitorFromPoint (capture_point, MONITOR_DEFAULTTONEAREST);
+
+          MONITORINFO                    minfo = { .cbSize = sizeof (MONITORINFO) };
+          GetMonitorInfo (hMonCaptured, &minfo);
+
+          // Clamp the capture rect to the window's primary monitor
+          //   ... it's the only one we have an image captured for!
+          capture_rect.left   = std::max (capture_rect.left,   minfo.rcMonitor.left);
+          capture_rect.top    = std::max (capture_rect.top,    minfo.rcMonitor.top);
+
+          capture_rect.right  = std::min (capture_rect.right,  minfo.rcMonitor.right);
+          capture_rect.bottom = std::min (capture_rect.bottom, minfo.rcMonitor.bottom);
         }
       }
 

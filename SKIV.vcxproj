@@ -519,6 +519,7 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />
+    <None Include="post_build.bat" />
     <None Include="resources\shaders\calibration.hlsli" />
     <None Include="resources\shaders\colorspaces.hlsli" />
     <None Include="resources\shaders\tone_mapping.hlsli" />

@@ -1,4 +1,5 @@
 #include "utility/image.h"
+#include "utility/registry.h"
 #include <cstdint>
 #include <string_view>
 #include <plog/Log.h>
@@ -8,6 +9,7 @@
 #include <utility/fsutil.h>
 #include <dxgi1_5.h>
 #include <Shlwapi.h>
+#include <windowsx.h>
 #include <ImGuiNotify.hpp>
 #include <utility/skif_imgui.h>
 #include <utility/utility.h>
@@ -947,7 +949,7 @@ SKIV_PNG_CopyToClipboard (const DirectX::Image& image, const void *pData, size_t
   return false;
 }
 
-bool SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped, bool isHDR, bool force_sRGB)
+bool SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped, bool isHDR)
 {
   if (pImage == nullptr)
     return false;
@@ -961,7 +963,10 @@ bool SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped, boo
 
   PLOG_VERBOSE << wsPNGPath;
 
-  if (isHDR)
+  static SKIF_RegistrySettings& _registry =
+    SKIF_RegistrySettings::GetInstance ( );
+
+  if (isHDR && (! _registry._SnippingTonemapsHDR))
   {
     if (SUCCEEDED (SKIV_Image_SaveToDisk_HDR (*pImage, wsPNGPath.c_str())))
     {
@@ -978,23 +983,307 @@ bool SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped, boo
       PLOG_VERBOSE << "SKIF_Image_SaveToDisk_HDR ( ): FAILED";
   }
 
-  else {
-    if (SUCCEEDED (SKIV_Image_SaveToDisk_SDR (*pImage, wsPNGPath.c_str(), force_sRGB)))
+  else
+  {
+    DirectX::ScratchImage tonemapped_sdr;
+    if (_registry._SnippingTonemapsHDR && isHDR)
     {
-      PLOG_VERBOSE << "SKIF_Image_SaveToDisk_SDR ( ): SUCCEEDED";
-
-      if (SKIV_PNG_CopyToClipboard (*pImage, wsPNGPath.c_str(), 0))
+      if (SUCCEEDED (SKIV_Image_TonemapToSDR (*pImage, tonemapped_sdr)))
       {
-        PLOG_VERBOSE << "SKIV_PNG_CopyToClipboard ( ): TRUE";
+        pImage = tonemapped_sdr.GetImage (0,0,0);
+      }
+
+      else
+        PLOG_INFO << "SKIV_Image_TonemapToSDR ( ): FAILED!";
+    }
+
+    if (OpenClipboard (nullptr))
+    {
+      const int
+          _bpc    =
+        (int)(DirectX::BitsPerPixel (pImage->format)),
+          _width  =
+        (int)(                       pImage->width),
+          _height =
+        (int)(                       pImage->height);
+
+      DirectX::ScratchImage swizzled_sdr;
+      // Swizzle the image and handle gamma if necessary
+      if (pImage->format != DXGI_FORMAT_B8G8R8X8_UNORM_SRGB)
+      {
+        if (SUCCEEDED (DirectX::Convert (*pImage, DXGI_FORMAT_B8G8R8X8_UNORM_SRGB, DirectX::TEX_FILTER_DEFAULT, 0.0f, swizzled_sdr)))
+        {
+          pImage = swizzled_sdr.GetImage (0,0,0);
+        }
+      }
+      ////SK_ReleaseAssert (pImage->format == DXGI_FORMAT_B8G8R8X8_UNORM ||
+      ////                  pImage->format == DXGI_FORMAT_B8G8R8A8_UNORM ||
+      ////                  pImage->format == DXGI_FORMAT_B8G8R8X8_UNORM_SRGB);
+
+      HBITMAP hBitmapCopy =
+         CreateBitmap (
+           _width, _height, 1,
+             _bpc, pImage->pixels
+         );
+
+      BITMAPINFOHEADER
+        bmh                 = { };
+        bmh.biSize          = sizeof (BITMAPINFOHEADER);
+        bmh.biWidth         =   _width;
+        bmh.biHeight        =  -_height;
+        bmh.biPlanes        =  1;
+        bmh.biBitCount      = (WORD)_bpc;
+        bmh.biCompression   = BI_RGB;
+        bmh.biXPelsPerMeter = 10;
+        bmh.biYPelsPerMeter = 10;
+
+      BITMAPINFO
+        bmi                 = { };
+        bmi.bmiHeader       = bmh;
+
+      HDC hdcDIB =
+        CreateCompatibleDC (GetDC (nullptr));
+
+      void* bitplane = nullptr;
+
+      HBITMAP
+        hBitmap =
+          CreateDIBSection ( hdcDIB, &bmi, DIB_RGB_COLORS,
+              &bitplane, nullptr, 0 );
+      memcpy ( bitplane,
+                 pImage->pixels,
+          static_cast <size_t> (_bpc / 8) *
+          static_cast <size_t> (_width  ) *
+          static_cast <size_t> (_height )
+             );
+
+      HDC hdcSrc = CreateCompatibleDC (GetDC (nullptr));
+      HDC hdcDst = CreateCompatibleDC (GetDC (nullptr));
+
+      if ( hBitmap    != nullptr &&
+          hBitmapCopy != nullptr )
+      {
+        auto hbmpSrc = (HBITMAP)SelectObject (hdcSrc, hBitmap);
+        auto hbmpDst = (HBITMAP)SelectObject (hdcDst, hBitmapCopy);
+
+        BitBlt (hdcDst, 0, 0, _width,
+                              _height, hdcSrc, 0, 0, SRCCOPY);
+
+        SelectObject     (hdcSrc, hbmpSrc);
+        SelectObject     (hdcDst, hbmpDst);
+
+        EmptyClipboard   ();
+        SetClipboardData (CF_BITMAP, hBitmapCopy);
+      }
+
+      CloseClipboard   ();
+
+      DeleteDC         (hdcSrc);
+      DeleteDC         (hdcDst);
+      DeleteDC         (hdcDIB);
+
+      if ( hBitmap     != nullptr &&
+           hBitmapCopy != nullptr )
+      {
+        DeleteBitmap   (hBitmap);
+        DeleteBitmap   (hBitmapCopy);
+
         return true;
       }
     }
-
-    else
-      PLOG_VERBOSE << "SKIF_Image_SaveToDisk_SDR ( ): FAILED";
   }
 
   return false;
+}
+
+HRESULT
+SKIV_Image_TonemapToSDR (const DirectX::Image& image, DirectX::ScratchImage& final_sdr)
+{
+  using namespace DirectX;
+
+  XMVECTOR maxLum = XMVectorZero          (),
+           minLum = XMVectorSplatInfinity ();
+
+  double lumTotal    = 0.0;
+  double logLumTotal = 0.0;
+  double N           = 0.0;
+
+  bool is_hdr = false;
+
+  ScratchImage scrgb;
+
+  if (image.format == DXGI_FORMAT_R16G16B16A16_FLOAT ||
+      image.format == DXGI_FORMAT_R32G32B32A32_FLOAT)
+  {
+    is_hdr = true;
+
+    if (FAILED (scrgb.InitializeFromImage (image)))
+      return E_INVALIDARG;
+  }
+
+  if (is_hdr)
+  {
+    ScratchImage tonemapped_hdr;
+    ScratchImage tonemapped_copy;
+
+    EvaluateImage ( scrgb.GetImages     (),
+                    scrgb.GetImageCount (),
+                    scrgb.GetMetadata   (),
+    [&](const XMVECTOR* pixels, size_t width, size_t y)
+    {
+      UNREFERENCED_PARAMETER(y);
+
+      for (size_t j = 0; j < width; ++j)
+      {
+        XMVECTOR v = *pixels;
+
+        v =
+          XMVector3Transform (v, c_from709toXYZ);
+
+        maxLum =
+          XMVectorReplicate (XMVectorGetY (XMVectorMax (v, maxLum)));
+
+        minLum =
+          XMVectorReplicate (XMVectorGetY (XMVectorMin (v, minLum)));
+
+        logLumTotal +=
+          log2 ( std::max (0.000001, static_cast <double> (std::max (0.0f, XMVectorGetY (v)))) );
+           lumTotal +=               static_cast <double> (std::max (0.0f, XMVectorGetY (v)));
+        ++N;
+
+        v = XMVectorMax (g_XMZero, v);
+  
+        pixels++;
+      }
+    });
+
+    //SK_LOGi0 ( L"Min Luminance: %f, Max Luminance: %f", std::max (0.0f, XMVectorGetY (minLum)) * 80.0f,
+    //                                                                    XMVectorGetY (maxLum)  * 80.0f );
+    //
+    //SK_LOGi0 ( L"Mean Luminance (arithmetic, geometric): %f, %f", 80.0 *      ( lumTotal    / N ),
+    //                                                              80.0 * exp2 ( logLumTotal / N ) );
+
+    // After tonemapping, re-normalize the image to preserve peak white,
+    //   this is important in cases where the maximum luminance was < 1000 nits
+    XMVECTOR maxTonemappedRGB = g_XMZero;
+
+    // If it's too bright, don't bother trying to tonemap the full range...
+    static constexpr float _maxNitsToTonemap = 10000.0f/80.0f;
+
+    const float maxYInPQ =
+      SKIV_Image_LinearToPQY (std::min (_maxNitsToTonemap, XMVectorGetY (maxLum))),
+               SDR_YInPQ =
+      SKIV_Image_LinearToPQY (                                              1.25f);
+
+    TransformImage ( scrgb.GetImages     (),
+                     scrgb.GetImageCount (),
+                     scrgb.GetMetadata   (),
+      [&](XMVECTOR* outPixels, const XMVECTOR* inPixels, size_t width, size_t y)
+      {
+        UNREFERENCED_PARAMETER(y);
+
+        auto TonemapHDR = [](float L, float Lc, float Ld) -> float
+        {
+          float a = (  Ld / pow (Lc, 2.0f));
+          float b = (1.0f / Ld);
+
+          return
+            L * (1 + a * L) / (1 + b * L);
+        };
+
+        static const XMVECTOR vLumaRescale =
+          XMVectorReplicate (1.0f/1.6f);
+
+        for (size_t j = 0; j < width; ++j)
+        {
+          XMVECTOR value = inPixels [j];
+
+          value =
+            XMVectorMultiply (value, vLumaRescale);
+
+          XMVECTOR ICtCp =
+            SKIV_Image_Rec709toICtCp (value);
+
+          float Y_in  = std::max (XMVectorGetX (ICtCp), 0.0f);
+          float Y_out = 1.0f;
+
+          Y_out =
+            TonemapHDR (Y_in, maxYInPQ, SDR_YInPQ);
+
+          if (Y_out + Y_in > 0.0f)
+          {
+            ICtCp.m128_f32 [0] *=
+              std::max ((Y_out / Y_in), 0.0f);
+          }
+
+          value =
+            SKIV_Image_ICtCptoRec709 (ICtCp);
+
+          maxTonemappedRGB =
+            XMVectorMax (maxTonemappedRGB, XMVectorMax (value, g_XMZero));
+
+          outPixels [j] = XMVectorSaturate (value);
+        }
+      }, tonemapped_hdr
+    );
+
+    float fMaxR = XMVectorGetX (maxTonemappedRGB);
+    float fMaxG = XMVectorGetY (maxTonemappedRGB);
+    float fMaxB = XMVectorGetZ (maxTonemappedRGB);
+
+    if (( fMaxR <  1.0f ||
+          fMaxG <  1.0f ||
+          fMaxB <  1.0f ) &&
+        ( fMaxR >= 1.0f ||
+          fMaxG >= 1.0f ||
+          fMaxB >= 1.0f ))
+    {
+#ifdef GAMUT_MAPPING_WARNING
+      SK_LOGi0 (
+        L"After tone mapping, maximum RGB was %4.2fR %4.2fG %4.2fB -- "
+        L"SDR image will be normalized to min (R|G|B) and clipped.",
+          fMaxR, fMaxG, fMaxB
+      );
+#endif
+
+      float fSmallestComp =
+        std::min ({fMaxR, fMaxG, fMaxB});
+
+      float fRescale =
+        (1.0f / fSmallestComp);
+
+      XMVECTOR vNormalizationScale =
+        XMVectorReplicate (fRescale);
+
+      TransformImage (*tonemapped_hdr.GetImages (),
+        [&]( _Out_writes_ (width)       XMVECTOR* outPixels,
+              _In_reads_  (width) const XMVECTOR* inPixels,
+                                        size_t    width,
+                                        size_t )
+        {
+          for (size_t j = 0; j < width; ++j)
+          {
+            XMVECTOR value =
+             inPixels [j];
+            outPixels [j] =
+              XMVectorSaturate (
+                XMVectorMultiply (value, vNormalizationScale)
+              );
+          }
+        }, tonemapped_copy
+      );
+
+      std::swap (tonemapped_hdr, tonemapped_copy);
+    }
+
+    if (FAILED (DirectX::Convert (*tonemapped_hdr.GetImages (), DXGI_FORMAT_B8G8R8X8_UNORM_SRGB,
+                                  (TEX_FILTER_FLAGS)0x200000FF, 1.0f, final_sdr)))
+    {
+      return E_UNEXPECTED;
+    }
+  }
+
+  return S_OK;
 }
 
 HRESULT
@@ -1386,6 +1675,7 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
   if (! pOutput5 ) //&& ! pOutput1)
   {
     PLOG_VERBOSE << "IDXGIOutput5 is unavailable, falling back to using IDXGIOutput1.";
+
     pOutput1 = pCursorOutput;
 
     if (! pOutput1)
@@ -1395,10 +1685,10 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
   // The ordering goes from the highest prioritized format to the lowest
   DXGI_FORMAT capture_formats [] = {
     // SDR:
-    DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, // Prefer SRGB formats as even non-SRGB formats use sRGB gamma
-    DXGI_FORMAT_R8G8B8A8_UNORM,
     DXGI_FORMAT_B8G8R8X8_UNORM_SRGB,
+    DXGI_FORMAT_B8G8R8A8_UNORM_SRGB, // Prefer SRGB formats as even non-SRGB formats use sRGB gamma
     DXGI_FORMAT_B8G8R8X8_UNORM,
+    DXGI_FORMAT_R8G8B8A8_UNORM,
 
     // HDR:
     DXGI_FORMAT_R10G10B10A2_UNORM,
@@ -1410,11 +1700,20 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
     DXGI_FORMAT_B8G8R8A8_UNORM
   };
 
+  static constexpr int num_sdr_formats = 4;
+  static constexpr int num_all_formats = 7;
+
+  HMONITOR hMon = MonitorFromPoint (point, MONITOR_DEFAULTTONEAREST);
+
+  extern bool SKIF_Util_IsHDRActive (HMONITOR hMonitor);
+  bool bHDR = SKIF_Util_IsHDRActive (hMon);
+
   CComPtr <IDXGIOutputDuplication> pDuplicator;
 
   if (pOutput5)
-    pOutput5->DuplicateOutput1 (pDevice, 0x0, _ARRAYSIZE (capture_formats),
-                                                          capture_formats, &pDuplicator.p);
+    pOutput5->DuplicateOutput1 (pDevice, 0x0, bHDR ? num_all_formats
+                                                   : num_sdr_formats,
+                                                     capture_formats, &pDuplicator.p);
   else if (pOutput1)
     pOutput1->DuplicateOutput  (pDevice, &pDuplicator.p);
 
@@ -1440,8 +1739,9 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
       pDuplicator.Release();
 
       if (pOutput5)
-        pOutput5->DuplicateOutput1 (pDevice, 0x0, _ARRAYSIZE (capture_formats),
-                                                              capture_formats, &pDuplicator.p);
+        pOutput5->DuplicateOutput1 (pDevice, 0x0, bHDR ? num_all_formats
+                                                       : num_sdr_formats,
+                                                         capture_formats, &pDuplicator.p);
       else if (pOutput1)
         pOutput1->DuplicateOutput  (pDevice, &pDuplicator.p);
     }
@@ -1481,6 +1781,10 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
   CComPtr <ID3D11Texture2D> pStagingTex;
   CComPtr <ID3D11Texture2D> pDesktopImage; // For rendering during snipping
 
+  // DXGI_FORMAT_B8G8R8A8_UNORM (Windows 8.1 fallback code)
+  if (surfDesc.Format == DXGI_FORMAT_B8G8R8A8_UNORM) // ! pOutput5
+      surfDesc.Format  = DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
+
   D3D11_TEXTURE2D_DESC
     texDesc                = { };
     texDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
@@ -1498,53 +1802,6 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
   if (pDevCtx == nullptr)
     return E_UNEXPECTED;
 
-#if 0
-  if (FAILED (pDevice->CreateTexture2D (&texDesc, nullptr, &pStagingTex.p)))
-  {
-    pDuplicator->ReleaseFrame ();
-    return E_UNEXPECTED;
-  }
-
-  pDevCtx->CopyResource (pStagingTex,   pDuplicatedTex);
-
-  D3D11_MAPPED_SUBRESOURCE mapped;
-
-  if (SUCCEEDED (pDevCtx->Map (pStagingTex, 0, D3D11_MAP_READ, 0x0, &mapped)))
-  {
-    image.Initialize2D (surfDesc.Format,
-                        surfDesc.Width,
-                        surfDesc.Height, 1, 1
-    );
-
-    if (! image.GetPixels ())
-    {
-      pSurface->Unmap ();
-      return E_POINTER;
-    }
-
-    auto pImg =
-      image.GetImages ();
-
-    const uint8_t* src = (const uint8_t *)mapped.pData;
-          uint8_t* dst = pImg->pixels;
-
-    for (size_t h = 0; h < surfDesc.Height; ++h)
-    {
-      size_t msize =
-        std::min <size_t> (pImg->rowPitch, mapped.RowPitch);
-
-      memcpy_s (dst, pImg->rowPitch, src, msize);
-
-      src += mapped.RowPitch;
-      dst += pImg->rowPitch;
-    }
-
-    if (FAILED (pSurface->Unmap ()))
-    {
-      return E_UNEXPECTED;
-    }
-  }
-#else
   texDesc.CPUAccessFlags = 0x0;
   texDesc.Usage          = D3D11_USAGE_DEFAULT;
   texDesc.BindFlags      = D3D11_BIND_SHADER_RESOURCE;
@@ -1570,7 +1827,6 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
   pDuplicator->ReleaseFrame ();
 
   SKIV_DesktopImage.process ();
-#endif
 
   return S_OK;
 }
@@ -1578,6 +1834,25 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
 void
 SKIV_Image_CaptureRegion (ImRect capture_area)
 {
+  // Fixes snipping rectangles on non-primary (origin != 0,0) displays
+  auto _AdjustCaptureAreaRelativeToDisplayOrigin = [&](void)
+  {
+    HMONITOR hMonCaptured =
+      MonitorFromPoint ({ static_cast <long> (capture_area.Min.x),
+                          static_cast <long> (capture_area.Min.y) }, MONITOR_DEFAULTTONEAREST);
+
+    MONITORINFO                    minfo = { .cbSize = sizeof (MONITORINFO) };
+    GetMonitorInfo (hMonCaptured, &minfo);
+
+    capture_area.Min.x -= minfo.rcMonitor.left;
+    capture_area.Max.x -= minfo.rcMonitor.left;
+
+    capture_area.Min.y -= minfo.rcMonitor.top;
+    capture_area.Max.y -= minfo.rcMonitor.top;
+  };
+
+  _AdjustCaptureAreaRelativeToDisplayOrigin ();
+
   const size_t
     x      = static_cast <size_t> (std::max (0.0f, capture_area.Min.x)),
     y      = static_cast <size_t> (std::max (0.0f, capture_area.Min.y)),
@@ -1605,14 +1880,12 @@ SKIV_Image_CaptureRegion (ImRect capture_area)
     {
       PLOG_VERBOSE << "subrect.Initialize2D       ( ): SUCCEEDED";
 
-      if (SUCCEEDED (DirectX::CopyRectangle (*captured_img.GetImages   (), src_rect,
-                                                                            *subrect.GetImages (), DirectX::TEX_FILTER_DEFAULT, 0, 0)))
+      if (SUCCEEDED (DirectX::CopyRectangle (*captured_img.GetImages (), src_rect,
+                                                  *subrect.GetImages (), DirectX::TEX_FILTER_DEFAULT, 0, 0)))
       {
         PLOG_VERBOSE << "DirectX::CopyRectangle     ( ): SUCCEEDED";
 
-        extern bool
-            SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped, bool isHDR, bool force_sRGB);
-        if (SKIV_Image_CopyToClipboard (subrect.GetImages (), true, SKIV_DesktopImage._hdr_image, SKIV_DesktopImage._srgb_hack))
+        if (SKIV_Image_CopyToClipboard (subrect.GetImages (), true, SKIV_DesktopImage._hdr_image))
         {
           PLOG_VERBOSE << "SKIV_Image_CopyToClipboard ( ): SUCCEEDED";
 
