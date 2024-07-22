@@ -1870,23 +1870,16 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
 void
 SKIV_Image_CaptureRegion (ImRect capture_area)
 {
-  if (SKIV_DesktopImage._rotation == DXGI_MODE_ROTATION_ROTATE90 ||
-      SKIV_DesktopImage._rotation == DXGI_MODE_ROTATION_ROTATE270)
-  {
-    std::swap (capture_area.Min.x, capture_area.Min.y);
-    std::swap (capture_area.Max.x, capture_area.Max.y);
-  }
+  HMONITOR hMonCaptured =
+    MonitorFromPoint ({ static_cast <long> (capture_area.Min.x),
+                        static_cast <long> (capture_area.Min.y) }, MONITOR_DEFAULTTONEAREST);
+
+  MONITORINFO                    minfo = { .cbSize = sizeof (MONITORINFO) };
+  GetMonitorInfo (hMonCaptured, &minfo);
 
   // Fixes snipping rectangles on non-primary (origin != 0,0) displays
   auto _AdjustCaptureAreaRelativeToDisplayOrigin = [&](void)
   {
-    HMONITOR hMonCaptured =
-      MonitorFromPoint ({ static_cast <long> (capture_area.Min.x),
-                          static_cast <long> (capture_area.Min.y) }, MONITOR_DEFAULTTONEAREST);
-
-    MONITORINFO                    minfo = { .cbSize = sizeof (MONITORINFO) };
-    GetMonitorInfo (hMonCaptured, &minfo);
-
     capture_area.Min.x -= minfo.rcMonitor.left;
     capture_area.Max.x -= minfo.rcMonitor.left;
 
@@ -1895,6 +1888,31 @@ SKIV_Image_CaptureRegion (ImRect capture_area)
   };
 
   _AdjustCaptureAreaRelativeToDisplayOrigin ();
+
+  if (SKIV_DesktopImage._rotation == DXGI_MODE_ROTATION_ROTATE90 ||
+      SKIV_DesktopImage._rotation == DXGI_MODE_ROTATION_ROTATE270)
+  {
+    float height = minfo.rcMonitor.right  - minfo.rcMonitor.left;
+    float width  = minfo.rcMonitor.bottom - minfo.rcMonitor.top;
+
+    std::swap (capture_area.Min.x, capture_area.Min.y);
+    std::swap (capture_area.Max.x, capture_area.Max.y);
+
+    float capture_height = capture_area.Max.y - capture_area.Min.y;
+    float capture_width  = capture_area.Max.x - capture_area.Min.x;
+
+    if (SKIV_DesktopImage._rotation == DXGI_MODE_ROTATION_ROTATE90)
+    {
+      capture_area.Min.y = height - capture_area.Max.y;
+      capture_area.Max.y = height - capture_area.Max.y + capture_height;
+    }
+
+    else
+    {
+      //capture_area.Min.x = width - capture_width;
+      //capture_area.Max.x = width;
+    }
+  }
 
   const size_t
     x      = static_cast <size_t> (std::max (0.0f, capture_area.Min.x)),
@@ -1928,7 +1946,38 @@ SKIV_Image_CaptureRegion (ImRect capture_area)
       {
         PLOG_VERBOSE << "DirectX::CopyRectangle     ( ): SUCCEEDED";
 
-        if (SKIV_Image_CopyToClipboard (subrect.GetImages (), true, SKIV_DesktopImage._hdr_image))
+        DirectX::ScratchImage rotated;
+        const DirectX::Image* final = subrect.GetImages ();
+
+        if (SKIV_DesktopImage._rotation > DXGI_MODE_ROTATION_IDENTITY)
+        {
+          DirectX::TEX_FR_FLAGS rotate_flags = DirectX::TEX_FR_ROTATE0;
+
+          switch (SKIV_DesktopImage._rotation)
+          {
+            case DXGI_MODE_ROTATION_ROTATE90:
+              rotate_flags = DirectX::TEX_FR_ROTATE90;
+              break;
+
+            case DXGI_MODE_ROTATION_ROTATE180:
+              rotate_flags = DirectX::TEX_FR_ROTATE180;
+              break;
+
+            case DXGI_MODE_ROTATION_ROTATE270:
+              rotate_flags = DirectX::TEX_FR_ROTATE270;
+              break;
+          }
+
+          if (SUCCEEDED (DirectX::FlipRotate (*subrect.GetImages (), DirectX::TEX_FR_ROTATE90, rotated)))
+          {
+            PLOG_VERBOSE << "DirectX::FlipRotate        ( ): SUCCEEDED";
+
+            final = rotated.GetImages ();
+          } else
+            PLOG_VERBOSE << "DirectX::FlipRotate        ( ): FAILED";
+        }
+
+        if (SKIV_Image_CopyToClipboard (final, true, SKIV_DesktopImage._hdr_image))
         {
           PLOG_VERBOSE << "SKIV_Image_CopyToClipboard ( ): SUCCEEDED";
 
