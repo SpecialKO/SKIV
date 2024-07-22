@@ -8,11 +8,14 @@
 #include <ShlObj_core.h>
 #include <utility/fsutil.h>
 #include <dxgi1_5.h>
+#include <dxgi1_6.h>
 #include <Shlwapi.h>
 #include <windowsx.h>
 #include <ImGuiNotify.hpp>
 #include <utility/skif_imgui.h>
 #include <utility/utility.h>
+
+skiv_image_desktop_s SKIV_DesktopImage;
 
 extern std::wstring defaultHDRFileExt;
 extern std::wstring defaultSDRFileExt;
@@ -988,7 +991,7 @@ bool SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped, boo
     DirectX::ScratchImage tonemapped_sdr;
     if (_registry._SnippingTonemapsHDR && isHDR)
     {
-      if (SUCCEEDED (SKIV_Image_TonemapToSDR (*pImage, tonemapped_sdr)))
+      if (SUCCEEDED (SKIV_Image_TonemapToSDR (*pImage, tonemapped_sdr, SKIV_DesktopImage._max_display_nits)))
       {
         pImage = tonemapped_sdr.GetImage (0,0,0);
       }
@@ -1097,7 +1100,7 @@ bool SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped, boo
 }
 
 HRESULT
-SKIV_Image_TonemapToSDR (const DirectX::Image& image, DirectX::ScratchImage& final_sdr)
+SKIV_Image_TonemapToSDR (const DirectX::Image& image, DirectX::ScratchImage& final_sdr, float mastering_max_nits)
 {
   using namespace DirectX;
 
@@ -1168,7 +1171,8 @@ SKIV_Image_TonemapToSDR (const DirectX::Image& image, DirectX::ScratchImage& fin
     XMVECTOR maxTonemappedRGB = g_XMZero;
 
     // If it's too bright, don't bother trying to tonemap the full range...
-    static constexpr float _maxNitsToTonemap = 10000.0f/80.0f;
+    const float _maxNitsToTonemap = (mastering_max_nits != 0.0f ? mastering_max_nits
+                                                                : 1000.0f) / 80.0f;
 
     const float maxYInPQ =
       SKIV_Image_LinearToPQY (std::min (_maxNitsToTonemap, XMVectorGetY (maxLum))),
@@ -1184,7 +1188,7 @@ SKIV_Image_TonemapToSDR (const DirectX::Image& image, DirectX::ScratchImage& fin
 
         auto TonemapHDR = [](float L, float Lc, float Ld) -> float
         {
-          float a = (  Ld / pow (Lc, 2.0f));
+          float a = (  Ld / pow (Lc, 2.15f));
           float b = (1.0f / Ld);
 
           return
@@ -1392,7 +1396,7 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
 
         auto TonemapHDR = [](float L, float Lc, float Ld) -> float
         {
-          float a = (  Ld / pow (Lc, 2.0f));
+          float a = (  Ld / pow (Lc, 2.15f));
           float b = (1.0f / Ld);
 
           return
@@ -1641,12 +1645,10 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
                       wszImplicitFileName, nullptr, SK_WIC_SetMaximumQuality);
 }
 
-skiv_image_desktop_s SKIV_DesktopImage;
-
 HRESULT
 SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
 {
-  SKIV_DesktopImage.clear();
+  SKIV_DesktopImage.clear ();
 
   std::ignore = image;
   std::ignore = flags;
@@ -1669,6 +1671,8 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
   UINT                  uiAdapter = 0;
 
   CComPtr <IDXGIOutput> pCursorOutput;
+  DXGI_OUTPUT_DESC      out_desc = {};
+  DXGI_OUTPUT_DESC1     out_desc1= {};
 
   while (SUCCEEDED (pFactory->EnumAdapters (uiAdapter++, &pAdapter.p)))
   {
@@ -1677,8 +1681,14 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
 
     while (SUCCEEDED (pAdapter->EnumOutputs (uiOutput++, &pOutput)))
     {
-      DXGI_OUTPUT_DESC   out_desc;
       pOutput->GetDesc (&out_desc);
+
+      CComQIPtr <IDXGIOutput6>
+          pOutput6 (pOutput);
+      if (pOutput6.p != nullptr)
+      {
+        pOutput6->GetDesc1 (&out_desc1);
+      }
 
       if (out_desc.AttachedToDesktop && PtInRect (&out_desc.DesktopCoordinates, point))
       {
@@ -1750,7 +1760,11 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
   if (! pDuplicator)
     return E_NOTIMPL;
 
+  DXGI_OUTDUPL_DESC       dup_desc   = { };
   DXGI_OUTDUPL_FRAME_INFO frame_info = { };
+
+  pDuplicator->GetDesc (&dup_desc);
+
   CComPtr <IDXGIResource> pDuplicatedResource;
   DWORD timeout = SKIF_Util_timeGetTime1 ( ) + 5000;
 
@@ -1852,6 +1866,12 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
   pDevCtx->CopyResource             (pDesktopImage, pDuplicatedTex);
   pDevice->CreateShaderResourceView (pDesktopImage, &srvDesc, &SKIV_DesktopImage._srv);
 
+  SKIV_DesktopImage._rotation    = dup_desc.Rotation;
+  SKIV_DesktopImage._desktop_pos =
+    ImVec2 (static_cast <float> (out_desc.DesktopCoordinates.left),
+            static_cast <float> (out_desc.DesktopCoordinates.top));
+  SKIV_DesktopImage._max_display_nits = out_desc1.MaxLuminance;
+
   pDevCtx->Flush ();
 
   pDuplicator->ReleaseFrame ();
@@ -1864,16 +1884,16 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
 void
 SKIV_Image_CaptureRegion (ImRect capture_area)
 {
+  HMONITOR hMonCaptured =
+    MonitorFromPoint ({ static_cast <long> (capture_area.Min.x),
+                        static_cast <long> (capture_area.Min.y) }, MONITOR_DEFAULTTONEAREST);
+
+  MONITORINFO                    minfo = { .cbSize = sizeof (MONITORINFO) };
+  GetMonitorInfo (hMonCaptured, &minfo);
+
   // Fixes snipping rectangles on non-primary (origin != 0,0) displays
   auto _AdjustCaptureAreaRelativeToDisplayOrigin = [&](void)
   {
-    HMONITOR hMonCaptured =
-      MonitorFromPoint ({ static_cast <long> (capture_area.Min.x),
-                          static_cast <long> (capture_area.Min.y) }, MONITOR_DEFAULTTONEAREST);
-
-    MONITORINFO                    minfo = { .cbSize = sizeof (MONITORINFO) };
-    GetMonitorInfo (hMonCaptured, &minfo);
-
     capture_area.Min.x -= minfo.rcMonitor.left;
     capture_area.Max.x -= minfo.rcMonitor.left;
 
@@ -1882,6 +1902,37 @@ SKIV_Image_CaptureRegion (ImRect capture_area)
   };
 
   _AdjustCaptureAreaRelativeToDisplayOrigin ();
+
+  if (SKIV_DesktopImage._rotation == DXGI_MODE_ROTATION_ROTATE90 ||
+      SKIV_DesktopImage._rotation == DXGI_MODE_ROTATION_ROTATE270)
+  {
+    const float height =
+      static_cast <float> (minfo.rcMonitor.right  - minfo.rcMonitor.left),
+                width  =
+      static_cast <float> (minfo.rcMonitor.bottom - minfo.rcMonitor.top);
+
+    std::swap (capture_area.Min.x, capture_area.Min.y);
+    std::swap (capture_area.Max.x, capture_area.Max.y);
+
+    const float capture_height =
+      static_cast <float> (capture_area.Max.y - capture_area.Min.y),
+                capture_width  =
+      static_cast <float> (capture_area.Max.x - capture_area.Min.x);
+
+    if (SKIV_DesktopImage._rotation == DXGI_MODE_ROTATION_ROTATE90)
+    {
+      capture_area.Min.y = height - capture_area.Max.y;
+      capture_area.Max.y = height - capture_area.Max.y + capture_height;
+    }
+
+    else
+    {
+      std::ignore = capture_width;
+      std::ignore = width;
+      //capture_area.Min.x = width - capture_width;
+      //capture_area.Max.x = width;
+    }
+  }
 
   const size_t
     x      = static_cast <size_t> (std::max (0.0f, capture_area.Min.x)),
@@ -1915,7 +1966,38 @@ SKIV_Image_CaptureRegion (ImRect capture_area)
       {
         PLOG_VERBOSE << "DirectX::CopyRectangle     ( ): SUCCEEDED";
 
-        if (SKIV_Image_CopyToClipboard (subrect.GetImages (), true, SKIV_DesktopImage._hdr_image))
+        DirectX::ScratchImage rotated;
+        const DirectX::Image* final = subrect.GetImages ();
+
+        if (SKIV_DesktopImage._rotation > DXGI_MODE_ROTATION_IDENTITY)
+        {
+          DirectX::TEX_FR_FLAGS rotate_flags = DirectX::TEX_FR_ROTATE0;
+
+          switch (SKIV_DesktopImage._rotation)
+          {
+            case DXGI_MODE_ROTATION_ROTATE90:
+              rotate_flags = DirectX::TEX_FR_ROTATE90;
+              break;
+
+            case DXGI_MODE_ROTATION_ROTATE180:
+              rotate_flags = DirectX::TEX_FR_ROTATE180;
+              break;
+
+            case DXGI_MODE_ROTATION_ROTATE270:
+              rotate_flags = DirectX::TEX_FR_ROTATE270;
+              break;
+          }
+
+          if (SUCCEEDED (DirectX::FlipRotate (*subrect.GetImages (), DirectX::TEX_FR_ROTATE90, rotated)))
+          {
+            PLOG_VERBOSE << "DirectX::FlipRotate        ( ): SUCCEEDED";
+
+            final = rotated.GetImages ();
+          } else
+            PLOG_VERBOSE << "DirectX::FlipRotate        ( ): FAILED";
+        }
+
+        if (SKIV_Image_CopyToClipboard (final, true, SKIV_DesktopImage._hdr_image))
         {
           PLOG_VERBOSE << "SKIV_Image_CopyToClipboard ( ): SUCCEEDED";
 

@@ -708,13 +708,82 @@ SKIF_ImGui_BeginChildFrame (ImGuiID id, const ImVec2& size, ImGuiChildFlags chil
   return ret;
 }
 
+void SKIF_ImGui_RotatedImage (ImTextureID user_texture_id, const ImVec2& size, DXGI_MODE_ROTATION rotation, const ImVec2& uv0, const ImVec2& uv1, const ImVec4& tint_col, const ImVec4& border_col)
+{
+  ImVec2 _uv0, _uv1, _uv2, _uv3;
+
+  switch (rotation)
+  {
+    default:
+    case DXGI_MODE_ROTATION_IDENTITY:
+    case DXGI_MODE_ROTATION_UNSPECIFIED:
+      ImGui::Image (user_texture_id, size, uv0, uv1, tint_col, border_col);
+      return;
+
+    case DXGI_MODE_ROTATION_ROTATE180:
+      ImGui::Image (user_texture_id, size, uv1, uv0, tint_col, border_col);
+      return;
+
+    case DXGI_MODE_ROTATION_ROTATE90:
+      _uv1 = uv0;
+      _uv3 = uv1;
+      _uv0 = ImVec2 (uv0.x, uv1.y);
+      _uv2 = ImVec2 (uv1.x, uv0.y);
+      break;
+
+    case DXGI_MODE_ROTATION_ROTATE270:
+      _uv3 = uv0;
+      _uv1 = uv1;
+      _uv0 = ImVec2 (uv1.x, uv0.y);
+      _uv2 = ImVec2 (uv0.x, uv1.y);
+      break;
+  }
+
+  ImGuiWindow* window = ImGui::GetCurrentWindow ();
+
+  if (window->SkipItems)
+      return;
+
+  ImVec2 _size (size.y, size.x);
+
+  ImRect bb (window->DC.CursorPos, window->DC.CursorPos + _size);
+
+  if (border_col.w > 0.0f)
+    bb.Max += ImVec2 (2, 2);
+
+  ImGui::ItemSize (bb);
+
+  if (! ImGui::ItemAdd (bb, 0))
+    return;
+
+  if (border_col.w > 0.0f)
+  {
+    window->DrawList->AddRect (bb.Min, bb.Max, ImGui::GetColorU32 (border_col), 0.0f);
+
+    ImVec2 x0 = bb.Min + ImVec2 (1, 1);
+    ImVec2 x2 = bb.Max - ImVec2 (1, 1);
+    ImVec2 x1 = ImVec2 (x2.x, x0.y);
+    ImVec2 x3 = ImVec2 (x0.x, x2.y);
+
+    window->DrawList->AddImageQuad (user_texture_id, x0, x1, x2, x3, _uv0, _uv1, _uv2, _uv3, ImGui::GetColorU32 (tint_col));
+  }
+
+  else
+  {
+    ImVec2 x1 = ImVec2 (bb.Max.x, bb.Min.y);
+    ImVec2 x3 = ImVec2 (bb.Min.x, bb.Max.y);
+
+    window->DrawList->AddImageQuad (user_texture_id, bb.Min, x1, bb.Max, x3, _uv0, _uv1, _uv2, _uv3, ImGui::GetColorU32 (tint_col));
+  }
+}
+
 // Basically like ImGui::Image but, you know, doesn't actually draw the images
-void SKIF_ImGui_OptImage (ImTextureID user_texture_id, const ImVec2& size, const ImVec2& uv0, const ImVec2& uv1, const ImVec4& tint_col, const ImVec4& border_col)
+void SKIF_ImGui_OptImage (ImTextureID user_texture_id, const ImVec2& size, const ImVec2& uv0, const ImVec2& uv1, const ImVec4& tint_col, const ImVec4& border_col, DXGI_MODE_ROTATION rotation)
 {
   // If not a nullptr, run original code
   if (user_texture_id != nullptr)
   {
-    ImGui::Image (user_texture_id, size, uv0, uv1, tint_col, border_col);
+    SKIF_ImGui_RotatedImage (user_texture_id, size, rotation, uv0, uv1, tint_col, border_col);
   }
   
   // If a nullptr, run slightly tweaked code that omitts the image rendering

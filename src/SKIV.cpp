@@ -52,6 +52,7 @@
 
 #include <filesystem>
 #include <concurrent_queue.h>
+#include <unordered_set>
 #include <oleidl.h>
 #include <utility/droptarget.hpp>
 
@@ -1913,9 +1914,28 @@ wWinMain ( _In_     HINSTANCE hInstance,
               CComPtr <ID3D11DeviceContext> pDevCtx;
               pDev->GetImmediateContext   (&pDevCtx.p);
 
-              FLOAT                                       fClearColor [4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+              FLOAT fClearColor [4] =
+                { 0.0f, 0.0f, 0.0f, 0.0f };
+
               pDevCtx->ClearRenderTargetView (vd->RTView, fClearColor);
+
               vd->SwapChain->Present (0,0);
+
+              // We must wait for the Present to complete if SKIV is using a
+              //   latency waitable SwapChain, or this would be permanent!
+              CComQIPtr <IDXGISwapChain2>
+                  pSwapChain2 (vd->SwapChain);
+              if (pSwapChain2 != nullptr)
+              {
+                HANDLE hWait =
+                  pSwapChain2->GetFrameLatencyWaitableObject ();
+
+                if (hWait != 0)
+                {
+                  WaitForSingleObject (hWait, 5000UL);
+                  CloseHandle         (hWait);
+                }
+              }
             }
           }
         }
@@ -1959,6 +1979,19 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
         extern skiv_image_desktop_s SKIV_DesktopImage;
 
+        ImVec2 resolution =
+          SKIV_DesktopImage._resolution;
+
+        if (SKIV_DesktopImage._rotation == DXGI_MODE_ROTATION_ROTATE90 ||
+            SKIV_DesktopImage._rotation == DXGI_MODE_ROTATION_ROTATE270)
+        {
+          std::swap (resolution.x, resolution.y);
+        }
+
+        ImRect allowable (SKIV_DesktopImage._desktop_pos,
+                          SKIV_DesktopImage._desktop_pos + resolution);
+        ImRect capture_area;
+
         bool HDR_Image = SKIV_DesktopImage._hdr_image;
         bool SKIV_HDR  = (HDR_Image ? SKIF_ImGui_IsViewportHDR (SKIF_ImGui_hWnd) : false);
 
@@ -1977,15 +2010,17 @@ wWinMain ( _In_     HINSTANCE hInstance,
                               hdr_uv0  = ImVec2 (-1024.0f, -1024.0f), // HDR formats
                               hdr_uv1  = ImVec2 (-2048.0f, -2048.0f); // HDR formats
 
-          SKIF_ImGui_OptImage (SKIV_DesktopImage._srv, SKIV_DesktopImage._resolution,
-                                                                (HDR_Image && SKIV_HDR) ? hdr_uv0 : srgb_uv0,
-                                                                (HDR_Image && SKIV_HDR) ? hdr_uv1 : srgb_uv1);
+          SKIF_ImGui_OptImage ( SKIV_DesktopImage._srv,
+                                SKIV_DesktopImage._resolution, (HDR_Image && SKIV_HDR) ? hdr_uv0 : srgb_uv0,
+                                                               (HDR_Image && SKIV_HDR) ? hdr_uv1 : srgb_uv1,
+                                  ImVec4 (1,1,1,1),
+                                  ImVec4 (0,0,0,0), SKIV_DesktopImage._rotation );
 
           ImDrawList* draw_list =
             ImGui::GetForegroundDrawList ();
 
           // Draw a slightly dark transparent overlay on top of the captured image
-          draw_list->AddRectFilled (ImVec2 (0, 0), SKIV_DesktopImage._resolution, ImGui::GetColorU32 (IM_COL32 (0, 0, 0, 20)));
+          draw_list->AddRectFilled (allowable.Min, allowable.Max, ImGui::GetColorU32 (IM_COL32 (0, 0, 0, 20)));
         }
 
         static ImRect selection;
@@ -1994,16 +2029,16 @@ wWinMain ( _In_     HINSTANCE hInstance,
         if (GetForegroundWindow () != SKIF_ImGui_hWnd)
             SetForegroundWindow (     SKIF_ImGui_hWnd);
 
-        // Let us store all ignored windows in a vector for quick reuse
-        static std::vector<HWND> ignoredWindows = { };
+        // Let us store all ignored windows in a hash set for quick reuse
+        static std::unordered_set <HWND> ignoredWindows = { };
 
         auto _IgnoreWindow = [&](HWND hWnd) -> bool
         {
-          if (std::find (ignoredWindows.begin(), ignoredWindows.end(), hWnd) != ignoredWindows.end())
+          if (ignoredWindows.count (hWnd))
             return true;
 
           // Window class names to ignore
-          static const std::vector<std::wstring> ignoreClassNames =
+          static const std::unordered_set <std::wstring> ignoreClassNames =
           {
             L"Progman",                   // Program Manager
             L"Button",                    // Start button?
@@ -2017,13 +2052,13 @@ wWinMain ( _In_     HINSTANCE hInstance,
           if (
                SKIF_ImGui_hWnd  ==   hWnd
             ||    ! IsWindowVisible (hWnd)
-            || (RealGetWindowClassW (hWnd, wszWindowTextBuffer, 64) && std::find (ignoreClassNames.begin(), ignoreClassNames.end(), wszWindowTextBuffer) != ignoreClassNames.end())
+            || (RealGetWindowClassW (hWnd, wszWindowTextBuffer, 64) && ignoreClassNames.count (wszWindowTextBuffer))
             ||     ! GetWindowTextW (hWnd, wszWindowTextBuffer, 64)
-          //|| (GetWindowLongPtr (hWnd, GWL_EXSTYLE) & WS_EX_TOOLWINDOW)
-          //|| (GetWindowLongPtr (hWnd, GWL_STYLE)   & WS_POPUP)  // Ignores some games, but allows some invisible stupid windows (UWP)
+            || (GetWindowLongPtr (hWnd, GWL_EXSTYLE) & WS_EX_TOOLWINDOW)
+            //|| (GetWindowLongPtr (hWnd, GWL_STYLE)   & WS_POPUP)  // Ignores some games, but allows some invisible stupid windows (UWP)
             )
           {
-            ignoredWindows.push_back (hWnd);
+            ignoredWindows.insert (hWnd);
             return true;
           }
 
@@ -2032,7 +2067,18 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
         auto _GetRectBelowCursor = [&](void) -> void
         {
-          std::vector<HWND> vHWNDs;
+          // This feature is unsupported on rotated displays
+          //
+          if (SKIV_DesktopImage._rotation == DXGI_MODE_ROTATION_ROTATE90 ||
+              SKIV_DesktopImage._rotation == DXGI_MODE_ROTATION_ROTATE270)
+          {
+            selection_auto.Min = ImVec2 (0.0f, 0.0f);
+            selection_auto.Max = ImVec2 (0.0f, 0.0f);
+            return;
+          }
+
+          std::vector <HWND> vHWNDs;
+          vHWNDs.reserve (2048);
 
           // Retrieve the RECT of the window below the cursor
           EnumWindows ( []( HWND   hWnd,
@@ -2044,7 +2090,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
             return TRUE;
           }, reinterpret_cast<LPARAM>(&vHWNDs));
 
-          if (! vHWNDs.empty())
+          if (! vHWNDs.empty ())
           {
             POINT point = { };
 
@@ -2059,10 +2105,9 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
                 if (GetWindowRect (hWnd, &rect))
                 {
-                  HRGN hRgn = CreateRectRgn (rect.left, rect.top, rect.right, rect.bottom);
                   bool breakLoop = false;
 
-                  if (PtInRegion (hRgn, point.x, point.y))
+                  if (PtInRect (&rect, point))
                   {
                     // Ensure the current selected window is the top-most
                     /* Does not seem to be required
@@ -2078,9 +2123,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
                         RECT new_rect = { };
                         if (GetWindowRect (parent, &new_rect))
                         {
-                          hRgn = CreateRectRgn (new_rect.left, new_rect.top, new_rect.right, new_rect.bottom);
-
-                          if (PtInRegion (hRgn, point.x, point.y))
+                          if (PtInRect (&new_rect, point))
                           {
                             rect     = new_rect;
                             top_most = parent;
@@ -2111,8 +2154,6 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
                     breakLoop = true;
                   }
- 
-                  DeleteObject (hRgn);
 
                   if (breakLoop)
                     break;
@@ -2121,10 +2162,6 @@ wWinMain ( _In_     HINSTANCE hInstance,
             }
           }
         };
-
-                          // Desktop Pos,      Desktop Pos + Desktop Size
-        ImRect allowable (monitor_extent.Min, SKIV_DesktopImage._resolution);
-        ImRect capture_area;
 
         static bool clicked = false;
 

@@ -125,15 +125,18 @@ HRESULT SKIV_Image_SaveToDisk_HDR  (const DirectX::Image& image, const wchar_t* 
 HRESULT SKIV_Image_SaveToDisk_SDR  (const DirectX::Image& image, const wchar_t* wszFileName, bool force_sRGB);
 HRESULT SKIV_Image_CaptureDesktop  (DirectX::ScratchImage& image, POINT pos, int flags = 0x0);
 void    SKIV_Image_CaptureRegion   (ImRect capture_area);
-HRESULT SKIV_Image_TonemapToSDR    (const DirectX::Image& image, DirectX::ScratchImage& final_sdr);
+HRESULT SKIV_Image_TonemapToSDR    (const DirectX::Image& image, DirectX::ScratchImage& final_sdr, float mastering_max_nits);
 
 // Structs
 
 struct skiv_image_desktop_s {
-  CComPtr <ID3D11ShaderResourceView> _srv        = nullptr;
-  CComPtr <ID3D11Resource>           _res        = nullptr;
-  bool                               _hdr_image  =   false;
-  ImVec2                             _resolution = ImVec2 (0.0f, 0.0f);
+  CComPtr <ID3D11ShaderResourceView> _srv              = nullptr;
+  CComPtr <ID3D11Resource>           _res              = nullptr;
+  bool                               _hdr_image        =   false;
+  ImVec2                             _resolution       = ImVec2 (0.0f, 0.0f);
+  ImVec2                             _desktop_pos      = ImVec2 (0.0f, 0.0f);
+  DXGI_MODE_ROTATION                 _rotation         = DXGI_MODE_ROTATION_UNSPECIFIED;
+  float                              _max_display_nits = 1000.0f;
 
   bool process (void)
   {
@@ -178,9 +181,12 @@ struct skiv_image_desktop_s {
 
   void clear (void)
   {
-    _res        = nullptr;
-    _srv        = nullptr;
-    _hdr_image  =   false;
-    _resolution = ImVec2 (0.0f, 0.0f);
+    _res              = nullptr;
+    _srv              = nullptr;
+    _hdr_image        =   false;
+    _resolution       = ImVec2 (0.0f, 0.0f);
+    _desktop_pos      = ImVec2 (0.0f, 0.0f);
+    _max_display_nits = 1000.0f;
+    _rotation         = DXGI_MODE_ROTATION_UNSPECIFIED;
   }
 };
