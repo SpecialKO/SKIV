@@ -130,11 +130,12 @@ HRESULT SKIV_Image_TonemapToSDR    (const DirectX::Image& image, DirectX::Scratc
 // Structs
 
 struct skiv_image_desktop_s {
-  CComPtr <ID3D11ShaderResourceView> _srv        = nullptr;
-  CComPtr <ID3D11Resource>           _res        = nullptr;
-  bool                               _hdr_image  =   false;
-  ImVec2                             _resolution = ImVec2 (0.0f, 0.0f);
-  DXGI_MODE_ROTATION                 _rotation   = DXGI_MODE_ROTATION_UNSPECIFIED;
+  CComPtr <ID3D11ShaderResourceView> _srv         = nullptr;
+  CComPtr <ID3D11Resource>           _res         = nullptr;
+  bool                               _hdr_image   =   false;
+  ImVec2                             _resolution  = ImVec2 (0.0f, 0.0f);
+  ImVec2                             _desktop_pos = ImVec2 (0.0f, 0.0f);
+  DXGI_MODE_ROTATION                 _rotation    = DXGI_MODE_ROTATION_UNSPECIFIED;
 
   bool process (void)
   {
@@ -179,10 +180,11 @@ struct skiv_image_desktop_s {
 
   void clear (void)
   {
-    _res        = nullptr;
-    _srv        = nullptr;
-    _hdr_image  =   false;
-    _resolution = ImVec2 (0.0f, 0.0f);
-    _rotation   = DXGI_MODE_ROTATION_UNSPECIFIED;
+    _res         = nullptr;
+    _srv         = nullptr;
+    _hdr_image   =   false;
+    _resolution  = ImVec2 (0.0f, 0.0f);
+    _desktop_pos = ImVec2 (0.0f, 0.0f);
+    _rotation    = DXGI_MODE_ROTATION_UNSPECIFIED;
   }
 };

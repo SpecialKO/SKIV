@@ -1969,8 +1969,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
           std::swap (resolution.x, resolution.y);
         }
 
-        // Desktop Pos,     Desktop Pos + Desktop Size
-        ImRect allowable (monitor_extent.Min, monitor_extent.Min + resolution);
+        ImRect allowable (SKIV_DesktopImage._desktop_pos,
+                          SKIV_DesktopImage._desktop_pos + resolution);
         ImRect capture_area;
 
         bool HDR_Image = SKIV_DesktopImage._hdr_image;
@@ -2056,6 +2056,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
           if (SKIV_DesktopImage._rotation == DXGI_MODE_ROTATION_ROTATE90 ||
               SKIV_DesktopImage._rotation == DXGI_MODE_ROTATION_ROTATE270)
           {
+            selection_auto.Min = ImVec2 (0.0f, 0.0f);
+            selection_auto.Max = ImVec2 (0.0f, 0.0f);
             return;
           }
 

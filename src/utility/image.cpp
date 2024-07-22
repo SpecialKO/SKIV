@@ -1646,7 +1646,7 @@ skiv_image_desktop_s SKIV_DesktopImage;
 HRESULT
 SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
 {
-  SKIV_DesktopImage.clear();
+  SKIV_DesktopImage.clear ();
 
   std::ignore = image;
   std::ignore = flags;
@@ -1669,6 +1669,7 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
   UINT                  uiAdapter = 0;
 
   CComPtr <IDXGIOutput> pCursorOutput;
+  DXGI_OUTPUT_DESC      out_desc = {};
 
   while (SUCCEEDED (pFactory->EnumAdapters (uiAdapter++, &pAdapter.p)))
   {
@@ -1677,7 +1678,6 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
 
     while (SUCCEEDED (pAdapter->EnumOutputs (uiOutput++, &pOutput)))
     {
-      DXGI_OUTPUT_DESC   out_desc;
       pOutput->GetDesc (&out_desc);
 
       if (out_desc.AttachedToDesktop && PtInRect (&out_desc.DesktopCoordinates, point))
@@ -1856,7 +1856,10 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
   pDevCtx->CopyResource             (pDesktopImage, pDuplicatedTex);
   pDevice->CreateShaderResourceView (pDesktopImage, &srvDesc, &SKIV_DesktopImage._srv);
 
-  SKIV_DesktopImage._rotation = dup_desc.Rotation;
+  SKIV_DesktopImage._rotation    = dup_desc.Rotation;
+  SKIV_DesktopImage._desktop_pos =
+    ImVec2 (static_cast <float> (out_desc.DesktopCoordinates.left),
+            static_cast <float> (out_desc.DesktopCoordinates.top));
 
   pDevCtx->Flush ();
 
@@ -1892,14 +1895,18 @@ SKIV_Image_CaptureRegion (ImRect capture_area)
   if (SKIV_DesktopImage._rotation == DXGI_MODE_ROTATION_ROTATE90 ||
       SKIV_DesktopImage._rotation == DXGI_MODE_ROTATION_ROTATE270)
   {
-    float height = minfo.rcMonitor.right  - minfo.rcMonitor.left;
-    float width  = minfo.rcMonitor.bottom - minfo.rcMonitor.top;
+    const float height =
+      static_cast <float> (minfo.rcMonitor.right  - minfo.rcMonitor.left),
+                width  =
+      static_cast <float> (minfo.rcMonitor.bottom - minfo.rcMonitor.top);
 
     std::swap (capture_area.Min.x, capture_area.Min.y);
     std::swap (capture_area.Max.x, capture_area.Max.y);
 
-    float capture_height = capture_area.Max.y - capture_area.Min.y;
-    float capture_width  = capture_area.Max.x - capture_area.Min.x;
+    const float capture_height =
+      static_cast <float> (capture_area.Max.y - capture_area.Min.y),
+                capture_width  =
+      static_cast <float> (capture_area.Max.x - capture_area.Min.x);
 
     if (SKIV_DesktopImage._rotation == DXGI_MODE_ROTATION_ROTATE90)
     {
@@ -1909,6 +1916,8 @@ SKIV_Image_CaptureRegion (ImRect capture_area)
 
     else
     {
+      std::ignore = capture_width;
+      std::ignore = width;
       //capture_area.Min.x = width - capture_width;
       //capture_area.Max.x = width;
     }
