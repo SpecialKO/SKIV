@@ -1914,9 +1914,28 @@ wWinMain ( _In_     HINSTANCE hInstance,
               CComPtr <ID3D11DeviceContext> pDevCtx;
               pDev->GetImmediateContext   (&pDevCtx.p);
 
-              FLOAT                                       fClearColor [4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+              FLOAT fClearColor [4] =
+                { 0.0f, 0.0f, 0.0f, 0.0f };
+
               pDevCtx->ClearRenderTargetView (vd->RTView, fClearColor);
+
               vd->SwapChain->Present (0,0);
+
+              // We must wait for the Present to complete if SKIV is using a
+              //   latency waitable SwapChain, or this would be permanent!
+              CComQIPtr <IDXGISwapChain2>
+                  pSwapChain2 (vd->SwapChain);
+              if (pSwapChain2 != nullptr)
+              {
+                HANDLE hWait =
+                  pSwapChain2->GetFrameLatencyWaitableObject ();
+
+                if (hWait != 0)
+                {
+                  WaitForSingleObject (hWait, 5000UL);
+                  CloseHandle         (hWait);
+                }
+              }
             }
           }
         }
