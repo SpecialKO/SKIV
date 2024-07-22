@@ -18,6 +18,8 @@ extern std::wstring defaultHDRFileExt;
 extern std::wstring defaultSDRFileExt;
 extern CComPtr <ID3D11Device> SKIF_D3D11_GetDevice (bool bWait = true);
 
+skiv_image_desktop_s SKIV_ClipboardImage;
+
 DirectX::XMVECTOR
 SKIV_Image_PQToLinear (DirectX::XMVECTOR N, DirectX::XMVECTOR maxPQValue)
 {
@@ -911,191 +913,6 @@ SKIV_HDR_SavePNGToDisk (const wchar_t* wszPNGPath, const DirectX::Image* png_ima
   return false;
 }
 
-// The parameters are screwy here because currently the only successful way
-//   of doing this copy involves passing the path to a file, but the intention
-//     is actually to pass raw image data and transfer it using OLE.
-static bool
-SKIV_PNG_CopyToClipboard (const DirectX::Image& image, const void *pData, size_t data_size)
-{
-  std::ignore = image;
-  std::ignore = data_size; // It's a string, we can compute the size trivially
-
-  if (OpenClipboard (nullptr))
-  {
-    int clpSize = sizeof (DROPFILES);
-
-    clpSize += sizeof (wchar_t) * static_cast <int> (wcslen ((wchar_t *)pData) + 1);
-    clpSize += sizeof (wchar_t);
-
-    HDROP hdrop =
-      (HDROP)GlobalAlloc (GHND, clpSize);
-
-    DROPFILES* df =
-      (DROPFILES *)GlobalLock (hdrop);
-
-    df->pFiles = sizeof (DROPFILES);
-    df->fWide  = TRUE;
-
-    wcscpy ((wchar_t*)&df [1], (const wchar_t *)pData);
-
-    GlobalUnlock     (hdrop);
-    EmptyClipboard   ();
-    SetClipboardData (CF_HDROP, hdrop);
-    CloseClipboard   ();
-
-    return true;
-  }
-
-  return false;
-}
-
-bool SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped, bool isHDR)
-{
-  if (pImage == nullptr)
-    return false;
-
-  static SKIF_CommonPathsCache& _path_cache = SKIF_CommonPathsCache::GetInstance ( );
-
-  std::wstring wsPNGPath = _path_cache.skiv_temp;
-  wsPNGPath += snipped ? L"SKIV_Snip"
-                       : L"SKIV_Clipboard";
-  wsPNGPath += L".png";
-
-  PLOG_VERBOSE << wsPNGPath;
-
-  static SKIF_RegistrySettings& _registry =
-    SKIF_RegistrySettings::GetInstance ( );
-
-  if (isHDR && (! _registry._SnippingTonemapsHDR))
-  {
-    if (SUCCEEDED (SKIV_Image_SaveToDisk_HDR (*pImage, wsPNGPath.c_str())))
-    {
-      PLOG_VERBOSE << "SKIF_Image_SaveToDisk_HDR ( ): SUCCEEDED";
-
-      if (SKIV_PNG_CopyToClipboard (*pImage, wsPNGPath.c_str(), 0))
-      {
-        PLOG_VERBOSE << "SKIV_PNG_CopyToClipboard ( ): TRUE";
-        return true;
-      }
-    }
-
-    else
-      PLOG_VERBOSE << "SKIF_Image_SaveToDisk_HDR ( ): FAILED";
-  }
-
-  else
-  {
-    DirectX::ScratchImage tonemapped_sdr;
-    if (_registry._SnippingTonemapsHDR && isHDR)
-    {
-      if (SUCCEEDED (SKIV_Image_TonemapToSDR (*pImage, tonemapped_sdr)))
-      {
-        pImage = tonemapped_sdr.GetImage (0,0,0);
-      }
-
-      else
-        PLOG_INFO << "SKIV_Image_TonemapToSDR ( ): FAILED!";
-    }
-
-    if (OpenClipboard (nullptr))
-    {
-      const int
-          _bpc    =
-        (int)(DirectX::BitsPerPixel (pImage->format)),
-          _width  =
-        (int)(                       pImage->width),
-          _height =
-        (int)(                       pImage->height);
-
-      DirectX::ScratchImage swizzled_sdr;
-      // Swizzle the image and handle gamma if necessary
-      if (pImage->format != DXGI_FORMAT_B8G8R8X8_UNORM_SRGB)
-      {
-        if (SUCCEEDED (DirectX::Convert (*pImage, DXGI_FORMAT_B8G8R8X8_UNORM_SRGB, DirectX::TEX_FILTER_DEFAULT, 0.0f, swizzled_sdr)))
-        {
-          pImage = swizzled_sdr.GetImage (0,0,0);
-        }
-      }
-      ////SK_ReleaseAssert (pImage->format == DXGI_FORMAT_B8G8R8X8_UNORM ||
-      ////                  pImage->format == DXGI_FORMAT_B8G8R8A8_UNORM ||
-      ////                  pImage->format == DXGI_FORMAT_B8G8R8X8_UNORM_SRGB);
-
-      HBITMAP hBitmapCopy =
-         CreateBitmap (
-           _width, _height, 1,
-             _bpc, pImage->pixels
-         );
-
-      BITMAPINFOHEADER
-        bmh                 = { };
-        bmh.biSize          = sizeof (BITMAPINFOHEADER);
-        bmh.biWidth         =   _width;
-        bmh.biHeight        =  -_height;
-        bmh.biPlanes        =  1;
-        bmh.biBitCount      = (WORD)_bpc;
-        bmh.biCompression   = BI_RGB;
-        bmh.biXPelsPerMeter = 10;
-        bmh.biYPelsPerMeter = 10;
-
-      BITMAPINFO
-        bmi                 = { };
-        bmi.bmiHeader       = bmh;
-
-      HDC hdcDIB =
-        CreateCompatibleDC (GetDC (nullptr));
-
-      void* bitplane = nullptr;
-
-      HBITMAP
-        hBitmap =
-          CreateDIBSection ( hdcDIB, &bmi, DIB_RGB_COLORS,
-              &bitplane, nullptr, 0 );
-      memcpy ( bitplane,
-                 pImage->pixels,
-          static_cast <size_t> (_bpc / 8) *
-          static_cast <size_t> (_width  ) *
-          static_cast <size_t> (_height )
-             );
-
-      HDC hdcSrc = CreateCompatibleDC (GetDC (nullptr));
-      HDC hdcDst = CreateCompatibleDC (GetDC (nullptr));
-
-      if ( hBitmap    != nullptr &&
-          hBitmapCopy != nullptr )
-      {
-        auto hbmpSrc = (HBITMAP)SelectObject (hdcSrc, hBitmap);
-        auto hbmpDst = (HBITMAP)SelectObject (hdcDst, hBitmapCopy);
-
-        BitBlt (hdcDst, 0, 0, _width,
-                              _height, hdcSrc, 0, 0, SRCCOPY);
-
-        SelectObject     (hdcSrc, hbmpSrc);
-        SelectObject     (hdcDst, hbmpDst);
-
-        EmptyClipboard   ();
-        SetClipboardData (CF_BITMAP, hBitmapCopy);
-      }
-
-      CloseClipboard   ();
-
-      DeleteDC         (hdcSrc);
-      DeleteDC         (hdcDst);
-      DeleteDC         (hdcDIB);
-
-      if ( hBitmap     != nullptr &&
-           hBitmapCopy != nullptr )
-      {
-        DeleteBitmap   (hBitmap);
-        DeleteBitmap   (hBitmapCopy);
-
-        return true;
-      }
-    }
-  }
-
-  return false;
-}
-
 HRESULT
 SKIV_Image_TonemapToSDR (const DirectX::Image& image, DirectX::ScratchImage& final_sdr)
 {
@@ -1641,15 +1458,10 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
                       wszImplicitFileName, nullptr, SK_WIC_SetMaximumQuality);
 }
 
-skiv_image_desktop_s SKIV_DesktopImage;
-
 HRESULT
-SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
+SKIV_Image_CaptureDesktop (const POINT point)
 {
-  SKIV_DesktopImage.clear();
-
-  std::ignore = image;
-  std::ignore = flags;
+  SKIV_ClipboardImage.clear();
 
   HRESULT res = E_NOT_VALID_STATE;
 
@@ -1850,19 +1662,19 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
     srvDesc.Texture2D.MostDetailedMip = 0;
 
   pDevCtx->CopyResource             (pDesktopImage, pDuplicatedTex);
-  pDevice->CreateShaderResourceView (pDesktopImage, &srvDesc, &SKIV_DesktopImage._srv);
+  pDevice->CreateShaderResourceView (pDesktopImage, &srvDesc, &SKIV_ClipboardImage._srv);
 
   pDevCtx->Flush ();
 
   pDuplicator->ReleaseFrame ();
 
-  SKIV_DesktopImage.process ();
+  SKIV_ClipboardImage.process ();
 
   return S_OK;
 }
 
 void
-SKIV_Image_CaptureRegion (ImRect capture_area)
+SKIV_Image_SetClipboard (ImRect capture_area, bool displayCapture)
 {
   // Fixes snipping rectangles on non-primary (origin != 0,0) displays
   auto _AdjustCaptureAreaRelativeToDisplayOrigin = [&](void)
@@ -1881,7 +1693,11 @@ SKIV_Image_CaptureRegion (ImRect capture_area)
     capture_area.Max.y -= minfo.rcMonitor.top;
   };
 
-  _AdjustCaptureAreaRelativeToDisplayOrigin ();
+  if (displayCapture)
+    _AdjustCaptureAreaRelativeToDisplayOrigin ();
+
+  else if (capture_area.GetArea () == 0)
+    capture_area = ImRect (ImVec2 (0, 0), SKIV_ClipboardImage._resolution);
 
   const size_t
     x      = static_cast <size_t> (std::max (0.0f, capture_area.Min.x)),
@@ -1889,8 +1705,41 @@ SKIV_Image_CaptureRegion (ImRect capture_area)
     width  = static_cast <size_t> (std::max (0.0f, capture_area.GetWidth  ())),
     height = static_cast <size_t> (std::max (0.0f, capture_area.GetHeight ()));
 
-  const DirectX::Rect
-    src_rect (x,y, width,height);
+  SKIV_ClipboardImage._selection =
+    DirectX::Rect (x,y, width,height);
+
+#ifdef _DEBUG
+  PLOG_VERBOSE << "SKIV_ClipboardImage._selection: \n"
+               << x     << "," << y      << "\n"
+               << width << "x" << height;
+#endif
+
+  // Set up delayed rendering to the clipboard
+  if (OpenClipboard (SKIF_Notify_hWnd))
+  {
+    if (EmptyClipboard ( ))
+    {
+      // Clipboard formats that contain the most information should be placed on the clipboard first, followed by less descriptive formats.
+      // A window pasting information from the clipboard typically retrieves a clipboard object in the first format it recognizes.
+      // Because clipboard formats are enumerated in the order they are placed on the clipboard, the first recognized format is also the most descriptive.
+      SetClipboardData (CF_UNICODETEXT, NULL);
+      SetClipboardData (CF_HDROP,       NULL);
+      SetClipboardData (CF_BITMAP,      NULL);
+
+      PLOG_VERBOSE << "Clipboard formats has been set up for delayed rendering.";
+    }
+
+    CloseClipboard ( );
+  }
+}
+
+void
+SKIV_Image_RenderToClipboard (UINT clipboard_format)
+{
+  PLOG_VERBOSE << ((clipboard_format == CF_BITMAP)      ? "CF_BITMAP"      :
+                   (clipboard_format == CF_HDROP)       ? "CF_HDROP"       :
+                   (clipboard_format == CF_UNICODETEXT) ? "CF_UNICODETEXT" :
+                                                          "Unknown clipboard format");
 
   extern CComPtr <ID3D11Device>
     SKIF_D3D11_GetDevice (bool bWait);
@@ -1901,47 +1750,185 @@ SKIV_Image_CaptureRegion (ImRect capture_area)
   pDevice->GetImmediateContext (&pDevCtx.p);
 
   DirectX::ScratchImage captured_img;
-  if (SUCCEEDED (DirectX::CaptureTexture (pDevice, pDevCtx, SKIV_DesktopImage._res, captured_img)))
+  if (FAILED (DirectX::CaptureTexture (pDevice, pDevCtx, SKIV_ClipboardImage._res, captured_img)))
   {
-    PLOG_VERBOSE << "DirectX::CaptureTexture    ( ): SUCCEEDED";
-    DirectX::ScratchImage subrect;
+    PLOG_VERBOSE << "DirectX::CaptureTexture    ( ): FAILED";
+    return;
+  }
 
-    if (SUCCEEDED (subrect.Initialize2D   ( captured_img.GetMetadata ().format, width, height, 1, 1)))
+  DirectX::ScratchImage subrect;
+  if (FAILED (subrect.Initialize2D (captured_img.GetMetadata ().format, SKIV_ClipboardImage._selection.w, SKIV_ClipboardImage._selection.h, 1, 1)))
+  {
+    PLOG_VERBOSE << "subrect.Initialize2D       ( ): FAILED";
+    return;
+  }
+
+  if (FAILED (DirectX::CopyRectangle (*captured_img.GetImages (), SKIV_ClipboardImage._selection,
+                                              *subrect.GetImages (), DirectX::TEX_FILTER_DEFAULT, 0, 0)))
+  {
+    PLOG_VERBOSE << "DirectX::CopyRectangle     ( ): FAILED";
+    return;
+  }
+
+  static SKIF_CommonPathsCache& _path_cache = SKIF_CommonPathsCache::GetInstance ( );
+  static SKIF_RegistrySettings& _registry   = SKIF_RegistrySettings::GetInstance ( );
+
+  const DirectX::Image* pImage =
+    subrect.GetImages ();
+
+  static const std::wstring wsPNGPath = std::wstring (_path_cache.skiv_temp) += L"SKIV_Clipboard.png";
+
+  bool success = false;
+
+  if (clipboard_format == CF_UNICODETEXT ||
+      clipboard_format == CF_HDROP)
+  {
+    if (SKIV_ClipboardImage._hdr_image && (! _registry._SnippingTonemapsHDR))
+      SKIV_Image_SaveToDisk_HDR (*pImage, wsPNGPath.c_str());
+    else
+      SKIV_Image_SaveToDisk_SDR (*pImage, wsPNGPath.c_str(), false);
+  }
+
+  if (clipboard_format == CF_UNICODETEXT)
+  {
+    HGLOBAL hGlobal = GlobalAlloc (GMEM_MOVEABLE, (wsPNGPath.size() + 1)  * sizeof (wchar_t));
+
+    if (hGlobal)
     {
-      PLOG_VERBOSE << "subrect.Initialize2D       ( ): SUCCEEDED";
+      wchar_t* pszDestination = static_cast<wchar_t*> (GlobalLock (hGlobal));
 
-      if (SUCCEEDED (DirectX::CopyRectangle (*captured_img.GetImages (), src_rect,
-                                                  *subrect.GetImages (), DirectX::TEX_FILTER_DEFAULT, 0, 0)))
+      if (pszDestination != nullptr)
       {
-        PLOG_VERBOSE << "DirectX::CopyRectangle     ( ): SUCCEEDED";
+        memcpy (pszDestination, wsPNGPath.data(), (wsPNGPath.length() + 1) * sizeof (wchar_t));
+        GlobalUnlock (hGlobal);
 
-        if (SKIV_Image_CopyToClipboard (subrect.GetImages (), true, SKIV_DesktopImage._hdr_image))
-        {
-          PLOG_VERBOSE << "SKIV_Image_CopyToClipboard ( ): SUCCEEDED";
+        success = SetClipboardData (CF_UNICODETEXT, hGlobal);
+      }
 
-          ImGui::InsertNotification (
-            {
-              ImGuiToastType::Info,
-              3000,
-              "Copied image to clipboard", ""
-            }
-          );
-        }
+      if (! success)
+        GlobalFree (hGlobal);
+    }
+  }
 
-        else {
-          ImGui::InsertNotification (
-            {
-              ImGuiToastType::Error,
-              3000,
-              "Failed to copy image to clipboard", ""
-            }
-          );
-          PLOG_WARNING << "SKIV_Image_CopyToClipboard ( ): FAILED";
-        }
-      } else
-        PLOG_WARNING << "DirectX::CopyRectangle     ( ): FAILED";
-    } else
-      PLOG_WARNING << "subrect.Initialize2D       ( ): FAILED";
-  } else
-    PLOG_WARNING << "DirectX::CaptureTexture    ( ): FAILED";
+  else if (clipboard_format == CF_HDROP)
+  {
+    int clpSize = sizeof (DROPFILES);
+
+    clpSize += sizeof (wchar_t) * static_cast <int> (wcslen ((const wchar_t *)wsPNGPath.c_str()) + 1);
+    clpSize += sizeof (wchar_t);
+
+    HGLOBAL hGlobal =
+      (HDROP)GlobalAlloc (GHND, clpSize);
+
+    DROPFILES* df =
+      (DROPFILES *)GlobalLock (hGlobal);
+
+    df->pFiles = sizeof (DROPFILES);
+    df->fWide  = TRUE;
+
+    wcscpy ((wchar_t*)&df [1], (const wchar_t *)wsPNGPath.c_str());
+    GlobalUnlock (hGlobal);
+
+    success = SetClipboardData (CF_HDROP, hGlobal);
+
+    if (! success)
+      GlobalFree (hGlobal);
+  }
+
+  else if (clipboard_format == CF_BITMAP)
+  {
+    // If this is a HDR image, we need to tonemap it to SDR first
+    DirectX::ScratchImage tonemapped_sdr;
+    if (SKIV_ClipboardImage._hdr_image)
+    {
+      if (SUCCEEDED (SKIV_Image_TonemapToSDR (*pImage, tonemapped_sdr)))
+        pImage = tonemapped_sdr.GetImage (0,0,0);
+    }
+
+    const int
+        _bpc    =
+      (int)(DirectX::BitsPerPixel (pImage->format)),
+        _width  =
+      (int)(                       pImage->width),
+        _height =
+      (int)(                       pImage->height);
+
+    DirectX::ScratchImage swizzled_sdr;
+
+    // Swizzle the image and handle gamma if necessary
+    if (pImage->format != DXGI_FORMAT_B8G8R8X8_UNORM_SRGB)
+    {
+      if (SUCCEEDED (DirectX::Convert (*pImage, DXGI_FORMAT_B8G8R8X8_UNORM_SRGB, DirectX::TEX_FILTER_DEFAULT, 0.0f, swizzled_sdr)))
+        pImage = swizzled_sdr.GetImage (0,0,0);
+    }
+    ////SK_ReleaseAssert (pImage->format == DXGI_FORMAT_B8G8R8X8_UNORM ||
+    ////                  pImage->format == DXGI_FORMAT_B8G8R8A8_UNORM ||
+    ////                  pImage->format == DXGI_FORMAT_B8G8R8X8_UNORM_SRGB);
+
+    HBITMAP hBitmapCopy =
+        CreateBitmap (
+          _width, _height, 1,
+            _bpc, pImage->pixels
+        );
+
+    BITMAPINFOHEADER
+      bmh                 = { };
+      bmh.biSize          = sizeof (BITMAPINFOHEADER);
+      bmh.biWidth         =   _width;
+      bmh.biHeight        =  -_height;
+      bmh.biPlanes        =  1;
+      bmh.biBitCount      = (WORD)_bpc;
+      bmh.biCompression   = BI_RGB;
+      bmh.biXPelsPerMeter = 10;
+      bmh.biYPelsPerMeter = 10;
+
+    BITMAPINFO
+      bmi                 = { };
+      bmi.bmiHeader       = bmh;
+
+    HDC hdcDIB =
+      CreateCompatibleDC (GetDC (nullptr));
+
+    void* bitplane = nullptr;
+
+    HBITMAP
+      hBitmap =
+        CreateDIBSection ( hdcDIB, &bmi, DIB_RGB_COLORS,
+            &bitplane, nullptr, 0 );
+    memcpy ( bitplane,
+                pImage->pixels,
+        static_cast <size_t> (_bpc / 8) *
+        static_cast <size_t> (_width  ) *
+        static_cast <size_t> (_height )
+            );
+
+    HDC hdcSrc = CreateCompatibleDC (GetDC (nullptr));
+    HDC hdcDst = CreateCompatibleDC (GetDC (nullptr));
+
+    if ( hBitmap     != nullptr &&
+         hBitmapCopy != nullptr )
+    {
+      auto hbmpSrc = (HBITMAP)SelectObject (hdcSrc, hBitmap);
+      auto hbmpDst = (HBITMAP)SelectObject (hdcDst, hBitmapCopy);
+
+      BitBlt (hdcDst, 0, 0, _width,
+                            _height, hdcSrc, 0, 0, SRCCOPY);
+
+      SelectObject     (hdcSrc, hbmpSrc);
+      SelectObject     (hdcDst, hbmpDst);
+      if (SetClipboardData (CF_BITMAP, hBitmapCopy))
+        hBitmapCopy = nullptr;
+    }
+
+    DeleteDC         (hdcSrc);
+    DeleteDC         (hdcDst);
+    DeleteDC         (hdcDIB);
+
+    if ( hBitmap     != nullptr &&
+         hBitmapCopy != nullptr )
+    {
+      DeleteBitmap   (hBitmap);
+      DeleteBitmap   (hBitmapCopy);
+    }
+  }
 }

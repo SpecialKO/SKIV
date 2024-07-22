@@ -276,8 +276,8 @@ struct SKIF_DropTargetObject
 {
   static SKIF_DropTargetObject& GetInstance (void)
   {
-      static SKIF_DropTargetObject instance;
-      return instance;
+    static SKIF_DropTargetObject instance;
+    return instance;
   }
 
   void Revoke (HWND hWnd)

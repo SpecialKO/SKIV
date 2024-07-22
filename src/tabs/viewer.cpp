@@ -1388,6 +1388,8 @@ SKIF_UI_Tab_DrawViewer (void)
 
     if (cover.pRawTexSRV.p != nullptr /* && cover.is_hdr */)
     {
+      SKIV_ClipboardImage.clear();
+
       auto
           pDevice = SKIF_D3D11_GetDevice ();
       if (pDevice != nullptr)
@@ -1397,6 +1399,20 @@ SKIF_UI_Tab_DrawViewer (void)
 
         CComPtr <ID3D11Resource>        pTexResource;
         cover.pRawTexSRV->GetResource (&pTexResource.p);
+
+      D3D11_SHADER_RESOURCE_VIEW_DESC
+        srvDesc                           = { };
+        srvDesc.Format                    = DXGI_FORMAT_UNKNOWN;
+        srvDesc.ViewDimension             = D3D11_SRV_DIMENSION_TEXTURE2D;
+        srvDesc.Texture2D.MipLevels       = UINT_MAX;
+        srvDesc.Texture2D.MostDetailedMip = 0;
+
+        pDevice->CreateShaderResourceView (pTexResource, &srvDesc, &SKIV_ClipboardImage._srv);
+        pDevCtx->Flush ();
+        SKIV_ClipboardImage.process ();
+        SKIV_Image_SetClipboard (copyRect, false);
+
+#if 0
 
         if (pTexResource.p != nullptr)
         {
@@ -1478,6 +1494,9 @@ SKIF_UI_Tab_DrawViewer (void)
             }
           }
         }
+
+
+#endif
       }
     }
   }

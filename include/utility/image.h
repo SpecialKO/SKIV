@@ -120,11 +120,11 @@ float             SKIV_Image_LinearToPQY   (float N);
 DirectX::XMVECTOR SKIV_Image_Rec709toICtCp (DirectX::XMVECTOR N);
 DirectX::XMVECTOR SKIV_Image_ICtCptoRec709 (DirectX::XMVECTOR N);
 
-bool    SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped, bool isHDR);
 HRESULT SKIV_Image_SaveToDisk_HDR  (const DirectX::Image& image, const wchar_t* wszFileName);
 HRESULT SKIV_Image_SaveToDisk_SDR  (const DirectX::Image& image, const wchar_t* wszFileName, bool force_sRGB);
-HRESULT SKIV_Image_CaptureDesktop  (DirectX::ScratchImage& image, POINT pos, int flags = 0x0);
-void    SKIV_Image_CaptureRegion   (ImRect capture_area);
+HRESULT SKIV_Image_CaptureDesktop  (const POINT pos);
+void    SKIV_Image_SetClipboard    (ImRect capture_area, bool displayCapture);
+void    SKIV_Image_RenderToClipboard (UINT clipboard_format);
 HRESULT SKIV_Image_TonemapToSDR    (const DirectX::Image& image, DirectX::ScratchImage& final_sdr);
 
 // Structs
@@ -134,6 +134,7 @@ struct skiv_image_desktop_s {
   CComPtr <ID3D11Resource>           _res        = nullptr;
   bool                               _hdr_image  =   false;
   ImVec2                             _resolution = ImVec2 (0.0f, 0.0f);
+  DirectX::Rect                      _selection  = { }; // srcRect
 
   bool process (void)
   {
@@ -182,5 +183,6 @@ struct skiv_image_desktop_s {
     _srv        = nullptr;
     _hdr_image  =   false;
     _resolution = ImVec2 (0.0f, 0.0f);
+    _selection  = { };
   }
-};
+} extern SKIV_ClipboardImage;

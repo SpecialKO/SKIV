@@ -261,7 +261,6 @@
     </Manifest>
   </ItemGroup>
   <ItemGroup>
-    <None Include="packages.config" />
     <None Include="resources\shaders\colorspaces.hlsli">
       <Filter>Resource Files\Shaders</Filter>
     </None>
@@ -273,6 +272,12 @@
     </None>
     <None Include="resources\shaders\calibration.hlsli">
       <Filter>Resource Files\Shaders</Filter>
+    </None>
+    <None Include="post_build.bat">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="packages.config">
+      <Filter>Resource Files</Filter>
     </None>
   </ItemGroup>
 </Project>

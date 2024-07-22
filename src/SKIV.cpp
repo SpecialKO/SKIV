@@ -1957,9 +1957,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
       {
 #pragma region UI: Snipping Mode
 
-        extern skiv_image_desktop_s SKIV_DesktopImage;
-
-        bool HDR_Image = SKIV_DesktopImage._hdr_image;
+        bool HDR_Image = SKIV_ClipboardImage._hdr_image;
         bool SKIV_HDR  = (HDR_Image ? SKIF_ImGui_IsViewportHDR (SKIF_ImGui_hWnd) : false);
 
         // Temporarily engage HDR mode for SKIV during snipping mode
@@ -1970,14 +1968,14 @@ wWinMain ( _In_     HINSTANCE hInstance,
           RecreateSwapChains = true;
         }
 
-        if (SKIV_DesktopImage._srv != nullptr)
+        if (SKIV_ClipboardImage._srv != nullptr)
         {
           static const ImVec2 srgb_uv0 = ImVec2 (0, 0),
                               srgb_uv1 = ImVec2 (1, 1),
                               hdr_uv0  = ImVec2 (-1024.0f, -1024.0f), // HDR formats
                               hdr_uv1  = ImVec2 (-2048.0f, -2048.0f); // HDR formats
 
-          SKIF_ImGui_OptImage (SKIV_DesktopImage._srv, SKIV_DesktopImage._resolution,
+          SKIF_ImGui_OptImage (SKIV_ClipboardImage._srv, SKIV_ClipboardImage._resolution,
                                                                 (HDR_Image && SKIV_HDR) ? hdr_uv0 : srgb_uv0,
                                                                 (HDR_Image && SKIV_HDR) ? hdr_uv1 : srgb_uv1);
 
@@ -1985,7 +1983,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
             ImGui::GetForegroundDrawList ();
 
           // Draw a slightly dark transparent overlay on top of the captured image
-          draw_list->AddRectFilled (ImVec2 (0, 0), SKIV_DesktopImage._resolution, ImGui::GetColorU32 (IM_COL32 (0, 0, 0, 20)));
+          draw_list->AddRectFilled (ImVec2 (0, 0), SKIV_ClipboardImage._resolution, ImGui::GetColorU32 (IM_COL32 (0, 0, 0, 20)));
         }
 
         static ImRect selection;
@@ -2123,7 +2121,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
         };
 
                           // Desktop Pos,      Desktop Pos + Desktop Size
-        ImRect allowable (monitor_extent.Min, SKIV_DesktopImage._resolution);
+        ImRect allowable (monitor_extent.Min, SKIV_ClipboardImage._resolution);
         ImRect capture_area;
 
         static bool clicked = false;
@@ -2235,7 +2233,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
             PLOG_VERBOSE << "Attempting to capture region...";
 
-            SKIV_Image_CaptureRegion (capture_area);
+            SKIV_Image_SetClipboard (capture_area, true);
           }
         }
 #pragma endregion
@@ -3027,8 +3025,40 @@ wWinMain ( _In_     HINSTANCE hInstance,
                     (format == CF_HDROP      ) ? ClipboardData_HDROP       :
                                                  ClipboardData_None       );
 //#ifdef _DEBUG
-            wchar_t wzFormatName[256];
+            wchar_t wzFormatName[256] = { L'\0' };
             GetClipboardFormatNameW (format, wzFormatName, 256);
+
+            if (wzFormatName[0] == L'\0')
+            {
+              switch (format)
+              {
+              case CF_TEXT:        // 1
+                wcsncpy_s (wzFormatName, 256,  L"CF_TEXT", _TRUNCATE);
+                break;
+              case CF_BITMAP:      // 2
+                wcsncpy_s (wzFormatName, 256,  L"CF_BITMAP", _TRUNCATE);
+                break;
+              case CF_OEMTEXT:     // 7
+                wcsncpy_s (wzFormatName, 256,  L"CF_OEMTEXT", _TRUNCATE);
+                break;
+              case CF_DIB:         // 8
+                wcsncpy_s (wzFormatName, 256,  L"CF_DIB", _TRUNCATE);
+                break;
+              case CF_UNICODETEXT: // 13
+                wcsncpy_s (wzFormatName, 256,  L"CF_UNICODETEXT", _TRUNCATE);
+                break;
+              case CF_HDROP:       // 15
+                wcsncpy_s (wzFormatName, 256,  L"CF_HDROP", _TRUNCATE);
+                break;
+              case CF_LOCALE:      // 16
+                wcsncpy_s (wzFormatName, 256,  L"CF_LOCALE", _TRUNCATE);
+                break;
+              case CF_DIBV5:       // 17
+                wcsncpy_s (wzFormatName, 256,  L"CF_DIBV5", _TRUNCATE);
+                break;
+              }
+            }
+
             PLOG_VERBOSE << "Supported clipboard format: " << format << " - " << std::wstring(wzFormatName);
 //#endif
           }
@@ -3566,12 +3596,15 @@ wWinMain ( _In_     HINSTANCE hInstance,
   ImGui_ImplDX11_Shutdown     ( );
   ImGui_ImplWin32_Shutdown    ( );
 
-  CleanupDeviceD3D            ( );
-
+  // The notification icon must be destroyed before D3D11
+  //   so that WM_RENDERALLFORMATS gets handled properly
   PLOG_INFO << "Destroying notification icon...";
   _gamepad.UnregisterDevNotification ( );
   SKIF_Shell_DeleteNotifyIcon ( );
   DestroyWindow             (SKIF_Notify_hWnd);
+
+  PLOG_INFO << "Cleaning up D3D11...";
+  CleanupDeviceD3D            ( );
 
   PLOG_INFO << "Destroying ImGui context...";
   ImGui::DestroyContext       ( );
@@ -3847,162 +3880,227 @@ void CleanupRenderTarget (void)
 }
 */
 
-// Win32 message handler
+
+
+static void
+SKIV_EnterCaptureMode (CaptureMode mode)
+{
+  static SKIF_RegistrySettings&   _registry   = SKIF_RegistrySettings  ::GetInstance ( );
+
+  PLOG_VERBOSE << "Received request to capture " << ((mode == CaptureMode_Window) ? "window" : (mode == CaptureMode_Region) ? "region" : "screen") << "...";
+
+  if (! std::exchange (_registry._SnippingMode, true))
+  {
+    extern HWND hwndBeforeSnip;
+    hwndBeforeSnip = GetForegroundWindow ();
+
+    POINT capture_point = { };
+    RECT  capture_rect  = { };
+
+    if (mode == CaptureMode_Window)
+    {
+      if (GetWindowRect (hwndBeforeSnip, &capture_rect))
+      {
+        // Use the window's centroid in case it spans multiple monitors
+        capture_point.x = static_cast <long> (capture_rect.left)  +
+                          static_cast <long> (capture_rect.right  - capture_rect.left) / 2;
+        capture_point.y = static_cast <long> (capture_rect.top)   +
+                          static_cast <long> (capture_rect.bottom - capture_rect.top)  / 2;
+
+        HMONITOR hMonCaptured =
+          MonitorFromPoint (capture_point, MONITOR_DEFAULTTONEAREST);
+
+        MONITORINFO                    minfo = { .cbSize = sizeof (MONITORINFO) };
+        GetMonitorInfo (hMonCaptured, &minfo);
+
+        // Clamp the capture rect to the window's primary monitor
+        //   ... it's the only one we have an image captured for!
+        capture_rect.left   = std::max (capture_rect.left,   minfo.rcMonitor.left);
+        capture_rect.top    = std::max (capture_rect.top,    minfo.rcMonitor.top);
+
+        capture_rect.right  = std::min (capture_rect.right,  minfo.rcMonitor.right);
+        capture_rect.bottom = std::min (capture_rect.bottom, minfo.rcMonitor.bottom);
+      }
+    }
+
+    else
+      GetCursorPos (&capture_point);
+
+    HRESULT hr =
+      SKIV_Image_CaptureDesktop (capture_point);
+
+    if (SUCCEEDED (hr))
+    {
+      PLOG_VERBOSE << "Capture was successful!";
+
+      extern HWND hwndTopBeforeSnip;
+      extern bool iconicBeforeSnip;
+      extern bool trayedBeforeSnip;
+
+      extern ImRect selection_rect;
+
+      if (mode == CaptureMode_Window)
+      {
+        const ImRect area = ImRect (static_cast<float> (capture_rect.left  ),
+                                    static_cast<float> (capture_rect.top   ),
+                                    static_cast<float> (capture_rect.right ),
+                                    static_cast<float> (capture_rect.bottom)
+        );
+
+        //PLOG_VERBOSE << "capture_rect.left  : " << capture_rect.left;
+        //PLOG_VERBOSE << "capture_rect.top   : " << capture_rect.top;
+        //PLOG_VERBOSE << "capture_rect.right : " << capture_rect.right;
+        //PLOG_VERBOSE << "capture_rect.bottom: " << capture_rect.bottom;
+
+        SKIV_Image_SetClipboard (area, true);
+        _registry._SnippingMode = false;
+      }
+
+      else if (mode == CaptureMode_Screen)
+      {
+        const ImRect area = ImRect (ImVec2 (0, 0), SKIV_ClipboardImage._resolution);
+        SKIV_Image_SetClipboard (area, true);
+        _registry._SnippingMode = false;
+      }
+
+      // CaptureMode_Region
+      else
+      {
+        hwndTopBeforeSnip = GetWindow (SKIF_ImGui_hWnd, GW_HWNDNEXT);
+
+        trayedBeforeSnip = SKIF_isTrayed;
+        iconicBeforeSnip =
+          IsIconic (SKIF_ImGui_hWnd);
+
+        if (SKIF_isTrayed)
+        {   SKIF_isTrayed = false;
+          ShowWindow (SKIF_ImGui_hWnd, SW_SHOW);
+        }
+
+        if (iconicBeforeSnip)
+          ShowWindow (SKIF_ImGui_hWnd, SW_RESTORE);
+
+        HMONITOR monitor =
+          MonitorFromPoint (capture_point, MONITOR_DEFAULTTONEAREST);
+
+        SKIF_ImGui_SetFullscreen (SKIF_ImGui_hWnd, true, monitor);
+        UpdateWindow             (SKIF_ImGui_hWnd);
+
+        selection_rect.Min = ImVec2 (0.0f, 0.0f);
+        selection_rect.Max = ImVec2 (0.0f, 0.0f);
+
+        ImGui::GetIO ().MouseDown         [0] = false;
+        ImGui::GetIO ().MouseDownDuration [0] = -1.0f;
+      }
+    }
+
+    else
+    {
+      if (_registry._SnippingMode)
+      {
+        _registry._SnippingMode     = false;
+        _registry._SnippingModeExit = true;
+      }
+
+      ImGui::InsertNotification ({
+        ImGuiToastType::Error, 5000,
+          "Screen Capture Failed",
+          "%ws (HRESULT=%x)",
+            _com_error (hr).ErrorMessage (),
+                        hr
+      });
+    }
+  }
+
+  else
+  {
+    SetForegroundWindow (SKIF_ImGui_hWnd);
+  }
+}
+
+
 LRESULT
 WINAPI
-SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
+SKIF_Notify_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
-  UNREFERENCED_PARAMETER (hWnd);
-  UNREFERENCED_PARAMETER (lParam);
-
-  // This is the message procedure that handles all custom SKIF window messages and actions
+  // This is the message procedure for the notification icon window
+  //   that also handles all custom window messages and actions
   
   UpdateFlags uFlags = UpdateFlags_Unknown;
   
   static SKIF_CommonPathsCache&   _path_cache = SKIF_CommonPathsCache  ::GetInstance ( );
   static SKIF_RegistrySettings&   _registry   = SKIF_RegistrySettings  ::GetInstance ( );
   static SKIF_GamePadInputHelper& _gamepad    = SKIF_GamePadInputHelper::GetInstance ( );
+
   // We don't define this here to ensure it doesn't get created before we are ready to handle it
-//static SKIF_Updater&          _updater    = SKIF_Updater         ::GetInstance ( );
+//static SKIF_Updater&            _updater    = SKIF_Updater           ::GetInstance ( );
 
-  auto _EnterSnippingMode = [&](CaptureMode mode) -> void
+  PLOG_VERBOSE_IF(_registry.isDevLogging()) << std::format("[0x{:<4x}] [{:5d}] [{:20s}]{:s}[0x{:x}, {:d}{:s}] [0x{:x}, {:d}]",
+                  msg, // Hexadecimal
+                  msg, // Decimal
+                  SKIF_Util_GetWindowMessageAsStr (msg), // String
+                    (hWnd == SKIF_Notify_hWnd ?  " [SKIF_Notify_hWnd] " : " "), // Is the message meant SKIF_Notify_hWnd ?
+                  wParam, wParam,
+            ((HWND)wParam == SKIF_Notify_hWnd ?  ", SKIF_Notify_hWnd"   : ""),  // Does wParam point to SKIF_Notify_hWnd ?
+                  lParam, lParam);
+
+  // Tell the main thread to render at least three more frames after we have processed the message
+  if (SKIF_ImGui_hWnd != NULL && ! msgDontRedraw)
   {
-    PLOG_VERBOSE << "Received request to capture " << ((mode == CaptureMode_Window) ? "window" : (mode == CaptureMode_Region) ? "region" : "screen") << "...";
+    addAdditionalFrames += 3;
+    //PostMessage (SKIF_ImGui_hWnd, WM_NULL, 0, 0);
+  }
 
-    if (! std::exchange (_registry._SnippingMode, true))
-    {
-      extern HWND hwndBeforeSnip;
-      hwndBeforeSnip = GetForegroundWindow ();
-
-      POINT capture_point = { };
-      RECT  capture_rect  = { };
-
-      if (mode == CaptureMode_Window)
-      {
-        if (GetWindowRect (hwndBeforeSnip, &capture_rect))
-        {
-          // Use the window's centroid in case it spans multiple monitors
-          capture_point.x = static_cast <long> (capture_rect.left)  +
-                            static_cast <long> (capture_rect.right  - capture_rect.left) / 2;
-          capture_point.y = static_cast <long> (capture_rect.top)   +
-                            static_cast <long> (capture_rect.bottom - capture_rect.top)  / 2;
-
-          HMONITOR hMonCaptured =
-            MonitorFromPoint (capture_point, MONITOR_DEFAULTTONEAREST);
-
-          MONITORINFO                    minfo = { .cbSize = sizeof (MONITORINFO) };
-          GetMonitorInfo (hMonCaptured, &minfo);
-
-          // Clamp the capture rect to the window's primary monitor
-          //   ... it's the only one we have an image captured for!
-          capture_rect.left   = std::max (capture_rect.left,   minfo.rcMonitor.left);
-          capture_rect.top    = std::max (capture_rect.top,    minfo.rcMonitor.top);
-
-          capture_rect.right  = std::min (capture_rect.right,  minfo.rcMonitor.right);
-          capture_rect.bottom = std::min (capture_rect.bottom, minfo.rcMonitor.bottom);
-        }
-      }
-
-      else
-        GetCursorPos (&capture_point);
-
-      DirectX::ScratchImage captured_img;
-      HRESULT hr =
-        SKIV_Image_CaptureDesktop (captured_img, capture_point);
-
-      if (SUCCEEDED (hr))
-      {
-        PLOG_VERBOSE << "Capture was successful!";
-
-        extern HWND hwndTopBeforeSnip;
-        extern bool iconicBeforeSnip;
-        extern bool trayedBeforeSnip;
-
-        extern ImRect selection_rect;
-
-        if (mode == CaptureMode_Window)
-        {
-          const ImRect area = ImRect (static_cast<float> (capture_rect.left  ),
-                                      static_cast<float> (capture_rect.top   ),
-                                      static_cast<float> (capture_rect.right ),
-                                      static_cast<float> (capture_rect.bottom)
-          );
-
-          //PLOG_VERBOSE << "capture_rect.left  : " << capture_rect.left;
-          //PLOG_VERBOSE << "capture_rect.top   : " << capture_rect.top;
-          //PLOG_VERBOSE << "capture_rect.right : " << capture_rect.right;
-          //PLOG_VERBOSE << "capture_rect.bottom: " << capture_rect.bottom;
-
-          SKIV_Image_CaptureRegion (area);
-          _registry._SnippingMode = false;
-        }
-
-        else if (mode == CaptureMode_Screen)
-        {
-          extern skiv_image_desktop_s SKIV_DesktopImage;
-          const ImRect area = ImRect (ImVec2 (0, 0), SKIV_DesktopImage._resolution);
-          SKIV_Image_CaptureRegion (area);
-          _registry._SnippingMode = false;
-        }
-
-        // CaptureMode_Region
-        else
-        {
-          hwndTopBeforeSnip = GetWindow (SKIF_ImGui_hWnd, GW_HWNDNEXT);
-
-          trayedBeforeSnip = SKIF_isTrayed;
-          iconicBeforeSnip =
-            IsIconic (SKIF_ImGui_hWnd);
-
-          if (SKIF_isTrayed)
-          {   SKIF_isTrayed = false;
-            ShowWindow (SKIF_ImGui_hWnd, SW_SHOW);
-          }
-
-          if (iconicBeforeSnip)
-            ShowWindow (SKIF_ImGui_hWnd, SW_RESTORE);
-
-          HMONITOR monitor =
-            MonitorFromPoint (capture_point, MONITOR_DEFAULTTONEAREST);
-
-          SKIF_ImGui_SetFullscreen (SKIF_ImGui_hWnd, true, monitor);
-          UpdateWindow             (SKIF_ImGui_hWnd);
-
-          selection_rect.Min = ImVec2 (0.0f, 0.0f);
-          selection_rect.Max = ImVec2 (0.0f, 0.0f);
-
-          ImGui::GetIO ().MouseDown         [0] = false;
-          ImGui::GetIO ().MouseDownDuration [0] = -1.0f;
-        }
-      }
-
-      else
-      {
-        if (_registry._SnippingMode)
-        {
-          _registry._SnippingMode     = false;
-          _registry._SnippingModeExit = true;
-        }
-
-        ImGui::InsertNotification ({
-          ImGuiToastType::Error, 5000,
-            "Screen Capture Failed",
-            "%ws (HRESULT=%x)",
-              _com_error (hr).ErrorMessage (),
-                          hr
-        });
-      }
-    }
-
-    else
-    {
-      SetForegroundWindow (SKIF_ImGui_hWnd);
-    }
-  };
-
+#pragma region Custom Messages/Actions
 
   switch (msg)
   {
+    // Sent to the clipboard owner before it is destroyed, if the clipboard owner has delayed rendering one or more clipboard formats.
+    // For the content of the clipboard to remain available to other applications, the clipboard owner must render data in all the formats
+    //   it is capable of generating, and place the data on the clipboard by calling the SetClipboardData function.
+    //
+    // When the application returns, the system removes any unrendered formats from the list of available clipboard formats.
+    case WM_RENDERALLFORMATS:
+
+      PLOG_VERBOSE << "WM_RENDERALLFORMATS";
+      if (OpenClipboard (hWnd))
+      {
+        if (hWnd == GetClipboardOwner ( ))
+        {
+          SKIV_Image_RenderToClipboard (CF_BITMAP);
+          SKIV_Image_RenderToClipboard (CF_HDROP);
+          SKIV_Image_RenderToClipboard (CF_UNICODETEXT);
+        }
+
+        CloseClipboard ( );
+      }
+
+      return 0;
+
+    // Delayed rendering of clipboard formats
+    // 
+    // When responding to the WM_RENDERFORMAT message, the clipboard owner
+    //   must not call OpenClipboard before calling SetClipboardData.
+    case WM_RENDERFORMAT:
+      PLOG_VERBOSE << "WM_RENDERFORMAT";
+
+      switch (wParam)
+      {
+        case CF_BITMAP:
+          SKIV_Image_RenderToClipboard (CF_BITMAP);
+          break;
+
+        case CF_HDROP:
+          SKIV_Image_RenderToClipboard (CF_HDROP);
+          break;
+
+        case CF_UNICODETEXT:
+          SKIV_Image_RenderToClipboard (CF_UNICODETEXT);
+          break;
+      }
+
+      return 0;
+
     case WM_COPYDATA:
     {
       PCOPYDATASTRUCT data = (PCOPYDATASTRUCT) lParam;
@@ -4094,15 +4192,15 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         break;
 
       case SKIV_HotKey_CaptureWindow:
-        _EnterSnippingMode (CaptureMode_Window);
+        SKIV_EnterCaptureMode (CaptureMode_Window);
         break;
 
       case SKIV_HotKey_CaptureRegion:
-        _EnterSnippingMode (CaptureMode_Region);
+        SKIV_EnterCaptureMode (CaptureMode_Region);
         break;
 
       case SKIV_HotKey_CaptureScreen:
-        _EnterSnippingMode (CaptureMode_Screen);
+        SKIV_EnterCaptureMode (CaptureMode_Screen);
         break;
       }
     break;
@@ -4271,15 +4369,15 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
       break;
 
     case WM_SKIF_SNIP_WINDOW:
-      _EnterSnippingMode (CaptureMode_Window);
+      SKIV_EnterCaptureMode (CaptureMode_Window);
       break;
 
     case WM_SKIF_SNIP_REGION:
-      _EnterSnippingMode (CaptureMode_Region);
+      SKIV_EnterCaptureMode (CaptureMode_Region);
       break;
 
     case WM_SKIF_SNIP_SCREEN:
-      _EnterSnippingMode (CaptureMode_Screen);
+      SKIV_EnterCaptureMode (CaptureMode_Screen);
       break;
 
     case WM_SKIF_RUN_UPDATER:
@@ -4429,39 +4527,10 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
       ::PostQuitMessage (0);
       break;
   }
-  
-  // Tell the main thread to render at least three more frames after we have processed the message
-  if (SKIF_ImGui_hWnd != NULL && ! msgDontRedraw)
-  {
-    addAdditionalFrames += 3;
-    //PostMessage (SKIF_ImGui_hWnd, WM_NULL, 0, 0);
-  }
 
-  return 0;
+#pragma endregion
 
-  //return
-  //  ::DefWindowProc (hWnd, msg, wParam, lParam);
-}
-
-LRESULT
-WINAPI
-SKIF_Notify_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
-{
-  // This is the message procedure for the notification icon window that also handles custom SKIF messages
-
-  static SKIF_RegistrySettings&   _registry  = SKIF_RegistrySettings  ::GetInstance ( );
-
-  PLOG_VERBOSE_IF(_registry.isDevLogging()) << std::format("[0x{:<4x}] [{:5d}] [{:20s}]{:s}[0x{:x}, {:d}{:s}] [0x{:x}, {:d}]",
-                  msg, // Hexadecimal
-                  msg, // Decimal
-                  SKIF_Util_GetWindowMessageAsStr (msg), // String
-                    (hWnd == SKIF_Notify_hWnd ?  " [SKIF_Notify_hWnd] " : " "), // Is the message meant SKIF_Notify_hWnd ?
-                  wParam, wParam,
-            ((HWND)wParam == SKIF_Notify_hWnd ?  ", SKIF_Notify_hWnd"   : ""),  // Does wParam point to SKIF_Notify_hWnd ?
-                  lParam, lParam);
-
-  if (SKIF_WndProc (hWnd, msg, wParam, lParam))
-    return true;
+#pragma region Notification Icon
 
   switch (msg)
   {
@@ -4556,6 +4625,9 @@ SKIF_Notify_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
       }
       break;
   }
+
+#pragma endregion
+
   return
     ::DefWindowProc (hWnd, msg, wParam, lParam);
 }
