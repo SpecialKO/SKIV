@@ -8,11 +8,14 @@
 #include <ShlObj_core.h>
 #include <utility/fsutil.h>
 #include <dxgi1_5.h>
+#include <dxgi1_6.h>
 #include <Shlwapi.h>
 #include <windowsx.h>
 #include <ImGuiNotify.hpp>
 #include <utility/skif_imgui.h>
 #include <utility/utility.h>
+
+skiv_image_desktop_s SKIV_DesktopImage;
 
 extern std::wstring defaultHDRFileExt;
 extern std::wstring defaultSDRFileExt;
@@ -988,7 +991,7 @@ bool SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped, boo
     DirectX::ScratchImage tonemapped_sdr;
     if (_registry._SnippingTonemapsHDR && isHDR)
     {
-      if (SUCCEEDED (SKIV_Image_TonemapToSDR (*pImage, tonemapped_sdr)))
+      if (SUCCEEDED (SKIV_Image_TonemapToSDR (*pImage, tonemapped_sdr, SKIV_DesktopImage._max_display_nits)))
       {
         pImage = tonemapped_sdr.GetImage (0,0,0);
       }
@@ -1097,7 +1100,7 @@ bool SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped, boo
 }
 
 HRESULT
-SKIV_Image_TonemapToSDR (const DirectX::Image& image, DirectX::ScratchImage& final_sdr)
+SKIV_Image_TonemapToSDR (const DirectX::Image& image, DirectX::ScratchImage& final_sdr, float mastering_max_nits)
 {
   using namespace DirectX;
 
@@ -1168,7 +1171,8 @@ SKIV_Image_TonemapToSDR (const DirectX::Image& image, DirectX::ScratchImage& fin
     XMVECTOR maxTonemappedRGB = g_XMZero;
 
     // If it's too bright, don't bother trying to tonemap the full range...
-    static constexpr float _maxNitsToTonemap = 10000.0f/80.0f;
+    const float _maxNitsToTonemap = (mastering_max_nits != 0.0f ? mastering_max_nits
+                                                                : 1000.0f) / 80.0f;
 
     const float maxYInPQ =
       SKIV_Image_LinearToPQY (std::min (_maxNitsToTonemap, XMVectorGetY (maxLum))),
@@ -1184,7 +1188,7 @@ SKIV_Image_TonemapToSDR (const DirectX::Image& image, DirectX::ScratchImage& fin
 
         auto TonemapHDR = [](float L, float Lc, float Ld) -> float
         {
-          float a = (  Ld / pow (Lc, 2.0f));
+          float a = (  Ld / pow (Lc, 2.15f));
           float b = (1.0f / Ld);
 
           return
@@ -1392,7 +1396,7 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
 
         auto TonemapHDR = [](float L, float Lc, float Ld) -> float
         {
-          float a = (  Ld / pow (Lc, 2.0f));
+          float a = (  Ld / pow (Lc, 2.15f));
           float b = (1.0f / Ld);
 
           return
@@ -1641,8 +1645,6 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
                       wszImplicitFileName, nullptr, SK_WIC_SetMaximumQuality);
 }
 
-skiv_image_desktop_s SKIV_DesktopImage;
-
 HRESULT
 SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
 {
@@ -1670,6 +1672,7 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
 
   CComPtr <IDXGIOutput> pCursorOutput;
   DXGI_OUTPUT_DESC      out_desc = {};
+  DXGI_OUTPUT_DESC1     out_desc1= {};
 
   while (SUCCEEDED (pFactory->EnumAdapters (uiAdapter++, &pAdapter.p)))
   {
@@ -1679,6 +1682,13 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
     while (SUCCEEDED (pAdapter->EnumOutputs (uiOutput++, &pOutput)))
     {
       pOutput->GetDesc (&out_desc);
+
+      CComQIPtr <IDXGIOutput6>
+          pOutput6 (pOutput);
+      if (pOutput6.p != nullptr)
+      {
+        pOutput6->GetDesc1 (&out_desc1);
+      }
 
       if (out_desc.AttachedToDesktop && PtInRect (&out_desc.DesktopCoordinates, point))
       {
@@ -1860,6 +1870,7 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
   SKIV_DesktopImage._desktop_pos =
     ImVec2 (static_cast <float> (out_desc.DesktopCoordinates.left),
             static_cast <float> (out_desc.DesktopCoordinates.top));
+  SKIV_DesktopImage._max_display_nits = out_desc1.MaxLuminance;
 
   pDevCtx->Flush ();
 

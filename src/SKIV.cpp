@@ -2015,9 +2015,6 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
         auto _IgnoreWindow = [&](HWND hWnd) -> bool
         {
-          if (hWnd == SKIF_ImGui_hWnd)
-            return true;
-
           if (ignoredWindows.count (hWnd))
             return true;
 
@@ -2038,8 +2035,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
             ||    ! IsWindowVisible (hWnd)
             || (RealGetWindowClassW (hWnd, wszWindowTextBuffer, 64) && ignoreClassNames.count (wszWindowTextBuffer))
             ||     ! GetWindowTextW (hWnd, wszWindowTextBuffer, 64)
-          //|| (GetWindowLongPtr (hWnd, GWL_EXSTYLE) & WS_EX_TOOLWINDOW)
-          //|| (GetWindowLongPtr (hWnd, GWL_STYLE)   & WS_POPUP)  // Ignores some games, but allows some invisible stupid windows (UWP)
+            || (GetWindowLongPtr (hWnd, GWL_EXSTYLE) & WS_EX_TOOLWINDOW)
+            //|| (GetWindowLongPtr (hWnd, GWL_STYLE)   & WS_POPUP)  // Ignores some games, but allows some invisible stupid windows (UWP)
             )
           {
             ignoredWindows.insert (hWnd);
