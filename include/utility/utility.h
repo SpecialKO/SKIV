@@ -334,3 +334,21 @@ struct SKIF_RegistryWatch {
   HANDLE  _hEvent      = NULL; // If the CreateEvent function fails, the return value is NULL.
   UITab   _waitTab     = UITab_None;
 };
+
+class SKIV_ScopedThreadPriority
+{
+public:
+  SKIV_ScopedThreadPriority (int prio = THREAD_PRIORITY_TIME_CRITICAL) {
+    orig_prio_ =
+      GetThreadPriority (GetCurrentThread ());
+
+    SetThreadPriority (GetCurrentThread  (), prio);
+  };
+
+  ~SKIV_ScopedThreadPriority (void) {
+    SetThreadPriority (GetCurrentThread (), orig_prio_);
+  }
+
+private:
+  int orig_prio_;
+};

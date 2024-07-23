@@ -3115,7 +3115,6 @@ SKIF_UI_Tab_DrawViewer (void)
           DirectX::ScratchImage                                                captured_img;
           if (SUCCEEDED (DirectX::CaptureTexture (pDevice, pDevCtx, pCoverRes, captured_img)))
           {
-
             if (cover.is_hdr)
             {
               hr =

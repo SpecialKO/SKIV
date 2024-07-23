@@ -4082,6 +4082,7 @@ SKIF_Notify_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
     // When responding to the WM_RENDERFORMAT message, the clipboard owner
     //   must not call OpenClipboard before calling SetClipboardData.
     case WM_RENDERFORMAT:
+    {
       PLOG_VERBOSE << "WM_RENDERFORMAT";
 
       switch (wParam)
@@ -4100,6 +4101,28 @@ SKIF_Notify_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
       }
 
       return 0;
+    }
+
+    case WM_DESTROYCLIPBOARD:
+    {
+      PLOG_VERBOSE << "WM_DESTROYCLIPBOARD";
+
+      // Only clear the clipboard if we are not the owner of it
+      bool clearClipboard = (! OpenClipboard (hWnd));
+
+      if (! clearClipboard)
+      {
+        if (hWnd == GetClipboardOwner ( ))
+          clearClipboard = false;
+
+        CloseClipboard ( );
+      }
+
+      if (clearClipboard)
+        SKIV_ClipboardImage.clear();
+
+      return 0;
+    }
 
     case WM_COPYDATA:
     {

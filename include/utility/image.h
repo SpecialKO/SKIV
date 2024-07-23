@@ -129,10 +129,11 @@ HRESULT SKIV_Image_TonemapToSDR    (const DirectX::Image& image, DirectX::Scratc
 
 // Structs
 
-struct skiv_image_desktop_s {
+struct skiv_capture_cache_s {
   CComPtr <ID3D11ShaderResourceView> _srv        = nullptr;
   CComPtr <ID3D11Resource>           _res        = nullptr;
   bool                               _hdr_image  =   false;
+  bool                               _exported   =   false;
   ImVec2                             _resolution = ImVec2 (0.0f, 0.0f);
   DirectX::Rect                      _selection  = { }; // srcRect
 
@@ -182,7 +183,9 @@ struct skiv_image_desktop_s {
     _res        = nullptr;
     _srv        = nullptr;
     _hdr_image  =   false;
+    _exported   =   false;
     _resolution = ImVec2 (0.0f, 0.0f);
     _selection  = { };
+    PLOG_VERBOSE << "Cached clipboard data has been cleared!";
   }
 } extern SKIV_ClipboardImage;
