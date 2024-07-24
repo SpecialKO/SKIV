@@ -1919,6 +1919,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
               pDevCtx->ClearRenderTargetView (vd->RTView, fClearColor);
 
+#if 1
               vd->SwapChain->Present (0,0);
 
               // We must wait for the Present to complete if SKIV is using a
@@ -1932,10 +1933,11 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
                 if (hWait != 0)
                 {
-                  WaitForSingleObject (hWait, 5000UL);
+                  WaitForSingleObject (hWait, 500UL);
                   CloseHandle         (hWait);
                 }
               }
+#endif
             }
           }
         }
@@ -3514,7 +3516,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
           //auto timePre = SKIF_Util_timeGetTime1 ( );
 
           DWORD res =
-            WaitForMultipleObjectsEx (static_cast<DWORD>(vSwapchainWaitHandles.size()), vSwapchainWaitHandles.data(), true, bWaitTimeoutSwapChainsFallback ? dwDwmPeriod : 1000, true);
+            WaitForMultipleObjectsEx (static_cast<DWORD>(vSwapchainWaitHandles.size()), vSwapchainWaitHandles.data(), true, /*bWaitTimeoutSwapChainsFallback ? dwDwmPeriod :*/ 500, true);
 
           //OutputDebugString((L"[" + SKIF_Util_timeGetTimeAsWStr() + L"][#" + std::to_wstring(ImGui::GetFrameCount()) + L"] Maybe we'll be waiting? (handles: " + std::to_wstring(vSwapchainWaitHandles.size()) + L")\n").c_str());
           if (res == WAIT_TIMEOUT)

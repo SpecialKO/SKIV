@@ -214,7 +214,6 @@ struct SK_PNG_HDR_sBIT_Payload
   uint8_t red_bits   = 10; // 12 if source was scRGB (compression optimization)
   uint8_t green_bits = 10; // 12 if source was scRGB (compression optimization)
   uint8_t blue_bits  = 10; // 12 if source was scRGB (compression optimization)
-  uint8_t alpha_bits =  1; // Spec says it must be > 0... :shrug:
 };
 
 struct SK_PNG_HDR_mDCv_Payload
@@ -766,7 +765,7 @@ SKIV_PNG_MakeHDR ( const wchar_t*        wszFilePath,
       sbit_data = {
         static_cast <unsigned char> (DirectX::BitsPerColor (raw_img.format)),
         static_cast <unsigned char> (DirectX::BitsPerColor (raw_img.format)),
-        static_cast <unsigned char> (DirectX::BitsPerColor (raw_img.format)), 1
+        static_cast <unsigned char> (DirectX::BitsPerColor (raw_img.format))
       };
 
       // If using compression optimization, max bits = 12
@@ -991,7 +990,7 @@ bool SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped, boo
     DirectX::ScratchImage tonemapped_sdr;
     if (_registry._SnippingTonemapsHDR && isHDR)
     {
-      if (SUCCEEDED (SKIV_Image_TonemapToSDR (*pImage, tonemapped_sdr, SKIV_DesktopImage._max_display_nits)))
+      if (SUCCEEDED (SKIV_Image_TonemapToSDR (*pImage, tonemapped_sdr, SKIV_DesktopImage._max_display_nits, SKIV_DesktopImage._sdr_display_nits)))
       {
         pImage = tonemapped_sdr.GetImage (0,0,0);
       }
@@ -1099,17 +1098,47 @@ bool SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped, boo
   return false;
 }
 
-HRESULT
-SKIV_Image_TonemapToSDR (const DirectX::Image& image, DirectX::ScratchImage& final_sdr, float mastering_max_nits)
+class SKIV_ScopedThreadPriority
 {
+public:
+  SKIV_ScopedThreadPriority (int prio = THREAD_PRIORITY_TIME_CRITICAL) {
+    orig_prio_ =
+      GetThreadPriority (GetCurrentThread ());
+
+    orig_process_class_ =
+      GetPriorityClass (GetCurrentProcess ());
+
+    SetPriorityClass  (GetCurrentProcess (), HIGH_PRIORITY_CLASS);
+    SetThreadPriority (GetCurrentThread  (), prio);
+  };
+
+  ~SKIV_ScopedThreadPriority (void) {
+    SetPriorityClass  (GetCurrentProcess (), orig_process_class_);
+    SetThreadPriority (GetCurrentThread  (), orig_prio_);
+  }
+
+private:
+  int orig_prio_;
+  int orig_process_class_;
+};
+
+HRESULT
+SKIV_Image_TonemapToSDR (const DirectX::Image& image, DirectX::ScratchImage& final_sdr, float mastering_max_nits, float mastering_sdr_nits)
+{
+  SKIV_ScopedThreadPriority _;
+
+  DWORD dwStart = SKIF_Util_timeGetTime1 ();
+
+  PLOG_INFO << "SKIV_Image_TonemapToSDR ( ): Begin";
+
   using namespace DirectX;
 
   XMVECTOR maxLum = XMVectorZero          (),
            minLum = XMVectorSplatInfinity ();
 
-  double lumTotal    = 0.0;
-  double logLumTotal = 0.0;
-  double N           = 0.0;
+//double lumTotal    = 0.0;
+//double logLumTotal = 0.0;
+//double N           = 0.0;
 
   bool is_hdr = false;
 
@@ -1126,8 +1155,12 @@ SKIV_Image_TonemapToSDR (const DirectX::Image& image, DirectX::ScratchImage& fin
 
   if (is_hdr)
   {
+    bool needs_tonemapping = false;
+
     ScratchImage tonemapped_hdr;
     ScratchImage tonemapped_copy;
+
+    PLOG_INFO << "SKIV_Image_TonemapToSDR ( ): EvaluateImageBegin";
 
     EvaluateImage ( scrgb.GetImages     (),
                     scrgb.GetImageCount (),
@@ -1149,16 +1182,17 @@ SKIV_Image_TonemapToSDR (const DirectX::Image& image, DirectX::ScratchImage& fin
         minLum =
           XMVectorReplicate (XMVectorGetY (XMVectorMin (v, minLum)));
 
-        logLumTotal +=
-          log2 ( std::max (0.000001, static_cast <double> (std::max (0.0f, XMVectorGetY (v)))) );
-           lumTotal +=               static_cast <double> (std::max (0.0f, XMVectorGetY (v)));
-        ++N;
+        //logLumTotal +=
+        //  log2 ( std::max (0.000001, static_cast <double> (std::max (0.0f, XMVectorGetY (v)))) );
+        //   lumTotal +=               static_cast <double> (std::max (0.0f, XMVectorGetY (v)));
+        //++N;
 
         v = XMVectorMax (g_XMZero, v);
   
         pixels++;
       }
     });
+    PLOG_INFO << "SKIV_Image_TonemapToSDR ( ): EvaluateImageEnd";
 
     //SK_LOGi0 ( L"Min Luminance: %f, Max Luminance: %f", std::max (0.0f, XMVectorGetY (minLum)) * 80.0f,
     //                                                                    XMVectorGetY (maxLum)  * 80.0f );
@@ -1174,11 +1208,20 @@ SKIV_Image_TonemapToSDR (const DirectX::Image& image, DirectX::ScratchImage& fin
     const float _maxNitsToTonemap = (mastering_max_nits != 0.0f ? mastering_max_nits
                                                                 : 1000.0f) / 80.0f;
 
-    const float maxYInPQ =
-      SKIV_Image_LinearToPQY (std::min (_maxNitsToTonemap, XMVectorGetY (maxLum))),
-               SDR_YInPQ =
-      SKIV_Image_LinearToPQY (                                              1.25f);
+    const float SDR_YInPQ = // Use the user's desktop SDR white level
+      SKIV_Image_LinearToPQY (mastering_sdr_nits / 80.0f);
 
+    const float  maxYInPQ =
+      std::max (SDR_YInPQ,
+        SKIV_Image_LinearToPQY (std::min (_maxNitsToTonemap, XMVectorGetY (maxLum)))
+      );
+
+    if (XMVectorGetY (maxLum) > std::max (1.0f, mastering_sdr_nits / 80.0f))
+    {
+      needs_tonemapping = true;
+    }
+
+    PLOG_INFO << "SKIV_Image_TonemapToSDR ( ): TransformImageBegin";
     TransformImage ( scrgb.GetImages     (),
                      scrgb.GetImageCount (),
                      scrgb.GetMetadata   (),
@@ -1188,7 +1231,7 @@ SKIV_Image_TonemapToSDR (const DirectX::Image& image, DirectX::ScratchImage& fin
 
         auto TonemapHDR = [](float L, float Lc, float Ld) -> float
         {
-          float a = (  Ld / pow (Lc, 2.15f));
+          float a = (  Ld / pow (Lc, 2.0f));
           float b = (1.0f / Ld);
 
           return
@@ -1196,15 +1239,18 @@ SKIV_Image_TonemapToSDR (const DirectX::Image& image, DirectX::ScratchImage& fin
         };
 
         static const XMVECTOR vLumaRescale =
-          XMVectorReplicate (1.0f/1.6f);
+          XMVectorReplicate (1.0f/std::max (1.0f, mastering_sdr_nits / 80.0f)); // user's SDR white level
 
         for (size_t j = 0; j < width; ++j)
         {
           XMVECTOR value = inPixels [j];
 
           value =
-            XMVectorMultiply (value, vLumaRescale);
+           XMVectorMultiply (value, vLumaRescale);
 
+          if (needs_tonemapping)
+          {
+#if 1
           XMVECTOR ICtCp =
             SKIV_Image_Rec709toICtCp (value);
 
@@ -1237,15 +1283,34 @@ SKIV_Image_TonemapToSDR (const DirectX::Image& image, DirectX::ScratchImage& fin
 
           value =
             SKIV_Image_ICtCptoRec709 (ICtCp);
+#else
+          XMVECTOR xyz =
+            XMVector3Transform (value, c_from709toXYZ);
+
+          float Y_in  = std::max (XMVectorGetY (xyz), 0.0f);
+          float Y_out = 1.0f;
+
+          Y_out =
+            TonemapHDR (Y_in, maxY, SDR_Y);
+
+          if (Y_out + Y_in > 0.0f)
+          {
+            value =
+              XMVectorMultiply (XMVector3Normalize (value), XMVectorReplicate (Y_out));
+          }
+#endif
 
           maxTonemappedRGB =
             XMVectorMax (maxTonemappedRGB, XMVectorMax (value, g_XMZero));
+          }
 
           outPixels [j] = XMVectorSaturate (value);
         }
       }, tonemapped_hdr
     );
+    PLOG_INFO << "SKIV_Image_TonemapToSDR ( ): TransformImageEnd";
 
+#if 1
     float fMaxR = XMVectorGetX (maxTonemappedRGB);
     float fMaxG = XMVectorGetY (maxTonemappedRGB);
     float fMaxB = XMVectorGetZ (maxTonemappedRGB);
@@ -1274,6 +1339,7 @@ SKIV_Image_TonemapToSDR (const DirectX::Image& image, DirectX::ScratchImage& fin
       XMVECTOR vNormalizationScale =
         XMVectorReplicate (fRescale);
 
+      PLOG_INFO << "SKIV_Image_TonemapToSDR ( ): TransformImageBegin";
       TransformImage (*tonemapped_hdr.GetImages (),
         [&]( _Out_writes_ (width)       XMVECTOR* outPixels,
               _In_reads_  (width) const XMVECTOR* inPixels,
@@ -1291,16 +1357,25 @@ SKIV_Image_TonemapToSDR (const DirectX::Image& image, DirectX::ScratchImage& fin
           }
         }, tonemapped_copy
       );
+      PLOG_INFO << "SKIV_Image_TonemapToSDR ( ): TransformImageEnd";
 
       std::swap (tonemapped_hdr, tonemapped_copy);
     }
+#endif
 
+    PLOG_INFO << "SKIV_Image_TonemapToSDR ( ): ConvertBegin";
     if (FAILED (DirectX::Convert (*tonemapped_hdr.GetImages (), DXGI_FORMAT_B8G8R8X8_UNORM_SRGB,
                                   (TEX_FILTER_FLAGS)0x200000FF, 1.0f, final_sdr)))
     {
       return E_UNEXPECTED;
     }
+    PLOG_INFO << "SKIV_Image_TonemapToSDR ( ): ConvertEnd";
   }
+
+  DWORD dwEnd = SKIF_Util_timeGetTime1 ();
+
+  PLOG_INFO << "SKIV_Image_TonemapToSDR ( ): End";
+  PLOG_INFO << "Operation took " << dwEnd - dwStart << "ms";
 
   return S_OK;
 }
@@ -1382,10 +1457,13 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
     // If it's too bright, don't bother trying to tonemap the full range...
     static constexpr float _maxNitsToTonemap = 10000.0f/80.0f;
 
-    const float maxYInPQ =
-      SKIV_Image_LinearToPQY (std::min (_maxNitsToTonemap, XMVectorGetY (maxLum))),
-               SDR_YInPQ =
-      SKIV_Image_LinearToPQY (                                              1.25f);
+    const float SDR_YInPQ =
+      SKIV_Image_LinearToPQY (5.25f);
+
+    const float  maxYInPQ =
+      std::max (SDR_YInPQ,
+        SKIV_Image_LinearToPQY (std::min (_maxNitsToTonemap, XMVectorGetY (maxLum)))
+      );
 
     TransformImage ( scrgb.GetImages     (),
                      scrgb.GetImageCount (),
@@ -1396,7 +1474,7 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
 
         auto TonemapHDR = [](float L, float Lc, float Ld) -> float
         {
-          float a = (  Ld / pow (Lc, 2.15f));
+          float a = (  Ld / pow (Lc, 2.0f));
           float b = (1.0f / Ld);
 
           return
@@ -1404,7 +1482,7 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
         };
 
         static const XMVECTOR vLumaRescale =
-          XMVectorReplicate (1.0f/1.6f);
+          XMVectorReplicate (1.0f/1.3f);
 
         for (size_t j = 0; j < width; ++j)
         {
@@ -1871,6 +1949,7 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
     ImVec2 (static_cast <float> (out_desc.DesktopCoordinates.left),
             static_cast <float> (out_desc.DesktopCoordinates.top));
   SKIV_DesktopImage._max_display_nits = out_desc1.MaxLuminance;
+  SKIV_DesktopImage._sdr_display_nits = SKIF_Util_GetSDRWhiteLevel (out_desc1.Monitor);
 
   pDevCtx->Flush ();
 

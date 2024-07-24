@@ -125,7 +125,7 @@ HRESULT SKIV_Image_SaveToDisk_HDR  (const DirectX::Image& image, const wchar_t* 
 HRESULT SKIV_Image_SaveToDisk_SDR  (const DirectX::Image& image, const wchar_t* wszFileName, bool force_sRGB);
 HRESULT SKIV_Image_CaptureDesktop  (DirectX::ScratchImage& image, POINT pos, int flags = 0x0);
 void    SKIV_Image_CaptureRegion   (ImRect capture_area);
-HRESULT SKIV_Image_TonemapToSDR    (const DirectX::Image& image, DirectX::ScratchImage& final_sdr, float mastering_max_nits);
+HRESULT SKIV_Image_TonemapToSDR    (const DirectX::Image& image, DirectX::ScratchImage& final_sdr, float mastering_max_nits, float mastering_sdr_nits);
 
 // Structs
 
@@ -137,6 +137,7 @@ struct skiv_image_desktop_s {
   ImVec2                             _desktop_pos      = ImVec2 (0.0f, 0.0f);
   DXGI_MODE_ROTATION                 _rotation         = DXGI_MODE_ROTATION_UNSPECIFIED;
   float                              _max_display_nits = 1000.0f;
+  float                              _sdr_display_nits = 240.0f;
 
   bool process (void)
   {
