@@ -300,14 +300,20 @@ float4 main (PS_INPUT input) : SV_Target
     float dML = LinearToPQY ( display_max_luminance);
     float cML = LinearToPQY (min (hdr_max_luminance, _maxNitsToTonemap));
 
-    float3 ICtCp = Rec709toICtCp (out_col.rgb);
-    float  Y_in  = max (ICtCp.x, 0.0f);
-    float  Y_out = 1.0f;
-
     if (implied_tonemap_type != SKIV_TONEMAP_TYPE_NONE && (! isHDR))
     {   implied_tonemap_type  = SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY;
         dML = LinearToPQY (1.25f);
     }
+
+    else if (implied_tonemap_type == SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY)
+    {
+      out_col.rgb *=
+        1.0f / max (1.0f, 80.0f / (2.0f * sdr_reference_white));
+    }
+
+    float3 ICtCp = Rec709toICtCp (out_col.rgb);
+    float  Y_in  = max (ICtCp.x, 0.0f);
+    float  Y_out = 1.0f;
 
     switch (implied_tonemap_type)
     {

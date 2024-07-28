@@ -1136,10 +1136,6 @@ SKIV_Image_TonemapToSDR (const DirectX::Image& image, DirectX::ScratchImage& fin
   XMVECTOR maxLum = XMVectorZero          (),
            minLum = XMVectorSplatInfinity ();
 
-//double lumTotal    = 0.0;
-//double logLumTotal = 0.0;
-//double N           = 0.0;
-
   bool is_hdr = false;
 
   ScratchImage scrgb;
@@ -1182,23 +1178,12 @@ SKIV_Image_TonemapToSDR (const DirectX::Image& image, DirectX::ScratchImage& fin
         minLum =
           XMVectorReplicate (XMVectorGetY (XMVectorMin (v, minLum)));
 
-        //logLumTotal +=
-        //  log2 ( std::max (0.000001, static_cast <double> (std::max (0.0f, XMVectorGetY (v)))) );
-        //   lumTotal +=               static_cast <double> (std::max (0.0f, XMVectorGetY (v)));
-        //++N;
-
         v = XMVectorMax (g_XMZero, v);
   
         pixels++;
       }
     });
     PLOG_INFO << "SKIV_Image_TonemapToSDR ( ): EvaluateImageEnd";
-
-    //SK_LOGi0 ( L"Min Luminance: %f, Max Luminance: %f", std::max (0.0f, XMVectorGetY (minLum)) * 80.0f,
-    //                                                                    XMVectorGetY (maxLum)  * 80.0f );
-    //
-    //SK_LOGi0 ( L"Mean Luminance (arithmetic, geometric): %f, %f", 80.0 *      ( lumTotal    / N ),
-    //                                                              80.0 * exp2 ( logLumTotal / N ) );
 
     // After tonemapping, re-normalize the image to preserve peak white,
     //   this is important in cases where the maximum luminance was < 1000 nits
@@ -1383,16 +1368,71 @@ SKIV_Image_TonemapToSDR (const DirectX::Image& image, DirectX::ScratchImage& fin
 HRESULT
 SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileName, const bool force_sRGB)
 {
+  auto pDevice =
+    SKIF_D3D11_GetDevice ();
+
+  if (! pDevice)
+    return E_UNEXPECTED;
+
+  CComPtr <IDXGIFactory> pFactory;
+  CreateDXGIFactory (IID_IDXGIFactory, (void **)&pFactory.p);
+
+  if (! pFactory)
+    return E_NOTIMPL;
+
+  CComPtr <IDXGIAdapter> pAdapter;
+  UINT                  uiAdapter = 0;
+
+  RECT                             wnd_rect = {};
+  GetWindowRect (SKIF_ImGui_hWnd, &wnd_rect);
+
+  HMONITOR hMonitor =
+    MonitorFromWindow (SKIF_ImGui_hWnd, MONITOR_DEFAULTTONEAREST);
+
+  CComPtr <IDXGIOutput> pMonitorOutput;
+  DXGI_OUTPUT_DESC      out_desc = {};
+  DXGI_OUTPUT_DESC1     out_desc1= {};
+
+  while (SUCCEEDED (pFactory->EnumAdapters (uiAdapter++, &pAdapter.p)))
+  {
+    CComPtr <IDXGIOutput> pOutput;
+    UINT                 uiOutput = 0;
+
+    while (SUCCEEDED (pAdapter->EnumOutputs (uiOutput++, &pOutput)))
+    {
+      pOutput->GetDesc (&out_desc);
+
+      CComQIPtr <IDXGIOutput6>
+          pOutput6 (pOutput);
+      if (pOutput6.p != nullptr)
+      {
+        pOutput6->GetDesc1 (&out_desc1);
+      }
+
+      if (out_desc.AttachedToDesktop && out_desc.Monitor == hMonitor)
+      {
+        pMonitorOutput = pOutput;
+        break;
+      }
+
+      pOutput = nullptr;
+    }
+
+    if (pMonitorOutput != nullptr)
+      break;
+
+    pAdapter = nullptr;
+  }
+
+  float mastering_max_nits = out_desc1.MaxLuminance;
+  float mastering_sdr_nits = SKIF_Util_GetSDRWhiteLevel (out_desc1.Monitor);
+
   using namespace DirectX;
 
   const Image* pOutputImage = &image;
 
   XMVECTOR maxLum = XMVectorZero          (),
            minLum = XMVectorSplatInfinity ();
-
-  double lumTotal    = 0.0;
-  double logLumTotal = 0.0;
-  double N           = 0.0;
 
   bool is_hdr = false;
 
@@ -1433,37 +1473,37 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
         minLum =
           XMVectorReplicate (XMVectorGetY (XMVectorMin (v, minLum)));
 
-        logLumTotal +=
-          log2 ( std::max (0.000001, static_cast <double> (std::max (0.0f, XMVectorGetY (v)))) );
-           lumTotal +=               static_cast <double> (std::max (0.0f, XMVectorGetY (v)));
-        ++N;
-
         v = XMVectorMax (g_XMZero, v);
   
         pixels++;
       }
     });
 
-    //SK_LOGi0 ( L"Min Luminance: %f, Max Luminance: %f", std::max (0.0f, XMVectorGetY (minLum)) * 80.0f,
-    //                                                                    XMVectorGetY (maxLum)  * 80.0f );
-    //
-    //SK_LOGi0 ( L"Mean Luminance (arithmetic, geometric): %f, %f", 80.0 *      ( lumTotal    / N ),
-    //                                                              80.0 * exp2 ( logLumTotal / N ) );
-
     // After tonemapping, re-normalize the image to preserve peak white,
     //   this is important in cases where the maximum luminance was < 1000 nits
     XMVECTOR maxTonemappedRGB = g_XMZero;
 
     // If it's too bright, don't bother trying to tonemap the full range...
-    static constexpr float _maxNitsToTonemap = 10000.0f/80.0f;
+    const float _maxNitsToTonemap = (mastering_max_nits > 80.0f ? mastering_max_nits
+                                                                : 5000.0f) / 80.0f;
 
-    const float SDR_YInPQ =
-      SKIV_Image_LinearToPQY (5.25f);
+    mastering_sdr_nits =
+      std::max (mastering_sdr_nits, 240.0f);
+
+    const float SDR_YInPQ = // Use the user's desktop SDR white level
+      SKIV_Image_LinearToPQY (mastering_sdr_nits / 80.0f);
 
     const float  maxYInPQ =
       std::max (SDR_YInPQ,
         SKIV_Image_LinearToPQY (std::min (_maxNitsToTonemap, XMVectorGetY (maxLum)))
       );
+
+    bool needs_tonemapping = false;
+
+    if (XMVectorGetY (maxLum) > std::max (1.0f, 80.0f /*mastering_sdr_nits*/ / 80.0f))
+    {
+      needs_tonemapping = true;
+    }
 
     TransformImage ( scrgb.GetImages     (),
                      scrgb.GetImageCount (),
@@ -1482,15 +1522,17 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
         };
 
         static const XMVECTOR vLumaRescale =
-          XMVectorReplicate (1.0f/1.3f);
+          XMVectorReplicate (1.0f/std::max (1.0f, (mastering_sdr_nits*2.0f) / 80.0f)); // user's SDR white level
 
         for (size_t j = 0; j < width; ++j)
         {
           XMVECTOR value = inPixels [j];
 
           value =
-            XMVectorMultiply (value, vLumaRescale);
+           XMVectorMultiply (value, vLumaRescale);
 
+          if (needs_tonemapping)
+          {
           XMVECTOR ICtCp =
             SKIV_Image_Rec709toICtCp (value);
 
@@ -1526,6 +1568,7 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
 
           maxTonemappedRGB =
             XMVectorMax (maxTonemappedRGB, XMVectorMax (value, g_XMZero));
+          }
 
           outPixels [j] = XMVectorSaturate (value);
         }
@@ -1560,6 +1603,7 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
       XMVECTOR vNormalizationScale =
         XMVectorReplicate (fRescale);
 
+      PLOG_INFO << "SKIV_Image_TonemapToSDR ( ): TransformImageBegin";
       TransformImage (*tonemapped_hdr.GetImages (),
         [&]( _Out_writes_ (width)       XMVECTOR* outPixels,
               _In_reads_  (width) const XMVECTOR* inPixels,
