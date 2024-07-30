@@ -1431,8 +1431,9 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
 
   const Image* pOutputImage = &image;
 
-  XMVECTOR maxLum = XMVectorZero          (),
-           minLum = XMVectorSplatInfinity ();
+  XMVECTOR maxLum   = XMVectorZero          (),
+           minLum   = XMVectorSplatInfinity (),
+           maxICtCp = XMVectorZero          ();
 
   bool is_hdr = false;
 
@@ -1487,11 +1488,8 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
     const float _maxNitsToTonemap = (mastering_max_nits > 80.0f ? mastering_max_nits
                                                                 : 5000.0f) / 80.0f;
 
-    mastering_sdr_nits =
-      std::max (mastering_sdr_nits, 240.0f);
-
-    const float SDR_YInPQ = // Use the user's desktop SDR white level
-      SKIV_Image_LinearToPQY (mastering_sdr_nits / 80.0f);
+    const float SDR_YInPQ =
+      SKIV_Image_LinearToPQY (1.3f);
 
     const float  maxYInPQ =
       std::max (SDR_YInPQ,
@@ -1500,7 +1498,7 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
 
     bool needs_tonemapping = false;
 
-    if (XMVectorGetY (maxLum) > std::max (1.0f, 80.0f /*mastering_sdr_nits*/ / 80.0f))
+    if (XMVectorGetY (maxLum) > 1.0f)
     {
       needs_tonemapping = true;
     }
@@ -1521,15 +1519,9 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
             L * (1 + a * L) / (1 + b * L);
         };
 
-        static const XMVECTOR vLumaRescale =
-          XMVectorReplicate (1.0f/std::max (1.0f, (mastering_sdr_nits*2.0f) / 80.0f)); // user's SDR white level
-
         for (size_t j = 0; j < width; ++j)
         {
           XMVECTOR value = inPixels [j];
-
-          value =
-           XMVectorMultiply (value, vLumaRescale);
 
           if (needs_tonemapping)
           {
@@ -1544,6 +1536,8 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
 
           if (Y_out + Y_in > 0.0f)
           {
+            ICtCp.m128_f32 [0] = std::pow (XMVectorGetX (ICtCp), 1.18f);
+
             float I0      = XMVectorGetX (ICtCp);
             float I1      = 0.0f;
             float I_scale = 0.0f;
@@ -1579,12 +1573,13 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
     float fMaxG = XMVectorGetY (maxTonemappedRGB);
     float fMaxB = XMVectorGetZ (maxTonemappedRGB);
 
-    if (( fMaxR <  1.0f ||
-          fMaxG <  1.0f ||
-          fMaxB <  1.0f ) &&
-        ( fMaxR >= 1.0f ||
-          fMaxG >= 1.0f ||
-          fMaxB >= 1.0f ))
+    if (false)
+        //( fMaxR <  1.0f ||
+        //  fMaxG <  1.0f ||
+        //  fMaxB <  1.0f ) &&
+        //( fMaxR >= 1.0f ||
+        //  fMaxG >= 1.0f ||
+        //  fMaxB >= 1.0f ))
     {
 #ifdef GAMUT_MAPPING_WARNING
       SK_LOGi0 (
