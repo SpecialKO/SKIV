@@ -1485,11 +1485,10 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
     XMVECTOR maxTonemappedRGB = g_XMZero;
 
     // If it's too bright, don't bother trying to tonemap the full range...
-    const float _maxNitsToTonemap = (mastering_max_nits > 80.0f ? mastering_max_nits
-                                                                : 5000.0f) / 80.0f;
+    const float _maxNitsToTonemap = 125.0f;
 
     const float SDR_YInPQ =
-      SKIV_Image_LinearToPQY (1.3f);
+      SKIV_Image_LinearToPQY (1.5f);
 
     const float  maxYInPQ =
       std::max (SDR_YInPQ,
