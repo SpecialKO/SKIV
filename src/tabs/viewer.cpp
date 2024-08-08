@@ -98,6 +98,9 @@ float    SKIV_HDR_DisplayMaxLuminance   =   0.0f;
 float    SKIV_HDR_BrightnessScale       = 100.0f;
 int      SKIV_HDR_TonemapType           = SKIV_HDR_TonemapType::SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY;
 
+float    SKIV_HDR_MaxLuminanceP99       =  80.0f;
+bool     SKIV_HDR_UsePercentileMaxCLL   =  true;
+
 CComPtr <ID3D11UnorderedAccessView>
          SKIV_HDR_GamutCoverageUAV      = nullptr;
 CComPtr <ID3D11ShaderResourceView>
@@ -301,6 +304,7 @@ struct image_s {
     float max_nits     = 0.0f;
     float min_nits     = 0.0f;
     float avg_nits     = 0.0f;
+    float p99_nits     = 0.0f;
     bool  isHDR        = false;
   } light_info;
 
@@ -957,9 +961,14 @@ LoadLibraryTexture (image_s& image)
     assert (meta.format == DXGI_FORMAT_R16G16B16A16_FLOAT ||
             meta.format == DXGI_FORMAT_R32G32B32A32_FLOAT);
 
-    XMVECTOR vMaxCLL = g_XMZero;
-    XMVECTOR vMaxLum = g_XMZero;
-    XMVECTOR vMinLum = g_XMOne;
+    XMVECTOR vMaxCLL   = g_XMZero;
+    XMVECTOR vMaxLum   = g_XMZero;
+    XMVECTOR vMinLum   = g_XMOne;
+    XMVECTOR vMaxLum99 = g_XMZero;
+
+    static unsigned int
+                luminance_freq [100000];
+    ZeroMemory (luminance_freq, sizeof (unsigned int) * 100000);
 
     double dLumAccum = 0.0;
 
@@ -1076,6 +1085,46 @@ LoadLibraryTexture (image_s& image)
         (dScanlineLum / static_cast <float> (width));
     } );
 
+    float fLumRange =
+      XMVectorGetY (vMaxLum) -
+      XMVectorGetY (vMinLum);
+
+    EvaluateImage ( pImg->GetImages     (),
+                    pImg->GetImageCount (),
+                    pImg->GetMetadata   (),
+    [&](const XMVECTOR* pixels, size_t width, size_t y)
+    {
+      UNREFERENCED_PARAMETER(y);
+
+      for (size_t j = 0; j < width; ++j)
+      {
+        XMVECTOR v = *pixels++;
+
+        v =
+          XMVector3Transform (v, c_from709toXYZ);
+
+        luminance_freq [std::clamp ((int)std::roundf ((XMVectorGetY (v) - XMVectorGetY (vMinLum)) / (fLumRange / 100000.0f)), 0, 99999)]++;
+      }
+    });
+
+    double percent = 0.0;
+
+    for (auto i = 0 ; i < 100000; ++i)
+    {
+      percent +=
+        (100.0 * ((double)luminance_freq [i] / ((double)pImg->GetMetadata ().width * (double)pImg->GetMetadata ().height)));
+
+      if (percent >= 99.825)
+      {
+        PLOG_INFO << "99.825th percentile luminance: " << 80.0f * (XMVectorGetY (vMinLum) + (fLumRange * ((float)i / 100000.0f))) << " nits";
+
+        vMaxLum99 =
+          XMVectorReplicate (XMVectorGetY (vMinLum) + (fLumRange * ((float)i / 100000.0f)));
+
+        break;
+      }
+    }
+
     const float fMaxCLL =
       std::max ({
         XMVectorGetX (vMaxCLL),
@@ -1095,6 +1144,7 @@ LoadLibraryTexture (image_s& image)
     // In XYZ space, so Y=Luminance
     float fMaxLum = XMVectorGetY (vMaxLum);
     float fMinLum = XMVectorGetY (vMinLum);
+    float fP99Lum = XMVectorGetY (vMaxLum99);
 
     if (fMinLum < 0.0f)
     {
@@ -1103,10 +1153,15 @@ LoadLibraryTexture (image_s& image)
       fMinLum = 0.0f;
     }
 
+    // Use the maximum luminance if for some reason the percentile calc failed
+    if (fP99Lum <= 0.01f)
+        fP99Lum  = fMaxLum;
+
     image.light_info.max_cll      = fMaxCLL;
     image.light_info.max_cll_name = cMaxChannel;
     image.light_info.max_nits     = std::max (0.0f, fMaxLum * 80.0f); // scRGB
     image.light_info.min_nits     = std::max (0.0f, fMinLum * 80.0f); // scRGB
+    image.light_info.p99_nits     = std::max (0.0f, fP99Lum * 80.0f); // scRGB
 
     // We use the sum of averages per-scanline to help avoid overflow
     image.light_info.avg_nits     = static_cast <float> (80.0 *
@@ -1895,8 +1950,9 @@ SKIF_UI_Tab_DrawViewer (void)
     SKIV_HDR_GamutCoverageSRV = nullptr;
   }
 
-  SKIV_HDR_MaxCLL       = cover.light_info.max_cll;
-  SKIV_HDR_MaxLuminance = cover.light_info.max_nits;
+  SKIV_HDR_MaxCLL          = cover.light_info.max_cll;
+  SKIV_HDR_MaxLuminanceP99 = cover.light_info.p99_nits;
+  SKIV_HDR_MaxLuminance    = cover.light_info.max_nits;
 
   if (sizeCover.x < ImGui::GetContentRegionAvail().x)
     ImGui::SetCursorPosX (ImFloor ((ImGui::GetContentRegionAvail().x - sizeCover.x) * 0.5f));
@@ -2530,6 +2586,14 @@ SKIF_UI_Tab_DrawViewer (void)
               ImGui::BulletText      ("May expose details you were not intended to see (i.e. calibration test patterns).");
               ImGui::PopStyleColor   ( );
               ImGui::EndTooltip      ( );
+            }
+
+            if (SKIV_HDR_TonemapType == SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY)
+            {
+              ImGui::Checkbox ("Use 99th Percentile Luminance as MaxCLL", &SKIV_HDR_UsePercentileMaxCLL);
+
+              if (ImGui::IsItemHovered ())
+                ImGui::SetTooltip ("Increase brightness on scenes with very bright localized peak highlights");
             }
           }
         }

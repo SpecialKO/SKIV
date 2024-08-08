@@ -600,16 +600,24 @@ void ImGui_ImplDX11_RenderDrawData (ImDrawData *draw_data)
     extern float SKIV_HDR_BrightnessScale;
     extern int   SKIV_HDR_TonemapType;
 
+    extern float SKIV_HDR_MaxLuminanceP99;
+    extern bool  SKIV_HDR_UsePercentileMaxCLL;
+
+    float MaxContentLuminance =
+      SKIV_HDR_UsePercentileMaxCLL ?
+          SKIV_HDR_MaxLuminanceP99 :
+          SKIV_HDR_MaxLuminance;
+
     if (SKIV_HDR_DisplayMaxLuminance != display_max_luminance)
       display_max_luminance = SKIV_HDR_DisplayMaxLuminance;
 
     *pix_constant_buffer = PIXEL_CONSTANT_BUFFER_DX11 ();
     pix_constant_buffer->font_dims [0]               = (float)ImGui::GetIO ().Fonts->TexWidth;
     pix_constant_buffer->font_dims [1]               = (float)ImGui::GetIO ().Fonts->TexHeight;
-    pix_constant_buffer->hdr_max_luminance           = SKIV_HDR_MaxLuminance    /  80.0f;
+    pix_constant_buffer->hdr_max_luminance           = MaxContentLuminance      /  80.0f;
     pix_constant_buffer->display_max_luminance       = display_max_luminance    /  80.0f;
     pix_constant_buffer->brightness                  = SKIV_HDR_BrightnessScale / 100.0f;
-    if ((SKIV_HDR_BrightnessScale / 100.0f) * SKIV_HDR_MaxLuminance > display_max_luminance)
+    if ((SKIV_HDR_BrightnessScale / 100.0f) * MaxContentLuminance > display_max_luminance)
       pix_constant_buffer->tonemap_type              = SKIV_HDR_TonemapType;
     else
       pix_constant_buffer->tonemap_type              = SKIV_HDR_TonemapType::SKIV_TONEMAP_TYPE_NONE;
@@ -647,10 +655,10 @@ void ImGui_ImplDX11_RenderDrawData (ImDrawData *draw_data)
     *pix_constant_buffer = PIXEL_CONSTANT_BUFFER_DX11 ();
     pix_constant_buffer->font_dims [0]               = 0.0f;
     pix_constant_buffer->font_dims [1]               = 0.0f;
-    pix_constant_buffer->hdr_max_luminance           = SKIV_HDR_MaxLuminance    /  80.0f;
+    pix_constant_buffer->hdr_max_luminance           = MaxContentLuminance      /  80.0f;
     pix_constant_buffer->display_max_luminance       = display_max_luminance    /  80.0f;
     pix_constant_buffer->brightness                  = SKIV_HDR_BrightnessScale / 100.0f;
-    if ((SKIV_HDR_BrightnessScale / 100.0f) * SKIV_HDR_MaxLuminance > display_max_luminance)
+    if ((SKIV_HDR_BrightnessScale / 100.0f) * MaxContentLuminance > display_max_luminance)
       pix_constant_buffer->tonemap_type              = SKIV_HDR_TonemapType;
     else
       pix_constant_buffer->tonemap_type              = SKIV_HDR_TonemapType::SKIV_TONEMAP_TYPE_NONE;
