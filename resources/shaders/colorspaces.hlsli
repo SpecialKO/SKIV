@@ -93,48 +93,6 @@ float Luma (float3 color)
     dot (color, float3 (0.299f, 0.587f, 0.114f));
 }
 
-float3 ApplyREC2084Curve (float3 L, float maxLuminance)
-{
-  float m1 = 2610.0 / 4096.0 / 4;
-  float m2 = 2523.0 / 4096.0 * 128;
-  float c1 = 3424.0 / 4096.0;
-  float c2 = 2413.0 / 4096.0 * 32;
-  float c3 = 2392.0 / 4096.0 * 32;
-
-  float maxLuminanceScale = maxLuminance / 10000.0f;
-  L *= maxLuminanceScale;
-
-  float3 Lp = pow (L, m1);
-
-  return pow ((c1 + c2 * Lp) / (1 + c3 * Lp), m2);
-}
-
-float3 RemoveREC2084Curve (float3 N)
-{
-  float  m1 = 2610.0 / 4096.0 / 4;
-  float  m2 = 2523.0 / 4096.0 * 128;
-  float  c1 = 3424.0 / 4096.0;
-  float  c2 = 2413.0 / 4096.0 * 32;
-  float  c3 = 2392.0 / 4096.0 * 32;
-  float3 Np = pow (N, 1 / m2);
-
-  return
-    pow (max (Np - c1, 0) / (c2 - c3 * Np), 1 / m1);
-}
-
-// Apply the ST.2084 curve to normalized linear values and outputs normalized non-linear values
-// pq_inverse_eotf
-float3 LinearToST2084 (float3 normalizedLinearValue)
-{
-  return pow((0.8359375f + 18.8515625f * pow(abs(normalizedLinearValue), 0.1593017578f)) / (1.0f + 18.6875f * pow(abs(normalizedLinearValue), 0.1593017578f)), 78.84375f);
-}
-
-// ST.2084 to linear, resulting in a linear normalized value
-float3 ST2084ToLinear (float3 ST2084)
-{
-  return pow(max(pow(abs(ST2084), 1.0f / 78.84375f) - 0.8359375f, 0.0f) / (18.8515625f - 18.6875f * pow(abs(ST2084), 1.0f / 78.84375f)), 1.0f / 0.1593017578f);
-}
-
 float3 Rec709toRec2020 (float3 linearRec709)
 {
   static const float3x3 ConvMat =
@@ -360,6 +318,7 @@ static const ParamsPQ PQ =
 float3 LinearToPQ (float3 x, float maxPQValue)
 {
   x =
+           sign ( x / maxPQValue) *
     PositivePow ( x / maxPQValue,
                          PQ.N );
  
@@ -368,11 +327,13 @@ float3 LinearToPQ (float3 x, float maxPQValue)
       (1.0 + PQ.C3 * x);
 
   return
-    PositivePow (nd, PQ.M);
+    sign (nd) * PositivePow (nd, PQ.M);
 }
 
 float3 PQToLinear (float3 x, float maxPQValue)
 {
+  float3 sign_x = sign(x);
+  
   x =
     PositivePow (x, PQ.rcpM);
 
@@ -381,7 +342,7 @@ float3 PQToLinear (float3 x, float maxPQValue)
             (PQ.C2 - (PQ.C3 * x));
 
   return
-    PositivePow (nd, PQ.rcpN) * maxPQValue;
+    sign_x * PositivePow (nd, PQ.rcpN) * maxPQValue;
 }
 
 float3 Rec709toICtCp (float3 c)
@@ -433,7 +394,7 @@ float LinearToPQY (float x, float maxPQValue)
       (1.0 + PQ.C3 * x);
 
   return
-    Clamp_scRGB (PositivePow (nd, PQ.M));
+    PositivePow (nd, PQ.M);
 }
 
 float LinearToPQY (float x)

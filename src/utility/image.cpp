@@ -22,11 +22,23 @@ extern std::wstring defaultSDRFileExt;
 extern CComPtr <ID3D11Device> SKIF_D3D11_GetDevice (bool bWait = true);
 
 DirectX::XMVECTOR
+XMVectorSign (DirectX::XMVECTOR v)
+{
+using namespace DirectX;
+
+  XMVECTOR Control = XMVectorLess   (v, g_XMZero);
+  XMVECTOR Sign    = XMVectorSelect (g_XMOne, g_XMNegativeOne, Control);
+
+  return Sign;
+}
+
+DirectX::XMVECTOR
 SKIV_Image_PQToLinear (DirectX::XMVECTOR N, DirectX::XMVECTOR maxPQValue)
 {
 using namespace DirectX;
 
   XMVECTOR ret;
+  XMVECTOR sign_N = XMVectorSign (N);
 
   ret =
     XMVectorPow (XMVectorAbs (N), XMVectorDivide (g_XMOne, PQ.M));
@@ -40,7 +52,7 @@ using namespace DirectX;
             XMVectorMultiply (PQ.C3, ret)));
 
   ret =
-    XMVectorMultiply (XMVectorPow (XMVectorAbs (nd), XMVectorDivide (g_XMOne, PQ.N)), maxPQValue);
+    XMVectorMultiply (sign_N, XMVectorMultiply (XMVectorPow (XMVectorAbs (nd), XMVectorDivide (g_XMOne, PQ.N)), maxPQValue));
 
   return ret;
 };
@@ -53,7 +65,7 @@ SKIV_Image_LinearToPQ (DirectX::XMVECTOR N, DirectX::XMVECTOR maxPQValue)
   XMVECTOR ret;
 
   ret =
-    XMVectorPow (XMVectorAbs (XMVectorDivide (N, maxPQValue)), PQ.N);
+    XMVectorMultiply (XMVectorSign (XMVectorDivide (N, maxPQValue)), XMVectorPow (XMVectorAbs (XMVectorDivide (N, maxPQValue)), PQ.N));
 
   XMVECTOR nd =
     XMVectorDivide (
@@ -62,7 +74,7 @@ SKIV_Image_LinearToPQ (DirectX::XMVECTOR N, DirectX::XMVECTOR maxPQValue)
     );
 
   return
-    XMVectorPow (XMVectorAbs (nd), PQ.M);
+    XMVectorMultiply (XMVectorSign (nd), XMVectorPow (XMVectorAbs (nd), PQ.M));
 };
 
 float
@@ -1121,6 +1133,134 @@ private:
   int orig_prio_;
   int orig_process_class_;
 };
+
+#include <iostream>
+#include <vector>
+#include <cmath>
+
+void
+scRGB_to_ICtCp (float r, float g, float b, float& I, float& Ct, float& Cp)
+{
+  using namespace DirectX;
+
+  XMVECTOR scRGB =
+    XMVectorSet (r,g,b,1.0f);
+
+  XMVECTOR ICtCp =
+    SKIV_Image_Rec709toICtCp (scRGB);
+
+  I  = XMVectorGetX (ICtCp);
+  Ct = XMVectorGetY (ICtCp);
+  Cp = XMVectorGetZ (ICtCp);
+}
+
+void
+ICtCp_to_scRGB (float I, float Ct, float Cp, float& r, float& g, float& b)
+{
+  using namespace DirectX;
+
+  XMVECTOR ICtCp =
+    XMVectorSet (I,Ct,Cp,1.0f);
+
+  XMVECTOR scRGB =
+    SKIV_Image_ICtCptoRec709 (ICtCp);
+
+  r = XMVectorGetX (scRGB);
+  g = XMVectorGetY (scRGB);
+  b = XMVectorGetZ (scRGB);
+}
+
+// Function to clamp values between 0 and 63
+int clamp(int value, int min, int max) {
+    return std::max(min, std::min(value, max));
+}
+
+// Example function to look up a value from the LUT
+std::array<float, 3> lookupLUT(const std::vector<std::vector<std::vector<std::array<float, 3>>>>& lut, 
+                               float r, float g, float b) {
+
+}
+
+DirectX::XMVECTOR
+SKIV_Image_LookupLUT (std::vector <std::vector <std::vector <float [3]>>>& lut, DirectX::XMVECTOR& v)
+{
+  using namespace DirectX;
+
+  const int LUT_SIZE = 64;
+
+  // Ensure input values are between 0 and 1
+  float r = std::max (0.0f, std::min (1.0f, XMVectorGetX (v)));
+  float g = std::max (0.0f, std::min (1.0f, XMVectorGetY (v)));
+  float b = std::max (0.0f, std::min (1.0f, XMVectorGetZ (v)));
+
+  // Convert normalized values to indices
+  int ri = static_cast<int>(r * (LUT_SIZE - 1));
+  int gi = static_cast<int>(g * (LUT_SIZE - 1));
+  int bi = static_cast<int>(b * (LUT_SIZE - 1));
+
+  // Clamp indices to be within the LUT bounds
+  ri = clamp (ri, 0, LUT_SIZE - 1);
+  gi = clamp (gi, 0, LUT_SIZE - 1);
+  bi = clamp (bi, 0, LUT_SIZE - 1);
+
+  // Retrieve the value from the LUT
+  return
+    XMVectorSet (lut [ri][gi][bi][0], lut [ri][gi][bi][1], lut [ri][gi][bi][2], 1.0f);
+}
+
+void
+SKIV_Image_GenerateLUT_scRGB_to_ICtCp (std::vector <std::vector <std::vector <float [3]>>>& lut)
+{
+  const int   LUT_SIZE = 64;
+  const float MAX_VAL  = 1.0f; // Assuming values are normalized between 0 and 1
+
+  for (int r = 0; r < LUT_SIZE; ++r)
+  {
+    for (int g = 0; g < LUT_SIZE; ++g)
+    {
+      for (int b = 0; b < LUT_SIZE; ++b)
+      {
+        float sr = static_cast <float> (r) / (LUT_SIZE - 1);
+        float sg = static_cast <float> (g) / (LUT_SIZE - 1);
+        float sb = static_cast <float> (b) / (LUT_SIZE - 1);
+
+        float I, Ct, Cp;
+        scRGB_to_ICtCp (sr, sg, sb, I, Ct, Cp);
+
+        lut[r][g][b][0] = I;
+        lut[r][g][b][1] = Ct;
+        lut[r][g][b][2] = Cp;
+      }
+    }
+  }
+}
+
+void
+SKIV_Image_GenerateLUT_ICtCp_to_scRGB (std::vector <std::vector <std::vector <float [3]>>>& lut)
+{
+  const int   LUT_SIZE = 64;
+  const float MAX_VAL  = 1.0f; // Assuming values are normalized between 0 and 1
+
+  for (int r = 0; r < LUT_SIZE; ++r)
+  {
+    for (int g = 0; g < LUT_SIZE; ++g)
+    {
+      for (int b = 0; b < LUT_SIZE; ++b)
+      {
+        float I  = static_cast <float> (r) / (LUT_SIZE - 1);
+        float Ct = static_cast <float> (g) / (LUT_SIZE - 1);
+        float Cp = static_cast <float> (b) / (LUT_SIZE - 1);
+
+        float sr, sg, sb;
+        ICtCp_to_scRGB (I, Ct, Cp, sr, sg, sb);
+
+        lut[r][g][b][0] = sr;
+        lut[r][g][b][1] = sg;
+        lut[r][g][b][2] = sb;
+      }
+    }
+  }
+}
 
 HRESULT
 SKIV_Image_TonemapToSDR (const DirectX::Image& image, DirectX::ScratchImage& final_sdr, float mastering_max_nits, float mastering_sdr_nits)
