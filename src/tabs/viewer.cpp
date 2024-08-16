@@ -1107,11 +1107,11 @@ LoadLibraryTexture (image_s& image)
       }
     });
 
-    double percent = 0.0;
+    double percent = 100.0;
 
-    for (auto i = 0 ; i < 100000; ++i)
+    for (auto i = 99999; i >= 0; --i)
     {
-      percent +=
+      percent -=
         (100.0 * ((double)luminance_freq [i] / ((double)pImg->GetMetadata ().width * (double)pImg->GetMetadata ().height)));
 
       if (percent >= 99.825)
