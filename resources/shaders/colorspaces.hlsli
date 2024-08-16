@@ -359,29 +359,33 @@ static const ParamsPQ PQ =
 
 float3 LinearToPQ (float3 x, float maxPQValue)
 {
+  float3 sign_bits = sign (x);
+  
   x =
-    PositivePow ( x / maxPQValue,
-                         PQ.N );
+    pow ( abs (x) / maxPQValue,
+                       PQ.N );
  
   float3 nd =
     (PQ.C1 + PQ.C2 * x) /
       (1.0 + PQ.C3 * x);
 
   return
-    PositivePow (nd, PQ.M);
+    sign_bits * pow (nd, PQ.M);
 }
 
 float3 PQToLinear (float3 x, float maxPQValue)
 {
+  float3 sign_bits = sign (x);
+  
   x =
-    PositivePow (x, PQ.rcpM);
+    pow (abs (x), PQ.rcpM);
 
   float3 nd =
     max (x - PQ.C1, 0.0) /
             (PQ.C2 - (PQ.C3 * x));
 
   return
-    PositivePow (nd, PQ.rcpN) * maxPQValue;
+    sign_bits * pow (nd, PQ.rcpN) * maxPQValue;
 }
 
 float3 Rec709toICtCp (float3 c)
@@ -424,16 +428,19 @@ float3 ICtCptoRec709 (float3 c)
 
 float LinearToPQY (float x, float maxPQValue)
 {
+  float sign_bit =
+    sign (x);
+  
   x =
-    PositivePow ( x / maxPQValue,
-                         PQ.N );
+    pow ( abs (x) / maxPQValue,
+                       PQ.N );
   
   float nd =
     (PQ.C1 + PQ.C2 * x) /
       (1.0 + PQ.C3 * x);
 
   return
-    Clamp_scRGB (PositivePow (nd, PQ.M));
+    sign_bit * Clamp_scRGB (pow (nd, PQ.M));
 }
 
 float LinearToPQY (float x)

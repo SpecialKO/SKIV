@@ -28,6 +28,11 @@ using namespace DirectX;
 
   XMVECTOR ret;
 
+  XMVECTOR sign =
+    XMVectorSet (XMVectorGetX (N) < 0.0f ? -1.0f : 1.0f,
+                 XMVectorGetY (N) < 0.0f ? -1.0f : 1.0f,
+                 XMVectorGetZ (N) < 0.0f ? -1.0f : 1.0f, 1.0f);
+
   ret =
     XMVectorPow (XMVectorAbs (N), XMVectorDivide (g_XMOne, PQ.M));
 
@@ -40,7 +45,7 @@ using namespace DirectX;
             XMVectorMultiply (PQ.C3, ret)));
 
   ret =
-    XMVectorMultiply (XMVectorPow (XMVectorAbs (nd), XMVectorDivide (g_XMOne, PQ.N)), maxPQValue);
+    XMVectorMultiply (XMVectorMultiply (XMVectorPow (nd, XMVectorDivide (g_XMOne, PQ.N)), maxPQValue), sign);
 
   return ret;
 };
@@ -51,9 +56,13 @@ SKIV_Image_LinearToPQ (DirectX::XMVECTOR N, DirectX::XMVECTOR maxPQValue)
   using namespace DirectX;
 
   XMVECTOR ret;
+  XMVECTOR sign =
+    XMVectorSet (XMVectorGetX (N) < 0.0f ? -1.0f : 1.0f,
+                 XMVectorGetY (N) < 0.0f ? -1.0f : 1.0f,
+                 XMVectorGetZ (N) < 0.0f ? -1.0f : 1.0f, 1.0f);
 
   ret =
-    XMVectorPow (XMVectorAbs (XMVectorDivide (N, maxPQValue)), PQ.N);
+    XMVectorPow (XMVectorDivide (XMVectorAbs (N), maxPQValue), PQ.N);
 
   XMVECTOR nd =
     XMVectorDivide (
@@ -62,7 +71,7 @@ SKIV_Image_LinearToPQ (DirectX::XMVECTOR N, DirectX::XMVECTOR maxPQValue)
     );
 
   return
-    XMVectorPow (XMVectorAbs (nd), PQ.M);
+    XMVectorMultiply (XMVectorPow (nd, PQ.M), sign);
 };
 
 float
@@ -590,7 +599,7 @@ SKIV_HDR_CalculateContentLightInfo (const DirectX::Image& img)
       percent -=
         (100.0 * ((double)luminance_freq [i] / ((double)img.width * (double)img.height)));
 
-      if (percent <= 99.95)
+      if (percent <= 99.9)
       {
         //PLOG_INFO << "99.95th percentile luminance: " << 80.0f * (XMVectorGetY (minLum) + (fLumRange * ((float)i / 100000.0f))) << " nits";
 
@@ -1459,6 +1468,8 @@ SKIV_Image_TonemapToSDR (const DirectX::Image& image, DirectX::ScratchImage& fin
 
           if (Y_out + Y_in > 0.0f)
           {
+            ICtCp.m128_f32 [0] = std::pow (Y_in, 1.18f);
+
             float I0      = XMVectorGetX (ICtCp);
             float I1      = 0.0f;
             float I_scale = 0.0f;
@@ -1723,9 +1734,9 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
       percent -=
         (100.0 * ((double)luminance_freq [i] / ((double)scrgb.GetMetadata ().width * (double)scrgb.GetMetadata ().height)));
 
-      if (percent <= 99.95)
+      if (percent <= 99.9)
       {
-        PLOG_INFO << "99.95th percentile luminance: " << 80.0f * (XMVectorGetY (minLum) + (fLumRange * ((float)i / 100000.0f))) << " nits";
+        PLOG_INFO << "99.9th percentile luminance: " << 80.0f * (XMVectorGetY (minLum) + (fLumRange * ((float)i / 100000.0f))) << " nits";
 
         maxLum =
           XMVectorReplicate (XMVectorGetY (minLum) + (fLumRange * ((float)i / 100000.0f)));
@@ -1794,14 +1805,14 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
           if (Y_out + Y_in > 0.0f)
           {
             ICtCp.m128_f32 [0] =
-              std::pow (Y_in, 1.19f);
+              std::pow (Y_in, 1.18f);
 
             float I0      = XMVectorGetX (ICtCp);
             float I1      = 0.0f;
             float I_scale = 0.0f;
 
             ICtCp.m128_f32 [0] *=
-              std::pow (std::max ((Y_out / Y_in), 0.0f), 1.0f/1.19f);
+              std::max ((Y_out / Y_in), 0.0f);
 
             I1 = XMVectorGetX (ICtCp);
 
