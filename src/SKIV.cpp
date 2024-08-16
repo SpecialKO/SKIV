@@ -2197,7 +2197,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
           ImGui::Separator         ();
           ImGui::PopStyleColor     ();
           ImGui::TreePush          ("");
-          ImGui::RadioButton       ("Capture HDR PNG",    &_registry._SnippingTonemapsHDR, 0);
+          ImGui::RadioButton       ("Keep HDR",       &_registry._SnippingTonemapsHDR, 0);
           if (ImGui::IsItemHovered ())
           {
             ImGui::BeginTooltip    ();
@@ -2208,13 +2208,23 @@ wWinMain ( _In_     HINSTANCE hInstance,
             ImGui::EndTooltip      ();
           }
           ImGui::SameLine          ();
-          ImGui::RadioButton       ("Tonemap HDR to SDR", &_registry._SnippingTonemapsHDR, 1);
+          ImGui::RadioButton       ("Tone-map to SDR", &_registry._SnippingTonemapsHDR, 1);
           if (ImGui::IsItemHovered ())
           {
             ImGui::BeginTooltip    ();
-            ImGui::TextUnformatted ("High Quality HDR to SDR Tonemap");
+            ImGui::TextUnformatted ("High Quality HDR to SDR Tone Map");
             ImGui::Separator       ();
             ImGui::BulletText      ("Stored in the clipboard as a Bitmap for maximum compatibility with SDR software.");
+            ImGui::EndTooltip      ();
+          }
+          ImGui::SameLine          ();
+          ImGui::RadioButton       ("Auto",           &_registry._SnippingTonemapsHDR, 2);
+          if (ImGui::IsItemHovered ())
+          {
+            ImGui::BeginTooltip    ();
+            ImGui::TextUnformatted ("Use SDR for Snips at or Below Windows SDR Desktop Luminance");
+            ImGui::Separator       ();
+            ImGui::BulletText      ("For HDR range content, captures an unaltered HDR image");
             ImGui::EndTooltip      ();
           }
           ImGui::TreePop           ();

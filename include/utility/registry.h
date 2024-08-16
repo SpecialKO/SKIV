@@ -435,7 +435,7 @@ struct SKIF_RegistrySettings {
   bool _SnippingMode                = false;
   bool _SnippingModeExit            = false;
   bool _SnippingModeTempHDR         = false;
-  int  _SnippingTonemapsHDR         = 0;
+  int  _SnippingTonemapsHDR         = 2;
 
   // Keybindings
 

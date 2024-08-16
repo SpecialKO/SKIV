@@ -22,23 +22,11 @@ extern std::wstring defaultSDRFileExt;
 extern CComPtr <ID3D11Device> SKIF_D3D11_GetDevice (bool bWait = true);
 
 DirectX::XMVECTOR
-XMVectorSign (DirectX::XMVECTOR v)
-{
-using namespace DirectX;
-
-  XMVECTOR Control = XMVectorLess   (v, g_XMZero);
-  XMVECTOR Sign    = XMVectorSelect (g_XMOne, g_XMNegativeOne, Control);
-
-  return Sign;
-}
-
-DirectX::XMVECTOR
 SKIV_Image_PQToLinear (DirectX::XMVECTOR N, DirectX::XMVECTOR maxPQValue)
 {
 using namespace DirectX;
 
   XMVECTOR ret;
-  XMVECTOR sign_N = XMVectorSign (N);
 
   ret =
     XMVectorPow (XMVectorAbs (N), XMVectorDivide (g_XMOne, PQ.M));
@@ -52,7 +40,7 @@ using namespace DirectX;
             XMVectorMultiply (PQ.C3, ret)));
 
   ret =
-    XMVectorMultiply (sign_N, XMVectorMultiply (XMVectorPow (XMVectorAbs (nd), XMVectorDivide (g_XMOne, PQ.N)), maxPQValue));
+    XMVectorMultiply (XMVectorPow (XMVectorAbs (nd), XMVectorDivide (g_XMOne, PQ.N)), maxPQValue);
 
   return ret;
 };
@@ -65,7 +53,7 @@ SKIV_Image_LinearToPQ (DirectX::XMVECTOR N, DirectX::XMVECTOR maxPQValue)
   XMVECTOR ret;
 
   ret =
-    XMVectorMultiply (XMVectorSign (XMVectorDivide (N, maxPQValue)), XMVectorPow (XMVectorAbs (XMVectorDivide (N, maxPQValue)), PQ.N));
+    XMVectorPow (XMVectorAbs (XMVectorDivide (N, maxPQValue)), PQ.N);
 
   XMVECTOR nd =
     XMVectorDivide (
@@ -74,7 +62,7 @@ SKIV_Image_LinearToPQ (DirectX::XMVECTOR N, DirectX::XMVECTOR maxPQValue)
     );
 
   return
-    XMVectorMultiply (XMVectorSign (nd), XMVectorPow (XMVectorAbs (nd), PQ.M));
+    XMVectorPow (XMVectorAbs (nd), PQ.M);
 };
 
 float
@@ -965,6 +953,8 @@ SKIV_PNG_CopyToClipboard (const DirectX::Image& image, const void *pData, size_t
 
 bool SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped, bool isHDR)
 {
+using namespace DirectX;
+
   if (pImage == nullptr)
     return false;
 
@@ -980,7 +970,43 @@ bool SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped, boo
   static SKIF_RegistrySettings& _registry =
     SKIF_RegistrySettings::GetInstance ( );
 
-  if (isHDR && (! _registry._SnippingTonemapsHDR))
+  int snipping_tonemap_mode = _registry._SnippingTonemapsHDR;
+
+  if (_registry._SnippingTonemapsHDR == 2)
+  {
+    XMVECTOR maxLum = XMVectorZero ();
+
+    EvaluateImage ( *pImage,
+    [&](const XMVECTOR* pixels, size_t width, size_t y)
+    {
+      UNREFERENCED_PARAMETER(y);
+
+      for (size_t j = 0; j < width; ++j)
+      {
+        XMVECTOR v = *pixels++;
+
+        v =
+          XMVector3Transform (v, c_from709toXYZ);
+
+        maxLum =
+          XMVectorReplicate (XMVectorGetY (XMVectorMax (v, maxLum)));
+      }
+    });
+
+    POINT          ptCursor = { };
+    GetCursorPos (&ptCursor);
+
+    HMONITOR hMon =
+      MonitorFromPoint (ptCursor, MONITOR_DEFAULTTONEAREST);
+
+    float mastering_sdr_nits = SKIF_Util_GetSDRWhiteLevel (hMon);
+
+    if (XMVectorGetY (maxLum) > std::max (1.0f, (mastering_sdr_nits * 1.00333f) / 80.0f))
+         snipping_tonemap_mode = 0;
+    else snipping_tonemap_mode = 1;
+  }
+
+  if (isHDR && (! snipping_tonemap_mode))
   {
     if (SUCCEEDED (SKIV_Image_SaveToDisk_HDR (*pImage, wsPNGPath.c_str())))
     {
@@ -1000,7 +1026,7 @@ bool SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped, boo
   else
   {
     DirectX::ScratchImage tonemapped_sdr;
-    if (_registry._SnippingTonemapsHDR && isHDR)
+    if (snipping_tonemap_mode && isHDR)
     {
       if (SUCCEEDED (SKIV_Image_TonemapToSDR (*pImage, tonemapped_sdr, SKIV_DesktopImage._max_display_nits, SKIV_DesktopImage._sdr_display_nits)))
       {
@@ -1176,10 +1202,10 @@ int clamp(int value, int min, int max) {
 }
 
 // Example function to look up a value from the LUT
-std::array<float, 3> lookupLUT(const std::vector<std::vector<std::vector<std::array<float, 3>>>>& lut, 
-                               float r, float g, float b) {
-
-}
+//std::array<float, 3> lookupLUT(const std::vector<std::vector<std::vector<std::array<float, 3>>>>& lut, 
+//                               float r, float g, float b) {
+//
+//}
 
 DirectX::XMVECTOR
 SKIV_Image_LookupLUT (std::vector <std::vector <std::vector <float [3]>>>& lut, DirectX::XMVECTOR& v)
@@ -1212,7 +1238,7 @@ void
 SKIV_Image_GenerateLUT_scRGB_to_ICtCp (std::vector <std::vector <std::vector <float [3]>>>& lut)
 {
   const int   LUT_SIZE = 64;
-  const float MAX_VAL  = 1.0f; // Assuming values are normalized between 0 and 1
+//const float MAX_VAL  = 1.0f; // Assuming values are normalized between 0 and 1
 
   for (int r = 0; r < LUT_SIZE; ++r)
   {
@@ -1239,7 +1265,7 @@ void
 SKIV_Image_GenerateLUT_ICtCp_to_scRGB (std::vector <std::vector <std::vector <float [3]>>>& lut)
 {
   const int   LUT_SIZE = 64;
-  const float MAX_VAL  = 1.0f; // Assuming values are normalized between 0 and 1
+//const float MAX_VAL  = 1.0f; // Assuming values are normalized between 0 and 1
 
   for (int r = 0; r < LUT_SIZE; ++r)
   {
@@ -1338,13 +1364,13 @@ SKIV_Image_TonemapToSDR (const DirectX::Image& image, DirectX::ScratchImage& fin
         SKIV_Image_LinearToPQY (std::min (_maxNitsToTonemap, XMVectorGetY (maxLum)))
       );
 
-    if (XMVectorGetY (maxLum) > std::max (1.0f, mastering_sdr_nits / 80.0f))
+    if (XMVectorGetY (maxLum) > std::max (1.0f, (mastering_sdr_nits * 1.00333f) / 80.0f))
     {
       needs_tonemapping = true;
     }
 
     const XMVECTOR vLumaRescale =
-      XMVectorReplicate (1.0f/std::max (1.0f, mastering_sdr_nits / 80.0f)); // user's SDR white level
+      XMVectorReplicate (1.0f/std::max (1.0f, (mastering_sdr_nits * 0.99667f) / 80.0f)); // user's SDR white level
 
     PLOG_INFO << "SKIV_Image_TonemapToSDR ( ): TransformImageBegin";
     TransformImage ( scrgb.GetImages     (),
@@ -1561,8 +1587,8 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
     pAdapter = nullptr;
   }
 
-  float mastering_max_nits = out_desc1.MaxLuminance;
-  float mastering_sdr_nits = SKIF_Util_GetSDRWhiteLevel (out_desc1.Monitor);
+//float mastering_max_nits = out_desc1.MaxLuminance;
+//float mastering_sdr_nits = SKIF_Util_GetSDRWhiteLevel (out_desc1.Monitor);
 
   using namespace DirectX;
 
