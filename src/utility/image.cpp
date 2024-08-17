@@ -607,9 +607,9 @@ SKIV_HDR_CalculateContentLightInfo (const DirectX::Image& img)
       percent -=
         (100.0 * ((double)luminance_freq [i] / ((double)img.width * (double)img.height)));
 
-      if (percent <= 99.5)
+      if (percent <= 99.75)
       {
-        //PLOG_INFO << "99.5th percentile luminance: " << 80.0f * (XMVectorGetY (minLum) + (fLumRange * ((float)i / 100000.0f))) << " nits";
+        //PLOG_INFO << "99.75th percentile luminance: " << 80.0f * (XMVectorGetY (minLum) + (fLumRange * ((float)i / 100000.0f))) << " nits";
 
         vMaxLum =
           XMVectorReplicate (XMVectorGetY (vMinLum) + (fLumRange * ((float)i / 100000.0f)));
@@ -1743,9 +1743,9 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
       percent -=
         (100.0 * ((double)luminance_freq [i] / ((double)scrgb.GetMetadata ().width * (double)scrgb.GetMetadata ().height)));
 
-      if (percent <= 99.9)
+      if (percent <= 99.75)
       {
-        PLOG_INFO << "99.9th percentile luminance: " << 80.0f * (XMVectorGetY (minLum) + (fLumRange * ((float)i / 100000.0f))) << " nits";
+        PLOG_INFO << "99.75th percentile luminance: " << 80.0f * (XMVectorGetY (minLum) + (fLumRange * ((float)i / 100000.0f))) << " nits";
 
         maxLum =
           XMVectorReplicate (XMVectorGetY (minLum) + (fLumRange * ((float)i / 100000.0f)));

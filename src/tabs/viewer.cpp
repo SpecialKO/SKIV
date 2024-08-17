@@ -1109,17 +1109,17 @@ LoadLibraryTexture (image_s& image)
 
     double percent = 100.0;
 
-    for (auto i = 99999; i > 0; --i)
+    for (auto i = 99999; i >= 0; --i)
     {
       percent -=
         (100.0 * ((double)luminance_freq [i] / ((double)pImg->GetMetadata ().width * (double)pImg->GetMetadata ().height)));
 
-      if (percent <= 99.825)
+      if (percent <= 99.75)
       {
-        PLOG_INFO << "99.825th percentile luminance: " << 80.0f * (XMVectorGetY (vMinLum) + (fLumRange * ((float)(i-0.5f) / 100000.0f))) << " nits";
+        PLOG_INFO << "99.75th percentile luminance: " << 80.0f * (XMVectorGetY (vMinLum) + (fLumRange * ((float)i / 100000.0f))) << " nits";
 
         vMaxLum99 =
-          XMVectorReplicate (XMVectorGetY (vMinLum) + (fLumRange * ((float)(i-0.5f) / 100000.0f)));
+          XMVectorReplicate (XMVectorGetY (vMinLum) + (fLumRange * ((float)i / 100000.0f)));
 
         break;
       }
