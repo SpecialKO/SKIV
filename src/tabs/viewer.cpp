@@ -584,9 +584,65 @@ enum ImageDecoder {
   ImageDecoder_stbi
 };
 
+class SK_AutoFile {
+public:
+  SK_AutoFile (FILE* pFile) : file_ (pFile)
+  {
+    if (file_ != nullptr)
+    {
+      auto orig_pos = _ftelli64 (pFile);
+                      _fseeki64 (pFile,        0, SEEK_END);
+              size_ = _ftelli64 (pFile);
+                      _fseeki64 (pFile, orig_pos, SEEK_SET);
+    }
+  }
+
+  ~SK_AutoFile (void)
+  {
+    if (file_ != nullptr)
+    {
+      fclose (std::exchange (file_, nullptr));
+    }
+  }
+
+  long long getInitialSize (void) const {
+    return size_;
+  }
+
+private:
+  long long size_;
+  FILE*     file_;
+};
+
+class SKIV_ScopedThreadPriority_Viewer
+{
+public:
+  SKIV_ScopedThreadPriority_Viewer (int prio = THREAD_PRIORITY_TIME_CRITICAL) {
+    orig_prio_ =
+      GetThreadPriority (GetCurrentThread ());
+
+    orig_process_class_ =
+      GetPriorityClass (GetCurrentProcess ());
+
+    SetPriorityClass  (GetCurrentProcess (), HIGH_PRIORITY_CLASS);
+    SetThreadPriority (GetCurrentThread  (), prio);
+  };
+
+  ~SKIV_ScopedThreadPriority_Viewer (void) {
+    SetPriorityClass  (GetCurrentProcess (), orig_process_class_);
+    SetThreadPriority (GetCurrentThread  (), orig_prio_);
+  }
+
+private:
+  int orig_prio_;
+  int orig_process_class_;
+};
+
 bool
 LoadLibraryTexture (image_s& image)
 {
+  SKIV_ScopedThreadPriority_Viewer _scoped_thread_prio;
+
   // NOT REALLY THREAD-SAFE WHILE IT RELIES ON THESE GLOBAL OBJECTS!
   static SKIF_RegistrySettings& _registry   = SKIF_RegistrySettings::GetInstance ( );
   static SKIF_CommonPathsCache& _path_cache = SKIF_CommonPathsCache::GetInstance ( );
@@ -601,19 +657,24 @@ LoadLibraryTexture (image_s& image)
   bool converted = false;
   bool need_srgb = false;
 
-  DWORD pre = SKIF_Util_timeGetTime1();
+  DWORD pre = SKIF_Util_timeGetTime1 ();
 
-  if (image.file_info.path.empty())
+  if (image.file_info.path.empty ())
     return false;
 
-  const std::filesystem::path imagePath (image.file_info.path.data());
-  std::wstring ext = SKIF_Util_ToLowerW (imagePath.extension().wstring());
-  std::string szPath = SK_WideCharToUTF8(image.file_info.path);
+  const std::filesystem::path
+    imagePath (image.file_info.path.data ());
+
+  std::wstring ext   = SKIF_Util_ToLowerW (imagePath.extension ().wstring ());
+  std::string szPath = SK_WideCharToUTF8  (image.file_info.path);
 
   ImageDecoder decoder = ImageDecoder_None;
 
   if (ext == L".tga")
     decoder = ImageDecoder_stbi;
+
+        FILE*          pImageFile = nullptr;
+  const FileSignature* image_sig  = nullptr;
 
   if (decoder == ImageDecoder_None)
   {
@@ -622,28 +683,32 @@ LoadLibraryTexture (image_s& image)
     if (maxLength == 0)
     {
       for (auto& type : supported_formats)
-        if (type.signature.size() > maxLength)
-          maxLength = type.signature.size();
+        if (type.signature.size () > maxLength)
+          maxLength = type.signature.size ();
     }
 
-    std::ifstream file(imagePath, std::ios::binary);
+    pImageFile =
+      _wfopen (imagePath.c_str (), L"rb");
 
-    if (! file)
+    if (! pImageFile)
     {
       PLOG_ERROR << "Failed to open file!";
       return false;
     }
 
-    if (file)
+    else
     {
-      std::vector<char> buffer (maxLength);
-      file.read (buffer.data(), maxLength);
-      file.close();
+      std::vector <char>
+              buffer         (maxLength);
+      fread  (buffer.data (), maxLength, 1, pImageFile);
+      rewind (                              pImageFile);
 
       for (auto& type : supported_formats)
       {
         if (SKIF_Util_HasFileSignature (buffer, type))
         {
+          image_sig = &type;
+
           PLOG_INFO << "Detected an " << type.mime_type << " image";
 
           decoder = 
@@ -682,6 +747,11 @@ LoadLibraryTexture (image_s& image)
     }
   }
 
+  SK_AutoFile _(pImageFile);
+
+  auto _scratchMemory =
+    std::make_unique <unsigned char []> (_.getInitialSize ());
+
   PLOG_ERROR_IF(decoder == ImageDecoder_None) << "Failed to detect file type!";
   PLOG_DEBUG_IF(decoder == ImageDecoder_stbi) << "Using stbi decoder...";
   PLOG_DEBUG_IF(decoder == ImageDecoder_WIC ) << "Using WIC decoder...";
@@ -706,13 +776,29 @@ LoadLibraryTexture (image_s& image)
 #define STBI_FLOAT
 #ifdef STBI_FLOAT
     // Check whether the image is a HDR image or not
-    image.light_info.isHDR = stbi_is_hdr (szPath.c_str());
+    image.light_info.isHDR = stbi_is_hdr_from_file (pImageFile);
 
     PLOG_VERBOSE << "STBI thinks the image is... " << ((image.light_info.isHDR) ? "HDR" : "SDR");
 
-    float*                pixels = stbi_loadf (szPath.c_str(), &width, &height, &channels_in_file, desired_channels);
+    if (image_sig->mime_type == L"image/png")
+    {
+      fseek  (pImageFile,                                 0, SEEK_SET  );
+      fread  (_scratchMemory.get (), _.getInitialSize (), 1, pImageFile);
+      rewind (pImageFile);
+
+      std::string_view  data_view ((const char *)_scratchMemory.get (), _.getInitialSize ());
+      if (auto cicp_pos  = data_view.find ("cICP", 0, 4);
+               cicp_pos != data_view.npos)
+      {
+        memcpy (&SKIV_STBI_CICP, &_scratchMemory.get ()[cicp_pos+4], 4);
+      }
+    }
+
+    float*                pixels = SKIV_STBI_CICP.primaries != 0 ?
+                                                         nullptr :
+                                   stbi_loadf_from_file (pImageFile, &width, &height, &channels_in_file, desired_channels);
     typedef float         pixel_size;
-    constexpr DXGI_FORMAT dxgi_format = DXGI_FORMAT::DXGI_FORMAT_R32G32B32A32_FLOAT;
+    DXGI_FORMAT           dxgi_format = DXGI_FORMAT::DXGI_FORMAT_R32G32B32A32_FLOAT;
 #else
     unsigned char*        pixels = stbi_load  (szPath.c_str(), &width, &height, &channels_in_file, desired_channels);
     typedef unsigned char pixel_size;
@@ -720,7 +806,7 @@ LoadLibraryTexture (image_s& image)
 #endif
 
     // Fall back to using WIC if STB fails to parse the file
-    if (pixels == NULL)
+    if (pixels == NULL && SKIV_STBI_CICP.primaries == 0)
     {
       decoder = ImageDecoder_WIC;
       PLOG_ERROR << "Using WIC decoder due to STB failing with: " << stbi_failure_reason();
@@ -740,6 +826,8 @@ LoadLibraryTexture (image_s& image)
 
       if (SKIV_STBI_CICP.primaries != 0)
       {
+        dxgi_format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+
         assert (SKIV_STBI_CICP.primaries     ==  9); // BT 2020
         assert (SKIV_STBI_CICP.transfer_func == 16); // ST 2084
         assert (SKIV_STBI_CICP.matrix_coeffs ==  0); // Identity
@@ -764,7 +852,8 @@ LoadLibraryTexture (image_s& image)
       meta.format    = dxgi_format; // STBI_rgb_alpha
       meta.dimension = DirectX::TEX_DIMENSION_TEXTURE2D;
 
-      if (dxgi_format == DXGI_FORMAT_R32G32B32A32_FLOAT)
+      if ( dxgi_format == DXGI_FORMAT_R32G32B32A32_FLOAT ||
+          (dxgi_format == DXGI_FORMAT_R16G16B16A16_FLOAT && image.is_hdr))
       {
         // Good grief this is inefficient, let's convert it to something reasonable...
         DirectX::ScratchImage raw_fp32_img;
@@ -776,17 +865,16 @@ LoadLibraryTexture (image_s& image)
           DirectX::ScratchImage temp_img  = { };
           DirectX::ScratchImage temp_img2 = { };
 
-          meta.format = DXGI_FORMAT_R32G32B32A32_FLOAT;
-
           if (SUCCEEDED (
-              DirectX::LoadFromWICFile (
-                image.file_info.path.c_str (),
+              DirectX::LoadFromWICMemory (
+                _scratchMemory.get (), _.getInitialSize (),
                   DirectX::WIC_FLAGS_FILTER_POINT | DirectX::WIC_FLAGS_FORCE_LINEAR,
                     &meta, temp_img)))
           {
             PLOG_INFO << "HDR10 PNG detected, transforming to scRGB...";
 
-            if (SUCCEEDED (DirectX::Convert (*temp_img.GetImages (), DXGI_FORMAT_R32G32B32A32_FLOAT, DirectX::TEX_FILTER_DEFAULT, 0.0f, temp_img2)))
+            // PNG will be loaded as UNORM, we need to convert to float...
+            if (SUCCEEDED (DirectX::Convert        (*temp_img.GetImages (), DXGI_FORMAT_R16G16B16A16_FLOAT, DirectX::TEX_FILTER_DEFAULT, 0.0f, temp_img2)))
             if (SUCCEEDED (img.InitializeFromImage (*temp_img2.GetImage (0,0,0))))
             {
               using namespace DirectX;
@@ -807,7 +895,7 @@ LoadLibraryTexture (image_s& image)
                 }
               }, img );
 
-              meta.format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+              meta.format = DXGI_FORMAT_R16G16B16A16_FLOAT;
               converted   = true;
               succeeded   = true;
             }
@@ -848,9 +936,13 @@ LoadLibraryTexture (image_s& image)
 
   if (decoder == ImageDecoder_WIC)
   {
+    fseek  (pImageFile,                                 0, SEEK_SET  );
+    fread  (_scratchMemory.get (), _.getInitialSize (), 1, pImageFile);
+    rewind (pImageFile);
+
     if (SUCCEEDED (
-        DirectX::LoadFromWICFile (
-          image.file_info.path.c_str (),
+        DirectX::LoadFromWICMemory (
+          _scratchMemory.get (), _.getInitialSize (),
             DirectX::WIC_FLAGS_FILTER_POINT | DirectX::WIC_FLAGS_DEFAULT_SRGB,
               &meta, img)))
     {
@@ -886,9 +978,13 @@ LoadLibraryTexture (image_s& image)
 
   if (decoder == ImageDecoder_DDS)
   {
+    fseek  (pImageFile,                                 0, SEEK_SET  );
+    fread  (_scratchMemory.get (), _.getInitialSize (), 1, pImageFile);
+    rewind (pImageFile);
+
     if (SUCCEEDED (
-        DirectX::LoadFromDDSFile (
-          image.file_info.path.c_str (),
+        DirectX::LoadFromDDSMemory (
+          _scratchMemory.get (), _.getInitialSize (),
             DirectX::DDS_FLAGS_PERMISSIVE,
               &meta, img)))
     {
@@ -1001,10 +1097,8 @@ LoadLibraryTexture (image_s& image)
     XMVECTOR vMinLum   = g_XMOne;
     XMVECTOR vMaxLum99 = g_XMZero;
 
-    auto luminance_freq =
-      std::make_unique <unsigned int[]> (100000);
-
-    ZeroMemory (luminance_freq.get (), sizeof (unsigned int) * 100000);
+    auto        luminance_freq = std::make_unique <uint32_t []> (16384);
+    ZeroMemory (luminance_freq.get (),     sizeof (uint32_t)  *  16384);
 
     double dLumAccum = 0.0;
 
@@ -1121,7 +1215,7 @@ LoadLibraryTexture (image_s& image)
         (dScanlineLum / static_cast <float> (width));
     } );
 
-    float fLumRange =
+    const float fLumRange =
       XMVectorGetY (vMaxLum) -
       XMVectorGetY (vMinLum);
 
@@ -1139,23 +1233,34 @@ LoadLibraryTexture (image_s& image)
         v =
           XMVector3Transform (v, c_from709toXYZ);
 
-        luminance_freq [std::clamp ((int)std::roundf ((XMVectorGetY (v) - XMVectorGetY (vMinLum)) / (fLumRange / 100000.0f)), 0, 99999)]++;
+        luminance_freq [
+          std::clamp ( (int)
+            std::roundf (
+              (XMVectorGetY (v) - XMVectorGetY (vMinLum)) /
+                                               (fLumRange / 16384.0f) ),
+                                                         0, 16383 ) ]++;
       }
     });
 
-    double percent = 100.0;
+          double percent  = 100.0;
+    const double img_size = (double)pImg->GetMetadata ().width *
+                            (double)pImg->GetMetadata ().height;
 
-    for (auto i = 99999; i >= 0; --i)
+    for (auto i = 16383; i >= 0; --i)
     {
       percent -=
-        (100.0 * ((double)luminance_freq [i] / ((double)pImg->GetMetadata ().width * (double)pImg->GetMetadata ().height)));
+        100.0 * ((double)luminance_freq [i] / img_size);
 
-      if (percent <= 99.75)
+      if (percent <= 99.8)
       {
-        PLOG_INFO << "99.75th percentile luminance: " << 80.0f * (XMVectorGetY (vMinLum) + (fLumRange * ((float)i / 100000.0f))) << " nits";
+        PLOG_INFO << "99.8th percentile luminance: " <<
+          80.0f * (XMVectorGetY (vMinLum) + (fLumRange * ((float)i / 16384.0f)))
+                                                      << " nits";
 
         vMaxLum99 =
-          XMVectorReplicate (XMVectorGetY (vMinLum) + (fLumRange * ((float)i / 100000.0f)));
+          XMVectorReplicate (
+            XMVectorGetY (vMinLum) + (fLumRange * ((float)i / 16384.0f))
+          );
 
         break;
       }
@@ -1203,6 +1308,9 @@ LoadLibraryTexture (image_s& image)
     image.light_info.avg_nits     = static_cast <float> (80.0 *
       (dLumAccum / static_cast <double> (meta.height)));
   }
+
+  //if (meta.format == DXGI_FORMAT_R16G16B16A16_FLOAT)
+  //    meta.format =  DXGI_FORMAT_R16G16B16A16_TYPELESS;
 
   HRESULT hr =
     DirectX::CreateTexture (pDevice, pImg->GetImages (), pImg->GetImageCount (), meta, (ID3D11Resource **)&pRawTex2D.p);
