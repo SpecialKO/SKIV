@@ -115,7 +115,7 @@ const std::initializer_list<FileSignature> supported_formats =
   FileSignature { L"image/webp",                { L".webp" },          { 0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50 },   // 52 49 46 46 ?? ?? ?? ?? 57 45 42 50
                                                                        { 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF } }, // mask
   FileSignature { L"image/bmp",                 { L".bmp"  },          { 0x42, 0x4D } },
-  FileSignature { L"image/vnd.ms-photo",        { L".jxr"  },          { 0x49, 0x49, 0xBC } },
+  FileSignature { L"image/vnd.ms-photo",        { L".jxr", L".hdp"  }, { 0x49, 0x49, 0xBC } },
   FileSignature { L"image/vnd.adobe.photoshop", { L".psd"  },          { 0x38, 0x42, 0x50, 0x53 } },
   FileSignature { L"image/tiff",                { L".tiff", L".tif" }, { 0x49, 0x49, 0x2A, 0x00 } }, // TIFF: little-endian
   FileSignature { L"image/tiff",                { L".tiff", L".tif" }, { 0x4D, 0x4D, 0x00, 0x2A } }, // TIFF: big-endian
@@ -133,6 +133,7 @@ const std::initializer_list<FileSignature> supported_sdr_encode_formats =
   FileSignature { L"image/png",                 { L".png"  },          { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A } },
   FileSignature { L"image/jpeg",                { L".jpg", L".jpeg" }, { 0xFF, 0xD8, 0x00, 0x00 },   // JPEG (SOI; Start of Image)
                                                                        { 0xFF, 0xFF, 0x00, 0x00 } }, // JPEG App Markers are masked as they can be all over the place (e.g. 0xFF 0xD8 0xFF 0xED)
+  FileSignature { L"image/vnd.ms-photo",        { L".jxr",  L".hdp" }, { 0x49, 0x49, 0xBC } },
   FileSignature { L"image/bmp",                 { L".bmp"  },          { 0x42, 0x4D } },
   FileSignature { L"image/tiff",                { L".tiff", L".tif" }, { 0x49, 0x49, 0x2A, 0x00 } }, // TIFF: little-endian
   FileSignature { L"image/tiff",                { L".tiff", L".tif" }, { 0x4D, 0x4D, 0x00, 0x2A } }, // TIFF: big-endian
@@ -579,7 +580,7 @@ extern CComPtr <ID3D11Device> SKIF_D3D11_GetDevice (bool bWait = true);
 enum ImageDecoder {
   ImageDecoder_None,
   ImageDecoder_WIC,
-  ImageDecoder_DSS,
+  ImageDecoder_DDS,
   ImageDecoder_stbi
 };
 
@@ -592,11 +593,13 @@ LoadLibraryTexture (image_s& image)
 
   CComPtr <ID3D11Texture2D> pRawTex2D;
   CComPtr <ID3D11Texture2D> pGamutCoverageTex2D;
-  DirectX::TexMetadata        meta = { };
-  DirectX::ScratchImage        img = { };
+  DirectX::TexMetadata        meta      = { };
+  DirectX::ScratchImage        img      = { };
+  DirectX::ScratchImage        img_srgb = { };
 
   bool succeeded = false;
   bool converted = false;
+  bool need_srgb = false;
 
   DWORD pre = SKIF_Util_timeGetTime1();
 
@@ -655,7 +658,7 @@ LoadLibraryTexture (image_s& image)
              (type.mime_type == L"image/webp"                ) ? ImageDecoder_WIC  :
              (type.mime_type == L"image/tiff"                ) ? ImageDecoder_WIC  :
              (type.mime_type == L"image/avif"                ) ? ImageDecoder_WIC  :
-             (type.mime_type == L"image/vnd-ms.dds"          ) ? ImageDecoder_DSS  :
+             (type.mime_type == L"image/vnd-ms.dds"          ) ? ImageDecoder_DDS  :
                                                                  ImageDecoder_WIC;   // Not actually being used
 
           // None of this is technically correct other than the .hdr case,
@@ -667,6 +670,12 @@ LoadLibraryTexture (image_s& image)
             image.is_hdr = true;
           }
 
+          if (type.mime_type == L"image/png")
+          {
+            // XXX: Check for the appropriate chunk
+            need_srgb = true;
+          }
+
           break;
         }
       }
@@ -676,7 +685,7 @@ LoadLibraryTexture (image_s& image)
   PLOG_ERROR_IF(decoder == ImageDecoder_None) << "Failed to detect file type!";
   PLOG_DEBUG_IF(decoder == ImageDecoder_stbi) << "Using stbi decoder...";
   PLOG_DEBUG_IF(decoder == ImageDecoder_WIC ) << "Using WIC decoder...";
-  PLOG_DEBUG_IF(decoder == ImageDecoder_DSS ) << "Using DSS decoder...";
+  PLOG_DEBUG_IF(decoder == ImageDecoder_DDS ) << "Using DDS decoder...";
 
   if (decoder == ImageDecoder_None)
     return false;
@@ -845,11 +854,37 @@ LoadLibraryTexture (image_s& image)
             DirectX::WIC_FLAGS_FILTER_POINT | DirectX::WIC_FLAGS_DEFAULT_SRGB,
               &meta, img)))
     {
+      // DirectXTex does not handle gamma on 10-bpc PNGs correctly
+      if (need_srgb && DirectX::BitsPerColor (meta.format) != 8)
+      {
+        using namespace DirectX;
+
+        TransformImage ( *img.GetImages (),
+           [&]( _Out_writes_ (width)       XMVECTOR* outPixels,
+                 _In_reads_  (width) const XMVECTOR* inPixels,
+                                           size_t    width,
+                                           size_t )
+          {
+            for (size_t j = 0; j < width; ++j)
+            {
+              XMVECTOR value =
+               inPixels [j];
+              outPixels [j] =
+                XMColorSRGBToRGB (
+                  XMVectorSaturate (value)
+                );
+            }
+          }, img_srgb
+        );
+
+        std::swap (img, img_srgb);
+      }
+
       succeeded = true;
     }
   }
 
-  if (decoder == ImageDecoder_DSS)
+  if (decoder == ImageDecoder_DDS)
   {
     if (SUCCEEDED (
         DirectX::LoadFromDDSFile (
@@ -966,9 +1001,10 @@ LoadLibraryTexture (image_s& image)
     XMVECTOR vMinLum   = g_XMOne;
     XMVECTOR vMaxLum99 = g_XMZero;
 
-    static unsigned int
-                luminance_freq [100000];
-    ZeroMemory (luminance_freq, sizeof (unsigned int) * 100000);
+    auto luminance_freq =
+      std::make_unique <unsigned int[]> (100000);
+
+    ZeroMemory (luminance_freq.get (), sizeof (unsigned int) * 100000);
 
     double dLumAccum = 0.0;
 

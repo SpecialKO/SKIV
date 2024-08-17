@@ -580,9 +580,10 @@ SKIV_HDR_CalculateContentLightInfo (const DirectX::Image& img)
       XMVectorGetY (vMaxLum) -
       XMVectorGetY (vMinLum);
 
-    static unsigned int luminance_freq [100000];
+    auto luminance_freq =
+      std::make_unique <unsigned int[]> (100000);
 
-    ZeroMemory (luminance_freq, sizeof (unsigned int) * 100000);
+    ZeroMemory (luminance_freq.get (), sizeof (unsigned int) * 100000);
 
     EvaluateImage ( img,
     [&](const XMVECTOR* pixels, size_t width, size_t y)
@@ -1656,10 +1657,25 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
     pAdapter = nullptr;
   }
 
-//float mastering_max_nits = out_desc1.MaxLuminance;
-//float mastering_sdr_nits = SKIF_Util_GetSDRWhiteLevel (out_desc1.Monitor);
+    wchar_t* wszExtension =
+    PathFindExtensionW (wszFileName);
+
+  wchar_t wszImplicitFileName [MAX_PATH] = { };
+  wcscpy (wszImplicitFileName, wszFileName);
+
+  // For silly users who don't give us filenames...
+  if (! wszExtension)
+  {
+    PathAddExtension (wszImplicitFileName, defaultSDRFileExt.c_str ());
+    wszExtension =
+      PathFindExtensionW (wszImplicitFileName);
+  }
+
 
   using namespace DirectX;
+
+//float mastering_max_nits = out_desc1.MaxLuminance;
+//float mastering_sdr_nits = SKIF_Util_GetSDRWhiteLevel (out_desc1.Monitor);
 
   const Image* pOutputImage = &image;
 
@@ -1681,16 +1697,72 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
       return E_INVALIDARG;
   }
 
+  bool bPrefer10bpcAs48bpp = false;
+  bool bPrefer10bpcAs32bpp = false;
+
+  GUID      wic_codec;
+  WIC_FLAGS wic_flags = WIC_FLAGS_DITHER_DIFFUSION | (force_sRGB ? WIC_FLAGS_FORCE_SRGB : WIC_FLAGS_NONE);
+
+  if (StrStrIW (wszExtension, L"jpg") ||
+      StrStrIW (wszExtension, L"jpeg"))
+  {
+    wic_codec = GetWICCodec (WIC_CODEC_JPEG);
+  }
+
+  else if (StrStrIW (wszExtension, L"png"))
+  {
+    wic_codec           = GetWICCodec (WIC_CODEC_PNG);
+    bPrefer10bpcAs48bpp = is_hdr;
+
+    wic_flags |= WIC_FLAGS_FORCE_SRGB;
+    wic_flags |= WIC_FLAGS_DEFAULT_SRGB;
+  }
+
+  else if (StrStrIW (wszExtension, L"bmp"))
+  {
+    wic_codec = GetWICCodec (WIC_CODEC_BMP);
+  }
+
+  else if (StrStrIW (wszExtension, L"tiff"))
+  {
+    wic_codec           = GetWICCodec (WIC_CODEC_TIFF);
+    bPrefer10bpcAs48bpp = false; // ?
+    bPrefer10bpcAs32bpp = false; // ?
+  }
+
+  // Probably ignore this
+  else if (StrStrIW (wszExtension, L"hdp") ||
+           StrStrIW (wszExtension, L"jxr"))
+  {
+    wic_codec           = GetWICCodec (WIC_CODEC_WMP);
+    bPrefer10bpcAs32bpp = is_hdr;
+  }
+
+  // AVIF technically works for SDR... do we want to support it?
+  //  If we do, WIC won't help us, however.
+
+  else
+  {
+    return E_UNEXPECTED;
+  }
+
   if (is_hdr)
   {
+    if (bPrefer10bpcAs48bpp ||
+        bPrefer10bpcAs32bpp)
+    {
+      wic_flags |= WIC_FLAGS_FORCE_SRGB;
+    }
+
     ScratchImage tonemapped_hdr;
     ScratchImage tonemapped_copy;
 
     PLOG_INFO << "SKIV_Image_TonemapToSDR ( ): EvaluateImageBegin";
 
-    static unsigned int luminance_freq [100000];
+    auto luminance_freq =
+      std::make_unique <unsigned int[]> (100000);
 
-    ZeroMemory (luminance_freq, sizeof (unsigned int) * 100000);
+    ZeroMemory (luminance_freq.get (), sizeof (unsigned int) * 100000);
 
     EvaluateImage ( scrgb.GetImages     (),
                     scrgb.GetImageCount (),
@@ -1842,7 +1914,9 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
             XMVectorMax (maxTonemappedRGB, XMVectorMax (value, g_XMZero));
           }
 
-          outPixels [j] = XMVectorSaturate (value);
+          if (bPrefer10bpcAs48bpp || bPrefer10bpcAs32bpp)
+               outPixels [j] = XMVectorSaturate (value);
+          else outPixels [j] = XMVectorSaturate (value);
         }
       }, tonemapped_hdr
     );
@@ -1898,7 +1972,9 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
       std::swap (tonemapped_hdr, tonemapped_copy);
     }
 
-    if (FAILED (DirectX::Convert (*tonemapped_hdr.GetImages (), DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,
+    if (FAILED (DirectX::Convert (*tonemapped_hdr.GetImages (), bPrefer10bpcAs48bpp ? DXGI_FORMAT_R10G10B10A2_UNORM :
+                                                                bPrefer10bpcAs32bpp ? DXGI_FORMAT_R10G10B10A2_UNORM :
+                                                                                      DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,
                                   (TEX_FILTER_FLAGS)0x200000FF, 1.0f, final_sdr)))
     {
       return E_UNEXPECTED;
@@ -1906,59 +1982,6 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
 
     pOutputImage =
       final_sdr.GetImages ();
-  }
-
-
-  wchar_t* wszExtension =
-    PathFindExtensionW (wszFileName);
-
-  wchar_t wszImplicitFileName [MAX_PATH] = { };
-  wcscpy (wszImplicitFileName, wszFileName);
-
-  // For silly users who don't give us filenames...
-  if (! wszExtension)
-  {
-    PathAddExtension (wszImplicitFileName, defaultSDRFileExt.c_str ());
-    wszExtension =
-      PathFindExtensionW (wszImplicitFileName);
-  }
-
-  GUID      wic_codec;
-  WIC_FLAGS wic_flags = WIC_FLAGS_DITHER_DIFFUSION | (force_sRGB ? WIC_FLAGS_FORCE_SRGB : WIC_FLAGS_NONE);
-
-  if (StrStrIW (wszExtension, L"jpg") ||
-      StrStrIW (wszExtension, L"jpeg"))
-  {
-    wic_codec = GetWICCodec (WIC_CODEC_JPEG);
-  }
-
-  else if (StrStrIW (wszExtension, L"png"))
-  {
-    wic_codec = GetWICCodec (WIC_CODEC_PNG);
-  }
-
-  else if (StrStrIW (wszExtension, L"bmp"))
-  {
-    wic_codec = GetWICCodec (WIC_CODEC_BMP);
-  }
-
-  else if (StrStrIW (wszExtension, L"tiff"))
-  {
-    wic_codec = GetWICCodec (WIC_CODEC_TIFF);
-  }
-
-  // Probably ignore this
-  else if (StrStrIW (wszExtension, L"hdp"))
-  {
-    wic_codec = GetWICCodec (WIC_CODEC_WMP);
-  }
-
-  // AVIF technically works for SDR... do we want to support it?
-  //  If we do, WIC won't help us, however.
-
-  else
-  {
-    return E_UNEXPECTED;
   }
 
   ///DirectX::TexMetadata              orig_tex_metadata;
@@ -1970,7 +1993,9 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
 
   return
     DirectX::SaveToWICFile (*pOutputImage, wic_flags, wic_codec,
-                      wszImplicitFileName, nullptr, SK_WIC_SetMaximumQuality);
+                      wszImplicitFileName, bPrefer10bpcAs48bpp ? &GUID_WICPixelFormat48bppRGB       :
+                                           bPrefer10bpcAs32bpp ? &GUID_WICPixelFormat32bppBGR101010 :
+                                                                 nullptr, SK_WIC_SetMaximumQuality);
 }
 
 HRESULT
