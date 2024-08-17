@@ -780,13 +780,13 @@ LoadLibraryTexture (image_s& image)
 
     PLOG_VERBOSE << "STBI thinks the image is... " << ((image.light_info.isHDR) ? "HDR" : "SDR");
 
+    fseek  (pImageFile,                                 0, SEEK_SET  );
+    fread  (_scratchMemory.get (), _.getInitialSize (), 1, pImageFile);
+    rewind (pImageFile);
+
     if (image_sig->mime_type == L"image/png")
     {
-      fseek  (pImageFile,                                 0, SEEK_SET  );
-      fread  (_scratchMemory.get (), _.getInitialSize (), 1, pImageFile);
-      rewind (pImageFile);
-
-      std::string_view  data_view ((const char *)_scratchMemory.get (), _.getInitialSize ());
+      std::string_view     data_view ((const char *)_scratchMemory.get (), _.getInitialSize ());
       if (auto cicp_pos  = data_view.find ("cICP", 0, 4);
                cicp_pos != data_view.npos)
       {
@@ -796,7 +796,7 @@ LoadLibraryTexture (image_s& image)
 
     float*                pixels = SKIV_STBI_CICP.primaries != 0 ?
                                                          nullptr :
-                                   stbi_loadf_from_file (pImageFile, &width, &height, &channels_in_file, desired_channels);
+                                   stbi_loadf_from_memory (_scratchMemory.get (), static_cast <int> (_.getInitialSize ()), &width, &height, &channels_in_file, desired_channels);
     typedef float         pixel_size;
     DXGI_FORMAT           dxgi_format = DXGI_FORMAT::DXGI_FORMAT_R32G32B32A32_FLOAT;
 #else
@@ -946,6 +946,25 @@ LoadLibraryTexture (image_s& image)
             DirectX::WIC_FLAGS_FILTER_POINT | DirectX::WIC_FLAGS_DEFAULT_SRGB,
               &meta, img)))
     {
+      if (image.is_hdr && (image_sig->mime_type == L"image/vnd.ms-photo" ||
+                           image_sig->mime_type == L"image/avif"))
+      {
+        if (DirectX::BitsPerColor (meta.format) < 16)
+        {
+          PLOG_INFO << "HDR capable image format does not contain HDR pixels... demoting to SDR!";
+
+          image.is_hdr = false;
+
+          if (! DirectX::IsSRGB (meta.format))
+            need_srgb  = true;
+        }
+
+        else
+        {
+          image.light_info.isHDR = true;
+        }
+      }
+
       // DirectXTex does not handle gamma on 10-bpc PNGs correctly
       if (need_srgb && DirectX::BitsPerColor (meta.format) != 8)
       {
@@ -1308,9 +1327,6 @@ LoadLibraryTexture (image_s& image)
     image.light_info.avg_nits     = static_cast <float> (80.0 *
       (dLumAccum / static_cast <double> (meta.height)));
   }
-
-  //if (meta.format == DXGI_FORMAT_R16G16B16A16_FLOAT)
-  //    meta.format =  DXGI_FORMAT_R16G16B16A16_TYPELESS;
 
   HRESULT hr =
     DirectX::CreateTexture (pDevice, pImg->GetImages (), pImg->GetImageCount (), meta, (ID3D11Resource **)&pRawTex2D.p);
