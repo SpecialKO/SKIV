@@ -80,6 +80,7 @@ ImRect copyRect = { 0,0,0,0 };
 bool wantCopyToClipboard = false;
 
 thread_local stbi__context::cicp_s SKIV_STBI_CICP;
+thread_local stbi__result_info     SKIV_STBI_ResultInfo;
 
 float SKIV_HDR_SDRWhite = 80.0f;
 
@@ -283,6 +284,8 @@ struct image_s {
     file_s ( ) { };
   } file_info;
 
+  int          bpc         =    0;
+  int          channels    =    0;
   float        width       = 0.0f;
   float        height      = 0.0f;
   static float zoom;//     = 1.0f; // 1.0f = 100%; max: 5.0f; min: 0.05f
@@ -332,6 +335,8 @@ struct image_s {
   image_s& operator= (const image_s other) noexcept
   {
     file_info           = other.file_info;
+    bpc                 = other.bpc;
+    channels            = other.channels;
     width               = other.width;
     height              = other.height;
     zoom                = other.zoom;
@@ -352,6 +357,8 @@ struct image_s {
   void reset (void)
   {
     file_info           = { };
+    bpc                 =    0;
+    channels            =    0;
     width               = 0.0f;
     height              = 0.0f;
   //zoom                = 1.0f;
@@ -771,7 +778,8 @@ LoadLibraryTexture (image_s& image)
         channels_in_file = 0,
         desired_channels = STBI_rgb_alpha;
 
-    SKIV_STBI_CICP = { };
+    SKIV_STBI_CICP       = { };
+    SKIV_STBI_ResultInfo = { };
 
 #define STBI_FLOAT
 #ifdef STBI_FLOAT
@@ -871,6 +879,11 @@ LoadLibraryTexture (image_s& image)
                   DirectX::WIC_FLAGS_FILTER_POINT | DirectX::WIC_FLAGS_FORCE_LINEAR,
                     &meta, temp_img)))
           {
+            image.bpc      =
+              (int)DirectX::BitsPerColor (meta.format);
+            image.channels =
+              DirectX::HasAlpha     (meta.format) ? 4 : 3; // Expect 3... 4 would be weird for an HDR image
+
             PLOG_INFO << "HDR10 PNG detected, transforming to scRGB...";
 
             // PNG will be loaded as UNORM, we need to convert to float...
@@ -905,12 +918,49 @@ LoadLibraryTexture (image_s& image)
 
         if ((! converted) && SUCCEEDED (raw_fp32_img.Initialize2D (meta.format, width, height, 1, 1)))
         {
-          size_t   imageSize = width * height * desired_channels * sizeof (pixel_size);
+          size_t   imageSize = width * height * channels_in_file * sizeof (pixel_size);
           uint8_t* pDest     = raw_fp32_img.GetImage (0, 0, 0)->pixels;
           memcpy  (pDest, pixels, imageSize);
 
+          image.bpc      = SKIV_STBI_ResultInfo.bits_per_channel;
+          image.channels = channels_in_file;
+
           // Still overkill for SDR, but we're saving some VRAM...
-          const DXGI_FORMAT final_format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+          const DXGI_FORMAT final_format =
+            image.bpc <=  8 ? //image.channels == 1 ? DXGI_FORMAT_R16_UNORM          :
+                              //image.channels == 2 ? DXGI_FORMAT_R16G16_UNORM       :
+                              //image.channels == 3 ? DXGI_FORMAT_R16G16B16A16_UNORM :
+                              //image.channels == 4 ? DXGI_FORMAT_R16G16B16A16_UNORM
+                              //                      : DXGI_FORMAT_UNKNOWN
+                              image.channels == 1 ? DXGI_FORMAT_R8_UNORM            :
+                              image.channels == 2 ? DXGI_FORMAT_R8G8_UNORM          :
+                              image.channels == 3 ? DXGI_FORMAT_B8G8R8X8_UNORM_SRGB :
+                              image.channels == 4 ? DXGI_FORMAT_R8G8B8A8_UNORM_SRGB
+                                                  : DXGI_FORMAT_UNKNOWN
+                            :
+            image.bpc <= 10 ? //image.channels == 1 ? DXGI_FORMAT_R16_UNORM          :
+                              //image.channels == 2 ? DXGI_FORMAT_R16G16_UNORM       :
+                              //image.channels == 3 ? DXGI_FORMAT_R16G16B16A16_UNORM :
+                              //image.channels == 4 ? DXGI_FORMAT_R16G16B16A16_UNORM
+                              //                      : DXGI_FORMAT_UNKNOWN
+                              image.channels == 1 ? DXGI_FORMAT_R10G10B10A2_UNORM :
+                              image.channels == 2 ? DXGI_FORMAT_R10G10B10A2_UNORM :
+                              image.channels == 3 ? DXGI_FORMAT_R10G10B10A2_UNORM :
+                              image.channels == 4 ? DXGI_FORMAT_R10G10B10A2_UNORM
+                                                  : DXGI_FORMAT_UNKNOWN
+                            :
+            image.bpc == 16 ? image.channels == 1 ? DXGI_FORMAT_R16_UNORM          :
+                              image.channels == 2 ? DXGI_FORMAT_R16G16_UNORM       :
+                              image.channels == 3 ? DXGI_FORMAT_R16G16B16A16_UNORM :
+                              image.channels == 4 ? DXGI_FORMAT_R16G16B16A16_UNORM
+                                                    : DXGI_FORMAT_UNKNOWN
+                            :
+            image.bpc == 32 ? image.channels == 1 ? DXGI_FORMAT_R32_FLOAT       :
+                              image.channels == 2 ? DXGI_FORMAT_R32G32_FLOAT    :
+                              image.channels == 3 ? DXGI_FORMAT_R32G32B32_FLOAT :
+                              image.channels == 4 ? DXGI_FORMAT_R32G32B32A32_FLOAT
+                                                    : DXGI_FORMAT_UNKNOWN
+                                                    : DXGI_FORMAT_UNKNOWN;
 
           if (SUCCEEDED (DirectX::Convert (*raw_fp32_img.GetImages (), final_format, DirectX::TEX_FILTER_DEFAULT, 0.0f, img)))
           {
@@ -923,7 +973,10 @@ LoadLibraryTexture (image_s& image)
 
       if (converted == false && SUCCEEDED (img.Initialize2D (meta.format, width, height, 1, 1)))
       {
-        size_t   imageSize = width * height * desired_channels * sizeof (pixel_size);
+        image.bpc      = SKIV_STBI_ResultInfo.bits_per_channel;
+        image.channels = channels_in_file;
+
+        size_t   imageSize = width * height * channels_in_file * sizeof (pixel_size);
         uint8_t* pDest     = img.GetImage(0, 0, 0)->pixels;
         memcpy  (pDest, pixels, imageSize);
 
@@ -946,6 +999,12 @@ LoadLibraryTexture (image_s& image)
             DirectX::WIC_FLAGS_FILTER_POINT | DirectX::WIC_FLAGS_DEFAULT_SRGB,
               &meta, img)))
     {
+      image.bpc      =
+        (int)DirectX::BitsPerColor (meta.format);
+      image.channels =
+        DirectX::HasAlpha          (meta.format) ? 4 : 3; // 2 and 1 channel images are unsupported for now
+
+
       if (image.is_hdr && (image_sig->mime_type == L"image/vnd.ms-photo" ||
                            image_sig->mime_type == L"image/avif"))
       {
@@ -1270,9 +1329,9 @@ LoadLibraryTexture (image_s& image)
       percent -=
         100.0 * ((double)luminance_freq [i] / img_size);
 
-      if (percent <= 99.8)
+      if (percent <= 99.825)
       {
-        PLOG_INFO << "99.8th percentile luminance: " <<
+        PLOG_INFO << "99.825th percentile luminance: " <<
           80.0f * (XMVectorGetY (vMinLum) + (fLumRange * ((float)i / 16384.0f)))
                                                       << " nits";
 
@@ -2354,11 +2413,18 @@ SKIF_UI_Tab_DrawViewer (void)
 
       sprintf (szLabelsData, "%.0fx%.0f\n"
                              "%3.0f %%\n"
-                             "%s\n",
+                             "%s (%hs @ %d-bpc)\n",
                                       cover.width,
                                       cover.height,
                                       cover.zoom * 100,
-                                     (cover.is_hdr) ? "HDR" : "SDR");
+                                     (cover.is_hdr) ? "HDR" : "SDR",
+                                      cover.channels == 0 ? "Unknown" :
+                                      cover.channels == 1 ? "R"       :
+                                      cover.channels == 2 ? "RG"      :
+                                      cover.channels == 3 ? "RGB"     :
+                                      cover.channels == 4 ? "RGBA"    :
+                                                            "Unknown",
+                                      cover.bpc);
 
       ImGui::TextUnformatted (szLabels);
       ImGui::SameLine        (posXvalues);
@@ -3087,6 +3153,8 @@ SKIF_UI_Tab_DrawViewer (void)
           PLOG_WARNING << "Queue position is live, but texture failed to load properly...";
 
         cover.file_info         = _data->image.file_info;
+        cover.bpc               = _data->image.bpc;
+        cover.channels          = _data->image.channels;
         cover.width             = _data->image.width;
         cover.height            = _data->image.height;
         cover.zoom              = _data->image.zoom;

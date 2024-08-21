@@ -1287,6 +1287,9 @@ static unsigned char *stbi__load_and_postprocess_8bit(stbi__context *s, int *x, 
       stbi__vertical_flip(result, *x, *y, channels * sizeof(stbi_uc));
    }
 
+   extern thread_local stbi__result_info SKIV_STBI_ResultInfo;
+                                         SKIV_STBI_ResultInfo = ri;
+
    return (unsigned char *) result;
 }
 
@@ -1313,6 +1316,9 @@ static stbi__uint16 *stbi__load_and_postprocess_16bit(stbi__context *s, int *x, 
       int channels = req_comp ? req_comp : *comp;
       stbi__vertical_flip(result, *x, *y, channels * sizeof(stbi__uint16));
    }
+
+   extern thread_local stbi__result_info SKIV_STBI_ResultInfo;
+                                         SKIV_STBI_ResultInfo = ri;
 
    return (stbi__uint16 *) result;
 }
@@ -1473,6 +1479,10 @@ static float *stbi__loadf_main(stbi__context *s, int *x, int *y, int *comp, int 
       float *hdr_data = stbi__hdr_load(s,x,y,comp,req_comp, &ri);
       if (hdr_data)
          stbi__float_postprocess(hdr_data,x,y,comp,req_comp);
+
+      extern thread_local stbi__result_info SKIV_STBI_ResultInfo;
+                                            SKIV_STBI_ResultInfo = ri;
+
       return hdr_data;
    }
    #endif
@@ -5308,6 +5318,9 @@ static void *stbi__do_png(stbi__png *p, int *x, int *y, int *n, int req_comp, st
       *x = p->s->img_x;
       *y = p->s->img_y;
       if (n) *n = p->s->img_n;
+
+      extern thread_local stbi__result_info SKIV_STBI_ResultInfo;
+                                            SKIV_STBI_ResultInfo = *ri;
    }
    STBI_FREE(p->out);      p->out      = NULL;
    STBI_FREE(p->expanded); p->expanded = NULL;
@@ -7306,6 +7319,9 @@ static float *stbi__hdr_load(stbi__context *s, int *x, int *y, int *comp, int re
       if (scanline)
          STBI_FREE(scanline);
    }
+
+   extern thread_local stbi__result_info SKIV_STBI_ResultInfo;
+                                         SKIV_STBI_ResultInfo = *ri;
 
    return hdr_data;
 }

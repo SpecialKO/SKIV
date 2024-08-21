@@ -1714,6 +1714,36 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
       StrStrIW (wszExtension, L"jpeg"))
   {
     wic_codec = GetWICCodec (WIC_CODEC_JPEG);
+
+    if (DirectX::BitsPerColor (image.format) == 10 ||
+        DirectX::BitsPerColor (image.format) == 16)
+    {
+      if (! is_hdr)
+      {
+        if (FAILED (scrgb.InitializeFromImage (image)))
+          return E_INVALIDARG;
+
+        TransformImage ( image,
+           [&]( _Out_writes_ (width)       XMVECTOR* outPixels,
+                 _In_reads_  (width) const XMVECTOR* inPixels,
+                                           size_t    width,
+                                           size_t )
+          {
+            for (size_t j = 0; j < width; ++j)
+            {
+              XMVECTOR value =
+               inPixels [j];
+              outPixels [j] =
+                XMColorRGBToSRGB (
+                  XMVectorSaturate (value)
+                );
+            }
+          }, scrgb
+        );
+
+        pOutputImage = scrgb.GetImages ();
+      }
+    }
   }
 
   else if (StrStrIW (wszExtension, L"png"))
@@ -1723,11 +1753,55 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
 
     wic_flags |= WIC_FLAGS_FORCE_SRGB;
     wic_flags |= WIC_FLAGS_DEFAULT_SRGB;
+
+    if (DirectX::BitsPerColor (image.format) == 10 ||
+        DirectX::BitsPerColor (image.format) == 16)
+    {
+      if (! is_hdr)
+      {
+        bPrefer10bpcAs48bpp = true;
+
+        if (FAILED (scrgb.InitializeFromImage (image)))
+          return E_INVALIDARG;
+
+        TransformImage ( image,
+           [&]( _Out_writes_ (width)       XMVECTOR* outPixels,
+                 _In_reads_  (width) const XMVECTOR* inPixels,
+                                           size_t    width,
+                                           size_t )
+          {
+            for (size_t j = 0; j < width; ++j)
+            {
+              XMVECTOR value =
+               inPixels [j];
+              outPixels [j] =
+                XMColorRGBToSRGB (
+                  XMVectorSaturate (value)
+                );
+            }
+          }, scrgb
+        );
+
+        pOutputImage = scrgb.GetImages ();
+      }
+    }
   }
 
   else if (StrStrIW (wszExtension, L"bmp"))
   {
     wic_codec = GetWICCodec (WIC_CODEC_BMP);
+
+    if (DirectX::BitsPerColor (image.format) == 10 ||
+        DirectX::BitsPerColor (image.format) == 16)
+    {
+      if (! is_hdr)
+      {
+        if (FAILED (Convert (image, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, DirectX::TEX_FILTER_DEFAULT, 0.0f, scrgb)))
+          return E_INVALIDARG;
+
+        pOutputImage = scrgb.GetImages ();
+      }
+    }
   }
 
   else if (StrStrIW (wszExtension, L"tiff"))
@@ -1735,6 +1809,34 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
     wic_codec           = GetWICCodec (WIC_CODEC_TIFF);
     bPrefer10bpcAs48bpp = false; // ?
     bPrefer10bpcAs32bpp = false; // ?
+
+    if (DirectX::BitsPerColor (image.format) == 10 ||
+        DirectX::BitsPerColor (image.format) == 16)
+    {
+      if (! is_hdr)
+      {
+        if (FAILED (scrgb.InitializeFromImage (image)))
+          return E_INVALIDARG;
+
+        TransformImage ( image,
+           [&]( _Out_writes_ (width)       XMVECTOR* outPixels,
+                 _In_reads_  (width) const XMVECTOR* inPixels,
+                                           size_t    width,
+                                           size_t )
+          {
+            for (size_t j = 0; j < width; ++j)
+            {
+              XMVECTOR value =
+               inPixels [j];
+              outPixels [j] =
+                value;
+            }
+          }, scrgb
+        );
+
+        pOutputImage = scrgb.GetImages ();
+      }
+    }
   }
 
   // Probably ignore this
@@ -1743,6 +1845,38 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
   {
     wic_codec           = GetWICCodec (WIC_CODEC_WMP);
     bPrefer10bpcAs32bpp = is_hdr;
+
+    if (DirectX::BitsPerColor (image.format) == 10 ||
+        DirectX::BitsPerColor (image.format) == 16)
+    {
+      if (! is_hdr)
+      {
+        bPrefer10bpcAs48bpp = true;
+
+        if (FAILED (scrgb.InitializeFromImage (image)))
+          return E_INVALIDARG;
+
+        TransformImage ( image,
+           [&]( _Out_writes_ (width)       XMVECTOR* outPixels,
+                 _In_reads_  (width) const XMVECTOR* inPixels,
+                                           size_t    width,
+                                           size_t )
+          {
+            for (size_t j = 0; j < width; ++j)
+            {
+              XMVECTOR value =
+               inPixels [j];
+              outPixels [j] =
+                XMColorRGBToSRGB (
+                  XMVectorSaturate (value)
+                );
+            }
+          }, scrgb
+        );
+
+        pOutputImage = scrgb.GetImages ();
+      }
+    }
   }
 
   // AVIF technically works for SDR... do we want to support it?
@@ -1827,9 +1961,9 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
       percent -=
         100.0 * ((double)luminance_freq [i] / img_size);
 
-      if (percent <= 99.8)
+      if (percent <= 99.825)
       {
-        PLOG_INFO << "99.8th percentile luminance: " <<
+        PLOG_INFO << "99.825th percentile luminance: " <<
           80.0f * (XMVectorGetY (minLum) + (fLumRange * ((float)i / 16348.0f)))
                                                       << " nits";
 
@@ -1986,8 +2120,8 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
       std::swap (tonemapped_hdr, tonemapped_copy);
     }
 
-    if (FAILED (DirectX::Convert (*tonemapped_hdr.GetImages (), bPrefer10bpcAs48bpp ? DXGI_FORMAT_R10G10B10A2_UNORM :
-                                                                bPrefer10bpcAs32bpp ? DXGI_FORMAT_R10G10B10A2_UNORM :
+    if (FAILED (DirectX::Convert (*tonemapped_hdr.GetImages (), bPrefer10bpcAs48bpp ? DXGI_FORMAT_R16G16B16A16_UNORM :
+                                                                bPrefer10bpcAs32bpp ? DXGI_FORMAT_R10G10B10A2_UNORM  :
                                                                                       DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,
                                   (TEX_FILTER_FLAGS)0x200000FF, 1.0f, final_sdr)))
     {
