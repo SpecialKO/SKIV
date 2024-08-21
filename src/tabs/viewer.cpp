@@ -69,6 +69,13 @@
 //#define STBI_ONLY_PIC
 //#define STBI_ONLY_PNM
 
+#include <jxl/codestream_header.h>
+#include <jxl/decode.h>
+#include <jxl/decode_cxx.h>
+#include <jxl/resizable_parallel_runner.h>
+#include <jxl/resizable_parallel_runner_cxx.h>
+#include <jxl/types.h>
+
 #include <stb_image.h>
 #include <html_coder.hpp>
 #include <utility/image.h>
@@ -125,6 +132,7 @@ const std::initializer_list<FileSignature> supported_formats =
   FileSignature { L"image/gif",                 { L".gif"  },          { 0x47, 0x49, 0x46, 0x38, 0x39, 0x61 } }, // GIF89a
   FileSignature { L"image/avif",                { L".avif" },          { 0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x61, 0x76, 0x69, 0x66 },   // ftypavif
                                                                        { 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF } }, // ?? ?? ?? ?? 66 74 79 70 61 76 69 66
+  FileSignature { L"image/jxl",                 { L".jxl"  },          { 0xFF, 0x0A } },
   FileSignature { L"image/vnd-ms.dds",          { L".dds"  },          { 0x44, 0x44, 0x53, 0x20 } },
 //FileSignature { L"image/x-targa",             { L".tga"  },          { 0x00, } }, // TGA has no real unique header identifier, so just use the file extension on those
 };
@@ -156,7 +164,17 @@ bool isExtensionSupported (const std::wstring extension)
 {
   for (auto& type : supported_formats)
     if (SKIF_Util_HasFileExtension (extension, type))
+    {
+      // Support for JXL is optional
+      if (type.mime_type == L"image/jxl")
+      {
+        static HMODULE hModJXL;
+        SK_RunOnce (   hModJXL = LoadLibraryW (L"jxl.dll"));
+        return         hModJXL != 0;
+      }
+
       return true;
+    }
 
   return false;
 }
@@ -588,7 +606,8 @@ enum ImageDecoder {
   ImageDecoder_None,
   ImageDecoder_WIC,
   ImageDecoder_DDS,
-  ImageDecoder_stbi
+  ImageDecoder_stbi,
+  ImageDecoder_JXL
 };
 
 class SK_AutoFile {
@@ -730,6 +749,7 @@ LoadLibraryTexture (image_s& image)
              (type.mime_type == L"image/webp"                ) ? ImageDecoder_WIC  :
              (type.mime_type == L"image/tiff"                ) ? ImageDecoder_WIC  :
              (type.mime_type == L"image/avif"                ) ? ImageDecoder_WIC  :
+             (type.mime_type == L"image/jxl"                 ) ? ImageDecoder_JXL  :
              (type.mime_type == L"image/vnd-ms.dds"          ) ? ImageDecoder_DDS  :
                                                                  ImageDecoder_WIC;   // Not actually being used
 
@@ -763,6 +783,7 @@ LoadLibraryTexture (image_s& image)
   PLOG_DEBUG_IF(decoder == ImageDecoder_stbi) << "Using stbi decoder...";
   PLOG_DEBUG_IF(decoder == ImageDecoder_WIC ) << "Using WIC decoder...";
   PLOG_DEBUG_IF(decoder == ImageDecoder_DDS ) << "Using DDS decoder...";
+  PLOG_DEBUG_IF(decoder == ImageDecoder_JXL ) << "Using JPEG-XL decoder...";
 
   if (decoder == ImageDecoder_None)
     return false;
@@ -918,12 +939,15 @@ LoadLibraryTexture (image_s& image)
 
         if ((! converted) && SUCCEEDED (raw_fp32_img.Initialize2D (meta.format, width, height, 1, 1)))
         {
-          size_t   imageSize = width * height * channels_in_file * sizeof (pixel_size);
+          size_t   imageSize = width * height * desired_channels * sizeof (pixel_size);
           uint8_t* pDest     = raw_fp32_img.GetImage (0, 0, 0)->pixels;
           memcpy  (pDest, pixels, imageSize);
 
           image.bpc      = SKIV_STBI_ResultInfo.bits_per_channel;
           image.channels = channels_in_file;
+
+          if (image.bpc > 32)
+              image.bpc = 32;
 
           // Still overkill for SDR, but we're saving some VRAM...
           const DXGI_FORMAT final_format =
@@ -932,8 +956,8 @@ LoadLibraryTexture (image_s& image)
                               //image.channels == 3 ? DXGI_FORMAT_R16G16B16A16_UNORM :
                               //image.channels == 4 ? DXGI_FORMAT_R16G16B16A16_UNORM
                               //                      : DXGI_FORMAT_UNKNOWN
-                              image.channels == 1 ? DXGI_FORMAT_R8_UNORM            :
-                              image.channels == 2 ? DXGI_FORMAT_R8G8_UNORM          :
+                              image.channels == 1 ? DXGI_FORMAT_R8G8B8A8_UNORM_SRGB            :
+                              image.channels == 2 ? DXGI_FORMAT_R8G8B8A8_UNORM_SRGB          :
                               image.channels == 3 ? DXGI_FORMAT_B8G8R8X8_UNORM_SRGB :
                               image.channels == 4 ? DXGI_FORMAT_R8G8B8A8_UNORM_SRGB
                                                   : DXGI_FORMAT_UNKNOWN
@@ -949,15 +973,15 @@ LoadLibraryTexture (image_s& image)
                               image.channels == 4 ? DXGI_FORMAT_R10G10B10A2_UNORM
                                                   : DXGI_FORMAT_UNKNOWN
                             :
-            image.bpc == 16 ? image.channels == 1 ? DXGI_FORMAT_R16_UNORM          :
-                              image.channels == 2 ? DXGI_FORMAT_R16G16_UNORM       :
+            image.bpc == 16 ? image.channels == 1 ? DXGI_FORMAT_R16G16B16A16_UNORM          :
+                              image.channels == 2 ? DXGI_FORMAT_R16G16B16A16_UNORM       :
                               image.channels == 3 ? DXGI_FORMAT_R16G16B16A16_UNORM :
                               image.channels == 4 ? DXGI_FORMAT_R16G16B16A16_UNORM
                                                     : DXGI_FORMAT_UNKNOWN
                             :
-            image.bpc == 32 ? image.channels == 1 ? DXGI_FORMAT_R32_FLOAT       :
-                              image.channels == 2 ? DXGI_FORMAT_R32G32_FLOAT    :
-                              image.channels == 3 ? DXGI_FORMAT_R32G32B32_FLOAT :
+            image.bpc >= 32 ? image.channels == 1 ? DXGI_FORMAT_R32G32B32A32_FLOAT       :
+                              image.channels == 2 ? DXGI_FORMAT_R32G32B32A32_FLOAT    :
+                              image.channels == 3 ? DXGI_FORMAT_R32G32B32A32_FLOAT :
                               image.channels == 4 ? DXGI_FORMAT_R32G32B32A32_FLOAT
                                                     : DXGI_FORMAT_UNKNOWN
                                                     : DXGI_FORMAT_UNKNOWN;
@@ -976,7 +1000,7 @@ LoadLibraryTexture (image_s& image)
         image.bpc      = SKIV_STBI_ResultInfo.bits_per_channel;
         image.channels = channels_in_file;
 
-        size_t   imageSize = width * height * channels_in_file * sizeof (pixel_size);
+        size_t   imageSize = width * height * desired_channels * sizeof (pixel_size);
         uint8_t* pDest     = img.GetImage(0, 0, 0)->pixels;
         memcpy  (pDest, pixels, imageSize);
 
@@ -1101,6 +1125,186 @@ LoadLibraryTexture (image_s& image)
 
       //meta.format = DirectX::MakeSRGB (DirectX::MakeTypeless (meta.format));
     }
+  }
+
+  if (decoder == ImageDecoder_JXL)
+  {
+    static HMODULE hModJXL;
+    SK_RunOnce (   hModJXL = LoadLibraryW (L"jxl.dll"));
+
+    using JxlDecoderSubscribeEvents_pfn    = JxlDecoderStatus (*)(JxlDecoder* dec, int events_wanted);
+    using JxlDecoderSetInput_pfn           = JxlDecoderStatus (*)(JxlDecoder* dec, const uint8_t* data, size_t size);
+    using JxlDecoderImageOutBufferSize_pfn = JxlDecoderStatus (*)(const JxlDecoder* dec, const JxlPixelFormat* format, size_t* size);
+    using JxlDecoderCreate_pfn             = JxlDecoder*      (*)(const JxlMemoryManager* memory_manager);
+    using JxlDecoderDestroy_pfn            = void             (*)(JxlDecoder* dec);
+    using JxlDecoderGetBasicInfo_pfn       = JxlDecoderStatus (*)(const JxlDecoder* dec, JxlBasicInfo* info);
+    using JxlDecoderProcessInput_pfn       = JxlDecoderStatus (*)(JxlDecoder* dec);
+    using JxlDecoderCloseInput_pfn         = void             (*)(JxlDecoder* dec);
+    using JxlDecoderSetImageOutBuffer_pfn  = JxlDecoderStatus (*)(JxlDecoder* dec, const JxlPixelFormat* format, void* buffer, size_t size);
+
+    JxlDecoderSubscribeEvents_pfn    jxlDecoderSubscribeEvents    = (JxlDecoderSubscribeEvents_pfn)   GetProcAddress (hModJXL, "JxlDecoderSubscribeEvents");
+    JxlDecoderSetInput_pfn           jxlDecoderSetInput           = (JxlDecoderSetInput_pfn)          GetProcAddress (hModJXL, "JxlDecoderSetInput");
+    JxlDecoderImageOutBufferSize_pfn jxlDecoderImageOutBufferSize = (JxlDecoderImageOutBufferSize_pfn)GetProcAddress (hModJXL, "JxlDecoderImageOutBufferSize");
+    JxlDecoderCreate_pfn             jxlDecoderCreate             = (JxlDecoderCreate_pfn)            GetProcAddress (hModJXL, "JxlDecoderCreate");
+    JxlDecoderDestroy_pfn            jxlDecoderDestroy            = (JxlDecoderDestroy_pfn)           GetProcAddress (hModJXL, "JxlDecoderDestroy");
+    JxlDecoderGetBasicInfo_pfn       jxlDecoderGetBasicInfo       = (JxlDecoderGetBasicInfo_pfn)      GetProcAddress (hModJXL, "JxlDecoderGetBasicInfo");
+    JxlDecoderProcessInput_pfn       jxlDecoderProcessInput       = (JxlDecoderProcessInput_pfn)      GetProcAddress (hModJXL, "JxlDecoderProcessInput");
+    JxlDecoderCloseInput_pfn         jxlDecoderCloseInput         = (JxlDecoderCloseInput_pfn)        GetProcAddress (hModJXL, "JxlDecoderCloseInput");
+    JxlDecoderSetImageOutBuffer_pfn  jxlDecoderSetImageOutBuffer  = (JxlDecoderSetImageOutBuffer_pfn) GetProcAddress (hModJXL, "JxlDecoderSetImageOutBuffer");
+
+    JxlDecoder* jxl_decoder =
+      jxlDecoderCreate (nullptr);
+
+    if (jxl_decoder != nullptr && JXL_DEC_SUCCESS ==
+      jxlDecoderSubscribeEvents (jxl_decoder, JXL_DEC_BASIC_INFO     |
+                                              JXL_DEC_COLOR_ENCODING |
+                                              JXL_DEC_FULL_IMAGE))
+    {
+      JxlBasicInfo   info;
+      JxlPixelFormat format =
+        { 4, JXL_TYPE_FLOAT16, JXL_NATIVE_ENDIAN, 0 };
+
+      fseek  (pImageFile,                                 0, SEEK_SET  );
+      fread  (_scratchMemory.get (), _.getInitialSize (), 1, pImageFile);
+      rewind (pImageFile);
+
+      jxlDecoderSetInput   (jxl_decoder, _scratchMemory.get (), _.getInitialSize ());
+      jxlDecoderCloseInput (jxl_decoder);
+
+      for (;;)
+      {
+        JxlDecoderStatus status =
+          jxlDecoderProcessInput (jxl_decoder);
+
+        if (status == JXL_DEC_ERROR)
+        {
+          PLOG_ERROR << "Decoder error";
+          break;
+        }
+
+        else if (status == JXL_DEC_NEED_MORE_INPUT)
+        {
+          PLOG_ERROR << "Error, already provided all input";
+          break;
+        }
+
+        else if (status == JXL_DEC_BASIC_INFO)
+        {
+          if (JXL_DEC_SUCCESS != jxlDecoderGetBasicInfo (jxl_decoder, &info))
+          {
+            PLOG_ERROR << "JxlDecoderGetBasicInfo failed";
+            break;
+          }
+
+          image.width  = static_cast <float> (info.xsize);
+          image.height = static_cast <float> (info.ysize);
+
+          ////////JxlResizableParallelRunnerSetThreads(
+          ////////    runner.get(),
+          ////////    JxlResizableParallelRunnerSuggestThreads(info.xsize, info.ysize));
+        }
+
+        else if (status == JXL_DEC_COLOR_ENCODING)
+        {
+          // TODO
+        }
+
+        else if (status == JXL_DEC_NEED_IMAGE_OUT_BUFFER)
+        {
+          size_t buffer_size;
+          if (JXL_DEC_SUCCESS !=
+              jxlDecoderImageOutBufferSize (jxl_decoder, &format, &buffer_size))
+          {
+            PLOG_ERROR << "JxlDecoderImageOutBufferSize failed";
+            break;
+          }
+
+          if (buffer_size != image.width * image.height * 8) // 64-bpp
+          {
+            PLOG_ERROR << "Invalid out buffer size " << buffer_size << " " << (int)image.width * (int)image.height * 8;
+            //fprintf(stderr, "Invalid out buffer size %d %d\n",
+            //        static_cast<int>(buffer_size),
+            //        static_cast<int>(image.width * image.height * 16));
+            break;
+          }
+
+          if (SUCCEEDED (img.Initialize2D (DXGI_FORMAT_R16G16B16A16_FLOAT, static_cast <size_t> (image.width),
+                                                                           static_cast <size_t> (image.height), 1, 1)))
+          {
+            image.bpc      = info.bits_per_sample;
+            image.channels = info.num_color_channels;
+
+            void*  pixels_buffer      = static_cast <void *>(img.GetPixels ());
+            size_t pixels_buffer_size = img.GetPixelsSize ();
+
+            if (JXL_DEC_SUCCESS != jxlDecoderSetImageOutBuffer(jxl_decoder, &format,
+                                                               pixels_buffer,
+                                                               pixels_buffer_size))
+            {
+              PLOG_ERROR << "JxlDecoderSetImageOutBuffer failed";
+              break;
+            }
+          }
+        }
+
+        else if (status == JXL_DEC_FULL_IMAGE)
+        {
+          // Nothing to do. Do not yet return. If the image is an animation, more
+          // full frames may be decoded. This example only keeps the last one.
+        }
+
+        else if (status == JXL_DEC_SUCCESS)
+        {
+          // All decoding successfully finished.
+          // It's not required to call JxlDecoderReleaseInput(dec.get()) here since
+          // the decoder will be destroyed.
+          PLOG_INFO << "JXL Decode Succeeded!";
+          succeeded = true;
+
+          meta.format    = DXGI_FORMAT_R16G16B16A16_FLOAT;
+          meta.width     = static_cast <size_t> (image.width);
+          meta.height    = static_cast <size_t> (image.height);
+          meta.depth     = 1;
+          meta.arraySize = 1;
+          meta.mipLevels = 1;
+          meta.dimension = DirectX::TEX_DIMENSION_TEXTURE2D;
+
+          image.light_info.isHDR = true;
+          image.is_hdr           = true;
+
+          DirectX::ScratchImage converted_img;
+
+          using namespace DirectX;
+
+          if (SUCCEEDED (TransformImage (*img.GetImages (),
+              [&](XMVECTOR* outPixels, const XMVECTOR* inPixels, size_t width, size_t y)
+              {
+                UNREFERENCED_PARAMETER(y);
+              
+                for (size_t j = 0; j < width; ++j)
+                {
+                  XMVECTOR v = inPixels [j];
+
+                  outPixels [j] =
+                    XMVector3Transform (SKIV_Image_PQToLinear (v), c_Bt2100toscRGB);
+                }
+              }, converted_img)))
+          {
+            std::swap (img, converted_img);
+          }
+          break;
+        }
+
+        else
+        {
+          PLOG_ERROR << "Unknown decoder status";
+          break;
+        }
+      }
+    }
+
+    if (jxl_decoder != nullptr)
+      jxlDecoderDestroy (jxl_decoder);
   }
 
   // Push the existing texture to a stack to be released after the frame
@@ -2424,7 +2628,7 @@ SKIF_UI_Tab_DrawViewer (void)
                                       cover.channels == 3 ? "RGB"     :
                                       cover.channels == 4 ? "RGBA"    :
                                                             "Unknown",
-                                      cover.bpc);
+                                      std::min (cover.bpc, 32));
 
       ImGui::TextUnformatted (szLabels);
       ImGui::SameLine        (posXvalues);
