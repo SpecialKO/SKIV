@@ -2532,6 +2532,7 @@ SKIF_Util_GetClipboardBitmapData (void)
               meta.arraySize = 1;
               meta.mipLevels = 1;
               meta.dimension = DirectX::TEX_DIMENSION_TEXTURE2D;
+              meta.SetAlphaMode (DirectX::TEX_ALPHA_MODE_OPAQUE);
 
             // DIBs are upside down :)
             DirectX::ScratchImage

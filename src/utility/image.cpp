@@ -1608,6 +1608,28 @@ SKIV_Image_TonemapToSDR (const DirectX::Image& image, DirectX::ScratchImage& fin
 HRESULT
 SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileName, const bool force_sRGB)
 {
+  using namespace DirectX;
+
+  ScratchImage
+    scratch_image;
+    scratch_image.InitializeFromImage (image);
+
+
+  TransformImage (image,
+                  [&](XMVECTOR* outPixels, const XMVECTOR* inPixels, size_t width, size_t y)
+                  {
+                    UNREFERENCED_PARAMETER(y);
+
+                    for (size_t j = 0; j < width; ++j)
+                    {
+                      XMVECTOR value = inPixels [j];
+                      outPixels [j]  =
+                        image.format == DXGI_FORMAT_R16G16B16A16_FLOAT ?
+                          XMVectorSet (XMVectorGetX (value), XMVectorGetY (value), XMVectorGetZ (value), 65504.0f) :
+                          XMVectorSet (XMVectorGetX (value), XMVectorGetY (value), XMVectorGetZ (value),     1.0f);
+                    }
+                  }, scratch_image);
+
   auto pDevice =
     SKIF_D3D11_GetDevice ();
 
@@ -1684,7 +1706,7 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
 //float mastering_max_nits = out_desc1.MaxLuminance;
 //float mastering_sdr_nits = SKIF_Util_GetSDRWhiteLevel (out_desc1.Monitor);
 
-  const Image* pOutputImage = &image;
+  const Image* pOutputImage = scratch_image.GetImages ();
 
   XMVECTOR maxLum   = XMVectorZero          (),
            minLum   = XMVectorSplatInfinity (),
@@ -1700,7 +1722,7 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
   {
     is_hdr = true;
 
-    if (FAILED (scrgb.InitializeFromImage (image)))
+    if (FAILED (scrgb.InitializeFromImage (*scratch_image.GetImages ())))
       return E_INVALIDARG;
   }
 
@@ -1720,10 +1742,10 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
     {
       if (! is_hdr)
       {
-        if (FAILED (scrgb.InitializeFromImage (image)))
+        if (FAILED (scrgb.InitializeFromImage (*scratch_image.GetImages ())))
           return E_INVALIDARG;
 
-        TransformImage ( image,
+        TransformImage ( *scratch_image.GetImages (),
            [&]( _Out_writes_ (width)       XMVECTOR* outPixels,
                  _In_reads_  (width) const XMVECTOR* inPixels,
                                            size_t    width,
@@ -1761,10 +1783,10 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
       {
         bPrefer10bpcAs48bpp = true;
 
-        if (FAILED (scrgb.InitializeFromImage (image)))
+        if (FAILED (scrgb.InitializeFromImage (*scratch_image.GetImages ())))
           return E_INVALIDARG;
 
-        TransformImage ( image,
+        TransformImage ( *scratch_image.GetImages (),
            [&]( _Out_writes_ (width)       XMVECTOR* outPixels,
                  _In_reads_  (width) const XMVECTOR* inPixels,
                                            size_t    width,
@@ -1796,7 +1818,7 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
     {
       if (! is_hdr)
       {
-        if (FAILED (Convert (image, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, DirectX::TEX_FILTER_DEFAULT, 0.0f, scrgb)))
+        if (FAILED (Convert (*scratch_image.GetImages (), DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, DirectX::TEX_FILTER_DEFAULT, 0.0f, scrgb)))
           return E_INVALIDARG;
 
         pOutputImage = scrgb.GetImages ();
@@ -1815,10 +1837,10 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
     {
       if (! is_hdr)
       {
-        if (FAILED (scrgb.InitializeFromImage (image)))
+        if (FAILED (scrgb.InitializeFromImage (*scratch_image.GetImages ())))
           return E_INVALIDARG;
 
-        TransformImage ( image,
+        TransformImage ( *scratch_image.GetImages (),
            [&]( _Out_writes_ (width)       XMVECTOR* outPixels,
                  _In_reads_  (width) const XMVECTOR* inPixels,
                                            size_t    width,
@@ -1845,38 +1867,6 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
   {
     wic_codec           = GetWICCodec (WIC_CODEC_WMP);
     bPrefer10bpcAs32bpp = is_hdr;
-
-    if (DirectX::BitsPerColor (image.format) == 10 ||
-        DirectX::BitsPerColor (image.format) == 16)
-    {
-      if (! is_hdr)
-      {
-        bPrefer10bpcAs48bpp = true;
-
-        if (FAILED (scrgb.InitializeFromImage (image)))
-          return E_INVALIDARG;
-
-        TransformImage ( image,
-           [&]( _Out_writes_ (width)       XMVECTOR* outPixels,
-                 _In_reads_  (width) const XMVECTOR* inPixels,
-                                           size_t    width,
-                                           size_t )
-          {
-            for (size_t j = 0; j < width; ++j)
-            {
-              XMVECTOR value =
-               inPixels [j];
-              outPixels [j] =
-                XMColorRGBToSRGB (
-                  XMVectorSaturate (value)
-                );
-            }
-          }, scrgb
-        );
-
-        pOutputImage = scrgb.GetImages ();
-      }
-    }
   }
 
   // AVIF technically works for SDR... do we want to support it?

@@ -1089,7 +1089,7 @@ LoadLibraryTexture (image_s& image)
       {
         PLOG_VERBOSE << "Converting texture to the intended format...";
 
-        if (FAILED (DirectX::Convert (*img.GetImage (0, 0, 0), final_format, DirectX::TEX_FILTER_DEFAULT, DirectX::TEX_THRESHOLD_DEFAULT, temp_img)))
+        if (FAILED (DirectX::Convert (*img.GetImage (0, 0, 0), final_format, DirectX::TEX_FILTER_DEFAULT, 0.0f, temp_img)))
         {
           PLOG_ERROR << "Conversion failed!";
           succeeded = false;
@@ -1122,7 +1122,7 @@ LoadLibraryTexture (image_s& image)
   // We don't want single-channel icons, so convert to RGBA
   if (meta.format == DXGI_FORMAT_R8_UNORM)
   {
-    if (SUCCEEDED (DirectX::Convert (pImg->GetImages(), pImg->GetImageCount(), pImg->GetMetadata (), DXGI_FORMAT_R8G8B8A8_UNORM, DirectX::TEX_FILTER_DEFAULT, DirectX::TEX_THRESHOLD_DEFAULT, converted_img)))
+    if (SUCCEEDED (DirectX::Convert (pImg->GetImages(), pImg->GetImageCount(), pImg->GetMetadata (), DXGI_FORMAT_R8G8B8A8_UNORM, DirectX::TEX_FILTER_DEFAULT, 0.0f, converted_img)))
     {
       meta =  converted_img.GetMetadata ();
       pImg = &converted_img;
