@@ -20,6 +20,7 @@ New versions will probably be distributed through their own packaged installer o
 ## Format support
 
 * JXR
+* JXL* (Requires Special K)
 * AVIF* (Windows 11 only)
 * Radiance HDR (.hdr)
 * PNG* (+ HDR support)
@@ -77,4 +78,5 @@ New versions will probably be distributed through their own packaged installer o
 * Uses [ValveFileVDF](https://github.com/TinyTinni/ValveFileVDF), licensed under [MIT](https://github.com/TinyTinni/ValveFileVDF/blob/master/LICENSE).
 * Uses [TextFlowCpp](https://github.com/catchorg/textflowcpp), licensed under [BSL-1.0](https://github.com/catchorg/textflowcpp/blob/master/LICENSE.txt).
 * Uses [HybridDetect](https://github.com/GameTechDev/HybridDetect/), licensed under [MIT](https://github.com/GameTechDev/HybridDetect/blob/main/LICENSE.md).
+* Optionally Uses [libjxl](https://github.com/libjxl/), licensed under [BSD](https://raw.githubusercontent.com/libjxl/libjxl/main/LICENSE).
 * Includes various snippets of code from [Stack Overflow](https://stackoverflow.com/), licensed under [Creative Commons Attribution-ShareAlike](https://stackoverflow.com/help/licensing).
