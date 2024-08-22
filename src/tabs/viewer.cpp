@@ -1427,8 +1427,8 @@ LoadLibraryTexture (image_s& image)
                   for (size_t j = 0; j < width; ++j)
                   {
                     XMVECTOR v = inPixels [j];
-                
-                    outPixels [j] =
+
+                    v =
                       XMVectorMultiply (v, vRelativeToAbsoluteNits);
 
                     uint32_t xm_test_rec709 = 0x0,
@@ -1445,6 +1445,8 @@ LoadLibraryTexture (image_s& image)
                     {
                       hdr = true;
                     }
+
+                    outPixels [j] = v;
                   }
                 }, converted_img )
               )
