@@ -160,21 +160,109 @@ const std::initializer_list<FileSignature> supported_hdr_encode_formats =
 //FileSignature { L"image/vnd-ms.dds",          { L".dds"  },          { 0x44, 0x44, 0x53, 0x20 } },
 };
 
+bool isJXLDecoderAvailable (void)
+{
+  static HMODULE hModJXL        = nullptr;
+  static HMODULE hModJXLCMS     = nullptr;
+  static HMODULE hModJXLThreads = nullptr;
+
+  static const wchar_t* wszPluginArch =
+    SK_RunLHIfBitness ( 64, LR"(x64\)",
+                            LR"(x86\)" );
+
+  SK_RunOnce (
+  {
+    SKIF_RegistrySettings& _registry =
+      SKIF_RegistrySettings::GetInstance ();
+
+    std::wstring path_to_sk =
+      _registry.regKVPathSpecialK.getData ();
+
+    std::error_code                          ec;
+    if (std::filesystem::exists (path_to_sk, ec))
+    {
+      path_to_sk += LR"(\PlugIns\ThirdParty\Image Codecs\libjxl\)";
+      path_to_sk += wszPluginArch;
+
+      std::filesystem::create_directories
+                                  (path_to_sk, ec);
+      if (std::filesystem::exists (path_to_sk, ec))
+      {
+        std::wstring path_to_jxl_threads = path_to_sk + L"jxl_threads.dll";
+        std::wstring path_to_jxl_cms     = path_to_sk + L"jxl_cms.dll";
+        std::wstring path_to_jxl         = path_to_sk + L"jxl.dll";
+
+        if (! std::filesystem::exists (path_to_jxl, ec))
+          SKIF_Util_GetWebResource (L"https://sk-data.special-k.info/addon/ImageCodecs/libjxl/x64/jxl.dll",         path_to_jxl);
+
+        if (! std::filesystem::exists (path_to_jxl_cms, ec))
+          SKIF_Util_GetWebResource (L"https://sk-data.special-k.info/addon/ImageCodecs/libjxl/x64/jxl_cms.dll",     path_to_jxl_cms);
+
+        if (! std::filesystem::exists (path_to_jxl_threads, ec))
+          SKIF_Util_GetWebResource (L"https://sk-data.special-k.info/addon/ImageCodecs/libjxl/x64/jxl_threads.dll", path_to_jxl_threads);
+
+        // JXL depends on CMS to be loaded first
+
+        hModJXLThreads = LoadLibraryW (path_to_jxl_threads.c_str ());
+        hModJXLCMS     = LoadLibraryW (path_to_jxl_cms.    c_str ());
+        hModJXL        = LoadLibraryW (path_to_jxl.        c_str ());
+
+        if ( hModJXL        != nullptr &&
+             hModJXLCMS     != nullptr &&
+             hModJXLThreads != nullptr )
+        {
+          PLOG_INFO << "Loaded JPEG-XL DLLs from: " << path_to_sk;
+          return true;
+        }
+      }
+    }
+
+    if (hModJXLThreads == nullptr) hModJXLThreads = LoadLibraryW (L"jxl_threads.dll");
+    if (hModJXLCMS     == nullptr) hModJXLCMS     = LoadLibraryW (L"jxl_cms.dll");
+    if (hModJXL        == nullptr) hModJXL        = LoadLibraryW (L"jxl.dll");
+
+    if ( hModJXL        != nullptr &&
+         hModJXLCMS     != nullptr &&
+         hModJXLThreads != nullptr )
+    {
+      PLOG_INFO << "Loaded JPEG-XL DLLs from default DLL search path";
+      return true;
+    }
+  });
+
+  const bool supported =
+    ( hModJXL        != nullptr &&
+      hModJXLThreads != nullptr &&
+      hModJXLCMS     != nullptr );
+
+  if (! supported)
+  {
+    ImGuiToast toast = {
+      ImGuiToastType::Warning, 3333,
+        "JPEG-XL Unsupported because Special K is not Installed",
+        "Please install Special K and run SKIV again to view JPEG-XL images.\r\n\t"
+        "> You may also manually place (64-bit versions of) jxl.dll, jxl_cms.dll and jxl_threads.dll in SKIV's directory."
+    };
+  }
+
+  return supported;
+}
+
 bool isExtensionSupported (const std::wstring extension)
 {
   for (auto& type : supported_formats)
+  {
     if (SKIF_Util_HasFileExtension (extension, type))
     {
       // Support for JXL is optional
       if (type.mime_type == L"image/jxl")
       {
-        static HMODULE hModJXL;
-        SK_RunOnce (   hModJXL = LoadLibraryW (L"jxl.dll"));
-        return         hModJXL != 0;
+        return isJXLDecoderAvailable ();
       }
 
       return true;
     }
+  }
 
   return false;
 }
@@ -1132,35 +1220,69 @@ LoadLibraryTexture (image_s& image)
     static HMODULE hModJXL;
     SK_RunOnce (   hModJXL = LoadLibraryW (L"jxl.dll"));
 
-    using JxlDecoderSubscribeEvents_pfn    = JxlDecoderStatus (*)(JxlDecoder* dec, int events_wanted);
-    using JxlDecoderSetInput_pfn           = JxlDecoderStatus (*)(JxlDecoder* dec, const uint8_t* data, size_t size);
-    using JxlDecoderImageOutBufferSize_pfn = JxlDecoderStatus (*)(const JxlDecoder* dec, const JxlPixelFormat* format, size_t* size);
+    static HMODULE hModJXLThreads;
+    SK_RunOnce (   hModJXLThreads = LoadLibraryW (L"jxl_threads.dll"));
+
     using JxlDecoderCreate_pfn             = JxlDecoder*      (*)(const JxlMemoryManager* memory_manager);
-    using JxlDecoderDestroy_pfn            = void             (*)(JxlDecoder* dec);
-    using JxlDecoderGetBasicInfo_pfn       = JxlDecoderStatus (*)(const JxlDecoder* dec, JxlBasicInfo* info);
-    using JxlDecoderProcessInput_pfn       = JxlDecoderStatus (*)(JxlDecoder* dec);
-    using JxlDecoderCloseInput_pfn         = void             (*)(JxlDecoder* dec);
-    using JxlDecoderSetImageOutBuffer_pfn  = JxlDecoderStatus (*)(JxlDecoder* dec, const JxlPixelFormat* format, void* buffer, size_t size);
+    using JxlDecoderDestroy_pfn            = void             (*)(      JxlDecoder* dec);
+    using JxlDecoderSubscribeEvents_pfn    = JxlDecoderStatus (*)(      JxlDecoder* dec, int events_wanted);
+    using JxlDecoderSetInput_pfn           = JxlDecoderStatus (*)(      JxlDecoder* dec, const uint8_t* data,                        size_t  size);
+    using JxlDecoderImageOutBufferSize_pfn       = JxlDecoderStatus (*)(const JxlDecoder* dec, const JxlPixelFormat* format,               size_t* size);
+    using JxlDecoderSetImageOutBuffer_pfn        = JxlDecoderStatus (*)(      JxlDecoder* dec, const JxlPixelFormat* format, void* buffer, size_t  size);
+    using JxlDecoderGetBasicInfo_pfn             = JxlDecoderStatus (*)(const JxlDecoder* dec, JxlBasicInfo* info);
+    using JxlDecoderProcessInput_pfn             = JxlDecoderStatus (*)(      JxlDecoder* dec);
+    using JxlDecoderCloseInput_pfn               = void             (*)(      JxlDecoder* dec);
+    using JxlDecoderSetPreferredColorProfile_pfn = JxlDecoderStatus (*)(      JxlDecoder* dec, const JxlColorEncoding* color_encoding);
+    using JxlDecoderSetParallelRunner_pfn        = JxlDecoderStatus (*)(      JxlDecoder* dec,
+                                                                        JxlParallelRunner parallel_runner,
+                                                                                    void* parallel_runner_opaque);
+                                                 
+    using JxlResizableParallelRunnerCreate_pfn         = void*    (*)(const JxlMemoryManager* memory_manager);
+    using JxlResizableParallelRunnerSuggestThreads_pfn = uint32_t (*)(uint64_t xsize, uint64_t ysize);
+    using JxlResizableParallelRunnerSetThreads_pfn     = void     (*)(void*                  runner_opaque, size_t num_threads);
+    using JxlResizableParallelRunnerDestroy_pfn        = void     (*)(void*                  runner_opaque);
+    using JxlResizableParallelRunner_pfn   =   JxlParallelRetCode (*)(void*                  runner_opaque,
+                                                                      void*                  jpegxl_opaque,
+                                                                      JxlParallelRunInit     init,
+                                                                      JxlParallelRunFunction func,
+                                                                      uint32_t               start_range,
+                                                                      uint32_t               end_range);
 
-    JxlDecoderSubscribeEvents_pfn    jxlDecoderSubscribeEvents    = (JxlDecoderSubscribeEvents_pfn)   GetProcAddress (hModJXL, "JxlDecoderSubscribeEvents");
-    JxlDecoderSetInput_pfn           jxlDecoderSetInput           = (JxlDecoderSetInput_pfn)          GetProcAddress (hModJXL, "JxlDecoderSetInput");
-    JxlDecoderImageOutBufferSize_pfn jxlDecoderImageOutBufferSize = (JxlDecoderImageOutBufferSize_pfn)GetProcAddress (hModJXL, "JxlDecoderImageOutBufferSize");
-    JxlDecoderCreate_pfn             jxlDecoderCreate             = (JxlDecoderCreate_pfn)            GetProcAddress (hModJXL, "JxlDecoderCreate");
-    JxlDecoderDestroy_pfn            jxlDecoderDestroy            = (JxlDecoderDestroy_pfn)           GetProcAddress (hModJXL, "JxlDecoderDestroy");
-    JxlDecoderGetBasicInfo_pfn       jxlDecoderGetBasicInfo       = (JxlDecoderGetBasicInfo_pfn)      GetProcAddress (hModJXL, "JxlDecoderGetBasicInfo");
-    JxlDecoderProcessInput_pfn       jxlDecoderProcessInput       = (JxlDecoderProcessInput_pfn)      GetProcAddress (hModJXL, "JxlDecoderProcessInput");
-    JxlDecoderCloseInput_pfn         jxlDecoderCloseInput         = (JxlDecoderCloseInput_pfn)        GetProcAddress (hModJXL, "JxlDecoderCloseInput");
-    JxlDecoderSetImageOutBuffer_pfn  jxlDecoderSetImageOutBuffer  = (JxlDecoderSetImageOutBuffer_pfn) GetProcAddress (hModJXL, "JxlDecoderSetImageOutBuffer");
+    JxlDecoderSubscribeEvents_pfn          jxlDecoderSubscribeEvents          = (JxlDecoderSubscribeEvents_pfn)         GetProcAddress (hModJXL, "JxlDecoderSubscribeEvents");
+    JxlDecoderSetInput_pfn                 jxlDecoderSetInput                 = (JxlDecoderSetInput_pfn)                GetProcAddress (hModJXL, "JxlDecoderSetInput");
+    JxlDecoderImageOutBufferSize_pfn       jxlDecoderImageOutBufferSize       = (JxlDecoderImageOutBufferSize_pfn)      GetProcAddress (hModJXL, "JxlDecoderImageOutBufferSize");
+    JxlDecoderCreate_pfn                   jxlDecoderCreate                   = (JxlDecoderCreate_pfn)                  GetProcAddress (hModJXL, "JxlDecoderCreate");
+    JxlDecoderDestroy_pfn                  jxlDecoderDestroy                  = (JxlDecoderDestroy_pfn)                 GetProcAddress (hModJXL, "JxlDecoderDestroy");
+    JxlDecoderGetBasicInfo_pfn             jxlDecoderGetBasicInfo             = (JxlDecoderGetBasicInfo_pfn)            GetProcAddress (hModJXL, "JxlDecoderGetBasicInfo");
+    JxlDecoderProcessInput_pfn             jxlDecoderProcessInput             = (JxlDecoderProcessInput_pfn)            GetProcAddress (hModJXL, "JxlDecoderProcessInput");
+    JxlDecoderCloseInput_pfn               jxlDecoderCloseInput               = (JxlDecoderCloseInput_pfn)              GetProcAddress (hModJXL, "JxlDecoderCloseInput");
+    JxlDecoderSetImageOutBuffer_pfn        jxlDecoderSetImageOutBuffer        = (JxlDecoderSetImageOutBuffer_pfn)       GetProcAddress (hModJXL, "JxlDecoderSetImageOutBuffer");
+    JxlDecoderSetParallelRunner_pfn        jxlDecoderSetParallelRunner        = (JxlDecoderSetParallelRunner_pfn)       GetProcAddress (hModJXL, "JxlDecoderSetParallelRunner");
+    JxlDecoderSetPreferredColorProfile_pfn jxlDecoderSetPreferredColorProfile = (JxlDecoderSetPreferredColorProfile_pfn)GetProcAddress (hModJXL, "JxlDecoderSetPreferredColorProfile");
 
-    JxlDecoder* jxl_decoder =
-      jxlDecoderCreate (nullptr);
+    JxlResizableParallelRunnerCreate_pfn         jxlResizableParallelRunnerCreate         = (JxlResizableParallelRunnerCreate_pfn)        GetProcAddress (hModJXLThreads, "JxlResizableParallelRunnerCreate");
+    JxlResizableParallelRunnerSuggestThreads_pfn jxlResizableParallelRunnerSuggestThreads = (JxlResizableParallelRunnerSuggestThreads_pfn)GetProcAddress (hModJXLThreads, "JxlResizableParallelRunnerSuggestThreads");
+    JxlResizableParallelRunnerSetThreads_pfn     jxlResizableParallelRunnerSetThreads     = (JxlResizableParallelRunnerSetThreads_pfn)    GetProcAddress (hModJXLThreads, "JxlResizableParallelRunnerSetThreads");
+    JxlResizableParallelRunnerDestroy_pfn        jxlResizableParallelRunnerDestroy        = (JxlResizableParallelRunnerDestroy_pfn)       GetProcAddress (hModJXLThreads, "JxlResizableParallelRunnerDestroy");
+    JxlResizableParallelRunner_pfn               jxlResizableParallelRunner               = (JxlResizableParallelRunner_pfn)              GetProcAddress (hModJXLThreads, "JxlResizableParallelRunner");
 
-    if (jxl_decoder != nullptr && JXL_DEC_SUCCESS ==
-      jxlDecoderSubscribeEvents (jxl_decoder, JXL_DEC_BASIC_INFO     |
-                                              JXL_DEC_COLOR_ENCODING |
-                                              JXL_DEC_FULL_IMAGE))
+    JxlDecoder* jxl_decoder = jxlDecoderCreate                 != nullptr &&
+                              jxlResizableParallelRunnerCreate != nullptr  ?
+                              jxlDecoderCreate                   (nullptr) : nullptr;
+    void*       jxl_runner  = jxlResizableParallelRunnerCreate != nullptr  ?
+                              jxlResizableParallelRunnerCreate   (nullptr) : nullptr;
+
+    if ( jxl_decoder != nullptr &&
+         jxl_runner  != nullptr &&
+         JXL_DEC_SUCCESS ==
+           jxlDecoderSubscribeEvents (jxl_decoder, JXL_DEC_BASIC_INFO     |
+                                                   JXL_DEC_COLOR_ENCODING |
+                                                   JXL_DEC_FULL_IMAGE) &&
+         JXL_DEC_SUCCESS ==
+           jxlDecoderSetParallelRunner (jxl_decoder, jxlResizableParallelRunner,
+                                        jxl_runner) )
     {
-      JxlBasicInfo   info;
+      JxlBasicInfo   info   = { };
       JxlPixelFormat format =
         { 4, JXL_TYPE_FLOAT16, JXL_NATIVE_ENDIAN, 0 };
 
@@ -1199,21 +1321,31 @@ LoadLibraryTexture (image_s& image)
           image.width  = static_cast <float> (info.xsize);
           image.height = static_cast <float> (info.ysize);
 
-          ////////JxlResizableParallelRunnerSetThreads(
-          ////////    runner.get(),
-          ////////    JxlResizableParallelRunnerSuggestThreads(info.xsize, info.ysize));
+          jxlResizableParallelRunnerSetThreads ( jxl_runner,
+            jxlResizableParallelRunnerSuggestThreads (info.xsize * 16, info.ysize * 16) );
         }
 
         else if (status == JXL_DEC_COLOR_ENCODING)
         {
-          // TODO
+          static constexpr JxlColorEncoding
+            scrgb_encoding = { .color_space       = JXL_COLOR_SPACE_RGB,
+                               .white_point       = JXL_WHITE_POINT_D65,
+                               .primaries         = JXL_PRIMARIES_SRGB,
+                               .transfer_function = JXL_TRANSFER_FUNCTION_LINEAR,
+                               .rendering_intent  = JXL_RENDERING_INTENT_PERCEPTUAL };
+
+          if ( JXL_DEC_SUCCESS !=
+                 jxlDecoderSetPreferredColorProfile (jxl_decoder, &scrgb_encoding) )
+          {
+            PLOG_ERROR << "JxlDecoderSetPreferredColorProfile failed";
+          }
         }
 
         else if (status == JXL_DEC_NEED_IMAGE_OUT_BUFFER)
         {
           size_t buffer_size;
-          if (JXL_DEC_SUCCESS !=
-              jxlDecoderImageOutBufferSize (jxl_decoder, &format, &buffer_size))
+          if ( JXL_DEC_SUCCESS !=
+                 jxlDecoderImageOutBufferSize (jxl_decoder, &format, &buffer_size) )
           {
             PLOG_ERROR << "JxlDecoderImageOutBufferSize failed";
             break;
@@ -1222,9 +1354,6 @@ LoadLibraryTexture (image_s& image)
           if (buffer_size != image.width * image.height * 8) // 64-bpp
           {
             PLOG_ERROR << "Invalid out buffer size " << buffer_size << " " << (int)image.width * (int)image.height * 8;
-            //fprintf(stderr, "Invalid out buffer size %d %d\n",
-            //        static_cast<int>(buffer_size),
-            //        static_cast<int>(image.width * image.height * 16));
             break;
           }
 
@@ -1269,29 +1398,56 @@ LoadLibraryTexture (image_s& image)
           meta.mipLevels = 1;
           meta.dimension = DirectX::TEX_DIMENSION_TEXTURE2D;
 
-          image.light_info.isHDR = true;
-          image.is_hdr           = true;
-
-          DirectX::ScratchImage converted_img;
+          bool wcg = false;
+          bool hdr = false;
 
           using namespace DirectX;
 
-          if (SUCCEEDED (TransformImage (*img.GetImages (),
-              [&](XMVECTOR* outPixels, const XMVECTOR* inPixels, size_t width, size_t y)
-              {
-                UNREFERENCED_PARAMETER(y);
-              
-                for (size_t j = 0; j < width; ++j)
-                {
-                  XMVECTOR v = inPixels [j];
+          ScratchImage converted_img;
 
-                  outPixels [j] =
-                    XMVector3Transform (SKIV_Image_PQToLinear (v), c_Bt2100toscRGB);
-                }
-              }, converted_img)))
+          const XMVECTOR vRelativeToAbsoluteNits =
+            XMVectorReplicate (info.intensity_target / 80.0f);
+
+          if ( SUCCEEDED ( TransformImage (*img.GetImages (),
+                [&](      XMVECTOR* outPixels,
+                    const XMVECTOR* inPixels,
+                          size_t    width,
+                          size_t    y)
+                {
+                  UNREFERENCED_PARAMETER(y);
+                
+                  for (size_t j = 0; j < width; ++j)
+                  {
+                    XMVECTOR v = inPixels [j];
+                
+                    outPixels [j] =
+                      XMVectorMultiply (v, vRelativeToAbsoluteNits);
+
+                    uint32_t xm_test_rec709 = 0x0,
+                             xm_test_hdr    = 0x0;
+
+                    if (XMVectorGreaterOrEqualR (&xm_test_rec709, v, g_XMZero);
+                        XMComparisonAnyFalse    ( xm_test_rec709))
+                    {
+                      wcg = true;
+                    }
+
+                    if (XMVectorGreaterR    (&xm_test_hdr, v, g_XMOne);
+                        XMComparisonAnyTrue ( xm_test_hdr))
+                    {
+                      hdr = true;
+                    }
+                  }
+                }, converted_img )
+              )
+            )
           {
             std::swap (img, converted_img);
           }
+
+          image.light_info.isHDR = wcg||hdr;
+          image.is_hdr           = wcg||hdr;
+
           break;
         }
 
@@ -1305,6 +1461,9 @@ LoadLibraryTexture (image_s& image)
 
     if (jxl_decoder != nullptr)
       jxlDecoderDestroy (jxl_decoder);
+
+    if ( jxl_runner != nullptr)
+      jxlResizableParallelRunnerDestroy (nullptr);
   }
 
   // Push the existing texture to a stack to be released after the frame
