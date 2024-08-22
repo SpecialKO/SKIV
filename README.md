@@ -19,12 +19,13 @@ New versions will probably be distributed through their own packaged installer o
 
 ## Format support
 
-* JXR
-* JXL* (Requires Special K)
+* JPEG-XR (.jxr)
+* JPEG-XL* (.jxl)
 * AVIF* (Windows 11 only)
+* OpenEXR (.exr)
 * Radiance HDR (.hdr)
 * PNG* (+ HDR support)
-* JPEG (JPG)
+* JPEG (.jpg)
 * WebP*
 * PSD
 * GIF*
@@ -78,5 +79,7 @@ New versions will probably be distributed through their own packaged installer o
 * Uses [ValveFileVDF](https://github.com/TinyTinni/ValveFileVDF), licensed under [MIT](https://github.com/TinyTinni/ValveFileVDF/blob/master/LICENSE).
 * Uses [TextFlowCpp](https://github.com/catchorg/textflowcpp), licensed under [BSL-1.0](https://github.com/catchorg/textflowcpp/blob/master/LICENSE.txt).
 * Uses [HybridDetect](https://github.com/GameTechDev/HybridDetect/), licensed under [MIT](https://github.com/GameTechDev/HybridDetect/blob/main/LICENSE.md).
+* Uses [zlib](https://github.com/madler/zlib), licensed under [the zlib license](https://raw.githubusercontent.com/madler/zlib/develop/LICENSE).
+* Uses [OpenEXR](https://github.com/AcademySoftwareFoundation/openexr), licensed under [BSD](https://raw.githubusercontent.com/AcademySoftwareFoundation/openexr/main/LICENSE.md).
 * Optionally Uses [libjxl](https://github.com/libjxl/), licensed under [BSD](https://raw.githubusercontent.com/libjxl/libjxl/main/LICENSE).
 * Includes various snippets of code from [Stack Overflow](https://stackoverflow.com/), licensed under [Creative Commons Attribution-ShareAlike](https://stackoverflow.com/help/licensing).
