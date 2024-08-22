@@ -31,6 +31,7 @@
 #include <ImGuiNotify.hpp>
 
 #include "DirectXTex.h"
+#include <utility/DirectXTexEXR.h>
 #include <wincodec.h>
 
 #include <fonts/fa_621.h>
@@ -127,9 +128,10 @@ const std::initializer_list<FileSignature> supported_formats =
   FileSignature { L"image/vnd.adobe.photoshop", { L".psd"  },          { 0x38, 0x42, 0x50, 0x53 } },
   FileSignature { L"image/tiff",                { L".tiff", L".tif" }, { 0x49, 0x49, 0x2A, 0x00 } }, // TIFF: little-endian
   FileSignature { L"image/tiff",                { L".tiff", L".tif" }, { 0x4D, 0x4D, 0x00, 0x2A } }, // TIFF: big-endian
-  FileSignature { L"image/vnd.radiance",        { L".hdr"  },          { 0x23, 0x3F, 0x52, 0x41, 0x44, 0x49, 0x41, 0x4E, 0x43, 0x45, 0x0A } }, // Radiance High Dynamic Range image file
   FileSignature { L"image/gif",                 { L".gif"  },          { 0x47, 0x49, 0x46, 0x38, 0x37, 0x61 } }, // GIF87a
   FileSignature { L"image/gif",                 { L".gif"  },          { 0x47, 0x49, 0x46, 0x38, 0x39, 0x61 } }, // GIF89a
+  FileSignature { L"image/vnd.radiance",        { L".hdr"  },          { 0x23, 0x3F, 0x52, 0x41, 0x44, 0x49, 0x41, 0x4E, 0x43, 0x45, 0x0A } }, // Radiance High Dynamic Range image file
+  FileSignature { L"image/x-exr",               { L".exr"  },          { 0x76, 0x2F, 0x31, 0x01 } },
   FileSignature { L"image/avif",                { L".avif" },          { 0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x61, 0x76, 0x69, 0x66 },   // ftypavif
                                                                        { 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF } }, // ?? ?? ?? ?? 66 74 79 70 61 76 69 66
   FileSignature { L"image/jxl",                 { L".jxl"  },          { 0xFF, 0x0A } },
@@ -154,9 +156,11 @@ const std::initializer_list<FileSignature> supported_hdr_encode_formats =
 {
   FileSignature { L"image/png",                 { L".png"  },          { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A } },
   FileSignature { L"image/vnd.ms-photo",        { L".jxr"  },          { 0x49, 0x49, 0xBC } },
+  FileSignature { L"image/vnd.radiance",        { L".hdr"  },          { 0x23, 0x3F, 0x52, 0x41, 0x44, 0x49, 0x41, 0x4E, 0x43, 0x45, 0x0A } }, // Radiance High Dynamic Range image file
+  FileSignature { L"image/x-exr",               { L".exr"  },          { 0x76, 0x2F, 0x31, 0x01 } },
+//FileSignature { L"image/jxl",                 { L".jxl"  },          { 0xFF, 0x0A } },
 //FileSignature { L"image/avif",                { L".avif" },          { 0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x61, 0x76, 0x69, 0x66 },   // ftypavif
 //                                                                     { 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF } }, // ?? ?? ?? ?? 66 74 79 70 61 76 69 66
-//FileSignature { L"image/vnd.radiance",        { L".hdr"  },          { 0x23, 0x3F, 0x52, 0x41, 0x44, 0x49, 0x41, 0x4E, 0x43, 0x45, 0x0A } }, // Radiance High Dynamic Range image file
 //FileSignature { L"image/vnd-ms.dds",          { L".dds"  },          { 0x44, 0x44, 0x53, 0x20 } },
 };
 
@@ -695,7 +699,10 @@ enum ImageDecoder {
   ImageDecoder_WIC,
   ImageDecoder_DDS,
   ImageDecoder_stbi,
-  ImageDecoder_JXL
+  ImageDecoder_JXL,
+  ImageDecoder_EXR,
+  ImageDecoder_HDR,
+  ImageDecoder_AVIF // TODO
 };
 
 class SK_AutoFile {
@@ -831,7 +838,7 @@ LoadLibraryTexture (image_s& image)
              (type.mime_type == L"image/bmp"                 ) ? ImageDecoder_stbi :
              (type.mime_type == L"image/vnd.adobe.photoshop" ) ? ImageDecoder_stbi :
              (type.mime_type == L"image/gif"                 ) ? ImageDecoder_stbi :
-             (type.mime_type == L"image/vnd.radiance"        ) ? ImageDecoder_stbi :
+             (type.mime_type == L"image/vnd.radiance"        ) ? ImageDecoder_HDR  :
            //(type.mime_type == L"image/x-targa"             ) ? ImageDecoder_stbi : // TGA has no real unique header identifier, so just use the file extension on those
              (type.mime_type == L"image/vnd.ms-photo"        ) ? ImageDecoder_WIC  :
              (type.mime_type == L"image/webp"                ) ? ImageDecoder_WIC  :
@@ -839,13 +846,15 @@ LoadLibraryTexture (image_s& image)
              (type.mime_type == L"image/avif"                ) ? ImageDecoder_WIC  :
              (type.mime_type == L"image/jxl"                 ) ? ImageDecoder_JXL  :
              (type.mime_type == L"image/vnd-ms.dds"          ) ? ImageDecoder_DDS  :
+             (type.mime_type == L"image/x-exr"               ) ? ImageDecoder_EXR  :
                                                                  ImageDecoder_WIC;   // Not actually being used
 
           // None of this is technically correct other than the .hdr case,
           //   they can all be SDR or HDR.
           if (type.mime_type == L"image/vnd.radiance" || // .hdr
               type.mime_type == L"image/vnd.ms-photo" || // .jxr
-              type.mime_type == L"image/avif")           // .avif
+              type.mime_type == L"image/avif"         || // .avif
+              type.mime_type == L"image/x-exr")          // .exr
           {
             image.is_hdr = true;
           }
@@ -872,6 +881,8 @@ LoadLibraryTexture (image_s& image)
   PLOG_DEBUG_IF(decoder == ImageDecoder_WIC ) << "Using WIC decoder...";
   PLOG_DEBUG_IF(decoder == ImageDecoder_DDS ) << "Using DDS decoder...";
   PLOG_DEBUG_IF(decoder == ImageDecoder_JXL ) << "Using JPEG-XL decoder...";
+  PLOG_DEBUG_IF(decoder == ImageDecoder_EXR ) << "Using OpenEXR decoder...";
+  PLOG_DEBUG_IF(decoder == ImageDecoder_HDR ) << "Using Radiance HDR decoder...";
 
   if (decoder == ImageDecoder_None)
     return false;
@@ -1212,6 +1223,70 @@ LoadLibraryTexture (image_s& image)
       }
 
       //meta.format = DirectX::MakeSRGB (DirectX::MakeTypeless (meta.format));
+    }
+  }
+
+  if (decoder == ImageDecoder_EXR)
+  {
+    using namespace DirectX;
+
+    TexMetadata exr_meta;
+
+    if (SUCCEEDED (LoadFromEXRFile (imagePath.c_str (), &exr_meta, img)))
+    {
+      image.bpc      = static_cast <int> (DirectX::BitsPerColor (exr_meta.format));
+      image.channels =               3 + (DirectX::HasAlpha     (exr_meta.format) ?
+                                                                                1 : 0);
+
+      succeeded = true;
+
+      image.light_info.isHDR = true;
+      image.is_hdr           = true;
+
+      image.width    = static_cast <float> (exr_meta.width);
+      image.height   = static_cast <float> (exr_meta.height);
+
+      meta.format    = DXGI_FORMAT_R16G16B16A16_FLOAT;
+      meta.width     = static_cast <size_t> (image.width);
+      meta.height    = static_cast <size_t> (image.height);
+      meta.depth     = 1;
+      meta.arraySize = 1;
+      meta.mipLevels = 1;
+      meta.dimension = DirectX::TEX_DIMENSION_TEXTURE2D;
+    }
+  }
+
+  if (decoder == ImageDecoder_HDR)
+  {
+    fseek  (pImageFile,                                 0, SEEK_SET  );
+    fread  (_scratchMemory.get (), _.getInitialSize (), 1, pImageFile);
+    rewind (pImageFile);
+
+    using namespace DirectX;
+
+    TexMetadata hdr_meta;
+
+    if (SUCCEEDED (LoadFromHDRMemory (_scratchMemory.get (), _.getInitialSize (), &hdr_meta, img)))
+    {
+      image.bpc      = static_cast <int> (DirectX::BitsPerColor (hdr_meta.format));
+      image.channels =               3 + (DirectX::HasAlpha     (hdr_meta.format) ?
+                                                                                1 : 0);
+
+      succeeded = true;
+
+      image.light_info.isHDR = true;
+      image.is_hdr           = true;
+
+      image.width    = static_cast <float> (hdr_meta.width);
+      image.height   = static_cast <float> (hdr_meta.height);
+
+      meta.format    = hdr_meta.format;
+      meta.width     = static_cast <size_t> (image.width);
+      meta.height    = static_cast <size_t> (image.height);
+      meta.depth     = 1;
+      meta.arraySize = 1;
+      meta.mipLevels = 1;
+      meta.dimension = DirectX::TEX_DIMENSION_TEXTURE2D;
     }
   }
 

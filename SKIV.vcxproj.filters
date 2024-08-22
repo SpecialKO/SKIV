@@ -177,6 +177,9 @@
     <ClInclude Include="include\utility\image.h">
       <Filter>Header Files\Utility</Filter>
     </ClInclude>
+    <ClInclude Include="include\utility\DirectXTexEXR.h">
+      <Filter>Header Files\Packages_Misc</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\imgui\imgui.cpp">
@@ -236,6 +239,9 @@
     <ClCompile Include="src\utility\image.cpp">
       <Filter>Source Files\Utility</Filter>
     </ClCompile>
+    <ClCompile Include="src\utility\DirectXTexEXR.cpp">
+      <Filter>Source Files\Utility</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="SKIV.rc">
@@ -273,6 +279,9 @@
     </None>
     <None Include="resources\shaders\calibration.hlsli">
       <Filter>Resource Files\Shaders</Filter>
+    </None>
+    <None Include="post_build.bat">
+      <Filter>Source Files</Filter>
     </None>
   </ItemGroup>
 </Project>

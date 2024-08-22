@@ -14,6 +14,8 @@
 #include <ImGuiNotify.hpp>
 #include <utility/skif_imgui.h>
 #include <utility/utility.h>
+#include "DirectXTex.h"
+#include <utility/DirectXTexEXR.h>
 
 skiv_image_desktop_s SKIV_DesktopImage;
 
@@ -2167,7 +2169,7 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
   // For doofus users who don't give us filenames...
   if (! wszExtension)
   {
-    PathAddExtension (wszImplicitFileName, defaultHDRFileExt.c_str());
+    PathAddExtension (wszImplicitFileName, defaultHDRFileExt.c_str ());
     wszExtension =
       PathFindExtensionW (wszImplicitFileName);
   }
@@ -2177,6 +2179,26 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
   if (StrStrIW (wszExtension, L"jxr"))
   {
     wic_codec = GetWICCodec (WIC_CODEC_WMP);
+  }
+
+  else if (StrStrIW (wszExtension, L"exr"))
+  {
+    using namespace DirectX;
+
+    if (SUCCEEDED (SaveToEXRFile (image, wszImplicitFileName)))
+    {
+      return S_OK;
+    }
+  }
+
+  else if (StrStrIW (wszExtension, L"hdr"))
+  {
+    using namespace DirectX;
+
+    if (SUCCEEDED (SaveToHDRFile (image, wszImplicitFileName)))
+    {
+      return S_OK;
+    }
   }
 
   else if (StrStrIW (wszExtension, L"png"))
