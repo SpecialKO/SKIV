@@ -1223,12 +1223,13 @@ LoadLibraryTexture (image_s& image)
     static HMODULE hModJXLThreads;
     SK_RunOnce (   hModJXLThreads = LoadLibraryW (L"jxl_threads.dll"));
 
-    using JxlDecoderCreate_pfn             = JxlDecoder*      (*)(const JxlMemoryManager* memory_manager);
-    using JxlDecoderDestroy_pfn            = void             (*)(      JxlDecoder* dec);
-    using JxlDecoderSubscribeEvents_pfn    = JxlDecoderStatus (*)(      JxlDecoder* dec, int events_wanted);
-    using JxlDecoderSetInput_pfn           = JxlDecoderStatus (*)(      JxlDecoder* dec, const uint8_t* data,                        size_t  size);
+    using JxlDecoderCreate_pfn                   = JxlDecoder*      (*)(const JxlMemoryManager* memory_manager);
+    using JxlDecoderDestroy_pfn                  = void             (*)(      JxlDecoder* dec);
+    using JxlDecoderSubscribeEvents_pfn          = JxlDecoderStatus (*)(      JxlDecoder* dec, int events_wanted);
+    using JxlDecoderSetInput_pfn                 = JxlDecoderStatus (*)(      JxlDecoder* dec, const uint8_t* data,                        size_t  size);
     using JxlDecoderImageOutBufferSize_pfn       = JxlDecoderStatus (*)(const JxlDecoder* dec, const JxlPixelFormat* format,               size_t* size);
     using JxlDecoderSetImageOutBuffer_pfn        = JxlDecoderStatus (*)(      JxlDecoder* dec, const JxlPixelFormat* format, void* buffer, size_t  size);
+    using JxlDecoderSetImageOutBitDepth_pfn      = JxlDecoderStatus (*)(      JxlDecoder* dec, const JxlBitDepth* bit_depth);
     using JxlDecoderGetBasicInfo_pfn             = JxlDecoderStatus (*)(const JxlDecoder* dec, JxlBasicInfo* info);
     using JxlDecoderProcessInput_pfn             = JxlDecoderStatus (*)(      JxlDecoder* dec);
     using JxlDecoderCloseInput_pfn               = void             (*)(      JxlDecoder* dec);
@@ -1257,6 +1258,7 @@ LoadLibraryTexture (image_s& image)
     JxlDecoderProcessInput_pfn             jxlDecoderProcessInput             = (JxlDecoderProcessInput_pfn)            GetProcAddress (hModJXL, "JxlDecoderProcessInput");
     JxlDecoderCloseInput_pfn               jxlDecoderCloseInput               = (JxlDecoderCloseInput_pfn)              GetProcAddress (hModJXL, "JxlDecoderCloseInput");
     JxlDecoderSetImageOutBuffer_pfn        jxlDecoderSetImageOutBuffer        = (JxlDecoderSetImageOutBuffer_pfn)       GetProcAddress (hModJXL, "JxlDecoderSetImageOutBuffer");
+    JxlDecoderSetImageOutBitDepth_pfn      jxlDecoderSetImageOutBitDepth      = (JxlDecoderSetImageOutBitDepth_pfn)     GetProcAddress (hModJXL, "JxlDecoderSetImageOutBitDepth");
     JxlDecoderSetParallelRunner_pfn        jxlDecoderSetParallelRunner        = (JxlDecoderSetParallelRunner_pfn)       GetProcAddress (hModJXL, "JxlDecoderSetParallelRunner");
     JxlDecoderSetPreferredColorProfile_pfn jxlDecoderSetPreferredColorProfile = (JxlDecoderSetPreferredColorProfile_pfn)GetProcAddress (hModJXL, "JxlDecoderSetPreferredColorProfile");
 
@@ -1284,7 +1286,14 @@ LoadLibraryTexture (image_s& image)
     {
       JxlBasicInfo   info   = { };
       JxlPixelFormat format =
-        { 4, JXL_TYPE_FLOAT16, JXL_NATIVE_ENDIAN, 0 };
+        { 4, JXL_TYPE_FLOAT, JXL_NATIVE_ENDIAN, 0 };
+
+      auto bpp =
+        (format.data_type == JXL_TYPE_FLOAT)   ? (sizeof (float)    * format.num_channels) :
+        (format.data_type == JXL_TYPE_UINT8)   ? (sizeof (uint8_t)  * format.num_channels) :
+        (format.data_type == JXL_TYPE_UINT16)  ? (sizeof (uint16_t) * format.num_channels) :
+        (format.data_type == JXL_TYPE_FLOAT16) ? (sizeof (float)/2) * format.num_channels  :
+                                                  sizeof (uint8_t)  * format.num_channels;
 
       fseek  (pImageFile,                                 0, SEEK_SET  );
       fread  (_scratchMemory.get (), _.getInitialSize (), 1, pImageFile);
@@ -1322,7 +1331,7 @@ LoadLibraryTexture (image_s& image)
           image.height = static_cast <float> (info.ysize);
 
           jxlResizableParallelRunnerSetThreads ( jxl_runner,
-            jxlResizableParallelRunnerSuggestThreads (info.xsize * 16, info.ysize * 16) );
+            jxlResizableParallelRunnerSuggestThreads (info.xsize * 128, info.ysize * 128) );
         }
 
         else if (status == JXL_DEC_COLOR_ENCODING)
@@ -1351,13 +1360,13 @@ LoadLibraryTexture (image_s& image)
             break;
           }
 
-          if (buffer_size != image.width * image.height * 8) // 64-bpp
+          if (buffer_size != image.width * image.height * bpp)
           {
-            PLOG_ERROR << "Invalid out buffer size " << buffer_size << " " << (int)image.width * (int)image.height * 8;
+            PLOG_ERROR << "Invalid out buffer size " << buffer_size << " " << (int)image.width * (int)image.height * bpp;
             break;
           }
 
-          if (SUCCEEDED (img.Initialize2D (DXGI_FORMAT_R16G16B16A16_FLOAT, static_cast <size_t> (image.width),
+          if (SUCCEEDED (img.Initialize2D (DXGI_FORMAT_R32G32B32A32_FLOAT, static_cast <size_t> (image.width),
                                                                            static_cast <size_t> (image.height), 1, 1)))
           {
             image.bpc      = info.bits_per_sample;
@@ -1365,6 +1374,8 @@ LoadLibraryTexture (image_s& image)
 
             void*  pixels_buffer      = static_cast <void *>(img.GetPixels ());
             size_t pixels_buffer_size = img.GetPixelsSize ();
+
+            std::ignore = jxlDecoderSetImageOutBitDepth;
 
             if (JXL_DEC_SUCCESS != jxlDecoderSetImageOutBuffer(jxl_decoder, &format,
                                                                pixels_buffer,
@@ -1384,10 +1395,6 @@ LoadLibraryTexture (image_s& image)
 
         else if (status == JXL_DEC_SUCCESS)
         {
-          // All decoding successfully finished.
-          // It's not required to call JxlDecoderReleaseInput(dec.get()) here since
-          // the decoder will be destroyed.
-          PLOG_INFO << "JXL Decode Succeeded!";
           succeeded = true;
 
           meta.format    = DXGI_FORMAT_R16G16B16A16_FLOAT;
@@ -1406,7 +1413,8 @@ LoadLibraryTexture (image_s& image)
           ScratchImage converted_img;
 
           const XMVECTOR vRelativeToAbsoluteNits =
-            XMVectorReplicate (info.intensity_target / 80.0f);
+            XMVectorReplicate (info.intensity_target != 255.0f ? info.intensity_target / 80.0f
+                                                               : 1.0f);
 
           if ( SUCCEEDED ( TransformImage (*img.GetImages (),
                 [&](      XMVECTOR* outPixels,
@@ -1442,7 +1450,7 @@ LoadLibraryTexture (image_s& image)
               )
             )
           {
-            std::swap (img, converted_img);
+            DirectX::Convert (*converted_img.GetImages (), DXGI_FORMAT_R16G16B16A16_FLOAT, DirectX::TEX_FILTER_DEFAULT, 0.0f, img);
           }
 
           image.light_info.isHDR = wcg||hdr;
@@ -1534,12 +1542,12 @@ LoadLibraryTexture (image_s& image)
             meta.format == DXGI_FORMAT_R32G32B32A32_FLOAT);
 
     XMVECTOR vMaxCLL   = g_XMZero;
-    XMVECTOR vMaxLum   = g_XMZero;
-    XMVECTOR vMinLum   = g_XMOne;
-    XMVECTOR vMaxLum99 = g_XMZero;
+    float    fMaxLum   = 0.0f;
+    float    fMinLum   = 1.0f;
+    float    fMaxLum99 = 0.0f;
 
-    auto        luminance_freq = std::make_unique <uint32_t []> (16384);
-    ZeroMemory (luminance_freq.get (),     sizeof (uint32_t)  *  16384);
+    auto        luminance_freq = std::make_unique <uint32_t []> (4096);
+    ZeroMemory (luminance_freq.get (),     sizeof (uint32_t)  *  4096);
 
     double dLumAccum = 0.0;
 
@@ -1566,8 +1574,6 @@ LoadLibraryTexture (image_s& image)
       for (size_t j = 0; j < width; ++j)
       {
         v = *pixels;
-
-        XMVectorSetZ (v, 1.0f);
 
         vMaxCLL =
           XMVectorMax (v, vMaxCLL);
@@ -1640,14 +1646,16 @@ LoadLibraryTexture (image_s& image)
 
         image.colorimetry.pixel_counts.total++;
 
-        vMaxLum =
-          XMVectorMax (vMaxLum, vColorXYZ);
+        const float fLum =
+          XMVectorGetY (vColorXYZ);
 
-        vMinLum =
-          XMVectorMin (vMinLum, vColorXYZ);
+        fMaxLum =
+          std::max (fMaxLum, fLum);
+        fMinLum =
+          std::min (fMinLum, fLum);
 
         dScanlineLum +=
-          std::max (0.0, static_cast <double> (XMVectorGetY (v)));
+          std::max (0.0, static_cast <double> (fLum));
 
         pixels++;
       }
@@ -1657,8 +1665,7 @@ LoadLibraryTexture (image_s& image)
     } );
 
     const float fLumRange =
-      XMVectorGetY (vMaxLum) -
-      XMVectorGetY (vMinLum);
+            (fMaxLum - fMinLum);
 
     EvaluateImage ( pImg->GetImages     (),
                     pImg->GetImageCount (),
@@ -1677,9 +1684,9 @@ LoadLibraryTexture (image_s& image)
         luminance_freq [
           std::clamp ( (int)
             std::roundf (
-              (XMVectorGetY (v) - XMVectorGetY (vMinLum)) /
-                                               (fLumRange / 16384.0f) ),
-                                                         0, 16383 ) ]++;
+              (XMVectorGetY (v) - fMinLum) /
+                                    (fLumRange / 4096.0f) ),
+                                              0, 4095 ) ]++;
       }
     });
 
@@ -1687,7 +1694,7 @@ LoadLibraryTexture (image_s& image)
     const double img_size = (double)pImg->GetMetadata ().width *
                             (double)pImg->GetMetadata ().height;
 
-    for (auto i = 16383; i >= 0; --i)
+    for (auto i = 4095; i >= 0; --i)
     {
       percent -=
         100.0 * ((double)luminance_freq [i] / img_size);
@@ -1695,13 +1702,11 @@ LoadLibraryTexture (image_s& image)
       if (percent <= 99.825)
       {
         PLOG_INFO << "99.825th percentile luminance: " <<
-          80.0f * (XMVectorGetY (vMinLum) + (fLumRange * ((float)i / 16384.0f)))
+          80.0f * (fMinLum + (fLumRange * ((float)i / 4096.0f)))
                                                       << " nits";
 
-        vMaxLum99 =
-          XMVectorReplicate (
-            XMVectorGetY (vMinLum) + (fLumRange * ((float)i / 16384.0f))
-          );
+        fMaxLum99 =
+            fMinLum + (fLumRange * ((float)i / 4096.0f));
 
         break;
       }
@@ -1723,27 +1728,22 @@ LoadLibraryTexture (image_s& image)
       fMaxCLL == XMVectorGetZ (vMaxCLL) ? 'B' :
                                           'X';
 
-    // In XYZ space, so Y=Luminance
-    float fMaxLum = XMVectorGetY (vMaxLum);
-    float fMinLum = XMVectorGetY (vMinLum);
-    float fP99Lum = XMVectorGetY (vMaxLum99);
-
     if (fMinLum < 0.0f)
     {
-      PLOG_INFO  << "HDR image contains invalid (non-Rec2020) colors...";
+      //PLOG_INFO  << "HDR image contains invalid (non-Rec2020) colors...";
 
       fMinLum = 0.0f;
     }
 
     // Use the maximum luminance if for some reason the percentile calc failed
-    if (fP99Lum <= 0.01f)
-        fP99Lum  = fMaxLum;
+    if (fMaxLum99 <= 0.01f)
+        fMaxLum99  = fMaxLum;
 
     image.light_info.max_cll      = fMaxCLL;
     image.light_info.max_cll_name = cMaxChannel;
-    image.light_info.max_nits     = std::max (0.0f, fMaxLum * 80.0f); // scRGB
-    image.light_info.min_nits     = std::max (0.0f, fMinLum * 80.0f); // scRGB
-    image.light_info.p99_nits     = std::max (0.0f, fP99Lum * 80.0f); // scRGB
+    image.light_info.max_nits     = std::max (0.0f, fMaxLum   * 80.0f); // scRGB
+    image.light_info.min_nits     = std::max (0.0f, fMinLum   * 80.0f); // scRGB
+    image.light_info.p99_nits     = std::max (0.0f, fMaxLum99 * 80.0f); // scRGB
 
     // We use the sum of averages per-scanline to help avoid overflow
     image.light_info.avg_nits     = static_cast <float> (80.0 *
