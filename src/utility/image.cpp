@@ -716,7 +716,7 @@ SKIV_HDR_ConvertImageToPNG (const DirectX::Image& raw_hdr_img, DirectX::ScratchI
             typeless_fmt == DXGI_FORMAT_R32G32B32A32_TYPELESS)
         {
           XMVECTOR nvalue = XMVector3Transform (v, c_scRGBtoBt2100);
-                        v = SKIV_Image_LinearToPQ (nvalue);
+                        v = SKIV_Image_LinearToPQ (XMVectorClamp (nvalue, g_XMZero, g_XMInfinity));
         }
 
         v = // Quantize to 10- or 12-bpc before expanding to 16-bpc in order to improve
