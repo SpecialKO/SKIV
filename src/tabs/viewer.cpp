@@ -1541,13 +1541,13 @@ LoadLibraryTexture (image_s& image)
     assert (meta.format == DXGI_FORMAT_R16G16B16A16_FLOAT ||
             meta.format == DXGI_FORMAT_R32G32B32A32_FLOAT);
 
-    XMVECTOR vMaxCLL   = g_XMZero;
-    float    fMaxLum   = 0.0f;
-    float    fMinLum   = 1.0f;
-    float    fMaxLum99 = 0.0f;
+    XMVECTOR vMaxCLL   =   g_XMZero;
+    float    fMaxLum   =       0.0f;
+    float    fMinLum   = 5240320.0f;
+    float    fMaxLum99 =       0.0f;
 
-    auto        luminance_freq = std::make_unique <uint32_t []> (4096);
-    ZeroMemory (luminance_freq.get (),     sizeof (uint32_t)  *  4096);
+    auto        luminance_freq = std::make_unique <uint32_t []> (65536);
+    ZeroMemory (luminance_freq.get (),     sizeof (uint32_t)  *  65536);
 
     double dLumAccum = 0.0;
 
@@ -1664,6 +1664,13 @@ LoadLibraryTexture (image_s& image)
         (dScanlineLum / static_cast <float> (width));
     } );
 
+    float fMaxLumActual =           fMaxLum;
+    float fMinLumActual = std::max (fMinLum, 0.0f);
+
+    // 0 nits - 10k nits (appropriate for screencap, but not HDR photography)
+    fMinLum = std::clamp (fMinLum, 0.0f,    125.0f);
+    fMaxLum = std::clamp (fMaxLum, fMinLum, 125.0f);
+
     const float fLumRange =
             (fMaxLum - fMinLum);
 
@@ -1685,8 +1692,8 @@ LoadLibraryTexture (image_s& image)
           std::clamp ( (int)
             std::roundf (
               (XMVectorGetY (v) - fMinLum) /
-                                    (fLumRange / 4096.0f) ),
-                                              0, 4095 ) ]++;
+                                    (fLumRange / 65536.0f) ),
+                                              0, 65535 ) ]++;
       }
     });
 
@@ -1694,19 +1701,19 @@ LoadLibraryTexture (image_s& image)
     const double img_size = (double)pImg->GetMetadata ().width *
                             (double)pImg->GetMetadata ().height;
 
-    for (auto i = 4095; i >= 0; --i)
+    for (auto i = 65535; i >= 0; --i)
     {
       percent -=
         100.0 * ((double)luminance_freq [i] / img_size);
 
-      if (percent <= 99.825)
+      if (percent <= 99.92)
       {
-        PLOG_INFO << "99.825th percentile luminance: " <<
-          80.0f * (fMinLum + (fLumRange * ((float)i / 4096.0f)))
+        PLOG_INFO << "99.92th percentile luminance: " <<
+          80.0f * (fMinLum + (fLumRange * ((float)i / 65536.0f)))
                                                       << " nits";
 
         fMaxLum99 =
-            fMinLum + (fLumRange * ((float)i / 4096.0f));
+            fMinLum + (fLumRange * ((float)i / 65536.0f));
 
         break;
       }
@@ -1728,22 +1735,15 @@ LoadLibraryTexture (image_s& image)
       fMaxCLL == XMVectorGetZ (vMaxCLL) ? 'B' :
                                           'X';
 
-    if (fMinLum < 0.0f)
-    {
-      //PLOG_INFO  << "HDR image contains invalid (non-Rec2020) colors...";
-
-      fMinLum = 0.0f;
-    }
-
     // Use the maximum luminance if for some reason the percentile calc failed
     if (fMaxLum99 <= 0.01f)
         fMaxLum99  = fMaxLum;
 
     image.light_info.max_cll      = fMaxCLL;
     image.light_info.max_cll_name = cMaxChannel;
-    image.light_info.max_nits     = std::max (0.0f, fMaxLum   * 80.0f); // scRGB
-    image.light_info.min_nits     = std::max (0.0f, fMinLum   * 80.0f); // scRGB
-    image.light_info.p99_nits     = std::max (0.0f, fMaxLum99 * 80.0f); // scRGB
+    image.light_info.max_nits     = std::max (0.0f, fMaxLumActual * 80.0f); // scRGB
+    image.light_info.min_nits     = std::max (0.0f, fMinLumActual * 80.0f); // scRGB
+    image.light_info.p99_nits     = std::max (0.0f, fMaxLum99     * 80.0f); // scRGB
 
     // We use the sum of averages per-scanline to help avoid overflow
     image.light_info.avg_nits     = static_cast <float> (80.0 *

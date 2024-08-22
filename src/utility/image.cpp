@@ -584,11 +584,15 @@ SKIV_HDR_CalculateContentLightInfo (const DirectX::Image& img)
 
   if (N > 0.0)
   {
+    // 0 nits - 10k nits (limit imposed by PQ)
+    fMinLum = std::clamp (fMinLum, 0.0f,    125.0f);
+    fMaxLum = std::clamp (fMaxLum, fMinLum, 125.0f);
+
     const float fLumRange =
             (fMaxLum - fMinLum);
 
-    auto        luminance_freq = std::make_unique <uint32_t []> (4096);
-    ZeroMemory (luminance_freq.get (),     sizeof (uint32_t)  *  4096);
+    auto        luminance_freq = std::make_unique <uint32_t []> (65536);
+    ZeroMemory (luminance_freq.get (),     sizeof (uint32_t)  *  65536);
 
     EvaluateImage ( img,
     [&](const XMVECTOR* pixels, size_t width, size_t y)
@@ -606,8 +610,8 @@ SKIV_HDR_CalculateContentLightInfo (const DirectX::Image& img)
           std::clamp ( (int)
             std::roundf (
               (XMVectorGetY (v) - fMinLum)     /
-                                    (fLumRange / 4096.0f) ),
-                                              0, 4095 ) ]++;
+                                    (fLumRange / 65536.0f) ),
+                                              0, 65535 ) ]++;
       }
     });
 
@@ -615,15 +619,15 @@ SKIV_HDR_CalculateContentLightInfo (const DirectX::Image& img)
     const double img_size = (double)img.width *
                             (double)img.height;
 
-    for (auto i = 4095; i >= 0; --i)
+    for (auto i = 65535; i >= 0; --i)
     {
       percent -=
         100.0 * ((double)luminance_freq [i] / img_size);
 
-      if (percent <= 99.8)
+      if (percent <= 99.9)
       {
         fMaxLum =
-          fMinLum + (fLumRange * ((float)i / 4096.0f));
+          fMinLum + (fLumRange * ((float)i / 65536.0f));
 
         break;
       }
@@ -1915,8 +1919,8 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
       }
     });
 
-    auto        luminance_freq = std::make_unique <uint32_t []> (4096);
-    ZeroMemory (luminance_freq.get (),     sizeof (uint32_t)  *  4096);
+    auto        luminance_freq = std::make_unique <uint32_t []> (65536);
+    ZeroMemory (luminance_freq.get (),     sizeof (uint32_t)  *  65536);
 
     const float fLumRange =
       XMVectorGetY (maxLum) -
@@ -1940,8 +1944,8 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
           std::clamp ( (int)
             std::roundf (
               (XMVectorGetY (v) - XMVectorGetY (minLum)) /
-                                              (fLumRange / 4096.0f) ),
-                                                        0, 4095 ) ]++;
+                                              (fLumRange / 65536.0f) ),
+                                                        0, 65535 ) ]++;
       }
     });
 
@@ -1949,7 +1953,7 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
     const double img_size = (double)scrgb.GetMetadata ().width *
                             (double)scrgb.GetMetadata ().height;
 
-    for (auto i = 4095; i >= 0; --i)
+    for (auto i = 65535; i >= 0; --i)
     {
       percent -=
         100.0 * ((double)luminance_freq [i] / img_size);
@@ -1957,12 +1961,12 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
       if (percent <= 99.825)
       {
         PLOG_INFO << "99.825th percentile luminance: " <<
-          80.0f * (XMVectorGetY (minLum) + (fLumRange * ((float)i / 4096.0f)))
+          80.0f * (XMVectorGetY (minLum) + (fLumRange * ((float)i / 65536.0f)))
                                                       << " nits";
 
         maxLum =
           XMVectorReplicate (
-            XMVectorGetY (minLum) + (fLumRange * ((float)i / 4096.0f))
+            XMVectorGetY (minLum) + (fLumRange * ((float)i / 65536.0f))
           );
 
         break;
