@@ -728,8 +728,8 @@ SKIV_HDR_ConvertImageToPNG (const DirectX::Image& raw_hdr_img, DirectX::ScratchI
         if (typeless_fmt == DXGI_FORMAT_R16G16B16A16_TYPELESS ||
             typeless_fmt == DXGI_FORMAT_R32G32B32A32_TYPELESS)
         {
-          XMVECTOR nvalue = XMVector3Transform (v, c_scRGBtoBt2100);
-                        v = SKIV_Image_LinearToPQ (XMVectorClamp (nvalue, g_XMZero, g_XMInfinity));
+          v =
+            SKIV_Image_LinearToPQ (XMVector3Transform (v, c_scRGBtoBt2100));
         }
 
         v = // Quantize to 10- or 12-bpc before expanding to 16-bpc in order to improve
@@ -2245,7 +2245,7 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
     using JxlEncoderSetBasicInfo_pfn                         = JxlEncoderStatus         (*)(JxlEncoder* enc, const JxlBasicInfo* info);
     using JxlEncoderAddImageFrame_pfn                        = JxlEncoderStatus         (*)(const JxlEncoderFrameSettings* frame_settings, const JxlPixelFormat* pixel_format, const void* buffer, size_t size);
     using JxlEncoderSetColorEncoding_pfn                     = JxlEncoderStatus         (*)(JxlEncoder* enc, const JxlColorEncoding* color);
-    using JxlColorEncodingSetToLinearSRGB_pfn                = void                     (*)(JxlColorEncoding* color_encoding, JXL_BOOL is_gray);
+    using JxlEncoderFrameSettingsSetOption_pfn               = JxlEncoderStatus         (*)(JxlEncoderFrameSettings *frame_settings, JxlEncoderFrameSettingId option, int64_t value);
     using JxlEncoderSetParallelRunner_pfn                    = JxlEncoderStatus         (*)(JxlEncoder* enc, JxlParallelRunner parallel_runner, void* parallel_runner_opaque);
 
     using JxlThreadParallelRunner_pfn                        = JxlParallelRetCode       (*)(void* runner_opaque, void* jpegxl_opaque, JxlParallelRunInit init, JxlParallelRunFunction func, uint32_t start_range, uint32_t end_range);
@@ -2253,17 +2253,17 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
     using JxlThreadParallelRunnerDestroy_pfn                 = void                     (*)(void* runner_opaque);
     using JxlThreadParallelRunnerDefaultNumWorkerThreads_pfn = size_t                   (*)(void);
 
-    static JxlEncoderCreate_pfn                jxlEncoderCreate                = (JxlEncoderCreate_pfn)               GetProcAddress (hModJXL, "JxlEncoderCreate");
-    static JxlEncoderDestroy_pfn               jxlEncoderDestroy               = (JxlEncoderDestroy_pfn)              GetProcAddress (hModJXL, "JxlEncoderDestroy");
-    static JxlEncoderCloseInput_pfn            jxlEncoderCloseInput            = (JxlEncoderCloseInput_pfn)           GetProcAddress (hModJXL, "JxlEncoderCloseInput");
-    static JxlEncoderProcessOutput_pfn         jxlEncoderProcessOutput         = (JxlEncoderProcessOutput_pfn)        GetProcAddress (hModJXL, "JxlEncoderProcessOutput");
-    static JxlEncoderFrameSettingsCreate_pfn   jxlEncoderFrameSettingsCreate   = (JxlEncoderFrameSettingsCreate_pfn)  GetProcAddress (hModJXL, "JxlEncoderFrameSettingsCreate");
-    static JxlEncoderInitBasicInfo_pfn         jxlEncoderInitBasicInfo         = (JxlEncoderInitBasicInfo_pfn)        GetProcAddress (hModJXL, "JxlEncoderInitBasicInfo");
-    static JxlEncoderSetBasicInfo_pfn          jxlEncoderSetBasicInfo          = (JxlEncoderSetBasicInfo_pfn)         GetProcAddress (hModJXL, "JxlEncoderSetBasicInfo");
-    static JxlEncoderAddImageFrame_pfn         jxlEncoderAddImageFrame         = (JxlEncoderAddImageFrame_pfn)        GetProcAddress (hModJXL, "JxlEncoderAddImageFrame");
-    static JxlEncoderSetColorEncoding_pfn      jxlEncoderSetColorEncoding      = (JxlEncoderSetColorEncoding_pfn)     GetProcAddress (hModJXL, "JxlEncoderSetColorEncoding");
-    static JxlColorEncodingSetToLinearSRGB_pfn jxlColorEncodingSetToLinearSRGB = (JxlColorEncodingSetToLinearSRGB_pfn)GetProcAddress (hModJXL, "JxlColorEncodingSetToLinearSRGB");
-    static JxlEncoderSetParallelRunner_pfn     jxlEncoderSetParallelRunner     = (JxlEncoderSetParallelRunner_pfn)    GetProcAddress (hModJXL, "JxlEncoderSetParallelRunner");
+    static JxlEncoderCreate_pfn                 jxlEncoderCreate                 = (JxlEncoderCreate_pfn)                GetProcAddress (hModJXL, "JxlEncoderCreate");
+    static JxlEncoderDestroy_pfn                jxlEncoderDestroy                = (JxlEncoderDestroy_pfn)               GetProcAddress (hModJXL, "JxlEncoderDestroy");
+    static JxlEncoderCloseInput_pfn             jxlEncoderCloseInput             = (JxlEncoderCloseInput_pfn)            GetProcAddress (hModJXL, "JxlEncoderCloseInput");
+    static JxlEncoderProcessOutput_pfn          jxlEncoderProcessOutput          = (JxlEncoderProcessOutput_pfn)         GetProcAddress (hModJXL, "JxlEncoderProcessOutput");
+    static JxlEncoderFrameSettingsCreate_pfn    jxlEncoderFrameSettingsCreate    = (JxlEncoderFrameSettingsCreate_pfn)   GetProcAddress (hModJXL, "JxlEncoderFrameSettingsCreate");
+    static JxlEncoderInitBasicInfo_pfn          jxlEncoderInitBasicInfo          = (JxlEncoderInitBasicInfo_pfn)         GetProcAddress (hModJXL, "JxlEncoderInitBasicInfo");
+    static JxlEncoderSetBasicInfo_pfn           jxlEncoderSetBasicInfo           = (JxlEncoderSetBasicInfo_pfn)          GetProcAddress (hModJXL, "JxlEncoderSetBasicInfo");
+    static JxlEncoderAddImageFrame_pfn          jxlEncoderAddImageFrame          = (JxlEncoderAddImageFrame_pfn)         GetProcAddress (hModJXL, "JxlEncoderAddImageFrame");
+    static JxlEncoderSetColorEncoding_pfn       jxlEncoderSetColorEncoding       = (JxlEncoderSetColorEncoding_pfn)      GetProcAddress (hModJXL, "JxlEncoderSetColorEncoding");
+    static JxlEncoderFrameSettingsSetOption_pfn jxlEncoderFrameSettingsSetOption = (JxlEncoderFrameSettingsSetOption_pfn)GetProcAddress (hModJXL, "JxlEncoderFrameSettingsSetOption");
+    static JxlEncoderSetParallelRunner_pfn      jxlEncoderSetParallelRunner      = (JxlEncoderSetParallelRunner_pfn)     GetProcAddress (hModJXL, "JxlEncoderSetParallelRunner");
 
     static JxlThreadParallelRunner_pfn                        jxlThreadParallelRunner                        = (JxlThreadParallelRunner_pfn)                       GetProcAddress (hModJXLThreads, "JxlThreadParallelRunner");
     static JxlThreadParallelRunnerCreate_pfn                  jxlThreadParallelRunnerCreate                  = (JxlThreadParallelRunnerCreate_pfn)                 GetProcAddress (hModJXLThreads, "JxlThreadParallelRunnerCreate");
@@ -2309,10 +2309,40 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
         break;
       }
 
-      std::vector <float> fp32_pixels (image.width * image.height * 3);
+#if 0
+      JxlDataType type = JXL_TYPE_FLOAT16;
+      size_t      size = sizeof (uint16_t);
 
-      auto fp32_pixel_comp =
-        fp32_pixels.begin ();
+      std::vector <uint16_t> fp_pixels (image.width * image.height * 3);
+
+      auto fp_pixel_comp =
+        fp_pixels.begin ();
+
+      using namespace DirectX::PackedVector;
+
+      EvaluateImage ( image,
+        [&](const XMVECTOR* pixels, size_t width, size_t y)
+        {
+          UNREFERENCED_PARAMETER(y);
+
+          for (size_t j = 0; j < width; ++j)
+          {
+            XMHALF4 v (pixels++->m128_f32);
+
+            *fp_pixel_comp++ = v.x;
+            *fp_pixel_comp++ = v.y;
+            *fp_pixel_comp++ = v.z;
+          }
+        }
+      );
+#else
+      JxlDataType type = JXL_TYPE_FLOAT;
+      size_t      size = sizeof (float);
+
+      std::vector <float> fp_pixels (image.width * image.height * 3);
+
+      auto fp_pixel_comp =
+        fp_pixels.begin ();
 
       EvaluateImage ( image,
         [&](const XMVECTOR* pixels, size_t width, size_t y)
@@ -2324,25 +2354,27 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
             XMVECTOR v =
               *pixels++;
 
-            *fp32_pixel_comp++ = XMVectorGetX (v);
-            *fp32_pixel_comp++ = XMVectorGetY (v);
-            *fp32_pixel_comp++ = XMVectorGetZ (v);
+            *fp_pixel_comp++ = XMVectorGetX (v);
+            *fp_pixel_comp++ = XMVectorGetY (v);
+            *fp_pixel_comp++ = XMVectorGetZ (v);
           }
         }
       );
+#endif
 
-      JxlDataType    type         = JXL_TYPE_FLOAT;
       JxlPixelFormat pixel_format =
         { 3, type, JXL_NATIVE_ENDIAN, 0 };
 
       JxlBasicInfo              basic_info = { };
       jxlEncoderInitBasicInfo (&basic_info);
 
+      const bool bLossless = false;
+
       basic_info.xsize                    = static_cast <uint32_t> (image.width);
       basic_info.ysize                    = static_cast <uint32_t> (image.height);
       basic_info.bits_per_sample          = static_cast <uint32_t> (DirectX::BitsPerColor (image.format));
       basic_info.exponent_bits_per_sample =                         DirectX::BitsPerColor (image.format) == 32 ? 8 : 5;
-      basic_info.uses_original_profile    = JXL_FALSE;
+      basic_info.uses_original_profile    = bLossless ? JXL_TRUE : JXL_FALSE;
 
       if ( JXL_ENC_SUCCESS !=
              jxlEncoderSetBasicInfo ( jxl_encoder, &basic_info) )
@@ -2351,27 +2383,32 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
         break;
       }
 
-      /////JxlColorEncoding color_encoding = { };
-      /////
-      /////jxlColorEncodingSetToLinearSRGB (&color_encoding, JXL_FALSE);
-      /////
-      /////if ( JXL_ENC_SUCCESS !=
-      /////       jxlEncoderSetColorEncoding (jxl_encoder, &color_encoding) )
-      /////{
-      /////  PLOG_ERROR << "JxlEncoderSetColorEncoding failed";
-      /////  break;
-      /////}
+      JxlColorEncoding color_encoding = { };
+
+      color_encoding.color_space       = JXL_COLOR_SPACE_RGB;
+      color_encoding.white_point       = JXL_WHITE_POINT_D65;
+      color_encoding.primaries         = JXL_PRIMARIES_SRGB;
+      color_encoding.transfer_function = JXL_TRANSFER_FUNCTION_LINEAR;
+      color_encoding.rendering_intent  = JXL_RENDERING_INTENT_PERCEPTUAL;
+
+      if ( JXL_ENC_SUCCESS !=
+             jxlEncoderSetColorEncoding (jxl_encoder, &color_encoding) )
+      {
+        PLOG_ERROR << "JxlEncoderSetColorEncoding failed";
+        break;
+      }
 
       JxlEncoderFrameSettings* frame_settings =
         jxlEncoderFrameSettingsCreate (jxl_encoder, nullptr);
 
-      jxlEncoderSetFrameLossless (frame_settings, JXL_TRUE);
-      jxlEncoderSetFrameDistance (frame_settings, jxlEncoderDistanceFromQuality (100.0f));
+      jxlEncoderSetFrameLossless       (frame_settings, bLossless ? JXL_TRUE : JXL_FALSE);
+      jxlEncoderSetFrameDistance       (frame_settings, 0.05f);//jxlEncoderDistanceFromQuality (100.0f));
+      jxlEncoderFrameSettingsSetOption (frame_settings, JXL_ENC_FRAME_SETTING_EFFORT, 7);
 
       if ( JXL_ENC_SUCCESS !=
              jxlEncoderAddImageFrame ( frame_settings, &pixel_format,
-               static_cast <const void *> (fp32_pixels.data ()),
-                          sizeof (float) * fp32_pixels.size () ) )
+               static_cast <const void *> (fp_pixels.data ()),
+                                    size * fp_pixels.size () ) )
       {
         PLOG_ERROR << "JxlEncoderAddImageFrame failed";
         break;

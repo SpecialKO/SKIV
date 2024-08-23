@@ -134,8 +134,8 @@ const std::initializer_list<FileSignature> supported_formats =
   FileSignature { L"image/x-exr",               { L".exr"  },          { 0x76, 0x2F, 0x31, 0x01 } },
   FileSignature { L"image/avif",                { L".avif" },          { 0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x61, 0x76, 0x69, 0x66 },   // ftypavif
                                                                        { 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF } }, // ?? ?? ?? ?? 66 74 79 70 61 76 69 66
-  FileSignature { L"image/jxl",                 { L".jxl"  },          { 0xFF, 0x0A } },
-  FileSignature { L"image/jxl",                 { L".jxl"  },          { 0x00, 0x00, 0x00, 0x0C, 0x4A, 0x58, 0x4C} },
+  FileSignature { L"image/jxl",                 { L".jxl"  },          { 0xFF, 0x0A } },                                                             // Naked
+  FileSignature { L"image/jxl",                 { L".jxl"  },          { 0x00, 0x00, 0x00, 0x0C, 0x4A, 0x58, 0x4C, 0x20, 0x0D, 0x0A, 0x87, 0x0A } }, // ISOBMFF-based container
   FileSignature { L"image/vnd-ms.dds",          { L".dds"  },          { 0x44, 0x44, 0x53, 0x20 } },
 //FileSignature { L"image/x-targa",             { L".tga"  },          { 0x00, } }, // TGA has no real unique header identifier, so just use the file extension on those
 };
