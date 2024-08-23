@@ -30,7 +30,8 @@
 #ifndef JXL_THREAD_PARALLEL_RUNNER_H_
 #define JXL_THREAD_PARALLEL_RUNNER_H_
 
-#include <jxl/jxl_threads_export.h>
+//#include <jxl/jxl_threads_export.h>
+#define JXL_THREADS_EXPORT
 #include <jxl/memory_manager.h>
 #include <jxl/parallel_runner.h>
 #include <stddef.h>

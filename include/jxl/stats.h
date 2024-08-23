@@ -13,7 +13,8 @@
 #ifndef JXL_STATS_H_
 #define JXL_STATS_H_
 
-#include <jxl/jxl_export.h>
+//#include <jxl/jxl_export.h>
+#define JXL_EXPORT
 #include <stddef.h>
 
 #ifdef __cplusplus

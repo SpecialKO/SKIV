@@ -135,6 +135,7 @@ const std::initializer_list<FileSignature> supported_formats =
   FileSignature { L"image/avif",                { L".avif" },          { 0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x61, 0x76, 0x69, 0x66 },   // ftypavif
                                                                        { 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF } }, // ?? ?? ?? ?? 66 74 79 70 61 76 69 66
   FileSignature { L"image/jxl",                 { L".jxl"  },          { 0xFF, 0x0A } },
+  FileSignature { L"image/jxl",                 { L".jxl"  },          { 0x00, 0x00, 0x00, 0x0C, 0x4A, 0x58, 0x4C} },
   FileSignature { L"image/vnd-ms.dds",          { L".dds"  },          { 0x44, 0x44, 0x53, 0x20 } },
 //FileSignature { L"image/x-targa",             { L".tga"  },          { 0x00, } }, // TGA has no real unique header identifier, so just use the file extension on those
 };
@@ -158,7 +159,7 @@ const std::initializer_list<FileSignature> supported_hdr_encode_formats =
   FileSignature { L"image/vnd.ms-photo",        { L".jxr"  },          { 0x49, 0x49, 0xBC } },
   FileSignature { L"image/vnd.radiance",        { L".hdr"  },          { 0x23, 0x3F, 0x52, 0x41, 0x44, 0x49, 0x41, 0x4E, 0x43, 0x45, 0x0A } }, // Radiance High Dynamic Range image file
   FileSignature { L"image/x-exr",               { L".exr"  },          { 0x76, 0x2F, 0x31, 0x01 } },
-//FileSignature { L"image/jxl",                 { L".jxl"  },          { 0xFF, 0x0A } },
+  FileSignature { L"image/jxl",                 { L".jxl"  },          { 0xFF, 0x0A } },
 //FileSignature { L"image/avif",                { L".avif" },          { 0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x61, 0x76, 0x69, 0x66 },   // ftypavif
 //                                                                     { 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF } }, // ?? ?? ?? ?? 66 74 79 70 61 76 69 66
 //FileSignature { L"image/vnd-ms.dds",          { L".dds"  },          { 0x44, 0x44, 0x53, 0x20 } },
