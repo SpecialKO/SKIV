@@ -45,8 +45,8 @@
 
 #pragma warning(push)
 #pragma warning(disable : 4244 4996)
-#include <ImfRgbaFile.h>
-#include <ImfIO.h>
+#include <../packages/openexr-msvc-x64.2.3.0.8788/build/native/include/OpenEXR/ImfRgbaFile.h>
+#include <../packages/openexr-msvc-x64.2.3.0.8788/build/native/include/OpenEXR/ImfIO.h>
 #pragma warning(pop)
 
 #ifdef __clang__
