@@ -1190,7 +1190,7 @@ LoadLibraryTexture (image_s& image)
             DirectX::DDS_FLAGS_PERMISSIVE,
               &meta, img)))
     {
-      const DXGI_FORMAT final_format = DXGI_FORMAT_R8G8B8A8_UNORM;
+      const DXGI_FORMAT final_format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
       DirectX::ScratchImage temp_img = { };
 
       succeeded = true;
@@ -1213,7 +1213,7 @@ LoadLibraryTexture (image_s& image)
       {
         PLOG_VERBOSE << "Converting texture to the intended format...";
 
-        if (FAILED (DirectX::Convert (*img.GetImage (0, 0, 0), final_format, DirectX::TEX_FILTER_DEFAULT, 0.0f, temp_img)))
+        if (FAILED (DirectX::Convert (*img.GetImage (0, 0, 0), final_format, DirectX::TEX_FILTER_DEFAULT | DirectX::TEX_FILTER_SRGB, 0.0f, temp_img)))
         {
           PLOG_ERROR << "Conversion failed!";
           succeeded = false;
@@ -1222,8 +1222,6 @@ LoadLibraryTexture (image_s& image)
         std::swap (img, temp_img);
         meta = img.GetMetadata ( );
       }
-
-      //meta.format = DirectX::MakeSRGB (DirectX::MakeTypeless (meta.format));
     }
   }
 
@@ -1310,6 +1308,7 @@ LoadLibraryTexture (image_s& image)
     using JxlDecoderProcessInput_pfn             = JxlDecoderStatus (*)(      JxlDecoder* dec);
     using JxlDecoderCloseInput_pfn               = void             (*)(      JxlDecoder* dec);
     using JxlDecoderSetPreferredColorProfile_pfn = JxlDecoderStatus (*)(      JxlDecoder* dec, const JxlColorEncoding* color_encoding);
+    using JxlDecoderGetColorAsEncodedProfile_pfn = JxlDecoderStatus (*)(const JxlDecoder* dec, JxlColorProfileTarget target, JxlColorEncoding* color_encoding);
     using JxlDecoderSetParallelRunner_pfn        = JxlDecoderStatus (*)(      JxlDecoder* dec,
                                                                         JxlParallelRunner parallel_runner,
                                                                                     void* parallel_runner_opaque);
@@ -1337,6 +1336,7 @@ LoadLibraryTexture (image_s& image)
     JxlDecoderSetImageOutBitDepth_pfn      jxlDecoderSetImageOutBitDepth      = (JxlDecoderSetImageOutBitDepth_pfn)     GetProcAddress (hModJXL, "JxlDecoderSetImageOutBitDepth");
     JxlDecoderSetParallelRunner_pfn        jxlDecoderSetParallelRunner        = (JxlDecoderSetParallelRunner_pfn)       GetProcAddress (hModJXL, "JxlDecoderSetParallelRunner");
     JxlDecoderSetPreferredColorProfile_pfn jxlDecoderSetPreferredColorProfile = (JxlDecoderSetPreferredColorProfile_pfn)GetProcAddress (hModJXL, "JxlDecoderSetPreferredColorProfile");
+    JxlDecoderGetColorAsEncodedProfile_pfn jxlDecoderGetColorAsEncodedProfile = (JxlDecoderGetColorAsEncodedProfile_pfn)GetProcAddress (hModJXL, "JxlDecoderGetColorAsEncodedProfile");
 
     JxlResizableParallelRunnerCreate_pfn         jxlResizableParallelRunnerCreate         = (JxlResizableParallelRunnerCreate_pfn)        GetProcAddress (hModJXLThreads, "JxlResizableParallelRunnerCreate");
     JxlResizableParallelRunnerSuggestThreads_pfn jxlResizableParallelRunnerSuggestThreads = (JxlResizableParallelRunnerSuggestThreads_pfn)GetProcAddress (hModJXLThreads, "JxlResizableParallelRunnerSuggestThreads");
@@ -1360,6 +1360,8 @@ LoadLibraryTexture (image_s& image)
            jxlDecoderSetParallelRunner (jxl_decoder, jxlResizableParallelRunner,
                                         jxl_runner) )
     {
+      JxlColorEncoding actual_encoding = { };
+
       JxlBasicInfo   info   = { };
       JxlPixelFormat format =
         { 4, JXL_TYPE_FLOAT, JXL_NATIVE_ENDIAN, 0 };
@@ -1407,7 +1409,7 @@ LoadLibraryTexture (image_s& image)
           image.height = static_cast <float> (info.ysize);
 
           jxlResizableParallelRunnerSetThreads ( jxl_runner,
-            jxlResizableParallelRunnerSuggestThreads (info.xsize * 128, info.ysize * 128) );
+            std::max (8U, jxlResizableParallelRunnerSuggestThreads (info.xsize, info.ysize)) );
         }
 
         else if (status == JXL_DEC_COLOR_ENCODING)
@@ -1423,6 +1425,12 @@ LoadLibraryTexture (image_s& image)
                  jxlDecoderSetPreferredColorProfile (jxl_decoder, &scrgb_encoding) )
           {
             PLOG_ERROR << "JxlDecoderSetPreferredColorProfile failed";
+          }
+
+          if ( JXL_DEC_SUCCESS !=
+                 jxlDecoderGetColorAsEncodedProfile (jxl_decoder, JXL_COLOR_PROFILE_TARGET_DATA, &actual_encoding) )
+          {
+            PLOG_ERROR << "jxlDecoderGetColorAsEncodedProfile failed";
           }
         }
 
@@ -1492,6 +1500,24 @@ LoadLibraryTexture (image_s& image)
             XMVectorReplicate (info.intensity_target != 255.0f ? info.intensity_target / 80.0f
                                                                : 1.0f);
 
+          const bool bIsHDR10 =
+            actual_encoding.primaries         == JXL_PRIMARIES_2100 &&
+            actual_encoding.transfer_function == JXL_TRANSFER_FUNCTION_PQ;
+
+          const bool bIsRec709Linear =
+            actual_encoding.primaries         == JXL_PRIMARIES_SRGB &&
+            actual_encoding.transfer_function == JXL_TRANSFER_FUNCTION_LINEAR;
+
+          if (actual_encoding.white_point != JXL_WHITE_POINT_D65)
+          {
+            PLOG_WARNING << "Unexpected non-D65 white point";
+          }
+
+          if (! (bIsHDR10 || bIsRec709Linear))
+          {
+            PLOG_WARNING << "Encoded image is neither HDR10 nor scRGB...";
+          }
+
           if ( SUCCEEDED ( TransformImage (*img.GetImages (),
                 [&](      XMVECTOR* outPixels,
                     const XMVECTOR* inPixels,
@@ -1504,8 +1530,17 @@ LoadLibraryTexture (image_s& image)
                   {
                     XMVECTOR v = inPixels [j];
 
-                    v =
-                      XMVectorMultiply (v, vRelativeToAbsoluteNits);
+                    if (bIsRec709Linear)
+                    {
+                      v =
+                        XMVectorMultiply (v, vRelativeToAbsoluteNits);
+                    }
+
+                    else if (bIsHDR10)
+                    {
+                      v =
+                        XMVector3Transform (SKIV_Image_PQToLinear (v), c_Bt2100toscRGB);
+                    }
 
                     uint32_t xm_test_rec709 = 0x0,
                              xm_test_hdr    = 0x0;
@@ -2997,7 +3032,7 @@ SKIF_UI_Tab_DrawViewer (void)
       ImGui::SameLine   ();
       ImGui::BeginGroup ();
 
-#if 0
+#if 1
       ImGui::TextUnformatted ("Output Format");
 
       extern bool RecreateSwapChains;
@@ -3048,21 +3083,22 @@ SKIF_UI_Tab_DrawViewer (void)
       ImGui::Spacing (); ImGui::Spacing (); ImGui::Spacing (); ImGui::Spacing ();
       //ImGui::TextUnformatted ("");
 
-      if (ImGui::Button (ICON_FA_FLOPPY_DISK " Save As..."))
+      if (ImGui::Button (ICON_FA_FLOPPY_DISK "  Save As..."))
         SaveFileDialog  = PopupState_Open;
-      if (ImGui::Button (ICON_FA_FILE_EXPORT "Export to SDR"))
+      if (ImGui::Button (ICON_FA_FILE_EXPORT " Export to SDR"))
         ExportSDRDialog = PopupState_Open;
 
       ImGui::Spacing (); ImGui::Spacing (); ImGui::Spacing (); ImGui::Spacing ();
       //ImGui::TextUnformatted ("");
 
-      if (ImGui::Button (ICON_FA_COPY "Copy to Clipboard"))
+      if (ImGui::Button (ICON_FA_CLIPBOARD "  Copy to Clipboard"))
       {
+        wantCopyToClipboard = true;
       }
 
-      static int clipboard_type = 0;
-      ImGui::RadioButton ("HDR (.png)", &clipboard_type, 0); ImGui::SameLine ();
-      ImGui::RadioButton ("SDR",        &clipboard_type, 1);
+      //static int clipboard_type = 0;
+      //ImGui::RadioButton ("HDR (.png)", &clipboard_type, 0); ImGui::SameLine ();
+      //ImGui::RadioButton ("SDR",        &clipboard_type, 1);
 #endif
       ImGui::EndGroup ();
 
