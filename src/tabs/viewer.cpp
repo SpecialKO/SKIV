@@ -406,6 +406,7 @@ struct image_s {
   ImVec2       avail_size_cache;  // Holds a cached value used to determine if avail_size needs recalculating
 
   bool         is_hdr      = false;
+  bool         is_dds      = false;
 
   CComPtr <ID3D11ShaderResourceView>  pRawTexSRV;
   CComPtr <ID3D11UnorderedAccessView> pGamutCoverageUAV;
@@ -458,6 +459,7 @@ struct image_s {
     pGamutCoverageSRV.p = other.pGamutCoverageSRV.p;
     pGamutCoverageUAV.p = other.pGamutCoverageUAV.p;
     is_hdr              = other.is_hdr;
+    is_dds              = other.is_dds;
     light_info          = other.light_info;
     colorimetry         = other.colorimetry;
     return *this;
@@ -480,6 +482,7 @@ struct image_s {
     pGamutCoverageSRV.p = nullptr;
     pGamutCoverageUAV.p = nullptr;
     is_hdr              = false;
+    is_dds              = false;
     light_info          = { };
     colorimetry         = { };
   }
@@ -757,6 +760,158 @@ private:
   int orig_prio_;
   int orig_process_class_;
 };
+
+int
+SKIV_DXGI_NumberOfChannels (DXGI_FORMAT format)
+{
+  switch (format)
+  {
+    case DXGI_FORMAT_R32G32B32A32_TYPELESS:
+    case DXGI_FORMAT_R32G32B32A32_FLOAT:
+    case DXGI_FORMAT_R32G32B32A32_UINT:
+    case DXGI_FORMAT_R32G32B32A32_SINT:
+    case DXGI_FORMAT_R16G16B16A16_TYPELESS:
+    case DXGI_FORMAT_R16G16B16A16_FLOAT:
+    case DXGI_FORMAT_R16G16B16A16_UNORM:
+    case DXGI_FORMAT_R16G16B16A16_UINT:
+    case DXGI_FORMAT_R16G16B16A16_SNORM:
+    case DXGI_FORMAT_R16G16B16A16_SINT:
+    case DXGI_FORMAT_R10G10B10A2_TYPELESS:
+    case DXGI_FORMAT_R10G10B10A2_UNORM:
+    case DXGI_FORMAT_R10G10B10A2_UINT:
+    case DXGI_FORMAT_R8G8B8A8_TYPELESS:
+    case DXGI_FORMAT_R8G8B8A8_UNORM:
+    case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+    case DXGI_FORMAT_R8G8B8A8_UINT:
+    case DXGI_FORMAT_R8G8B8A8_SNORM:
+    case DXGI_FORMAT_R8G8B8A8_SINT:
+    case DXGI_FORMAT_B8G8R8A8_TYPELESS:
+    case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+    case DXGI_FORMAT_B8G8R8A8_UNORM:
+    case DXGI_FORMAT_R10G10B10_XR_BIAS_A2_UNORM:
+    case DXGI_FORMAT_B5G5R5A1_UNORM:
+    case DXGI_FORMAT_B4G4R4A4_UNORM:
+      return 4;
+
+    case DXGI_FORMAT_R32G32B32_TYPELESS:
+    case DXGI_FORMAT_R32G32B32_FLOAT:
+    case DXGI_FORMAT_R32G32B32_UINT:
+    case DXGI_FORMAT_R32G32B32_SINT:
+    case DXGI_FORMAT_R11G11B10_FLOAT:
+    case DXGI_FORMAT_R9G9B9E5_SHAREDEXP:
+    case DXGI_FORMAT_B5G6R5_UNORM:
+    case DXGI_FORMAT_B8G8R8X8_UNORM:
+    case DXGI_FORMAT_B8G8R8X8_TYPELESS:
+    case DXGI_FORMAT_B8G8R8X8_UNORM_SRGB:
+      return 3;
+
+    case DXGI_FORMAT_R32G32_TYPELESS:
+    case DXGI_FORMAT_R32G32_FLOAT:
+    case DXGI_FORMAT_R32G32_UINT:
+    case DXGI_FORMAT_R32G32_SINT:
+    case DXGI_FORMAT_R32G8X24_TYPELESS:
+    case DXGI_FORMAT_D32_FLOAT_S8X24_UINT:
+    case DXGI_FORMAT_R16G16_TYPELESS:
+    case DXGI_FORMAT_R16G16_FLOAT:
+    case DXGI_FORMAT_R16G16_UNORM:
+    case DXGI_FORMAT_R16G16_UINT:
+    case DXGI_FORMAT_R16G16_SNORM:
+    case DXGI_FORMAT_R16G16_SINT:
+    case DXGI_FORMAT_R24G8_TYPELESS:
+    case DXGI_FORMAT_D24_UNORM_S8_UINT:
+    case DXGI_FORMAT_R8G8_TYPELESS:
+    case DXGI_FORMAT_R8G8_UNORM:
+    case DXGI_FORMAT_R8G8_UINT:
+    case DXGI_FORMAT_R8G8_SNORM:
+    case DXGI_FORMAT_R8G8_SINT:
+      return 2;
+
+    case DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS:
+    case DXGI_FORMAT_X32_TYPELESS_G8X24_UINT:
+    case DXGI_FORMAT_R24_UNORM_X8_TYPELESS:
+    case DXGI_FORMAT_X24_TYPELESS_G8_UINT:
+    case DXGI_FORMAT_R32_TYPELESS:
+    case DXGI_FORMAT_D32_FLOAT:
+    case DXGI_FORMAT_R32_FLOAT:
+    case DXGI_FORMAT_R32_UINT:
+    case DXGI_FORMAT_R32_SINT:
+    case DXGI_FORMAT_R16_TYPELESS:
+    case DXGI_FORMAT_R16_FLOAT:
+    case DXGI_FORMAT_D16_UNORM:
+    case DXGI_FORMAT_R16_UNORM:
+    case DXGI_FORMAT_R16_UINT:
+    case DXGI_FORMAT_R16_SNORM:
+    case DXGI_FORMAT_R16_SINT:
+    case DXGI_FORMAT_R8_TYPELESS:
+    case DXGI_FORMAT_R8_UNORM:
+    case DXGI_FORMAT_R8_UINT:
+    case DXGI_FORMAT_R8_SNORM:
+    case DXGI_FORMAT_R8_SINT:
+    case DXGI_FORMAT_A8_UNORM:
+    case DXGI_FORMAT_R1_UNORM:
+      return 1;
+
+    case DXGI_FORMAT_R8G8_B8G8_UNORM:
+    case DXGI_FORMAT_G8R8_G8B8_UNORM:
+      return -1; // ?
+
+    case DXGI_FORMAT_BC1_TYPELESS:
+    case DXGI_FORMAT_BC1_UNORM:
+    case DXGI_FORMAT_BC1_UNORM_SRGB:
+    case DXGI_FORMAT_BC2_TYPELESS:
+    case DXGI_FORMAT_BC2_UNORM:
+    case DXGI_FORMAT_BC2_UNORM_SRGB:
+    case DXGI_FORMAT_BC3_TYPELESS:
+    case DXGI_FORMAT_BC3_UNORM:
+    case DXGI_FORMAT_BC3_UNORM_SRGB:
+      return 4;
+
+    case DXGI_FORMAT_BC4_TYPELESS:
+    case DXGI_FORMAT_BC4_UNORM:
+    case DXGI_FORMAT_BC4_SNORM:
+      return 1;
+
+    case DXGI_FORMAT_BC5_TYPELESS:
+    case DXGI_FORMAT_BC5_UNORM:
+    case DXGI_FORMAT_BC5_SNORM:
+      return 2;
+
+    case DXGI_FORMAT_BC6H_TYPELESS:
+    case DXGI_FORMAT_BC6H_UF16:
+    case DXGI_FORMAT_BC6H_SF16:
+      return 3;
+
+    case DXGI_FORMAT_BC7_TYPELESS:
+    case DXGI_FORMAT_BC7_UNORM:
+    case DXGI_FORMAT_BC7_UNORM_SRGB:
+      return 4;
+
+    case DXGI_FORMAT_AYUV:
+    case DXGI_FORMAT_Y410:
+    case DXGI_FORMAT_Y416:
+    case DXGI_FORMAT_NV12:
+    case DXGI_FORMAT_P010:
+    case DXGI_FORMAT_P016:
+    case DXGI_FORMAT_420_OPAQUE:
+    case DXGI_FORMAT_YUY2:
+    case DXGI_FORMAT_Y210:
+    case DXGI_FORMAT_Y216:
+    case DXGI_FORMAT_NV11:
+    case DXGI_FORMAT_AI44:
+    case DXGI_FORMAT_IA44:
+    case DXGI_FORMAT_P8:
+    case DXGI_FORMAT_A8P8:
+      return -1; // ?
+
+    case DXGI_FORMAT_P208:
+    case DXGI_FORMAT_V208:
+    case DXGI_FORMAT_V408:
+      return -1; // ?
+
+    default:
+      return 0;
+  }
+}
 
 bool
 LoadLibraryTexture (image_s& image)
@@ -1188,37 +1343,16 @@ LoadLibraryTexture (image_s& image)
             DirectX::DDS_FLAGS_PERMISSIVE,
               &meta, img)))
     {
-      const DXGI_FORMAT final_format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
-      DirectX::ScratchImage temp_img = { };
-
       succeeded = true;
+      meta = img.GetMetadata ( );
 
-      if (DirectX::IsCompressed (meta.format))
+      image.bpc      = static_cast <int> (DirectX::BitsPerColor      (meta.format));
+      image.channels =                    SKIV_DXGI_NumberOfChannels (meta.format);
+      image.is_dds   = true;
+
+      if (DirectX::MakeTypeless (meta.format) == DXGI_FORMAT_BC6H_TYPELESS)
       {
-        PLOG_VERBOSE << "Decompressing texture to the intended format...";
-
-        if (FAILED (DirectX::Decompress (*img.GetImage (0, 0, 0), final_format, temp_img)))
-        {
-          PLOG_ERROR << "Decompression failed!";
-          succeeded = false;
-        }
-
-        std::swap (img, temp_img);
-        meta = img.GetMetadata ( );
-      }
-
-      else if (meta.format != final_format)
-      {
-        PLOG_VERBOSE << "Converting texture to the intended format...";
-
-        if (FAILED (DirectX::Convert (*img.GetImage (0, 0, 0), final_format, DirectX::TEX_FILTER_DEFAULT | DirectX::TEX_FILTER_SRGB, 0.0f, temp_img)))
-        {
-          PLOG_ERROR << "Conversion failed!";
-          succeeded = false;
-        }
-
-        std::swap (img, temp_img);
-        meta = img.GetMetadata ( );
+        image.is_hdr = true;
       }
     }
   }
@@ -2542,8 +2676,10 @@ SKIF_UI_Tab_DrawViewer (void)
 
 #pragma region GameCover
 
-  static const ImVec2 hdr_uv0 (-1024.0f, -1024.0f);
-  static const ImVec2 hdr_uv1 (-2048.0f, -2048.0f);
+  static const ImVec2 hdr_uv0  (-1024.0f, -1024.0f);
+  static const ImVec2 hdr_uv1  (-2048.0f, -2048.0f);
+  static const ImVec2 srgb_uv0 (-4096.0f, -4096.0f);
+  static const ImVec2 srgb_uv1 (-8192.0f, -8192.0f);
   
   static int    queuePosGameCover  = 0;
   static char   cstrLabelDowning[] = "Downloading...";
@@ -2618,8 +2754,8 @@ SKIF_UI_Tab_DrawViewer (void)
     SKIF_ImGui_OptImage  (cover_old.pRawTexSRV.p,
                                                       ImVec2 (sizeCover_old.x,
                                                               sizeCover_old.y),
-                                    cover_old.light_info.isHDR ? hdr_uv0 : cover_old.uv0, // Top Left coordinates
-                                    cover_old.light_info.isHDR ? hdr_uv1 : cover_old.uv1, // Bottom Right coordinates
+                                    cover_old.light_info.isHDR ? hdr_uv0 : cover_old.is_dds ? srgb_uv0 : cover_old.uv0, // Top Left coordinates
+                                    cover_old.light_info.isHDR ? hdr_uv1 : cover_old.is_dds ? srgb_uv1 : cover_old.uv1, // Bottom Right coordinates
                                     (_registry._StyleLightMode) ? ImVec4 (1.0f, 1.0f, 1.0f, fGammaCorrectedTint * AdjustAlpha (fAlphaPrev))  : ImVec4 (fTint, fTint, fTint, fAlphaPrev) // Alpha transparency
     );
   
@@ -2662,8 +2798,8 @@ SKIF_UI_Tab_DrawViewer (void)
   SKIF_ImGui_OptImage  (cover.pRawTexSRV.p,
                                                     ImVec2 (sizeCover.x,
                                                             sizeCover.y),
-                                  cover.light_info.isHDR ? hdr_uv0 : cover.uv0, // Top Left coordinates
-                                  cover.light_info.isHDR ? hdr_uv1 : cover.uv1, // Bottom Right coordinates
+                                  cover.light_info.isHDR ? hdr_uv0 : cover.is_dds ? srgb_uv0 : cover.uv0, // Top Left coordinates
+                                  cover.light_info.isHDR ? hdr_uv1 : cover.is_dds ? srgb_uv1 : cover.uv1, // Bottom Right coordinates
                                   (_registry._StyleLightMode) ? ImVec4 (1.0f, 1.0f, 1.0f, fGammaCorrectedTint * AdjustAlpha (fAlpha))  :
                                                                 ImVec4 (1.f, 1.f, 1.f, 1.f) // Alpha transparency (2024-01-01, removed fGammaCorrectedTint * fAlpha for the light style)
   );
@@ -3650,6 +3786,7 @@ SKIF_UI_Tab_DrawViewer (void)
         cover.light_info        = _data->image.light_info;
         cover.colorimetry       = _data->image.colorimetry;
         cover.is_hdr            = _data->image.is_hdr;
+        cover.is_dds            = _data->image.is_dds;
 
         // Parent folder (used for the directory watch)
         std::filesystem::path path       = SKIF_Util_NormalizeFullPath (cover.file_info.path);

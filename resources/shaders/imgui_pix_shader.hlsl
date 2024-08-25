@@ -164,6 +164,18 @@ float4 main (PS_INPUT input) : SV_Target
                                   saturate (input_col.a)
               );
 
+    // sRGB (SDR) Content
+    if (input.srgb_img)
+    {
+      out_col =
+        float4 ( (input_col.rgb) *
+                 (  out_col.rgb),
+        saturate (  out_col.a  ) *
+        saturate (input_col.a  ) );
+
+      out_col.rgb = RemoveSRGBCurve (out_col.rgb);
+    }
+
     float hdr_scale = input.lum.x;
 
     if (! input.hdr_img)
@@ -188,11 +200,10 @@ float4 main (PS_INPUT input) : SV_Target
     if (input.srgb_img)
     {
       out_col =
-        float4 (   (           input_col.rgb) *
-                   (             out_col.rgb),
-                                    saturate (  out_col.a)  *
-                                    saturate (input_col.a)
-                );
+        float4 ( (input_col.rgb) *
+                 (  out_col.rgb),
+        saturate (  out_col.a  ) *
+        saturate (input_col.a  ) );
 
       out_col.rgb = RemoveSRGBCurve (out_col.rgb);
     }
@@ -210,7 +221,7 @@ float4 main (PS_INPUT input) : SV_Target
     else
     {
       out_col =
-        float4 (RemoveGammaExp  (           input_col.rgb,        2.2f) *
+        float4 (RemoveGammaExp  (             input_col.rgb,        2.2f) *
                                                 out_col.rgb,
                                     saturate (  out_col.a)  *
                                     saturate (input_col.a)
@@ -248,11 +259,10 @@ float4 main (PS_INPUT input) : SV_Target
     if (input.srgb_img)
     {
       out_col =
-        float4 (   (           input_col.rgb) *
-                   (             out_col.rgb),
-                                    saturate (  out_col.a)  *
-                                    saturate (input_col.a)
-                );
+        float4 ( (input_col.rgb) *
+                 (  out_col.rgb),
+        saturate (  out_col.a  ) *
+        saturate (input_col.a  ) );
 
       out_col.rgb = RemoveSRGBCurve (out_col.rgb);
     }
@@ -270,7 +280,7 @@ float4 main (PS_INPUT input) : SV_Target
     else
     {
       out_col =
-        float4 (  RemoveGammaExp  (           input_col.rgb,        2.2f) *
+        float4 (  RemoveGammaExp  (           input_col.rgb,       2.2f) *
                                                 out_col.rgb,
                                     saturate (  out_col.a)  *
                                     saturate (input_col.a)
