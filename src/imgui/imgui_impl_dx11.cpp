@@ -598,15 +598,13 @@ void ImGui_ImplDX11_RenderDrawData (ImDrawData *draw_data)
 
     extern float SKIV_HDR_DisplayMaxLuminance;
     extern float SKIV_HDR_BrightnessScale;
-    extern int   SKIV_HDR_TonemapType;
 
     extern float SKIV_HDR_MaxLuminanceP99;
-    extern bool  SKIV_HDR_UsePercentileMaxCLL;
 
     float MaxContentLuminance =
-      SKIV_HDR_UsePercentileMaxCLL ?
-          SKIV_HDR_MaxLuminanceP99 :
-          SKIV_HDR_MaxLuminance;
+      _registry.b99thPercentileMaxCLL ?
+             SKIV_HDR_MaxLuminanceP99 :
+             SKIV_HDR_MaxLuminance;
 
     if (SKIV_HDR_DisplayMaxLuminance != display_max_luminance)
       display_max_luminance = SKIV_HDR_DisplayMaxLuminance;
@@ -618,7 +616,7 @@ void ImGui_ImplDX11_RenderDrawData (ImDrawData *draw_data)
     pix_constant_buffer->display_max_luminance       = display_max_luminance    /  80.0f;
     pix_constant_buffer->brightness                  = SKIV_HDR_BrightnessScale / 100.0f;
     if ((SKIV_HDR_BrightnessScale / 100.0f) * MaxContentLuminance > display_max_luminance)
-      pix_constant_buffer->tonemap_type              = SKIV_HDR_TonemapType;
+      pix_constant_buffer->tonemap_type              = _registry.iHDRToneMapType;
     else
       pix_constant_buffer->tonemap_type              = SKIV_HDR_TonemapType::SKIV_TONEMAP_TYPE_NONE;
   //pix_constant_buffer->hdr_max_cll                 = SKIV_HDR_MaxCLL;
@@ -659,7 +657,7 @@ void ImGui_ImplDX11_RenderDrawData (ImDrawData *draw_data)
     pix_constant_buffer->display_max_luminance       = display_max_luminance    /  80.0f;
     pix_constant_buffer->brightness                  = SKIV_HDR_BrightnessScale / 100.0f;
     if ((SKIV_HDR_BrightnessScale / 100.0f) * MaxContentLuminance > display_max_luminance)
-      pix_constant_buffer->tonemap_type              = SKIV_HDR_TonemapType;
+      pix_constant_buffer->tonemap_type              = _registry.iHDRToneMapType;
     else
       pix_constant_buffer->tonemap_type              = SKIV_HDR_TonemapType::SKIV_TONEMAP_TYPE_NONE;
   //pix_constant_buffer->hdr_max_cll                 = SKIV_HDR_MaxCLL;

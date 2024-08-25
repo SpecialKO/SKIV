@@ -105,10 +105,8 @@ float    SKIV_HDR_MaxCLL                =   1.0f;
 float    SKIV_HDR_MaxLuminance          =  80.0f;
 float    SKIV_HDR_DisplayMaxLuminance   =   0.0f;
 float    SKIV_HDR_BrightnessScale       = 100.0f;
-int      SKIV_HDR_TonemapType           = SKIV_HDR_TonemapType::SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY;
 
 float    SKIV_HDR_MaxLuminanceP99       =  80.0f;
-bool     SKIV_HDR_UsePercentileMaxCLL   =  true;
 
 CComPtr <ID3D11UnorderedAccessView>
          SKIV_HDR_GamutCoverageUAV      = nullptr;
@@ -3237,6 +3235,8 @@ SKIF_UI_Tab_DrawViewer (void)
         //   user is calibrating their screen...
         if (bLockCalibration)
         {
+          bool changed_tonemap = false;
+
           if ( (SKIV_HDR_BrightnessScale / 100.0f) * SKIV_HDR_MaxLuminance >
                                                      SKIV_HDR_DisplayMaxLuminance )
           {
@@ -3245,7 +3245,8 @@ SKIF_UI_Tab_DrawViewer (void)
             ImGui::SameLine    ();
             ImGui::TextUnformatted ("Content Exceeds Display Capabilities");
 
-            ImGui::RadioButton ("Do Nothing",      &SKIV_HDR_TonemapType, SKIV_TONEMAP_TYPE_NONE);
+            changed_tonemap |=
+            ImGui::RadioButton ("Do Nothing",      &_registry.iHDRToneMapType, SKIV_TONEMAP_TYPE_NONE);
             if (ImGui::IsItemHovered ())
             {
               ImGui::BeginTooltip    ( );
@@ -3260,7 +3261,8 @@ SKIF_UI_Tab_DrawViewer (void)
             }
             ImGui::SameLine    ();
 
-            ImGui::RadioButton ("Clip to Display", &SKIV_HDR_TonemapType, SKIV_TONEMAP_TYPE_CLIP);
+            changed_tonemap |=
+            ImGui::RadioButton ("Clip to Display", &_registry.iHDRToneMapType, SKIV_TONEMAP_TYPE_CLIP);
             if (ImGui::IsItemHovered ())
             {
               ImGui::BeginTooltip    ( );
@@ -3276,7 +3278,8 @@ SKIF_UI_Tab_DrawViewer (void)
             }
             ImGui::SameLine          ( );
 
-            ImGui::RadioButton ("Map to Display",  &SKIV_HDR_TonemapType, SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY);
+            changed_tonemap |=
+            ImGui::RadioButton ("Map to Display",  &_registry.iHDRToneMapType, SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY);
             if (ImGui::IsItemHovered ())
             {
               ImGui::BeginTooltip    ( );
@@ -3291,9 +3294,13 @@ SKIF_UI_Tab_DrawViewer (void)
               ImGui::EndTooltip      ( );
             }
 
-            if (SKIV_HDR_TonemapType == SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY)
+            if (changed_tonemap)
+               _registry.regKVHDRToneMapType.putData (_registry.iHDRToneMapType);
+
+            if (_registry.iHDRToneMapType == SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY)
             {
-              ImGui::Checkbox ("Use 99th Percentile Luminance as MaxCLL", &SKIV_HDR_UsePercentileMaxCLL);
+              if (ImGui::Checkbox ("Use 99th Percentile Luminance as MaxCLL", &_registry.b99thPercentileMaxCLL))
+                _registry.regKV99thPercentileMaxCLL.putData                   (_registry.b99thPercentileMaxCLL);
 
               if (ImGui::IsItemHovered ())
                 ImGui::SetTooltip ("Increase brightness on scenes with very bright localized peak highlights");

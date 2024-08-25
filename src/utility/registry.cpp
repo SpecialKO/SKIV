@@ -232,12 +232,12 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
     iUIMode                =   2;
 
   HKEY hKey = nullptr;
-  
+
   LSTATUS lsKey = RegCreateKeyW (HKEY_CURRENT_USER, LR"(SOFTWARE\Kaldaien\Special K\Viewer\)", &hKey);
 
   if (lsKey != ERROR_SUCCESS)
     hKey = nullptr;
-  
+
   // UI elements that can be toggled
 
   if (regKVUIBorders.hasData(&hKey))
@@ -298,6 +298,9 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
     if (iHDRBrightness < 80 || 400 < iHDRBrightness)
       iHDRBrightness       =   203;
   }
+
+  if (regKVHDRToneMapType.hasData(&hKey))
+    iHDRToneMapType        =   regKVHDRToneMapType         .getData (&hKey);
   
   if (regKVUIMode.hasData(&hKey))
     iUIMode                =   regKVUIMode                 .getData (&hKey);
@@ -352,6 +355,9 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
 
   if (regKVControllers.hasData(&hKey))
     bControllers           =   regKVControllers            .getData (&hKey);
+
+  if (regKV99thPercentileMaxCLL.hasData(&hKey))
+    b99thPercentileMaxCLL  =   regKV99thPercentileMaxCLL   .getData (&hKey);
 
   // These defaults to false, so no need to check if the registry has another value
   //   since getData ( ) defaults to false for non-existent registry values
