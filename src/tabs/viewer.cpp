@@ -31,8 +31,10 @@
 #include <ImGuiNotify.hpp>
 
 #include "DirectXTex.h"
-#include <utility/DirectXTexEXR.h>
 #include <wincodec.h>
+#ifdef _M_X64
+#include <utility/DirectXTexEXR.h>
+#endif
 
 #include <fonts/fa_621.h>
 #include <fonts/fa_621b.h>
@@ -70,12 +72,14 @@
 //#define STBI_ONLY_PIC
 //#define STBI_ONLY_PNM
 
+#ifdef _M_X64
 #include <jxl/codestream_header.h>
 #include <jxl/decode.h>
 #include <jxl/decode_cxx.h>
 #include <jxl/resizable_parallel_runner.h>
 #include <jxl/resizable_parallel_runner_cxx.h>
 #include <jxl/types.h>
+#endif
 
 #include <stb_image.h>
 #include <html_coder.hpp>
@@ -129,11 +133,16 @@ const std::initializer_list<FileSignature> supported_formats =
   FileSignature { L"image/gif",                 { L".gif"  },          { 0x47, 0x49, 0x46, 0x38, 0x37, 0x61 } }, // GIF87a
   FileSignature { L"image/gif",                 { L".gif"  },          { 0x47, 0x49, 0x46, 0x38, 0x39, 0x61 } }, // GIF89a
   FileSignature { L"image/vnd.radiance",        { L".hdr"  },          { 0x23, 0x3F, 0x52, 0x41, 0x44, 0x49, 0x41, 0x4E, 0x43, 0x45, 0x0A } }, // Radiance High Dynamic Range image file
+#ifdef _M_X64
   FileSignature { L"image/x-exr",               { L".exr"  },          { 0x76, 0x2F, 0x31, 0x01 } },
+#endif
   FileSignature { L"image/avif",                { L".avif" },          { 0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x61, 0x76, 0x69, 0x66 },   // ftypavif
+
                                                                        { 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF } }, // ?? ?? ?? ?? 66 74 79 70 61 76 69 66
+#ifdef _M_X64
   FileSignature { L"image/jxl",                 { L".jxl"  },          { 0xFF, 0x0A } },                                                             // Naked
   FileSignature { L"image/jxl",                 { L".jxl"  },          { 0x00, 0x00, 0x00, 0x0C, 0x4A, 0x58, 0x4C, 0x20, 0x0D, 0x0A, 0x87, 0x0A } }, // ISOBMFF-based container
+#endif
   FileSignature { L"image/vnd-ms.dds",          { L".dds"  },          { 0x44, 0x44, 0x53, 0x20 } },
 //FileSignature { L"image/x-targa",             { L".tga"  },          { 0x00, } }, // TGA has no real unique header identifier, so just use the file extension on those
 };
@@ -156,8 +165,10 @@ const std::initializer_list<FileSignature> supported_hdr_encode_formats =
   FileSignature { L"image/png",                 { L".png"  },          { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A } },
   FileSignature { L"image/vnd.ms-photo",        { L".jxr"  },          { 0x49, 0x49, 0xBC } },
   FileSignature { L"image/vnd.radiance",        { L".hdr"  },          { 0x23, 0x3F, 0x52, 0x41, 0x44, 0x49, 0x41, 0x4E, 0x43, 0x45, 0x0A } }, // Radiance High Dynamic Range image file
+#ifdef _M_X64
   FileSignature { L"image/x-exr",               { L".exr"  },          { 0x76, 0x2F, 0x31, 0x01 } },
   FileSignature { L"image/jxl",                 { L".jxl"  },          { 0xFF, 0x0A } },
+#endif
 //FileSignature { L"image/avif",                { L".avif" },          { 0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x61, 0x76, 0x69, 0x66 },   // ftypavif
 //                                                                     { 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF } }, // ?? ?? ?? ?? 66 74 79 70 61 76 69 66
 //FileSignature { L"image/vnd-ms.dds",          { L".dds"  },          { 0x44, 0x44, 0x53, 0x20 } },
@@ -165,6 +176,7 @@ const std::initializer_list<FileSignature> supported_hdr_encode_formats =
 
 bool isJXLDecoderAvailable (void)
 {
+#ifdef _M_X64
   static HMODULE hModJXL        = nullptr;
   static HMODULE hModJXLCMS     = nullptr;
   static HMODULE hModJXLThreads = nullptr;
@@ -249,6 +261,9 @@ bool isJXLDecoderAvailable (void)
   }
 
   return supported;
+#else
+  return false;
+#endif
 }
 
 bool isExtensionSupported (const std::wstring extension)
@@ -257,11 +272,13 @@ bool isExtensionSupported (const std::wstring extension)
   {
     if (SKIF_Util_HasFileExtension (extension, type))
     {
+#ifdef _M_X64
       // Support for JXL is optional
       if (type.mime_type == L"image/jxl")
       {
         return isJXLDecoderAvailable ();
       }
+#endif
 
       return true;
     }
@@ -389,7 +406,7 @@ struct image_s {
     std:: string folder_path_utf8 = { };
     std::wstring path             = { }; // Image path (full)
     std:: string path_utf8        = { };
-    size_t       size             = 0;
+    uint64_t     size             = 0;
     file_s ( ) { };
   } file_info;
 
@@ -701,8 +718,10 @@ enum ImageDecoder {
   ImageDecoder_WIC,
   ImageDecoder_DDS,
   ImageDecoder_stbi,
+#ifdef _M_X64
   ImageDecoder_JXL,
   ImageDecoder_EXR,
+#endif
   ImageDecoder_HDR,
   ImageDecoder_AVIF // TODO
 };
@@ -713,10 +732,10 @@ public:
   {
     if (file_ != nullptr)
     {
-      auto orig_pos = _ftelli64 (pFile);
-                      _fseeki64 (pFile,        0, SEEK_END);
-              size_ = _ftelli64 (pFile);
-                      _fseeki64 (pFile, orig_pos, SEEK_SET);
+      auto orig_pos = ftell (pFile);
+                      fseek (pFile,        0, SEEK_END);
+              size_ = ftell (pFile);
+                      fseek (pFile, orig_pos, SEEK_SET);
     }
   }
 
@@ -728,13 +747,13 @@ public:
     }
   }
 
-  long long getInitialSize (void) const {
+  size_t getInitialSize (void) const {
     return size_;
   }
 
 private:
-  long long size_;
-  FILE*     file_;
+  size_t size_;
+  FILE*  file_;
 };
 
 class SKIV_ScopedThreadPriority_Viewer
@@ -998,9 +1017,13 @@ LoadLibraryTexture (image_s& image)
              (type.mime_type == L"image/webp"                ) ? ImageDecoder_WIC  :
              (type.mime_type == L"image/tiff"                ) ? ImageDecoder_WIC  :
              (type.mime_type == L"image/avif"                ) ? ImageDecoder_WIC  :
+#ifdef _M_X64
              (type.mime_type == L"image/jxl"                 ) ? ImageDecoder_JXL  :
+#endif
              (type.mime_type == L"image/vnd-ms.dds"          ) ? ImageDecoder_DDS  :
+#ifdef _M_X64
              (type.mime_type == L"image/x-exr"               ) ? ImageDecoder_EXR  :
+#endif
                                                                  ImageDecoder_WIC;   // Not actually being used
 
           // None of this is technically correct other than the .hdr case,
@@ -1034,8 +1057,10 @@ LoadLibraryTexture (image_s& image)
   PLOG_DEBUG_IF(decoder == ImageDecoder_stbi) << "Using stbi decoder...";
   PLOG_DEBUG_IF(decoder == ImageDecoder_WIC ) << "Using WIC decoder...";
   PLOG_DEBUG_IF(decoder == ImageDecoder_DDS ) << "Using DDS decoder...";
+#ifdef _M_X64
   PLOG_DEBUG_IF(decoder == ImageDecoder_JXL ) << "Using JPEG-XL decoder...";
   PLOG_DEBUG_IF(decoder == ImageDecoder_EXR ) << "Using OpenEXR decoder...";
+#endif
   PLOG_DEBUG_IF(decoder == ImageDecoder_HDR ) << "Using Radiance HDR decoder...";
 
   if (decoder == ImageDecoder_None)
@@ -1357,6 +1382,7 @@ LoadLibraryTexture (image_s& image)
     }
   }
 
+#ifdef _M_X64
   if (decoder == ImageDecoder_EXR)
   {
     using namespace DirectX;
@@ -1386,6 +1412,7 @@ LoadLibraryTexture (image_s& image)
       meta.dimension = DirectX::TEX_DIMENSION_TEXTURE2D;
     }
   }
+#endif
 
   if (decoder == ImageDecoder_HDR)
   {
@@ -1421,6 +1448,7 @@ LoadLibraryTexture (image_s& image)
     }
   }
 
+#ifdef _M_X64
   if (decoder == ImageDecoder_JXL)
   {
     static HMODULE hModJXL;
@@ -1718,6 +1746,7 @@ LoadLibraryTexture (image_s& image)
     if ( jxl_runner != nullptr)
       jxlResizableParallelRunnerDestroy (nullptr);
   }
+#endif
 
   // Push the existing texture to a stack to be released after the frame
   //   Do this regardless of whether we could actually load the new cover or not

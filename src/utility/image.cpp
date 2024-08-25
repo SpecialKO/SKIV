@@ -2192,6 +2192,7 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
     wic_codec = GetWICCodec (WIC_CODEC_WMP);
   }
 
+#ifdef _M_X64
   else if (StrStrIW (wszExtension, L"exr"))
   {
     using namespace DirectX;
@@ -2201,6 +2202,7 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
       return S_OK;
     }
   }
+#endif
 
   else if (StrStrIW (wszExtension, L"hdr"))
   {
@@ -2224,6 +2226,7 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
     }
   }
 
+#ifdef _M_X64
   else if (StrStrIW (wszExtension, L"jxl"))
   {
     extern bool isJXLDecoderAvailable (void);
@@ -2472,6 +2475,7 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
     return
       succeeded ? S_OK : E_FAIL;
   }
+#endif
 
   else if (StrStrIW (wszExtension, L"avif"))
   {

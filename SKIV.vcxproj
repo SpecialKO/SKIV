@@ -426,7 +426,9 @@
     <ClCompile Include="src\imgui\imgui_impl_dx11.cpp" />
     <ClCompile Include="src\imgui\imgui_impl_win32.cpp" />
     <ClCompile Include="src\imgui\imgui_tables.cpp" />
-    <ClCompile Include="src\utility\DirectXTexEXR.cpp" />
+    <ClCompile Include="src\utility\DirectXTexEXR.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
+    </ClCompile>
     <ClCompile Include="src\utility\gamepad.cpp" />
     <ClCompile Include="src\utility\image.cpp" />
     <ClCompile Include="src\utility\registry.cpp" />
