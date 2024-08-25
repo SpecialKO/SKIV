@@ -385,7 +385,7 @@ float3 Rec709toICtCp (float3 c)
   c = XYZ_to_LMS    (c);
   
   c =
-    LinearToPQ (c, 125.0f);
+    LinearToPQ (max (c, 0.0f), 125.0f);
 
   static const float3x3 ConvMat =
   {
@@ -437,5 +437,5 @@ float LinearToPQY (float x, float maxPQValue)
 float LinearToPQY (float x)
 {
   return
-    LinearToPQY (x, DEFAULT_MAX_PQ);
+    LinearToPQY (max (x, 0.0f), DEFAULT_MAX_PQ);
 }

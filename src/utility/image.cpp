@@ -115,7 +115,7 @@ SKIV_Image_Rec709toICtCp (DirectX::XMVECTOR N)
   ret = XMVector3Transform (ret, c_fromXYZtoLMS);
 
   ret =
-    SKIV_Image_LinearToPQ (ret, XMVectorReplicate (125.0f));
+    SKIV_Image_LinearToPQ (XMVectorMax (ret, g_XMZero), XMVectorReplicate (125.0f));
 
   static const DirectX::XMMATRIX ConvMat = // Transposed
   {
@@ -729,7 +729,7 @@ SKIV_HDR_ConvertImageToPNG (const DirectX::Image& raw_hdr_img, DirectX::ScratchI
             typeless_fmt == DXGI_FORMAT_R32G32B32A32_TYPELESS)
         {
           v =
-            SKIV_Image_LinearToPQ (XMVector3Transform (v, c_scRGBtoBt2100));
+            SKIV_Image_LinearToPQ (XMVectorMax (XMVector3Transform (v, c_scRGBtoBt2100), g_XMZero));
         }
 
         v = // Quantize to 10- or 12-bpc before expanding to 16-bpc in order to improve
