@@ -1810,7 +1810,7 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
   else if (StrStrIW (wszExtension, L"png"))
   {
     wic_codec           = GetWICCodec (WIC_CODEC_PNG);
-    bPrefer10bpcAs48bpp = is_hdr;
+    //bPrefer10bpcAs48bpp = is_hdr;
 
     wic_flags |= WIC_FLAGS_FORCE_SRGB;
     wic_flags |= WIC_FLAGS_DEFAULT_SRGB;
