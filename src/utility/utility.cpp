@@ -2516,7 +2516,8 @@ SKIF_Util_GetClipboardBitmapData (void)
           else if (bmp5hdr->bV5BitCount == 32)
             img.format = DXGI_FORMAT_B8G8R8A8_UNORM;
 
-          if (img.format == DXGI_FORMAT_B8G8R8A8_UNORM)
+          if (img.format == DXGI_FORMAT_B8G8R8A8_UNORM ||
+              img.format == DXGI_FORMAT_B8G8R8X8_UNORM)
           {
             img.pixels     = (BYTE *)bmp5hdr + offset;
             img.width      = bmp5hdr->bV5Width;
@@ -2539,17 +2540,20 @@ SKIF_Util_GetClipboardBitmapData (void)
               flipped;
               flipped.Initialize (meta);
 
-            if (SUCCEEDED (DirectX::FlipRotate    (&img, 1, meta,             DirectX::TEX_FR_FLIP_VERTICAL, flipped)) &&
-                SUCCEEDED (DirectX::SaveToWICFile (*flipped.GetImage (0,0,0), DirectX::WIC_FLAGS_FORCE_SRGB, GUID_ContainerFormatTiff, L"clipboard.tiff")))
+            if (SUCCEEDED (DirectX::FlipRotate (&img, 1, meta, DirectX::TEX_FR_FLIP_VERTICAL, flipped)))
             {
-              extern std::wstring dragDroppedFilePath;
-              dragDroppedFilePath = L"clipboard.tiff";
-              PLOG_VERBOSE << "Successfully received and saved image data from the clipboard!";
-            }
-          }
-        }
+              GlobalUnlock (hGlobal);
 
-        GlobalUnlock (hGlobal);
+              if (SUCCEEDED (DirectX::SaveToWICFile (*flipped.GetImage (0,0,0), DirectX::WIC_FLAGS_FORCE_SRGB, GUID_ContainerFormatTiff, L"clipboard.tiff")))
+              {
+                extern std::wstring dragDroppedFilePath;
+                dragDroppedFilePath = L"clipboard.tiff";
+                PLOG_VERBOSE << "Successfully received and saved image data from the clipboard!";
+              }
+            }
+            else GlobalUnlock (hGlobal);
+          } else GlobalUnlock (hGlobal);
+        }
       }
     }
 
