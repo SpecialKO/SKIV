@@ -1017,7 +1017,7 @@ SKIV_PNG_CopyToClipboard (const DirectX::Image& image, const void *pData, size_t
   std::ignore = image;
   std::ignore = data_size; // It's a string, we can compute the size trivially
 
-  if (OpenClipboard (nullptr))
+  if (OpenClipboard (SKIF_ImGui_hWnd))
   {
     int clpSize = sizeof (DROPFILES);
 
@@ -1132,7 +1132,7 @@ using namespace DirectX;
         PLOG_INFO << "SKIV_Image_TonemapToSDR ( ): FAILED!";
     }
 
-    if (OpenClipboard (nullptr))
+    if (OpenClipboard (SKIF_ImGui_hWnd))
     {
       const int
           _bpc    =
