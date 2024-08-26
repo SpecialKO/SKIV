@@ -2336,7 +2336,17 @@ SKIF_Util_SetClipboardData (const std::wstring_view& data)
 {
   bool result = false;
 
-  if (OpenClipboard (SKIF_ImGui_hWnd))
+  bool clipboard_open = false;
+
+  for (UINT i = 0 ; i < 5 ; ++i)
+  {
+    clipboard_open = OpenClipboard (SKIF_ImGui_hWnd);
+  
+    if (! clipboard_open)
+      Sleep (2);
+  }
+
+  if (clipboard_open)
   {
     HGLOBAL hGlobal = GlobalAlloc (GMEM_MOVEABLE, (data.size() + 1)  * sizeof (wchar_t));
 
@@ -2347,10 +2357,10 @@ SKIF_Util_SetClipboardData (const std::wstring_view& data)
       if (pszDestination != nullptr)
       {
         memcpy (pszDestination, data.data(), (data.length() + 1) * sizeof (wchar_t));
-        GlobalUnlock (hGlobal);
 
         EmptyClipboard ( );
         result = SetClipboardData (CF_UNICODETEXT, hGlobal);
+        GlobalUnlock                              (hGlobal);
       }
 
       if (! result)

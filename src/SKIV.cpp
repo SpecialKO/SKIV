@@ -3061,7 +3061,17 @@ wWinMain ( _In_     HINSTANCE hInstance,
       //   duplicate the same processing we're already doing in viewer.cpp
       if (hotkeyCtrlV && ! ImGui::IsAnyItemActive ( )) // && ! ImGui::IsAnyItemFocused ( )
       {
-        if (OpenClipboard (SKIF_ImGui_hWnd))
+        bool clipboard_open = false;
+
+        for (UINT i = 0 ; i < 5 ; ++i)
+        {
+          clipboard_open = OpenClipboard (SKIF_ImGui_hWnd);
+        
+          if (! clipboard_open)
+            Sleep (2);
+        }
+
+        if (clipboard_open)
         {
           ClipboardData cbd = ClipboardData_None;
 
