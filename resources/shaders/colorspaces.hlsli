@@ -50,9 +50,8 @@ RemoveSRGBCurve (float x)
 #ifdef FAST_SRGB
   return x < 0.04045 ? x / 12.92 : -7.43605 * x - 31.24297 * sqrt(-0.53792 * x + 1.279924) + 35.34864;
 #else
-  // Approximately pow(x, 2.2)
-  return (x < 0.04045 ? x / 12.92 :
-                  pow( (x + 0.055) / 1.055, 2.4 ));
+  return sign (x) * (abs (x) < 0.04045 ? abs (x) / 12.92 :
+                                   pow( (abs (x) + 0.055) / 1.055, 2.4 ));
 #endif
 }
 
@@ -438,4 +437,31 @@ float LinearToPQY (float x)
 {
   return
     LinearToPQY (max (x, 0.0f), DEFAULT_MAX_PQ);
+}
+
+float4 LinearToPQ4 (float4 x, float maxPQValue)
+{
+  x =
+    PositivePow ( x / maxPQValue,
+                         PQ.N );
+ 
+  float4 nd =
+    (PQ.C1 + PQ.C2 * x) /
+      (1.0 + PQ.C3 * x);
+
+  return
+    PositivePow (nd, PQ.M);
+}
+
+float4 PQToLinear4 (float4 x, float maxPQValue)
+{
+  x =
+    PositivePow (x, PQ.rcpM);
+
+  float4 nd =
+    max (x - PQ.C1, 0.0) /
+            (PQ.C2 - (PQ.C3 * x));
+
+  return
+    PositivePow (nd, PQ.rcpN) * maxPQValue;
 }

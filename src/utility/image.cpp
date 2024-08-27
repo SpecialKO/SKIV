@@ -2151,7 +2151,7 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
 
     if (FAILED (DirectX::Convert (*tonemapped_hdr.GetImages (), bPrefer10bpcAs48bpp ? DXGI_FORMAT_R16G16B16A16_UNORM :
                                                                 bPrefer10bpcAs32bpp ? DXGI_FORMAT_R10G10B10A2_UNORM  :
-                                                                                      DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,
+                                                                                      DXGI_FORMAT_B8G8R8X8_UNORM_SRGB,
                                   (TEX_FILTER_FLAGS)0x200000FF, 1.0f, final_sdr)))
     {
       return E_UNEXPECTED;
@@ -2172,7 +2172,7 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
     DirectX::SaveToWICFile (*pOutputImage, wic_flags, wic_codec,
                       wszImplicitFileName, bPrefer10bpcAs48bpp ? &GUID_WICPixelFormat48bppRGB       :
                                            bPrefer10bpcAs32bpp ? &GUID_WICPixelFormat32bppBGR101010 :
-                                                                 nullptr, SK_WIC_SetMaximumQuality);
+                                                                 &GUID_WICPixelFormat24bppBGR, SK_WIC_SetMaximumQuality);
 }
 
 HRESULT
