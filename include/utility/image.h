@@ -132,6 +132,10 @@ HRESULT SKIV_Image_CaptureDesktop  (DirectX::ScratchImage& image, POINT pos, int
 void    SKIV_Image_CaptureRegion   (ImRect capture_area);
 HRESULT SKIV_Image_TonemapToSDR    (const DirectX::Image& image, DirectX::ScratchImage& final_sdr, float mastering_max_nits, float mastering_sdr_nits);
 
+bool    SKIV_Image_IsUltraHDR      (const wchar_t* wszFileName);
+bool    SKIV_Image_IsUltraHDR      (void* data, int size);
+HRESULT SKIV_Image_LoadUltraHDR    (DirectX::ScratchImage& image, void* data, int size);
+
 // Structs
 
 struct skiv_image_desktop_s {

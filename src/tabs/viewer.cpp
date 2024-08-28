@@ -723,6 +723,7 @@ enum ImageDecoder {
   ImageDecoder_EXR,
 #endif
   ImageDecoder_HDR,
+  ImageDecoder_UHDR,
   ImageDecoder_AVIF // TODO
 };
 
@@ -1006,7 +1007,9 @@ LoadLibraryTexture (image_s& image)
           PLOG_INFO << "Detected an " << type.mime_type << " image";
 
           decoder = 
-             (type.mime_type == L"image/jpeg"                ) ? ImageDecoder_stbi : // covers both .jpeg and .jpg
+             (type.mime_type == L"image/jpeg"                ) ?
+                   (SKIV_Image_IsUltraHDR (imagePath.c_str ()) ? ImageDecoder_UHDR :
+                                                                 ImageDecoder_stbi):
              (type.mime_type == L"image/png"                 ) ? ImageDecoder_stbi : // Use WIC for proper color correction
              (type.mime_type == L"image/bmp"                 ) ? ImageDecoder_stbi :
              (type.mime_type == L"image/vnd.adobe.photoshop" ) ? ImageDecoder_stbi :
@@ -1062,9 +1065,28 @@ LoadLibraryTexture (image_s& image)
   PLOG_DEBUG_IF(decoder == ImageDecoder_EXR ) << "Using OpenEXR decoder...";
 #endif
   PLOG_DEBUG_IF(decoder == ImageDecoder_HDR ) << "Using Radiance HDR decoder...";
+  PLOG_DEBUG_IF(decoder == ImageDecoder_UHDR) << "Using Ultra HDR decoder...";
 
   if (decoder == ImageDecoder_None)
     return false;
+
+  if (decoder == ImageDecoder_UHDR)
+  {
+    fseek  (pImageFile,                                 0, SEEK_SET  );
+    fread  (_scratchMemory.get (), _.getInitialSize (), 1, pImageFile);
+    rewind (pImageFile);
+
+    image.light_info.isHDR = true;
+    image.is_hdr           = true;
+
+    SKIV_Image_LoadUltraHDR (img, _scratchMemory.get (), _.getInitialSize ());
+
+    meta           = img.GetMetadata ();
+    meta.dimension = DirectX::TEX_DIMENSION_TEXTURE2D;
+
+    converted = true;
+    succeeded = true;
+  }
 
   if (decoder == ImageDecoder_stbi)
   {

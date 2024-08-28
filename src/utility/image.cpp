@@ -1788,7 +1788,7 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
 
       if (percent <= 99.85)
       {
-        PLOG_INFO << "99.85th percentile luminance: " <<
+        PLOG_INFO << "99.5th percentile luminance: " <<
           80.0f * (XMVectorGetY (minLum) + (fLumRange * ((float)i / 65536.0f)))
                                                       << " nits";
 
@@ -1974,32 +1974,65 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
 
 #include <ultrahdr/ultrahdr_api.h>
 
-using uhdr_create_encoder_pfn        = uhdr_codec_private_t*    (*)(void);
-using uhdr_enc_set_quality_pfn       = uhdr_error_info_t        (*)(uhdr_codec_private_t* enc, int quality,           uhdr_img_label_t intent);
-using uhdr_enc_set_raw_image_pfn     = uhdr_error_info_t        (*)(uhdr_codec_private_t* enc, uhdr_raw_image_t* img, uhdr_img_label_t intent);
-using uhdr_enc_set_output_format_pfn = uhdr_error_info_t        (*)(uhdr_codec_private_t* enc, uhdr_codec_t media_type);
-using uhdr_encode_pfn                = uhdr_error_info_t        (*)(uhdr_codec_private_t* enc);
-using uhdr_get_encoded_stream_pfn    = uhdr_compressed_image_t* (*)(uhdr_codec_private_t* enc);
-using uhdr_release_encoder_pfn       = void                     (*)(uhdr_codec_private_t* enc);
+using uhdr_create_encoder_pfn                = uhdr_codec_private_t*    (*)(void);
+using uhdr_enc_set_quality_pfn               = uhdr_error_info_t        (*)(uhdr_codec_private_t* enc, int quality,           uhdr_img_label_t intent);
+using uhdr_enc_set_raw_image_pfn             = uhdr_error_info_t        (*)(uhdr_codec_private_t* enc, uhdr_raw_image_t* img, uhdr_img_label_t intent);
+using uhdr_enc_set_output_format_pfn         = uhdr_error_info_t        (*)(uhdr_codec_private_t* enc, uhdr_codec_t media_type);
+using uhdr_encode_pfn                        = uhdr_error_info_t        (*)(uhdr_codec_private_t* enc);
+using uhdr_get_encoded_stream_pfn            = uhdr_compressed_image_t* (*)(uhdr_codec_private_t* enc);
+using uhdr_release_encoder_pfn               = void                     (*)(uhdr_codec_private_t* enc);
+using uhdr_enc_set_min_max_content_boost_pfn = uhdr_error_info_t        (*)(uhdr_codec_private_t* enc, float min_boost, float max_boost);
+using uhdr_enc_set_preset_pfn                = uhdr_error_info_t        (*)(uhdr_codec_private_t* enc, uhdr_enc_preset_t preset);
 
-uhdr_create_encoder_pfn        sk_uhdr_create_encoder        = nullptr;
-uhdr_enc_set_quality_pfn       sk_uhdr_enc_set_quality       = nullptr;
-uhdr_enc_set_raw_image_pfn     sk_uhdr_enc_set_raw_image     = nullptr;
-uhdr_enc_set_output_format_pfn sk_uhdr_enc_set_output_format = nullptr;
-uhdr_encode_pfn                sk_uhdr_encode                = nullptr;
-uhdr_get_encoded_stream_pfn    sk_uhdr_get_encoded_stream    = nullptr;
-uhdr_release_encoder_pfn       sk_uhdr_release_encoder       = nullptr;
+using is_uhdr_image_pfn                      = int                      (*)(void* data, int size);
 
-bool isUHDREncoderAvailable (void)
+using uhdr_create_decoder_pfn                = uhdr_codec_private_t*    (*)(void);
+using uhdr_release_decoder_pfn               = void                     (*)(uhdr_codec_private_t* dec);
+using uhdr_dec_set_image_pfn                 = uhdr_error_info_t        (*)(uhdr_codec_private_t* dec, uhdr_compressed_image_t* img);
+using uhdr_dec_set_out_color_transfer_pfn    = uhdr_error_info_t        (*)(uhdr_codec_private_t* dec, uhdr_color_transfer_t ct);
+using uhdr_dec_set_out_img_format_pfn        = uhdr_error_info_t        (*)(uhdr_codec_private_t* dec, uhdr_img_fmt_t fmt);
+using uhdr_dec_set_out_max_display_boost_pfn = uhdr_error_info_t        (*)(uhdr_codec_private_t* dec, float display_boost);
+using uhdr_dec_probe_pfn                     = uhdr_error_info_t        (*)(uhdr_codec_private_t* dec);
+using uhdr_decode_pfn                        = uhdr_error_info_t        (*)(uhdr_codec_private_t* dec);
+using uhdr_get_decoded_image_pfn             = uhdr_raw_image_t*        (*)(uhdr_codec_private_t* dec);
+using uhdr_get_gain_map_image_pfn            = uhdr_raw_image_t*        (*)(uhdr_codec_private_t* dec);
+using uhdr_dec_get_gain_map_metadata_pfn     = uhdr_gainmap_metadata_t* (*)(uhdr_codec_private_t* dec);
+
+uhdr_create_encoder_pfn                sk_uhdr_create_encoder                = nullptr;
+uhdr_enc_set_quality_pfn               sk_uhdr_enc_set_quality               = nullptr;
+uhdr_enc_set_raw_image_pfn             sk_uhdr_enc_set_raw_image             = nullptr;
+uhdr_enc_set_output_format_pfn         sk_uhdr_enc_set_output_format         = nullptr;
+uhdr_encode_pfn                        sk_uhdr_encode                        = nullptr;
+uhdr_get_encoded_stream_pfn            sk_uhdr_get_encoded_stream            = nullptr;
+uhdr_release_encoder_pfn               sk_uhdr_release_encoder               = nullptr;
+uhdr_enc_set_min_max_content_boost_pfn sk_uhdr_enc_set_min_max_content_boost = nullptr;
+uhdr_enc_set_preset_pfn                sk_uhdr_enc_set_preset                = nullptr;
+
+is_uhdr_image_pfn                      sk_is_uhdr_image                      = nullptr;
+
+uhdr_create_decoder_pfn                sk_uhdr_create_decoder                = nullptr;
+uhdr_release_decoder_pfn               sk_uhdr_release_decoder               = nullptr;
+uhdr_dec_set_image_pfn                 sk_uhdr_dec_set_image                 = nullptr;
+uhdr_dec_set_out_color_transfer_pfn    sk_uhdr_dec_set_out_color_transfer    = nullptr;
+uhdr_dec_set_out_img_format_pfn        sk_uhdr_dec_set_out_img_format        = nullptr;
+uhdr_dec_set_out_max_display_boost_pfn sk_uhdr_dec_set_out_max_display_boost = nullptr;
+uhdr_dec_probe_pfn                     sk_uhdr_dec_probe                     = nullptr;
+uhdr_decode_pfn                        sk_uhdr_decode                        = nullptr;
+uhdr_get_decoded_image_pfn             sk_uhdr_get_decoded_image             = nullptr;
+uhdr_get_gain_map_image_pfn            sk_uhdr_get_gain_map_image            = nullptr;
+uhdr_dec_get_gain_map_metadata_pfn     sk_uhdr_dec_get_gain_map_metadata     = nullptr;
+
+bool isUHDRCodecAvailable (void)
 {
-  // Disable for now
-  return false;
-
   static HMODULE hModUHDR = nullptr;
 
   static const wchar_t* wszPluginArch =
     SK_RunLHIfBitness ( 64, LR"(x64\)",
                             LR"(x86\)" );
+
+  static const wchar_t* wszDownloadURL =
+    SK_RunLHIfBitness ( 64, LR"(https://sk-data.special-k.info/addon/ImageCodecs/libuhdr/x64/uhdr.dll)",
+                            LR"(https://sk-data.special-k.info/addon/ImageCodecs/libuhdr/x86/uhdr.dll)" );
 
   SK_RunOnce (
   {
@@ -2022,11 +2055,8 @@ bool isUHDREncoderAvailable (void)
         std::wstring path_to_uhdr = path_to_sk + L"uhdr.dll";
 
         if (! std::filesystem::exists (path_to_uhdr, ec))
-//#ifdef _M_X64
-          SKIF_Util_GetWebResource (L"https://sk-data.special-k.info/addon/ImageCodecs/libuhdr/x64/uhdr.dll", path_to_uhdr);
-//#else
-//          SKIF_Util_GetWebResource (L"https://sk-data.special-k.info/addon/ImageCodecs/libuhdr/x86/uhdr.dll", path_to_uhdr);
-//#endif
+          SKIF_Util_GetWebResource (wszDownloadURL, path_to_uhdr);
+
         hModUHDR = LoadLibraryW (path_to_uhdr.c_str ());
 
         if (hModUHDR != nullptr)
@@ -2048,13 +2078,29 @@ bool isUHDREncoderAvailable (void)
 
     if (hModUHDR != nullptr)
     {
-      sk_uhdr_create_encoder        = (uhdr_create_encoder_pfn)       GetProcAddress (hModUHDR, "uhdr_create_encoder");
-      sk_uhdr_enc_set_quality       = (uhdr_enc_set_quality_pfn)      GetProcAddress (hModUHDR, "uhdr_enc_set_quality");
-      sk_uhdr_enc_set_raw_image     = (uhdr_enc_set_raw_image_pfn)    GetProcAddress (hModUHDR, "uhdr_enc_set_raw_image");
-      sk_uhdr_enc_set_output_format = (uhdr_enc_set_output_format_pfn)GetProcAddress (hModUHDR, "uhdr_enc_set_output_format");
-      sk_uhdr_encode                = (uhdr_encode_pfn)               GetProcAddress (hModUHDR, "uhdr_encode");
-      sk_uhdr_get_encoded_stream    = (uhdr_get_encoded_stream_pfn)   GetProcAddress (hModUHDR, "uhdr_get_encoded_stream");
-      sk_uhdr_release_encoder       = (uhdr_release_encoder_pfn)      GetProcAddress (hModUHDR, "uhdr_release_encoder");
+      sk_uhdr_create_encoder                = (uhdr_create_encoder_pfn)               GetProcAddress (hModUHDR, "uhdr_create_encoder");
+      sk_uhdr_enc_set_quality               = (uhdr_enc_set_quality_pfn)              GetProcAddress (hModUHDR, "uhdr_enc_set_quality");
+      sk_uhdr_enc_set_raw_image             = (uhdr_enc_set_raw_image_pfn)            GetProcAddress (hModUHDR, "uhdr_enc_set_raw_image");
+      sk_uhdr_enc_set_output_format         = (uhdr_enc_set_output_format_pfn)        GetProcAddress (hModUHDR, "uhdr_enc_set_output_format");
+      sk_uhdr_encode                        = (uhdr_encode_pfn)                       GetProcAddress (hModUHDR, "uhdr_encode");
+      sk_uhdr_get_encoded_stream            = (uhdr_get_encoded_stream_pfn)           GetProcAddress (hModUHDR, "uhdr_get_encoded_stream");
+      sk_uhdr_release_encoder               = (uhdr_release_encoder_pfn)              GetProcAddress (hModUHDR, "uhdr_release_encoder");
+      sk_uhdr_enc_set_min_max_content_boost = (uhdr_enc_set_min_max_content_boost_pfn)GetProcAddress (hModUHDR, "uhdr_enc_set_min_max_content_boost");
+      sk_uhdr_enc_set_preset                = (uhdr_enc_set_preset_pfn)               GetProcAddress (hModUHDR, "uhdr_enc_set_preset");
+
+      sk_is_uhdr_image                      = (is_uhdr_image_pfn)                     GetProcAddress (hModUHDR, "is_uhdr_image");
+      
+      sk_uhdr_create_decoder                = (uhdr_create_decoder_pfn)               GetProcAddress (hModUHDR, "uhdr_create_decoder");
+      sk_uhdr_release_decoder               = (uhdr_release_decoder_pfn)              GetProcAddress (hModUHDR, "uhdr_release_decoder");
+      sk_uhdr_dec_set_image                 = (uhdr_dec_set_image_pfn)                GetProcAddress (hModUHDR, "uhdr_dec_set_image");
+      sk_uhdr_dec_set_out_color_transfer    = (uhdr_dec_set_out_color_transfer_pfn)   GetProcAddress (hModUHDR, "uhdr_dec_set_out_color_transfer");
+      sk_uhdr_dec_set_out_img_format        = (uhdr_dec_set_out_img_format_pfn)       GetProcAddress (hModUHDR, "uhdr_dec_set_out_img_format");
+      sk_uhdr_dec_set_out_max_display_boost = (uhdr_dec_set_out_max_display_boost_pfn)GetProcAddress (hModUHDR, "uhdr_dec_set_out_max_display_boost");
+      sk_uhdr_dec_probe                     = (uhdr_dec_probe_pfn)                    GetProcAddress (hModUHDR, "uhdr_dec_probe");
+      sk_uhdr_decode                        = (uhdr_decode_pfn)                       GetProcAddress (hModUHDR, "uhdr_decode");
+      sk_uhdr_get_decoded_image             = (uhdr_get_decoded_image_pfn)            GetProcAddress (hModUHDR, "uhdr_get_decoded_image");
+      sk_uhdr_get_gain_map_image            = (uhdr_get_gain_map_image_pfn)           GetProcAddress (hModUHDR, "uhdr_get_gain_map_image");
+      sk_uhdr_dec_get_gain_map_metadata     = (uhdr_dec_get_gain_map_metadata_pfn)    GetProcAddress (hModUHDR, "uhdr_dec_get_gain_map_metadata");
 
       return true;
     }
@@ -2081,7 +2127,7 @@ bool isUHDREncoderAvailable (void)
 void
 SKIV_Image_SaveToDisk_UltraHDR (const DirectX::Image& image, const wchar_t* wszFileName)
 {
-  if (! isUHDREncoderAvailable ())
+  if (! isUHDRCodecAvailable ())
     return;
 
   uhdr_raw_image raw_hdr;
@@ -2209,11 +2255,108 @@ SKIV_Image_SaveToDisk_UltraHDR (const DirectX::Image& image, const wchar_t* wszF
   sk_uhdr_release_encoder (encoder);
 }
 
+bool
+SKIV_Image_IsUltraHDR (const wchar_t* wszFileName)
+{
+  if (! isUHDRCodecAvailable ())
+    return false;
+
+  FILE* fImageFile =
+    _wfopen (wszFileName, L"rb");
+
+  if (fImageFile != nullptr)
+  {
+    fseek (            fImageFile, 0, SEEK_END);
+    auto size = ftell (fImageFile);
+    auto data =
+      std::make_unique <uint8_t []> (size);
+
+    rewind (                      fImageFile);
+    fread  (data.get (), 1, size, fImageFile);
+    fclose (                      fImageFile);
+
+    return
+      sk_is_uhdr_image (data.get (), size) != 0;
+  }
+
+  return false;
+}
+
+bool
+SKIV_Image_IsUltraHDR (void* data, int size)
+{
+  if (! isUHDRCodecAvailable ())
+    return false;
+
+  return
+    sk_is_uhdr_image (data, size) != 0;
+}
+
+HRESULT
+SKIV_Image_LoadUltraHDR (DirectX::ScratchImage& image, void* data, int size)
+{
+  auto decoder =
+    sk_uhdr_create_decoder ();
+
+  uhdr_compressed_image_t uhdr_image;
+
+  uhdr_image.data     = data;
+  uhdr_image.data_sz  = size;
+  uhdr_image.capacity = size;
+  uhdr_image.cg       = UHDR_CG_BT_709;//UHDR_CG_UNSPECIFIED;
+  uhdr_image.ct       = UHDR_CT_LINEAR;//UHDR_CT_UNSPECIFIED;
+  uhdr_image.range    = UHDR_CR_FULL_RANGE;//UHDR_CR_UNSPECIFIED;
+
+  sk_uhdr_dec_set_image              (decoder, &uhdr_image);
+  sk_uhdr_dec_probe                  (decoder);
+  sk_uhdr_dec_set_out_color_transfer (decoder, UHDR_CT_LINEAR);
+  sk_uhdr_dec_set_out_img_format     (decoder, UHDR_IMG_FMT_64bppRGBAHalfFloat);
+  sk_uhdr_decode                     (decoder);
+
+  auto decoded_img =
+    sk_uhdr_get_decoded_image        (decoder);
+
+  DirectX::Image img;
+
+  img.pixels   = (uint8_t *)decoded_img->planes [UHDR_PLANE_PACKED];
+  img.rowPitch =            decoded_img->stride [UHDR_PLANE_PACKED] * sizeof (uint16_t) * 4;
+  img.width    =            decoded_img->w;
+  img.height   =            decoded_img->h;
+  img.format   = DXGI_FORMAT_R16G16B16A16_FLOAT;
+
+  DirectX::ScratchImage
+    unscaled_image;
+    unscaled_image.InitializeFromImage (img);
+
+  auto metadata =
+    sk_uhdr_dec_get_gain_map_metadata (decoder);
+
+  DirectX::TransformImage (*unscaled_image.GetImage (0,0,0),
+    [&](DirectX::XMVECTOR* outPixels, const DirectX::XMVECTOR* inPixels, size_t width, size_t y)
+    {
+      using namespace DirectX;
+
+      for (size_t j = 0; j < width; ++j)
+      {
+        XMVECTOR value = inPixels [j];
+
+        value =
+          XMVectorMultiply (value, XMVectorReplicate (metadata->hdr_capacity_max));
+
+        outPixels [j] = value;
+      }
+
+      UNREFERENCED_PARAMETER(y);
+    }, image);
+
+  sk_uhdr_release_decoder (decoder);
+
+  return S_OK;
+}
+
 HRESULT
 SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileName)
 {
-  SKIV_Image_SaveToDisk_UltraHDR (image, L"test.jpg");
-
   using namespace DirectX;
 
   const Image* pOutputImage = &image;
