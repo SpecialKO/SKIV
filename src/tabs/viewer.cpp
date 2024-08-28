@@ -226,7 +226,7 @@ bool isJXLDecoderAvailable (void)
              hModJXLCMS     != nullptr &&
              hModJXLThreads != nullptr )
         {
-          PLOG_INFO << "Loaded JPEG-XL DLLs from: " << path_to_sk;
+          PLOG_INFO << "Loaded JPEG XL DLLs from: " << path_to_sk;
           return true;
         }
       }
@@ -240,7 +240,7 @@ bool isJXLDecoderAvailable (void)
          hModJXLCMS     != nullptr &&
          hModJXLThreads != nullptr )
     {
-      PLOG_INFO << "Loaded JPEG-XL DLLs from default DLL search path";
+      PLOG_INFO << "Loaded JPEG XL DLLs from default DLL search path";
       return true;
     }
   });
@@ -254,8 +254,8 @@ bool isJXLDecoderAvailable (void)
   {
     ImGuiToast toast = {
       ImGuiToastType::Warning, 3333,
-        "JPEG-XL Unsupported because Special K is not Installed",
-        "Please install Special K and run SKIV again to view JPEG-XL images.\r\n\t"
+        "JPEG XL Unsupported because Special K is not Installed",
+        "Please install Special K and run SKIV again to view JPEG XL images.\r\n\t"
         "> You may also manually place (64-bit versions of) jxl.dll, jxl_cms.dll and jxl_threads.dll in SKIV's directory."
     };
   }
@@ -1058,7 +1058,7 @@ LoadLibraryTexture (image_s& image)
   PLOG_DEBUG_IF(decoder == ImageDecoder_WIC ) << "Using WIC decoder...";
   PLOG_DEBUG_IF(decoder == ImageDecoder_DDS ) << "Using DDS decoder...";
 #ifdef _M_X64
-  PLOG_DEBUG_IF(decoder == ImageDecoder_JXL ) << "Using JPEG-XL decoder...";
+  PLOG_DEBUG_IF(decoder == ImageDecoder_JXL ) << "Using JPEG XL decoder...";
   PLOG_DEBUG_IF(decoder == ImageDecoder_EXR ) << "Using OpenEXR decoder...";
 #endif
   PLOG_DEBUG_IF(decoder == ImageDecoder_HDR ) << "Using Radiance HDR decoder...";
