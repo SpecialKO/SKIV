@@ -1960,7 +1960,7 @@ LoadLibraryTexture (image_s& image)
         XMVECTOR v = *pixels++;
 
         v =
-          XMVector3Transform (v, c_from709toXYZ);
+          XMVectorMax (g_XMZero, XMVector3Transform (v, c_from709toXYZ));
 
         luminance_freq [
           std::clamp ( (int)
