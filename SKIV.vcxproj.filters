@@ -46,6 +46,21 @@
     <Filter Include="Header Files\Packages_Misc">
       <UniqueIdentifier>{9fb4cf13-f304-4e2c-a64a-0fb28fa175f2}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Header Files\Image Libraries">
+      <UniqueIdentifier>{3d9dc276-86da-47f9-beee-7572c951dd38}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\Image Libraries\JPEG XL">
+      <UniqueIdentifier>{b68e057a-f235-4746-9d17-5c2431038e75}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\Image Libraries\AVIF">
+      <UniqueIdentifier>{aa2b7146-a0df-4d19-a1a4-b7a46f0f796b}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\Image Libraries\Ultra HDR">
+      <UniqueIdentifier>{63e02f49-c14d-4686-afae-bdd84df79d80}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\Image Libraries\OpenEXR">
+      <UniqueIdentifier>{295a3518-939e-4628-be1a-4aa8a0e5db1c}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\imgui\imconfig.h">
@@ -179,6 +194,588 @@
     </ClInclude>
     <ClInclude Include="include\utility\DirectXTexEXR.h">
       <Filter>Header Files\Packages_Misc</Filter>
+    </ClInclude>
+    <ClInclude Include="include\jxl\cms.h">
+      <Filter>Header Files\Image Libraries\JPEG XL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\jxl\cms_interface.h">
+      <Filter>Header Files\Image Libraries\JPEG XL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\jxl\codestream_header.h">
+      <Filter>Header Files\Image Libraries\JPEG XL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\jxl\color_encoding.h">
+      <Filter>Header Files\Image Libraries\JPEG XL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\jxl\compressed_icc.h">
+      <Filter>Header Files\Image Libraries\JPEG XL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\jxl\decode.h">
+      <Filter>Header Files\Image Libraries\JPEG XL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\jxl\decode_cxx.h">
+      <Filter>Header Files\Image Libraries\JPEG XL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\jxl\encode.h">
+      <Filter>Header Files\Image Libraries\JPEG XL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\jxl\encode_cxx.h">
+      <Filter>Header Files\Image Libraries\JPEG XL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\jxl\gain_map.h">
+      <Filter>Header Files\Image Libraries\JPEG XL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\jxl\memory_manager.h">
+      <Filter>Header Files\Image Libraries\JPEG XL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\jxl\parallel_runner.h">
+      <Filter>Header Files\Image Libraries\JPEG XL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\jxl\resizable_parallel_runner.h">
+      <Filter>Header Files\Image Libraries\JPEG XL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\jxl\resizable_parallel_runner_cxx.h">
+      <Filter>Header Files\Image Libraries\JPEG XL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\jxl\stats.h">
+      <Filter>Header Files\Image Libraries\JPEG XL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\jxl\thread_parallel_runner.h">
+      <Filter>Header Files\Image Libraries\JPEG XL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\jxl\thread_parallel_runner_cxx.h">
+      <Filter>Header Files\Image Libraries\JPEG XL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\jxl\types.h">
+      <Filter>Header Files\Image Libraries\JPEG XL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\avif\internal.h">
+      <Filter>Header Files\Image Libraries\AVIF</Filter>
+    </ClInclude>
+    <ClInclude Include="include\avif\avif.h">
+      <Filter>Header Files\Image Libraries\AVIF</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ultrahdr\editorhelper.h">
+      <Filter>Header Files\Image Libraries\Ultra HDR</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ultrahdr\gainmapmath.h">
+      <Filter>Header Files\Image Libraries\Ultra HDR</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ultrahdr\gainmapmetadata.h">
+      <Filter>Header Files\Image Libraries\Ultra HDR</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ultrahdr\icc.h">
+      <Filter>Header Files\Image Libraries\Ultra HDR</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ultrahdr\jpegdecoderhelper.h">
+      <Filter>Header Files\Image Libraries\Ultra HDR</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ultrahdr\jpegencoderhelper.h">
+      <Filter>Header Files\Image Libraries\Ultra HDR</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ultrahdr\jpegr.h">
+      <Filter>Header Files\Image Libraries\Ultra HDR</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ultrahdr\jpegrutils.h">
+      <Filter>Header Files\Image Libraries\Ultra HDR</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ultrahdr\multipictureformat.h">
+      <Filter>Header Files\Image Libraries\Ultra HDR</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ultrahdr\ultrahdr.h">
+      <Filter>Header Files\Image Libraries\Ultra HDR</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ultrahdr\ultrahdr_api.h">
+      <Filter>Header Files\Image Libraries\Ultra HDR</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ultrahdr\ultrahdrcommon.h">
+      <Filter>Header Files\Image Libraries\Ultra HDR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\half.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\halfExport.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\halfFunction.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\halfLimits.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\Iex.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\IexBaseExc.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\IexErrnoExc.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\IexExport.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\IexForward.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\IexMacros.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\IexMathExc.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\IexMathFloatExc.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\IexMathFpu.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\IexMathIeeeExc.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\IexNamespace.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\IexThrowErrnoExc.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\IlmBaseConfig.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\IlmThread.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\IlmThreadExport.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\IlmThreadForward.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\IlmThreadMutex.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\IlmThreadNamespace.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\IlmThreadPool.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\IlmThreadSemaphore.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImathBox.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImathBoxAlgo.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImathColor.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImathColorAlgo.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImathEuler.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImathExc.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImathExport.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImathForward.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImathFrame.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImathFrustum.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImathFrustumTest.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImathFun.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImathGL.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImathGLU.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImathHalfLimits.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImathInt64.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImathInterval.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImathLimits.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImathLine.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImathLineAlgo.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImathMath.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImathMatrix.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImathMatrixAlgo.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImathNamespace.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImathPlane.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImathPlatform.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImathQuat.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImathRandom.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImathRoots.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImathShear.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImathSphere.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImathVec.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImathVecAlgo.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfAcesFile.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfArray.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfAttribute.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfB44Compressor.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfBoxAttribute.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfChannelList.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfChannelListAttribute.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfChromaticities.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfChromaticitiesAttribute.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfCompositeDeepScanLine.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfCompression.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfCompressionAttribute.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfConvert.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfCRgbaFile.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfDeepCompositing.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfDeepFrameBuffer.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfDeepImage.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfDeepImageChannel.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfDeepImageIO.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfDeepImageLevel.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfDeepImageState.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfDeepImageStateAttribute.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfDeepScanLineInputFile.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfDeepScanLineInputPart.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfDeepScanLineOutputFile.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfDeepScanLineOutputPart.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfDeepTiledInputFile.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfDeepTiledInputPart.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfDeepTiledOutputFile.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfDeepTiledOutputPart.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfDoubleAttribute.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfEnvmap.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfEnvmapAttribute.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfExport.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfFlatImage.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfFlatImageChannel.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfFlatImageIO.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfFlatImageLevel.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfFloatAttribute.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfFloatVectorAttribute.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfForward.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfFrameBuffer.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfFramesPerSecond.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfGenericInputFile.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfGenericOutputFile.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfHeader.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfHuf.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfImage.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfImageChannel.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfImageChannelRenaming.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfImageDataWindow.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfImageIO.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfImageLevel.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfInputFile.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfInputPart.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfInt64.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfIntAttribute.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfIO.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfKeyCode.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfKeyCodeAttribute.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfLineOrder.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfLineOrderAttribute.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfLut.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfMatrixAttribute.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfMisc.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfMultiPartInputFile.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfMultiPartOutputFile.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfMultiView.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfName.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfNamespace.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfOpaqueAttribute.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfOutputFile.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfOutputPart.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfPartHelper.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfPartType.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfPixelType.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfPreviewImage.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfPreviewImageAttribute.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfRational.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfRationalAttribute.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfRgba.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfRgbaFile.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfRgbaYca.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfSampleCountChannel.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfStandardAttributes.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfStdIO.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfStringAttribute.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfStringVectorAttribute.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfTestFile.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfThreading.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfTileDescription.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfTileDescriptionAttribute.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfTiledInputFile.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfTiledInputPart.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfTiledOutputFile.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfTiledOutputPart.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfTiledRgbaFile.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfTimeCode.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfTimeCodeAttribute.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfUtilExport.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfVecAttribute.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfVersion.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfWav.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\ImfXdr.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
+    </ClInclude>
+    <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\OpenEXRConfig.h">
+      <Filter>Header Files\Image Libraries\OpenEXR</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

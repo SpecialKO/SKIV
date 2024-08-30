@@ -139,10 +139,8 @@ const std::initializer_list<FileSignature> supported_formats =
   FileSignature { L"image/avif",                { L".avif" },          { 0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x61, 0x76, 0x69, 0x66 },   // ftypavif
 
                                                                        { 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF } }, // ?? ?? ?? ?? 66 74 79 70 61 76 69 66
-#ifdef _M_X64
   FileSignature { L"image/jxl",                 { L".jxl"  },          { 0xFF, 0x0A } },                                                             // Naked
   FileSignature { L"image/jxl",                 { L".jxl"  },          { 0x00, 0x00, 0x00, 0x0C, 0x4A, 0x58, 0x4C, 0x20, 0x0D, 0x0A, 0x87, 0x0A } }, // ISOBMFF-based container
-#endif
   FileSignature { L"image/vnd-ms.dds",          { L".dds"  },          { 0x44, 0x44, 0x53, 0x20 } },
 //FileSignature { L"image/x-targa",             { L".tga"  },          { 0x00, } }, // TGA has no real unique header identifier, so just use the file extension on those
 };
@@ -167,19 +165,21 @@ const std::initializer_list<FileSignature> supported_hdr_encode_formats =
   FileSignature { L"image/vnd.radiance",        { L".hdr"  },          { 0x23, 0x3F, 0x52, 0x41, 0x44, 0x49, 0x41, 0x4E, 0x43, 0x45, 0x0A } }, // Radiance High Dynamic Range image file
 #ifdef _M_X64
   FileSignature { L"image/x-exr",               { L".exr"  },          { 0x76, 0x2F, 0x31, 0x01 } },
-  FileSignature { L"image/jxl",                 { L".jxl"  },          { 0xFF, 0x0A } },
 #endif
-//FileSignature { L"image/avif",                { L".avif" },          { 0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x61, 0x76, 0x69, 0x66 },   // ftypavif
-//                                                                     { 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF } }, // ?? ?? ?? ?? 66 74 79 70 61 76 69 66
+  FileSignature { L"image/jxl",                 { L".jxl"  },          { 0xFF, 0x0A } },
+  FileSignature { L"image/avif",                { L".avif" },          { 0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x61, 0x76, 0x69, 0x66 },   // ftypavif
+                                                                       { 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF } }, // ?? ?? ?? ?? 66 74 79 70 61 76 69 66
 //FileSignature { L"image/vnd-ms.dds",          { L".dds"  },          { 0x44, 0x44, 0x53, 0x20 } },
 };
 
 bool isJXLDecoderAvailable (void)
 {
-#ifdef _M_X64
-  static HMODULE hModJXL        = nullptr;
-  static HMODULE hModJXLCMS     = nullptr;
-  static HMODULE hModJXLThreads = nullptr;
+  static HMODULE hModBrotliCommon = nullptr;
+  static HMODULE hModBrotliDec    = nullptr;
+  static HMODULE hModBrotliEnc    = nullptr;
+  static HMODULE hModJXL          = nullptr;
+  static HMODULE hModJXLCMS       = nullptr;
+  static HMODULE hModJXLThreads   = nullptr;
 
   static const wchar_t* wszPluginArch =
     SK_RunLHIfBitness ( 64, LR"(x64\)",
@@ -193,7 +193,15 @@ bool isJXLDecoderAvailable (void)
     std::wstring path_to_sk =
       _registry.regKVPathSpecialK.getData ();
 
-    std::error_code                          ec;
+    std::error_code                            ec;
+    if (! std::filesystem::exists (path_to_sk, ec))
+    {
+      path_to_sk =
+        SKIF_CommonPathsCache::GetInstance ().my_documents.path;
+
+      path_to_sk += LR"(\My Mods\SpecialK\)";
+    }
+
     if (std::filesystem::exists (path_to_sk, ec))
     {
       path_to_sk += LR"(\PlugIns\ThirdParty\Image Codecs\libjxl\)";
@@ -203,28 +211,46 @@ bool isJXLDecoderAvailable (void)
                                   (path_to_sk, ec);
       if (std::filesystem::exists (path_to_sk, ec))
       {
-        std::wstring path_to_jxl_threads = path_to_sk + L"jxl_threads.dll";
-        std::wstring path_to_jxl_cms     = path_to_sk + L"jxl_cms.dll";
-        std::wstring path_to_jxl         = path_to_sk + L"jxl.dll";
+        std::wstring path_to_brotlicommon = path_to_sk + L"brotlicommon.dll";
+        std::wstring path_to_brotlienc    = path_to_sk + L"brotlienc.dll";
+        std::wstring path_to_brotlidec    = path_to_sk + L"brotlidec.dll";
+        std::wstring path_to_jxl_threads  = path_to_sk + L"jxl_threads.dll";
+        std::wstring path_to_jxl_cms      = path_to_sk + L"jxl_cms.dll";
+        std::wstring path_to_jxl          = path_to_sk + L"jxl.dll";
+
+        if (! std::filesystem::exists (path_to_brotlicommon, ec))
+          SKIF_Util_GetWebResource (L"https://sk-data.special-k.info/addon/ImageCodecs/libjxl/x64/brotlicommon.dll", path_to_brotlicommon);
+
+        if (! std::filesystem::exists (path_to_brotlienc, ec))
+          SKIF_Util_GetWebResource (L"https://sk-data.special-k.info/addon/ImageCodecs/libjxl/x64/brotlienc.dll",    path_to_brotlienc);
+
+        if (! std::filesystem::exists (path_to_brotlidec, ec))
+          SKIF_Util_GetWebResource (L"https://sk-data.special-k.info/addon/ImageCodecs/libjxl/x64/brotlidec.dll",    path_to_brotlidec);
 
         if (! std::filesystem::exists (path_to_jxl, ec))
-          SKIF_Util_GetWebResource (L"https://sk-data.special-k.info/addon/ImageCodecs/libjxl/x64/jxl.dll",         path_to_jxl);
+          SKIF_Util_GetWebResource (L"https://sk-data.special-k.info/addon/ImageCodecs/libjxl/x64/jxl.dll",          path_to_jxl);
 
         if (! std::filesystem::exists (path_to_jxl_cms, ec))
-          SKIF_Util_GetWebResource (L"https://sk-data.special-k.info/addon/ImageCodecs/libjxl/x64/jxl_cms.dll",     path_to_jxl_cms);
+          SKIF_Util_GetWebResource (L"https://sk-data.special-k.info/addon/ImageCodecs/libjxl/x64/jxl_cms.dll",      path_to_jxl_cms);
 
         if (! std::filesystem::exists (path_to_jxl_threads, ec))
-          SKIF_Util_GetWebResource (L"https://sk-data.special-k.info/addon/ImageCodecs/libjxl/x64/jxl_threads.dll", path_to_jxl_threads);
+          SKIF_Util_GetWebResource (L"https://sk-data.special-k.info/addon/ImageCodecs/libjxl/x64/jxl_threads.dll",  path_to_jxl_threads);
 
         // JXL depends on CMS to be loaded first
 
-        hModJXLThreads = LoadLibraryW (path_to_jxl_threads.c_str ());
-        hModJXLCMS     = LoadLibraryW (path_to_jxl_cms.    c_str ());
-        hModJXL        = LoadLibraryW (path_to_jxl.        c_str ());
+        hModBrotliCommon = LoadLibraryW (path_to_brotlicommon.c_str ());
+        hModBrotliDec    = LoadLibraryW (path_to_brotlidec.   c_str ());
+        hModBrotliEnc    = LoadLibraryW (path_to_brotlienc.   c_str ());
+        hModJXLThreads   = LoadLibraryW (path_to_jxl_threads. c_str ());
+        hModJXLCMS       = LoadLibraryW (path_to_jxl_cms.     c_str ());
+        hModJXL          = LoadLibraryW (path_to_jxl.         c_str ());
 
-        if ( hModJXL        != nullptr &&
-             hModJXLCMS     != nullptr &&
-             hModJXLThreads != nullptr )
+        if ( hModBrotliCommon != nullptr &&
+             hModBrotliDec    != nullptr &&
+             hModBrotliEnc    != nullptr &&
+             hModJXL          != nullptr &&
+             hModJXLCMS       != nullptr &&
+             hModJXLThreads   != nullptr )
         {
           PLOG_INFO << "Loaded JPEG XL DLLs from: " << path_to_sk;
           return true;
@@ -232,13 +258,19 @@ bool isJXLDecoderAvailable (void)
       }
     }
 
-    if (hModJXLThreads == nullptr) hModJXLThreads = LoadLibraryW (L"jxl_threads.dll");
-    if (hModJXLCMS     == nullptr) hModJXLCMS     = LoadLibraryW (L"jxl_cms.dll");
-    if (hModJXL        == nullptr) hModJXL        = LoadLibraryW (L"jxl.dll");
+    if (hModBrotliCommon == nullptr) hModBrotliCommon = LoadLibraryW (L"brotlicommon.dll");
+    if (hModBrotliDec    == nullptr) hModBrotliDec    = LoadLibraryW (L"brotlidec.dll");
+    if (hModBrotliEnc    == nullptr) hModBrotliEnc    = LoadLibraryW (L"brotlienc.dll");
+    if (hModJXLThreads   == nullptr) hModJXLThreads   = LoadLibraryW (L"jxl_threads.dll");
+    if (hModJXLCMS       == nullptr) hModJXLCMS       = LoadLibraryW (L"jxl_cms.dll");
+    if (hModJXL          == nullptr) hModJXL          = LoadLibraryW (L"jxl.dll");
 
-    if ( hModJXL        != nullptr &&
-         hModJXLCMS     != nullptr &&
-         hModJXLThreads != nullptr )
+    if ( hModBrotliCommon != nullptr &&
+         hModBrotliDec    != nullptr &&
+         hModBrotliEnc    != nullptr &&
+         hModJXL          != nullptr &&
+         hModJXLCMS       != nullptr &&
+         hModJXLThreads   != nullptr )
     {
       PLOG_INFO << "Loaded JPEG XL DLLs from default DLL search path";
       return true;
@@ -246,9 +278,12 @@ bool isJXLDecoderAvailable (void)
   });
 
   const bool supported =
-    ( hModJXL        != nullptr &&
-      hModJXLThreads != nullptr &&
-      hModJXLCMS     != nullptr );
+    ( hModBrotliCommon != nullptr &&
+      hModBrotliDec    != nullptr &&
+      hModBrotliEnc    != nullptr &&
+      hModJXL          != nullptr &&
+      hModJXLThreads   != nullptr &&
+      hModJXLCMS       != nullptr );
 
   if (! supported)
   {
@@ -261,9 +296,6 @@ bool isJXLDecoderAvailable (void)
   }
 
   return supported;
-#else
-  return false;
-#endif
 }
 
 bool isExtensionSupported (const std::wstring extension)
@@ -1079,7 +1111,7 @@ LoadLibraryTexture (image_s& image)
     image.light_info.isHDR = true;
     image.is_hdr           = true;
 
-    SKIV_Image_LoadUltraHDR (img, _scratchMemory.get (), _.getInitialSize ());
+    SKIV_Image_LoadUltraHDR (img, _scratchMemory.get (), static_cast <int> (_.getInitialSize ()));
 
     meta           = img.GetMetadata ();
     meta.dimension = DirectX::TEX_DIMENSION_TEXTURE2D;

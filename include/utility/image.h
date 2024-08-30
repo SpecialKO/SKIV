@@ -136,6 +136,36 @@ bool    SKIV_Image_IsUltraHDR      (const wchar_t* wszFileName);
 bool    SKIV_Image_IsUltraHDR      (void* data, int size);
 HRESULT SKIV_Image_LoadUltraHDR    (DirectX::ScratchImage& image, void* data, int size);
 
+#include <avif/avif.h>
+
+bool isAVIFEncoderAvailable (void);
+
+using avifEncoderCreate_pfn          = avifEncoder*(*)(void);
+using avifEncoderDestroy_pfn         = void        (*)(avifEncoder*  encoder);
+using avifEncoderAddImage_pfn        = avifResult  (*)(avifEncoder*  encoder, const avifImage* image, uint64_t durationInTimescales, avifAddImageFlags addImageFlags);
+using avifEncoderFinish_pfn          = avifResult  (*)(avifEncoder*  encoder, avifRWData* output);
+
+using avifImageCreate_pfn            = avifImage*  (*)(uint32_t width, uint32_t height, uint32_t depth, avifPixelFormat yuvFormat);
+using avifImageRGBToYUV_pfn          = avifResult  (*)(avifImage*    image, const avifRGBImage* rgb);
+using avifImageDestroy_pfn           = void        (*)(avifImage*    image);
+
+using avifRGBImageAllocatePixels_pfn = avifResult  (*)(avifRGBImage* rgb);
+using avifRGBImageFreePixels_pfn     = void        (*)(avifRGBImage* rgb);
+using avifRGBImageSetDefaults_pfn    = void        (*)(avifRGBImage* rgb, const avifImage* image);
+
+extern avifEncoderCreate_pfn          SK_avifEncoderCreate;
+extern avifEncoderDestroy_pfn         SK_avifEncoderDestroy;
+extern avifEncoderAddImage_pfn        SK_avifEncoderAddImage;
+extern avifEncoderFinish_pfn          SK_avifEncoderFinish;
+
+extern avifImageCreate_pfn            SK_avifImageCreate;
+extern avifImageRGBToYUV_pfn          SK_avifImageRGBToYUV;
+extern avifImageDestroy_pfn           SK_avifImageDestroy;
+
+extern avifRGBImageSetDefaults_pfn    SK_avifRGBImageSetDefaults;
+extern avifRGBImageAllocatePixels_pfn SK_avifRGBImageAllocatePixels;
+extern avifRGBImageFreePixels_pfn     SK_avifRGBImageFreePixels;
+
 // Structs
 
 struct skiv_image_desktop_s {

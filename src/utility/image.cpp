@@ -629,7 +629,7 @@ SKIV_HDR_CalculateContentLightInfo (const DirectX::Image& img)
       percent -=
         100.0 * ((double)luminance_freq [i] / img_size);
 
-      if (percent <= 99.9)
+      if (percent <= 99.5)
       {
         fMaxLum =
           fMinLum + (fLumRange * ((float)i / 65536.0f));
@@ -2042,7 +2042,15 @@ bool isUHDRCodecAvailable (void)
     std::wstring path_to_sk =
       _registry.regKVPathSpecialK.getData ();
 
-    std::error_code                          ec;
+    std::error_code                            ec;
+    if (! std::filesystem::exists (path_to_sk, ec))
+    {
+      path_to_sk =
+        SKIF_CommonPathsCache::GetInstance ().my_documents.path;
+
+      path_to_sk += LR"(\My Mods\SpecialK\)";
+    }
+
     if (std::filesystem::exists (path_to_sk, ec))
     {
       path_to_sk += LR"(\PlugIns\ThirdParty\Image Codecs\libultrahdr\)";
@@ -2366,6 +2374,8 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
   {
     // SKIV always uses scRGB internally for HDR, any other format
     //   can't be HDR...
+    PLOG_ERROR << "Unsupported HDR image format: %d", image.format;
+
     return E_NOTIMPL;
   }
 
@@ -2487,7 +2497,7 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
          jxlThreadParallelRunnerCreate                  == nullptr ||
          jxlThreadParallelRunnerDefaultNumWorkerThreads == nullptr )
     {
-      PLOG_ERROR << "JPEG-XL library unavailable";
+      PLOG_ERROR << "JPEG XL library unavailable";
       return E_NOINTERFACE;
     }
 
@@ -2656,7 +2666,7 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
         fwrite (output.data (), output.size (), 1, fOutput);
         fclose (fOutput);
 
-        PLOG_INFO << "JPEG-XL Encode Finished";
+        PLOG_VERBOSE << "JPEG XL Encode Finished";
 
         succeeded = true;
       }
@@ -2677,13 +2687,328 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
 
   else if (StrStrIW (wszExtension, L"avif"))
   {
-    // Not yet, sorry...
-    return E_NOTIMPL;
+    extern bool isAVIFEncoderAvailable (void);
+    if (!       isAVIFEncoderAvailable ())
+      return E_NOTIMPL;
+
+    using namespace DirectX;
+    
+    uint32_t width  = static_cast <uint32_t> (image.width);
+    uint32_t height = static_cast <uint32_t> (image.height);
+    
+    int             bit_depth  = 10;
+    avifPixelFormat yuv_format = AVIF_PIXEL_FORMAT_YUV444;
+
+    const int yuv_subsampling = 444;
+    switch (  yuv_subsampling )
+    {
+      default:
+        //config.screenshots.avif.yuv_subsampling = 444; // Write a valid value to INI
+        [[fallthrough]];
+      case 444:
+        yuv_format = AVIF_PIXEL_FORMAT_YUV444;
+        break;
+      case 422:
+        yuv_format = AVIF_PIXEL_FORMAT_YUV422;
+        break;
+      case 420:
+        yuv_format = AVIF_PIXEL_FORMAT_YUV420;
+        break;
+      case 400: // lol
+        yuv_format = AVIF_PIXEL_FORMAT_YUV400;
+        break;
+    }
+    
+    if (image.format == DXGI_FORMAT_R16G16B16A16_FLOAT)
+    {
+      bit_depth = 12;
+        //std::clamp (config.screenshots.avif.scrgb_bit_depth, 8, 12);
+    
+      // 8, 10, 12... nothing else.
+      if ( bit_depth == 9 ||
+           bit_depth == 11 )
+           bit_depth++;
+    
+      //// Write a valid value back to INI
+      //config.screenshots.avif.scrgb_bit_depth = bit_depth;
+    }
+    
+    avifResult rgbToYuvResult = AVIF_RESULT_NO_CONTENT;
+    avifResult addResult      = AVIF_RESULT_NO_CONTENT;
+    avifResult encodeResult   = AVIF_RESULT_NO_CONTENT;
+    
+    avifRWData   avifOutput = AVIF_DATA_EMPTY;
+    avifRGBImage rgb        = { };
+    avifEncoder* encoder    = nullptr;
+    avifImage*   avif_image =
+      SK_avifImageCreate (width, height, bit_depth, yuv_format);
+    
+    if (avif_image != nullptr)
+    {
+      avif_image->yuvRange = AVIF_RANGE_FULL;
+    
+      switch (image.format)
+      {
+        case DXGI_FORMAT_R10G10B10A2_UNORM:
+        case DXGI_FORMAT_R16G16B16A16_FLOAT:
+          avif_image->colorPrimaries          = AVIF_COLOR_PRIMARIES_BT2020;
+          avif_image->transferCharacteristics = AVIF_TRANSFER_CHARACTERISTICS_SMPTE2084;
+          avif_image->matrixCoefficients      = AVIF_MATRIX_COEFFICIENTS_BT2020_NCL;
+          break;
+        default:
+          return false;
+      }
+    
+      SK_avifRGBImageSetDefaults (&rgb, avif_image);
+    
+      rgb.depth       = image.format == DXGI_FORMAT_R10G10B10A2_UNORM ? 10 : 12;
+      rgb.ignoreAlpha = true;
+      rgb.isFloat     = false;
+      rgb.format      = AVIF_RGB_FORMAT_RGB;
+    
+      SK_avifRGBImageAllocatePixels (&rgb);
+    
+      switch (image.format)
+      {
+        case DXGI_FORMAT_R10G10B10A2_UNORM:
+        {
+          uint16_t* rgb_pixels = (uint16_t *)rgb.pixels;
+    
+          EvaluateImage ( image,
+          [&](const DirectX::XMVECTOR* pixels, size_t width, size_t y)
+          {
+            UNREFERENCED_PARAMETER(y);
+    
+            for (size_t j = 0; j < width; ++j)
+            {
+              DirectX::XMVECTOR v = *pixels++;
+    
+              *(rgb_pixels++) = static_cast <uint16_t> (std::min (1023, static_cast <int> (XMVectorGetX (v) * 1024.0f)));
+              *(rgb_pixels++) = static_cast <uint16_t> (std::min (1023, static_cast <int> (XMVectorGetY (v) * 1024.0f)));
+              *(rgb_pixels++) = static_cast <uint16_t> (std::min (1023, static_cast <int> (XMVectorGetZ (v) * 1024.0f)));
+            }
+          } );
+        } break;
+    
+        case DXGI_FORMAT_R16G16B16A16_FLOAT:
+        {
+          uint16_t* rgb_pixels = (uint16_t *)rgb.pixels;
+
+          float N          =       0.0f;
+          float fLumAccum  =       0.0f;
+          float fMaxLum    =       0.0f;
+          float fMinLum    = 5240320.0f;
+
+          EvaluateImage ( image,
+            [&](const XMVECTOR* pixels, size_t width, size_t y)
+            {
+              UNREFERENCED_PARAMETER(y);
+
+              float fScanlineLum = 0.0f;
+
+              switch (image.format)
+              {
+                case DXGI_FORMAT_R10G10B10A2_UNORM:
+                {
+                  for (size_t j = 0; j < width; ++j)
+                  {
+                    XMVECTOR v =
+                      *pixels++;
+
+                    v =
+                      XMVector3Transform (
+                        SKIV_Image_PQToLinear (XMVectorSaturate (v)), c_from2020toXYZ
+                      );
+
+                    const float fLum =
+                      XMVectorGetY (v);
+
+                    fMaxLum =
+                      std::max (fMaxLum, fLum);
+
+                    fMinLum =
+                      std::min (fMinLum, fLum);
+
+                    fScanlineLum += fLum;
+                  }
+                } break;
+
+                case DXGI_FORMAT_R16G16B16A16_FLOAT:
+                case DXGI_FORMAT_R32G32B32A32_FLOAT:
+                {
+                  for (size_t j = 0; j < width; ++j)
+                  {
+                    XMVECTOR v =
+                      *pixels++;
+
+                    v =
+                      XMVector3Transform (v, c_from709toXYZ);
+
+                    const float fLum =
+                      XMVectorGetY (v);
+
+                    fMaxLum =
+                      std::max (fMaxLum, fLum);
+
+                    fMinLum =
+                      std::min (fMinLum, fLum);
+
+                    fScanlineLum += fLum;
+                  }
+                } break;
+
+                default:
+                  break;
+              }
+
+              fLumAccum +=
+                (fScanlineLum / static_cast <float> (width));
+              ++N;
+            }
+          );
+
+          if (N > 0.0)
+          {
+            // 0 nits - 10k nits (limit imposed by PQ)
+            fMinLum = std::clamp (fMinLum, 0.0f,    125.0f);
+            fMaxLum = std::clamp (fMaxLum, fMinLum, 125.0f);
+
+            const float fLumRange =
+                    (fMaxLum - fMinLum);
+
+            auto        luminance_freq = std::make_unique <uint32_t []> (65536);
+            ZeroMemory (luminance_freq.get (),     sizeof (uint32_t)  *  65536);
+
+            EvaluateImage ( image,
+            [&](const XMVECTOR* pixels, size_t width, size_t y)
+            {
+              UNREFERENCED_PARAMETER(y);
+
+              for (size_t j = 0; j < width; ++j)
+              {
+                XMVECTOR v = *pixels++;
+
+                v =
+                  XMVectorMax (g_XMZero, XMVector3Transform (v, c_from709toXYZ));
+
+                luminance_freq [
+                  std::clamp ( (int)
+                    std::roundf (
+                      (XMVectorGetY (v) - fMinLum)     /
+                                            (fLumRange / 65536.0f) ),
+                                                      0, 65535 ) ]++;
+              }
+            });
+
+                  double percent  = 100.0;
+            const double img_size = (double)image.width *
+                                    (double)image.height;
+
+            for (auto i = 65535; i >= 0; --i)
+            {
+              percent -=
+                100.0 * ((double)luminance_freq [i] / img_size);
+
+              if (percent <= 99.5)
+              {
+                fMaxLum =
+                  fMinLum + (fLumRange * ((float)i / 65536.0f));
+
+                break;
+              }
+            }
+
+            avif_image->clli.maxCLL = 
+              static_cast <uint16_t> (80.0f * fMaxLum);
+            avif_image->clli.maxPALL =
+              static_cast <uint16_t> (80.0f * (fLumAccum / N));
+          }
+    
+          EvaluateImage ( image,
+          [&](_In_reads_ (width) const XMVECTOR* pixels, size_t width, size_t y)
+          {
+            UNREFERENCED_PARAMETER (y);
+    
+            for (size_t j = 0; j < width; ++j)
+            {
+              XMVECTOR value = pixels [j];
+    
+              value =
+                XMVectorSaturate (
+                  SKIV_Image_LinearToPQ (
+                    XMVector3Transform (value, c_scRGBtoBt2100)
+                  )
+                );
+
+              *(rgb_pixels++) = static_cast <uint16_t> (std::min (DirectX::XMVectorGetX (value) * 4096.0f, 4095.0f));
+              *(rgb_pixels++) = static_cast <uint16_t> (std::min (DirectX::XMVectorGetY (value) * 4096.0f, 4095.0f));
+              *(rgb_pixels++) = static_cast <uint16_t> (std::min (DirectX::XMVectorGetZ (value) * 4096.0f, 4095.0f));
+            }
+          } );
+        } break;
+      }
+    
+      rgbToYuvResult =
+        SK_avifImageRGBToYUV (avif_image, &rgb);
+    }
+    
+    if (rgbToYuvResult == AVIF_RESULT_OK)
+    {
+      encoder =
+        SK_avifEncoderCreate ();
+    
+      if (encoder != nullptr)
+      {
+        encoder->quality         = 100;//config.screenshots.compression_quality;
+        encoder->qualityAlpha    = 100;//config.screenshots.compression_quality; // N/A?
+        encoder->timescale       = 1;
+        encoder->repetitionCount = AVIF_REPETITION_COUNT_INFINITE;
+        encoder->maxThreads      = 16;//config.screenshots.avif.max_threads;
+        encoder->speed           = 7;//config.screenshots.avif.compression_speed;
+        encoder->minQuantizer    = AVIF_QUANTIZER_BEST_QUALITY;
+        encoder->maxQuantizer    = AVIF_QUANTIZER_BEST_QUALITY;
+        encoder->codecChoice     = AVIF_CODEC_CHOICE_AUTO;
+    
+        addResult    = SK_avifEncoderAddImage (encoder, avif_image, 1, AVIF_ADD_IMAGE_FLAG_SINGLE);
+        encodeResult = SK_avifEncoderFinish   (encoder, &avifOutput);
+      }
+    }
+    
+    if ( rgbToYuvResult != AVIF_RESULT_OK ||
+         addResult      != AVIF_RESULT_OK ||
+         encodeResult   != AVIF_RESULT_OK )
+    {
+      PLOG_ERROR << L"rgbToYUV: " << rgbToYuvResult << L" addImage: " << addResult << L" encode: " << encodeResult;
+    }
+    
+    if (encodeResult == AVIF_RESULT_OK)
+    {
+      PathRemoveExtensionW (wszImplicitFileName);
+      PathAddExtensionW    (wszImplicitFileName, L".avif");
+    
+      FILE* fAVIF =
+        _wfopen (wszImplicitFileName, L"wb");
+    
+      if (fAVIF != nullptr)
+      {
+        fwrite (avifOutput.data, 1, avifOutput.size, fAVIF);
+        fclose (fAVIF);
+      }
+    }
+    
+    if (avif_image != nullptr) SK_avifImageDestroy   (avif_image);
+    if (encoder    != nullptr) SK_avifEncoderDestroy (encoder);
+    
+    SK_avifRGBImageFreePixels (&rgb);
+    
+    return
+      ( encodeResult == AVIF_RESULT_OK ) ? S_OK : E_FAIL;
   }
 
   else
   {
     // What the hell is this?
+    PLOG_ERROR << "Unknown encoder format for file extension '" << wszExtension << "'";
     return E_UNEXPECTED;
   }
 
@@ -2706,13 +3031,19 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
     SKIF_D3D11_GetDevice ();
 
   if (! pDevice)
+  {
+    PLOG_ERROR << "No D3D11 device is available for Desktop Duplication.";
     return res;
+  }
 
   CComPtr <IDXGIFactory> pFactory;
   CreateDXGIFactory (IID_IDXGIFactory, (void **)&pFactory.p);
 
   if (! pFactory)
+  {
+    PLOG_ERROR << "DXGI Factory creation failed.";
     return E_NOTIMPL;
+  }
 
   CComPtr <IDXGIAdapter> pAdapter;
   UINT                  uiAdapter = 0;
@@ -2753,7 +3084,10 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
   }
 
   if (! pCursorOutput)
+  {
+    PLOG_ERROR << "Unable to find an attached desktop output under the cursor.";
     return E_UNEXPECTED;
+  }
 
   CComQIPtr <IDXGIOutput5> pOutput5 (pCursorOutput);
   CComQIPtr <IDXGIOutput1> pOutput1; // Always DXGI_FORMAT_B8G8R8A8_UNORM
@@ -2766,7 +3100,10 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
     pOutput1 = pCursorOutput;
 
     if (! pOutput1)
+    {
+      PLOG_ERROR << "IDXGIOutput1 is not implemented by the current system.";
       return E_NOTIMPL;
+    }
   }
 
   // The ordering goes from the highest prioritized format to the lowest
@@ -2807,7 +3144,10 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
     pOutput1->DuplicateOutput  (pDevice, &pDuplicator.p);
 
   if (! pDuplicator)
+  {
+    PLOG_ERROR << "Unable to acquire an IDXGIOutputDuplication interface.";
     return E_NOTIMPL;
+  }
 
   DXGI_OUTDUPL_DESC       dup_desc   = { };
   DXGI_OUTDUPL_FRAME_INFO frame_info = { };
@@ -2857,16 +3197,25 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
 
   // This means the timeout was reached without a successful capture
   if (! frame_info.LastPresentTime.QuadPart)
+  {
+    PLOG_ERROR << "Capture timeout encountered.";
     return E_UNEXPECTED;
+  }
 
   if (! pDuplicatedResource)
+  {
+    PLOG_ERROR << "No resource captured.";
     return E_UNEXPECTED;
+  }
 
   CComQIPtr <IDXGISurface>    pSurface       (pDuplicatedResource);
   CComQIPtr <ID3D11Texture2D> pDuplicatedTex (pSurface);
 
   if (! pDuplicatedTex)
-    return E_NOTIMPL;
+  {
+    PLOG_ERROR << "Failed to get a D3D11 texture for the duplicated DXGI surface.";
+    return E_NOINTERFACE;
+  }
 
   DXGI_SURFACE_DESC   surfDesc;
   pSurface->GetDesc (&surfDesc);
@@ -2893,7 +3242,10 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
   pDevice->GetImmediateContext (&pDevCtx);
 
   if (pDevCtx == nullptr)
+  {
+    PLOG_ERROR << "No D3D11 Immediate Device Context.";
     return E_UNEXPECTED;
+  }
 
   texDesc.CPUAccessFlags = 0x0;
   texDesc.Usage          = D3D11_USAGE_DEFAULT;
@@ -2901,6 +3253,7 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
 
   if (FAILED (pDevice->CreateTexture2D (&texDesc, nullptr, &pDesktopImage.p)))
   {
+    PLOG_ERROR << "Failed to create a 2D texture to store a copy of the desktop.";
     pDuplicator->ReleaseFrame ();
     return E_UNEXPECTED;
   }
@@ -2929,7 +3282,11 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
 
   pDuplicator->ReleaseFrame ();
 
-  SKIV_DesktopImage.process ();
+  if (! SKIV_DesktopImage.process ())
+  {
+    PLOG_ERROR << "Failed to process desktop image.";
+    return E_FAIL;
+  }
 
   return S_OK;
 }
@@ -3080,3 +3437,91 @@ SKIV_Image_CaptureRegion (ImRect capture_area)
   } else
     PLOG_WARNING << "DirectX::CaptureTexture    ( ): FAILED";
 }
+
+
+bool
+isAVIFEncoderAvailable (void)
+{
+  static bool init = false;
+    
+  SK_RunOnce (
+  {
+    static const wchar_t* wszPluginArch =
+      SK_RunLHIfBitness ( 64, LR"(x64\)",
+                              LR"(x86\)" );
+
+    static const wchar_t* wszDownloadURL =
+      SK_RunLHIfBitness ( 64, LR"(https://sk-data.special-k.info/addon/ImageCodecs/libavif/libavif_x64.dll)",
+                              LR"(https://sk-data.special-k.info/addon/ImageCodecs/libavif/libavif_x86.dll)" );
+
+    SKIF_RegistrySettings& _registry =
+      SKIF_RegistrySettings::GetInstance ();
+
+    std::filesystem::path avif_dll =
+      _registry.regKVPathSpecialK.getData ();
+
+    std::error_code                          ec;
+    if (! std::filesystem::exists (avif_dll, ec))
+    {
+      avif_dll =
+        SKIF_CommonPathsCache::GetInstance ().my_documents.path;
+
+      avif_dll /= LR"(My Mods\SpecialK\)";
+    }
+  
+    avif_dll /=
+     LR"(PlugIns\ThirdParty\Image Codecs\libavif\)";
+
+    std::filesystem::create_directories (avif_dll, ec);
+
+    avif_dll /= SK_RunLHIfBitness (64, LR"(libavif_x64.dll)",
+                                       LR"(libavif_x86.dll)");
+
+    if (! std::filesystem::exists (avif_dll, ec))
+    {
+      SKIF_Util_GetWebResource (wszDownloadURL, avif_dll.wstring ());
+    }
+  
+    HMODULE hModAVIF =
+      LoadLibraryW (avif_dll.c_str ());
+  
+    if (hModAVIF != 0)
+    {
+      SK_avifImageCreate            = (avifImageCreate_pfn)           GetProcAddress (hModAVIF, "avifImageCreate");
+      SK_avifRGBImageSetDefaults    = (avifRGBImageSetDefaults_pfn)   GetProcAddress (hModAVIF, "avifRGBImageSetDefaults");
+      SK_avifRGBImageAllocatePixels = (avifRGBImageAllocatePixels_pfn)GetProcAddress (hModAVIF, "avifRGBImageAllocatePixels");
+      SK_avifImageRGBToYUV          = (avifImageRGBToYUV_pfn)         GetProcAddress (hModAVIF, "avifImageRGBToYUV");
+      SK_avifEncoderCreate          = (avifEncoderCreate_pfn)         GetProcAddress (hModAVIF, "avifEncoderCreate");
+      SK_avifEncoderAddImage        = (avifEncoderAddImage_pfn)       GetProcAddress (hModAVIF, "avifEncoderAddImage");
+      SK_avifEncoderFinish          = (avifEncoderFinish_pfn)         GetProcAddress (hModAVIF, "avifEncoderFinish");
+      SK_avifImageDestroy           = (avifImageDestroy_pfn)          GetProcAddress (hModAVIF, "avifImageDestroy");
+      SK_avifEncoderDestroy         = (avifEncoderDestroy_pfn)        GetProcAddress (hModAVIF, "avifEncoderDestroy");
+      SK_avifRGBImageFreePixels     = (avifRGBImageFreePixels_pfn)    GetProcAddress (hModAVIF, "avifRGBImageFreePixels");
+  
+      init =
+        ( SK_avifImageCreate            != nullptr &&
+          SK_avifRGBImageSetDefaults    != nullptr &&
+          SK_avifRGBImageAllocatePixels != nullptr &&
+          SK_avifImageRGBToYUV          != nullptr &&
+          SK_avifEncoderCreate          != nullptr &&
+          SK_avifEncoderAddImage        != nullptr &&
+          SK_avifEncoderFinish          != nullptr &&
+          SK_avifImageDestroy           != nullptr &&
+          SK_avifEncoderDestroy         != nullptr &&
+          SK_avifRGBImageFreePixels     != nullptr );
+    }
+  });
+
+  return init;
+}
+    
+avifImageCreate_pfn            SK_avifImageCreate            = nullptr;
+avifRGBImageSetDefaults_pfn    SK_avifRGBImageSetDefaults    = nullptr;
+avifRGBImageAllocatePixels_pfn SK_avifRGBImageAllocatePixels = nullptr;
+avifImageRGBToYUV_pfn          SK_avifImageRGBToYUV          = nullptr;
+avifEncoderCreate_pfn          SK_avifEncoderCreate          = nullptr;
+avifEncoderAddImage_pfn        SK_avifEncoderAddImage        = nullptr;
+avifEncoderFinish_pfn          SK_avifEncoderFinish          = nullptr;
+avifImageDestroy_pfn           SK_avifImageDestroy           = nullptr;
+avifEncoderDestroy_pfn         SK_avifEncoderDestroy         = nullptr;
+avifRGBImageFreePixels_pfn     SK_avifRGBImageFreePixels     = nullptr;
