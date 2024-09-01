@@ -145,9 +145,19 @@ using avifEncoderDestroy_pfn         = void        (*)(avifEncoder*  encoder);
 using avifEncoderAddImage_pfn        = avifResult  (*)(avifEncoder*  encoder, const avifImage* image, uint64_t durationInTimescales, avifAddImageFlags addImageFlags);
 using avifEncoderFinish_pfn          = avifResult  (*)(avifEncoder*  encoder, avifRWData* output);
 
+using avifDecoderCreate_pfn          = avifDecoder*(*)(void);
+using avifDecoderDestroy_pfn         = void        (*)(avifDecoder*  decoder);
+
+using avifDecoderSetIOMemory_pfn     = avifResult  (*)(avifDecoder*  decoder, const uint8_t* data, size_t size);
+using avifDecoderParse_pfn           = avifResult  (*)(avifDecoder*  decoder);
+using avifDecoderNextImage_pfn       = avifResult  (*)(avifDecoder*  decoder);
+using avifDecoderRead_pfn            = avifResult  (*)(avifDecoder*  decoder, avifImage* image);
+using avifDecoderReadMemory_pfn      = avifResult  (*)(avifDecoder*  decoder, avifImage* image, const uint8_t* data, size_t size);
+
 using avifImageCreate_pfn            = avifImage*  (*)(uint32_t width, uint32_t height, uint32_t depth, avifPixelFormat yuvFormat);
-using avifImageRGBToYUV_pfn          = avifResult  (*)(avifImage*    image, const avifRGBImage* rgb);
-using avifImageDestroy_pfn           = void        (*)(avifImage*    image);
+using avifImageRGBToYUV_pfn          = avifResult  (*)(      avifImage* image, const avifRGBImage* rgb);
+using avifImageYUVToRGB_pfn          = avifResult  (*)(const avifImage* image,       avifRGBImage* rgb);
+using avifImageDestroy_pfn           = void        (*)(      avifImage* image);
 
 using avifRGBImageAllocatePixels_pfn = avifResult  (*)(avifRGBImage* rgb);
 using avifRGBImageFreePixels_pfn     = void        (*)(avifRGBImage* rgb);
@@ -158,8 +168,18 @@ extern avifEncoderDestroy_pfn         SK_avifEncoderDestroy;
 extern avifEncoderAddImage_pfn        SK_avifEncoderAddImage;
 extern avifEncoderFinish_pfn          SK_avifEncoderFinish;
 
+extern avifDecoderCreate_pfn          SK_avifDecoderCreate;
+extern avifDecoderDestroy_pfn         SK_avifDecoderDestroy;
+
+extern avifDecoderSetIOMemory_pfn     SK_avifDecoderSetIOMemory;
+extern avifDecoderParse_pfn           SK_avifDecoderParse;
+extern avifDecoderNextImage_pfn       SK_avifDecoderNextImage;
+extern avifDecoderRead_pfn            SK_avifDecoderRead;
+extern avifDecoderReadMemory_pfn      SK_avifDecoderReadMemory;
+
 extern avifImageCreate_pfn            SK_avifImageCreate;
 extern avifImageRGBToYUV_pfn          SK_avifImageRGBToYUV;
+extern avifImageYUVToRGB_pfn          SK_avifImageYUVToRGB;
 extern avifImageDestroy_pfn           SK_avifImageDestroy;
 
 extern avifRGBImageSetDefaults_pfn    SK_avifRGBImageSetDefaults;

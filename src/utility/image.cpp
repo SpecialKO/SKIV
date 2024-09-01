@@ -2959,11 +2959,14 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
     
       if (encoder != nullptr)
       {
+        SYSTEM_INFO     si = { };
+        GetSystemInfo (&si);
+
         encoder->quality         = 100;//config.screenshots.compression_quality;
         encoder->qualityAlpha    = 100;//config.screenshots.compression_quality; // N/A?
         encoder->timescale       = 1;
         encoder->repetitionCount = AVIF_REPETITION_COUNT_INFINITE;
-        encoder->maxThreads      = 16;//config.screenshots.avif.max_threads;
+        encoder->maxThreads      = std::min (64U, std::min ((UINT)si.dwNumberOfProcessors, (UINT)__popcnt64 (si.dwActiveProcessorMask)));
         encoder->speed           = 7;//config.screenshots.avif.compression_speed;
         encoder->minQuantizer    = AVIF_QUANTIZER_BEST_QUALITY;
         encoder->maxQuantizer    = AVIF_QUANTIZER_BEST_QUALITY;
@@ -3491,12 +3494,22 @@ isAVIFEncoderAvailable (void)
       SK_avifRGBImageSetDefaults    = (avifRGBImageSetDefaults_pfn)   GetProcAddress (hModAVIF, "avifRGBImageSetDefaults");
       SK_avifRGBImageAllocatePixels = (avifRGBImageAllocatePixels_pfn)GetProcAddress (hModAVIF, "avifRGBImageAllocatePixels");
       SK_avifImageRGBToYUV          = (avifImageRGBToYUV_pfn)         GetProcAddress (hModAVIF, "avifImageRGBToYUV");
+      SK_avifImageYUVToRGB          = (avifImageYUVToRGB_pfn)         GetProcAddress (hModAVIF, "avifImageYUVToRGB");
       SK_avifEncoderCreate          = (avifEncoderCreate_pfn)         GetProcAddress (hModAVIF, "avifEncoderCreate");
       SK_avifEncoderAddImage        = (avifEncoderAddImage_pfn)       GetProcAddress (hModAVIF, "avifEncoderAddImage");
       SK_avifEncoderFinish          = (avifEncoderFinish_pfn)         GetProcAddress (hModAVIF, "avifEncoderFinish");
       SK_avifImageDestroy           = (avifImageDestroy_pfn)          GetProcAddress (hModAVIF, "avifImageDestroy");
       SK_avifEncoderDestroy         = (avifEncoderDestroy_pfn)        GetProcAddress (hModAVIF, "avifEncoderDestroy");
       SK_avifRGBImageFreePixels     = (avifRGBImageFreePixels_pfn)    GetProcAddress (hModAVIF, "avifRGBImageFreePixels");
+
+      SK_avifDecoderCreate          = (avifDecoderCreate_pfn)         GetProcAddress (hModAVIF, "avifDecoderCreate");
+      SK_avifDecoderDestroy         = (avifDecoderDestroy_pfn)        GetProcAddress (hModAVIF, "avifDecoderDestroy");
+
+      SK_avifDecoderRead            = (avifDecoderRead_pfn)           GetProcAddress (hModAVIF, "avifDecoderRead");
+      SK_avifDecoderReadMemory      = (avifDecoderReadMemory_pfn)     GetProcAddress (hModAVIF, "avifDecoderReadMemory");
+      SK_avifDecoderSetIOMemory     = (avifDecoderSetIOMemory_pfn)    GetProcAddress (hModAVIF, "avifDecoderSetIOMemory");
+      SK_avifDecoderParse           = (avifDecoderParse_pfn)          GetProcAddress (hModAVIF, "avifDecoderParse");
+      SK_avifDecoderNextImage       = (avifDecoderNextImage_pfn)      GetProcAddress (hModAVIF, "avifDecoderNextImage");
   
       init =
         ( SK_avifImageCreate            != nullptr &&
@@ -3508,7 +3521,15 @@ isAVIFEncoderAvailable (void)
           SK_avifEncoderFinish          != nullptr &&
           SK_avifImageDestroy           != nullptr &&
           SK_avifEncoderDestroy         != nullptr &&
-          SK_avifRGBImageFreePixels     != nullptr );
+          SK_avifRGBImageFreePixels     != nullptr &&
+          SK_avifDecoderCreate          != nullptr &&
+          SK_avifDecoderDestroy         != nullptr &&
+          SK_avifDecoderRead            != nullptr &&
+          SK_avifDecoderReadMemory      != nullptr &&
+          SK_avifImageYUVToRGB          != nullptr &&
+          SK_avifDecoderSetIOMemory     != nullptr &&
+          SK_avifDecoderParse           != nullptr &&
+          SK_avifDecoderNextImage       != nullptr );
     }
   });
 
@@ -3519,9 +3540,19 @@ avifImageCreate_pfn            SK_avifImageCreate            = nullptr;
 avifRGBImageSetDefaults_pfn    SK_avifRGBImageSetDefaults    = nullptr;
 avifRGBImageAllocatePixels_pfn SK_avifRGBImageAllocatePixels = nullptr;
 avifImageRGBToYUV_pfn          SK_avifImageRGBToYUV          = nullptr;
+avifImageYUVToRGB_pfn          SK_avifImageYUVToRGB          = nullptr;
 avifEncoderCreate_pfn          SK_avifEncoderCreate          = nullptr;
 avifEncoderAddImage_pfn        SK_avifEncoderAddImage        = nullptr;
 avifEncoderFinish_pfn          SK_avifEncoderFinish          = nullptr;
 avifImageDestroy_pfn           SK_avifImageDestroy           = nullptr;
 avifEncoderDestroy_pfn         SK_avifEncoderDestroy         = nullptr;
 avifRGBImageFreePixels_pfn     SK_avifRGBImageFreePixels     = nullptr;
+
+avifDecoderCreate_pfn          SK_avifDecoderCreate          = nullptr;
+avifDecoderDestroy_pfn         SK_avifDecoderDestroy         = nullptr;
+
+avifDecoderRead_pfn            SK_avifDecoderRead            = nullptr;
+avifDecoderReadMemory_pfn      SK_avifDecoderReadMemory      = nullptr;
+avifDecoderSetIOMemory_pfn     SK_avifDecoderSetIOMemory     = nullptr;
+avifDecoderParse_pfn           SK_avifDecoderParse           = nullptr;
+avifDecoderNextImage_pfn       SK_avifDecoderNextImage       = nullptr;
