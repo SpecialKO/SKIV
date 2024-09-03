@@ -257,8 +257,8 @@ SKIF_UI_Tab_DrawSettings (void)
 
     constexpr char* StyleItems[UIStyle_COUNT] =
     { "Dynamic",
-      "SKIF Dark",
-      "SKIF Light",
+      "SKIV Dark",
+      "SKIV Light",
       "ImGui Classic",
       "ImGui Dark"
     };
@@ -693,8 +693,10 @@ SKIF_UI_Tab_DrawSettings (void)
     if ( ImGui::Checkbox ( "Always open this app on the same monitor as the mouse", &_registry.bOpenAtCursorPosition ) )
       _registry.regKVOpenAtCursorPosition.putData (                                  _registry.bOpenAtCursorPosition );
 
+#ifdef HAS_AUTO_UPDATE
     if ( ImGui::Checkbox ( "Automatically install new updates",                     &_registry.bAutoUpdate ) )
       _registry.regKVAutoUpdate.putData (                                            _registry.bAutoUpdate);
+#endif
 
 #if 0
     if ( ImGui::Checkbox ( "Controller support",                                    &_registry.bControllers ) )
@@ -720,6 +722,7 @@ SKIF_UI_Tab_DrawSettings (void)
 
 #pragma region Advanced::CheckForUpdates
 
+#ifdef HAS_AUTO_UPDATE
     ImGui::TextColored     (ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info), ICON_FA_LIGHTBULB);
     SKIF_ImGui_SetHoverTip ("This setting has no effect if low bandwidth mode is enabled.");
     ImGui::SameLine        ( );
@@ -841,8 +844,8 @@ SKIF_UI_Tab_DrawSettings (void)
     }
 
     ImGui::EndGroup   ( );
-
     ImGui::TreePop    ( );
+#endif
 
 #pragma endregion
 
@@ -905,7 +908,7 @@ SKIF_UI_Tab_DrawSettings (void)
       }
     }
 
-    SKIF_ImGui_SetHoverTip  ("Only intended for SKIF developers as this enables excessive logging (e.g. window messages).");
+    SKIF_ImGui_SetHoverTip  ("Only intended for SKIV developers as this enables excessive logging (e.g. window messages).");
 
     SKIF_ImGui_Spacing ( );
 
@@ -977,6 +980,7 @@ SKIF_UI_Tab_DrawSettings (void)
 #endif
         );
 
+#if 0
     static std::wstring wsDisableCall = SK_FormatStringW (
       LR"("%ws\%ws",RunDLL_DisableGFEForSKIF)",
         _path_cache.specialk_userdata, // Can theoretically be wrong
@@ -1047,6 +1051,7 @@ SKIF_UI_Tab_DrawSettings (void)
       SKIF_ImGui_SetHoverTip  ("This only needs to be used if GeForce Experience notifications\n"
                                "appear on the screen whenever this app is being used.");
     }
+#endif
 
     ImGui::TreePop ( );
 

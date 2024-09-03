@@ -43,6 +43,7 @@ void SKIF_UI_DrawComponentVersion (void)
 
   ImGui::EndGroup         ( );
 
+#ifdef HAS_AUTO_UPDATE
   ImGui::BeginGroup       ( );
   ImGui::Spacing          ( );
   ImGui::SameLine         ( );
@@ -77,6 +78,7 @@ void SKIF_UI_DrawComponentVersion (void)
       UpdatePromptPopup = PopupState_Open;
     ImGui::PopStyleColor ( );
   }
+#endif
 }
 
 void SKIF_UI_DrawPlatformStatus (void)
