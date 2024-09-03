@@ -429,6 +429,7 @@ PopupState OpenFileDialog  = PopupState_Closed;
 PopupState SaveFileDialog  = PopupState_Closed;
 PopupState ExportSDRDialog = PopupState_Closed;
 PopupState ContextMenu     = PopupState_Closed;
+PopupState ConfigEncoders  = PopupState_Closed;
 
 struct image_s {
   struct file_s {
@@ -1569,9 +1570,11 @@ LoadLibraryTexture (image_s& image)
         meta.dimension = DirectX::TEX_DIMENSION_TEXTURE2D;
 
         void*  pixels_buffer      = static_cast <void *>(temp_img.GetPixels ());
-        size_t pixels_buffer_size = temp_img.GetPixelsSize ();
 
+#ifdef _DEBUG
+        size_t pixels_buffer_size = temp_img.GetPixelsSize ();
         assert (pixels_buffer_size >= rgb.rowBytes * rgb.height);
+#endif
 
         memcpy (pixels_buffer, rgb.pixels, rgb.rowBytes * rgb.height);
 
@@ -3716,6 +3719,30 @@ SKIF_UI_Tab_DrawViewer (void)
   if (ContextMenu == PopupState_Open)
     ImGui::OpenPopup    ("ContextMenu");
 
+
+  if (ConfigEncoders == PopupState_Open)
+  {
+    ImGui::OpenPopup ("ConfigEncoders");
+    ConfigEncoders = PopupState_Opened;
+  }
+
+  if (ConfigEncoders == PopupState_Opened)
+  {
+    if (ImGui::BeginPopup ("ConfigEncoders", ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize))
+    {
+      if (ImGui::Button ("Save"))
+      {
+        ImGui::CloseCurrentPopup ();
+      }
+      ImGui::EndPopup     ();
+    }
+
+    else
+    {
+      ConfigEncoders = PopupState_Closed;
+    }
+  }
+
   if (ImGui::BeginPopup   ("ContextMenu", ImGuiWindowFlags_NoMove))
   {
     ContextMenu = PopupState_Opened;
@@ -3747,13 +3774,15 @@ SKIF_UI_Tab_DrawViewer (void)
       if (cover.is_hdr &&
           SKIF_ImGui_MenuItemEx2 ("Export to SDR", ICON_FA_FILE_EXPORT, ImGui::GetStyleColorVec4(ImGuiCol_Text),      "Ctrl+X"))
         ExportSDRDialog = PopupState_Open;
+      //if (SKIF_ImGui_MenuItemEx2 ("Encoder Setup", ICON_FA_GEARS,       ImGui::GetStyleColorVec4(ImGuiCol_Text),      "Ctrl+B"))
+      //  ConfigEncoders = PopupState_Open;
       if (//cover.is_hdr &&
           SKIF_ImGui_MenuItemEx2 ("Copy",          ICON_FA_CLIPBOARD,   ImGui::GetStyleColorVec4(ImGuiCol_Text),      "Ctrl+C"))
       {
         wantCopyToClipboard = true;
       }
-      if (SKIF_ImGui_MenuItemEx2 ("Close", 0,                           ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info), "Ctrl+W"))
-        _SwapOutCover ();
+      //if (SKIF_ImGui_MenuItemEx2 ("Close", 0,                           ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info), "Ctrl+W"))
+      //  _SwapOutCover ();
 
       // Image scaling
 
@@ -4145,7 +4174,6 @@ SKIF_UI_Tab_DrawViewer (void)
 
     SaveFileDialog = PopupState_Closed;
   }
-
 
   if (ExportSDRDialog == PopupState_Open)
   {

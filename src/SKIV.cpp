@@ -181,6 +181,7 @@ UITab SKIF_Tab_Selected      = UITab_Viewer,
 extern PopupState  OpenFileDialog;  // Viewer: open file dialog
 extern PopupState  SaveFileDialog;  // Viewer: save file dialog
 extern PopupState  ExportSDRDialog; // Viewer: export sdr dialog
+extern PopupState  ConfigEncoders;  // Viewer: configure image encoders
 
 // Variables related to the display SKIF is visible on
 ImVec2  windowPos;
@@ -1343,7 +1344,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
                 hotkeyCtrlV = false, // Paste data through the clipboard
                 hotkeyCtrlN = false, // Minimize app
                 hotkeyCtrlS = false,
-                hotkeyCtrlX = false;
+                hotkeyCtrlX = false,
+                hotkeyCtrlB = false; // Encoder Config
 
     // Handled in viewer.cpp
        //hotkeyCtrl1 = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_1     )->DownDuration == 0.0f), // Viewer -> Image Scaling: View actual size (1:1 / None)
@@ -1592,6 +1594,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
       hotkeyCtrlN = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_N     )->DownDuration == 0.0f); // Minimize app
       hotkeyCtrlS = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_S     )->DownDuration == 0.0f); // Save Current Image (in same Dynamic Range)
       hotkeyCtrlX = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_X     )->DownDuration == 0.0f); // Export Current Image (HDR -> SDR)
+      hotkeyCtrlB = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_E     )->DownDuration == 0.0f); // Configure Image Encoders
 
       const bool hotkeyCycleScaling       = ImGui::IsKeyPressed (ImGuiKey_GamepadL3);
       const bool hotkeyCycleVisualization = ImGui::IsKeyPressed (ImGuiKey_GamepadR3);
@@ -1869,6 +1872,14 @@ wWinMain ( _In_     HINSTANCE hInstance,
             ExportSDRDialog = PopupState_Open;
           if (hotkeyCtrlS)
             SaveFileDialog = PopupState_Open;
+        }
+
+        if (allowShortcutCtrlA && hotkeyCtrlB)
+        {
+          if (SKIF_Tab_Selected != UITab_Viewer)
+              SKIF_Tab_ChangeTo  = UITab_Viewer;
+
+          ConfigEncoders = PopupState_Open;
         }
       }
 
