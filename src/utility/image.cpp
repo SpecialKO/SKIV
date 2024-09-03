@@ -1367,7 +1367,7 @@ SKIV_Image_TonemapToSDR (const DirectX::Image& image, DirectX::ScratchImage& fin
       percent -=
         100.0 * ((double)luminance_freq [i] / img_size);
     
-      if (percent <= 99.5)
+      if (percent <= 99.94)
       {
         maxLum =
           XMVectorReplicate (XMVectorGetY (minLum) + (fLumRange * ((float)i / 65536.0f)));
@@ -1416,44 +1416,49 @@ SKIV_Image_TonemapToSDR (const DirectX::Image& image, DirectX::ScratchImage& fin
 
           if (needs_tonemapping)
           {
-          XMVECTOR ICtCp =
-            SKIV_Image_Rec709toICtCp (value);
+            XMVECTOR ICtCp =
+              SKIV_Image_Rec709toICtCp (value);
 
-          float Y_in  = std::max (XMVectorGetX (ICtCp), 0.0f);
-          float Y_out = 1.0f;
+            float Y_in  = std::max (XMVectorGetX (ICtCp), 0.0f);
+            float Y_out = 1.0f;
 
-          Y_out =
-            TonemapHDR (Y_in, maxYInPQ, SDR_YInPQ);
+            Y_out =
+              TonemapHDR (Y_in, maxYInPQ, SDR_YInPQ);
 
-          if (Y_out + Y_in > 0.0f)
-          {
-            ICtCp.m128_f32 [0] =
-              std::pow (Y_in, 1.18f);
-
-            float I0      = XMVectorGetX (ICtCp);
-            float I1      = 0.0f;
-            float I_scale = 0.0f;
-
-            ICtCp.m128_f32 [0] *=
-              std::max ((Y_out / Y_in), 0.0f);
-
-            I1 = XMVectorGetX (ICtCp);
-
-            if (I0 != 0.0f && I1 != 0.0f)
+            if (Y_out + Y_in > 0.0f)
             {
-              I_scale =
-                std::min (I0 / I1, I1 / I0);
+              ICtCp.m128_f32 [0] =
+                std::pow (Y_in, 1.18f);
+
+              float I0      = XMVectorGetX (ICtCp);
+              float I1      = 0.0f;
+              float I_scale = 0.0f;
+
+              ICtCp.m128_f32 [0] *=
+                std::max ((Y_out / Y_in), 0.0f);
+
+              I1 = XMVectorGetX (ICtCp);
+
+              if (I0 != 0.0f && I1 != 0.0f)
+              {
+                I_scale =
+                  std::min (I0 / I1, I1 / I0);
+              }
+
+              ICtCp.m128_f32 [1] *= I_scale;
+              ICtCp.m128_f32 [2] *= I_scale;
             }
 
-            ICtCp.m128_f32 [1] *= I_scale;
-            ICtCp.m128_f32 [2] *= I_scale;
+            value =
+              SKIV_Image_ICtCptoRec709 (ICtCp);
+
+            maxTonemappedRGB =
+              XMVectorMax (maxTonemappedRGB, XMVectorMax (value, g_XMZero));
           }
 
-          value =
-            SKIV_Image_ICtCptoRec709 (ICtCp);
-
-          maxTonemappedRGB =
-            XMVectorMax (maxTonemappedRGB, XMVectorMax (value, g_XMZero));
+          else
+          {
+            value /= (mastering_sdr_nits * 0.0125f);
           }
 
           outPixels [j] = XMVectorSaturate (value);
@@ -1808,9 +1813,9 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
       percent -=
         100.0 * ((double)luminance_freq [i] / img_size);
 
-      if (percent <= 99.85)
+      if (percent <= 99.94)
       {
-        PLOG_INFO << "99.5th percentile luminance: " <<
+        PLOG_INFO << "99.94th percentile luminance: " <<
           80.0f * (XMVectorGetY (minLum) + (fLumRange * ((float)i / 65536.0f)))
                                                       << " nits";
 

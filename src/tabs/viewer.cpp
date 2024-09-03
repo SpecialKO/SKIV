@@ -2139,9 +2139,9 @@ LoadLibraryTexture (image_s& image)
       percent -=
         100.0 * ((double)luminance_freq [i] / img_size);
 
-      if (percent <= 99.92)
+      if (percent <= 99.94)
       {
-        PLOG_INFO << "99.92th percentile luminance: " <<
+        PLOG_INFO << "99.94th percentile luminance: " <<
           80.0f * (fMinLum + (fLumRange * ((float)i / 65536.0f)))
                                                       << " nits";
 
@@ -3728,9 +3728,67 @@ SKIF_UI_Tab_DrawViewer (void)
 
   if (ConfigEncoders == PopupState_Opened)
   {
-    if (ImGui::BeginPopup ("ConfigEncoders", ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize))
+    if (ImGui::BeginPopup ("ConfigEncoders", ImGuiWindowFlags_AlwaysAutoResize))
     {
-      if (ImGui::Button ("Save"))
+      ImGui::BeginTabBar ("EncoderTabs");
+      static int selection = 0;            
+
+      if (ImGui::BeginTabItem ("AVIF", nullptr, ImGuiTabItemFlags_NoTooltip))
+      {
+        selection = 0;
+        //ImGui::TextUnformatted ("AVIF");
+
+        static int                                  avif_bit_depth           = 12;
+        static int                                  avif_compression_speed   = AVIF_SPEED_FASTEST;
+        static int                                  avif_compression_quality = AVIF_QUALITY_LOSSLESS;
+        ImGui::SliderInt ("Compression Speed",     &avif_compression_speed,   AVIF_SPEED_SLOWEST, AVIF_SPEED_FASTEST);
+        ImGui::SliderInt ("Compression Quality",   &avif_compression_quality, 80,                 100);
+
+        int avif_bit_select =
+          avif_bit_depth == 8  ? 0 :
+          avif_bit_depth == 10 ? 1 :
+          avif_bit_depth == 12 ? 2 : 2;
+
+        ImGui::Combo     ("Compression Bit Depth", &avif_bit_select, " 8-bpc\0 10-bpc\0 12-bpc\0\0");
+
+        avif_bit_depth = avif_bit_select == 0 ?  8 :
+                         avif_bit_select == 1 ? 10 :
+                         avif_bit_select == 2 ? 12 : 12;
+
+        ImGui::EndTabItem      ();
+      }
+      if (ImGui::BeginTabItem ("JPEG XL", nullptr, ImGuiTabItemFlags_NoTooltip))
+      {
+        selection = 1;
+        //ImGui::TextUnformatted ("XL");
+
+        static int                                jxl_compression_speed   = 10;
+        static int                                jxl_compression_quality = 100;
+        ImGui::SliderInt ("Compression Speed",   &jxl_compression_speed,   AVIF_SPEED_SLOWEST, AVIF_SPEED_FASTEST);
+        ImGui::SliderInt ("Compression Quality", &jxl_compression_quality, 80,                 100);
+        ImGui::EndTabItem      ();
+      }
+      if (ImGui::BeginTabItem ("JPEG XR", nullptr, ImGuiTabItemFlags_NoTooltip))
+      {
+        selection = 2;
+        //ImGui::TextUnformatted ("XR");
+        static int                                jxr_compression_quality = 100;
+        ImGui::SliderInt ("Compression Quality", &jxr_compression_quality, 80, 100);
+        ImGui::EndTabItem      ();
+      }
+      if (ImGui::BeginTabItem ("PNG", nullptr, ImGuiTabItemFlags_NoTooltip))
+      {
+        selection = 3;
+        //ImGui::TextUnformatted ("PNG");
+        static int                      png_bit_depth = 16;
+        ImGui::SliderInt ("Bit Depth", &png_bit_depth, 10, 16);
+        ImGui::EndTabItem      ();
+      }
+      //if (ImGui::BeginTabItem ("Ultra HDR", nullptr, ImGuiTabItemFlags_NoTooltip))
+      //{
+      //}
+      ImGui::EndTabBar   ();
+      if (ImGui::Button ("Okay"))
       {
         ImGui::CloseCurrentPopup ();
       }
@@ -3774,8 +3832,8 @@ SKIF_UI_Tab_DrawViewer (void)
       if (cover.is_hdr &&
           SKIF_ImGui_MenuItemEx2 ("Export to SDR", ICON_FA_FILE_EXPORT, ImGui::GetStyleColorVec4(ImGuiCol_Text),      "Ctrl+X"))
         ExportSDRDialog = PopupState_Open;
-      //if (SKIF_ImGui_MenuItemEx2 ("Encoder Setup", ICON_FA_GEARS,       ImGui::GetStyleColorVec4(ImGuiCol_Text),      "Ctrl+B"))
-      //  ConfigEncoders = PopupState_Open;
+      if (SKIF_ImGui_MenuItemEx2 ("Encoder Setup", ICON_FA_GEARS,       ImGui::GetStyleColorVec4(ImGuiCol_Text),      "Ctrl+B"))
+        ConfigEncoders = PopupState_Open;
       if (//cover.is_hdr &&
           SKIF_ImGui_MenuItemEx2 ("Copy",          ICON_FA_CLIPBOARD,   ImGui::GetStyleColorVec4(ImGuiCol_Text),      "Ctrl+C"))
       {
