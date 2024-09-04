@@ -3736,52 +3736,54 @@ SKIF_UI_Tab_DrawViewer (void)
       if (ImGui::BeginTabItem ("AVIF", nullptr, ImGuiTabItemFlags_NoTooltip))
       {
         selection = 0;
-        //ImGui::TextUnformatted ("AVIF");
-
-        static int                                  avif_bit_depth           = 12;
-        static int                                  avif_compression_speed   = AVIF_SPEED_FASTEST;
-        static int                                  avif_compression_quality = AVIF_QUALITY_LOSSLESS;
-        ImGui::SliderInt ("Compression Speed",     &avif_compression_speed,   AVIF_SPEED_SLOWEST, AVIF_SPEED_FASTEST);
-        ImGui::SliderInt ("Compression Quality",   &avif_compression_quality, 80,                 100);
+        
+        if (ImGui::SliderInt ("Compression Speed",    &_registry.avif.speed,  AVIF_SPEED_SLOWEST, AVIF_SPEED_FASTEST))
+          _registry.regKVAVIFSpeed.putData (_registry.avif.speed);
+        
+        if (ImGui::SliderInt ("Compression Quality", &_registry.avif.quality, 80, 100))
+          _registry.regKVAVIFQuality.putData         (_registry.avif.quality);
 
         int avif_bit_select =
-          avif_bit_depth == 8  ? 0 :
-          avif_bit_depth == 10 ? 1 :
-          avif_bit_depth == 12 ? 2 : 2;
+          _registry.avif.hdr_bitdepth == 8  ? 0 :
+          _registry.avif.hdr_bitdepth == 10 ? 1 :
+          _registry.avif.hdr_bitdepth == 12 ? 2 : 2;
 
+        bool changed_depth =
         ImGui::Combo     ("Compression Bit Depth", &avif_bit_select, " 8-bpc\0 10-bpc\0 12-bpc\0\0");
 
-        avif_bit_depth = avif_bit_select == 0 ?  8 :
-                         avif_bit_select == 1 ? 10 :
-                         avif_bit_select == 2 ? 12 : 12;
+        _registry.avif.hdr_bitdepth = avif_bit_select == 0 ?  8 :
+                                      avif_bit_select == 1 ? 10 :
+                                      avif_bit_select == 2 ? 12 : 12;
+
+        if (changed_depth)
+          _registry.regKVAVIFHDRBitDepth.putData (_registry.avif.hdr_bitdepth);
 
         ImGui::EndTabItem      ();
       }
       if (ImGui::BeginTabItem ("JPEG XL", nullptr, ImGuiTabItemFlags_NoTooltip))
       {
         selection = 1;
-        //ImGui::TextUnformatted ("XL");
 
-        static int                                jxl_compression_speed   = 10;
-        static int                                jxl_compression_quality = 100;
-        ImGui::SliderInt ("Compression Speed",   &jxl_compression_speed,   AVIF_SPEED_SLOWEST, AVIF_SPEED_FASTEST);
-        ImGui::SliderInt ("Compression Quality", &jxl_compression_quality, 80,                 100);
+        if (ImGui::SliderInt ("Compression Speed", &_registry.jxl.speed, AVIF_SPEED_SLOWEST, AVIF_SPEED_FASTEST))
+          _registry.regKVJXLSpeed.putData          (_registry.jxl.speed);
+
+        if (ImGui::SliderInt ("Compression Quality", &_registry.jxl.quality, 80, 100))
+          _registry.regKVJXLQuality.putData          (_registry.jxl.quality);
         ImGui::EndTabItem      ();
       }
-      if (ImGui::BeginTabItem ("JPEG XR", nullptr, ImGuiTabItemFlags_NoTooltip))
-      {
-        selection = 2;
-        //ImGui::TextUnformatted ("XR");
-        static int                                jxr_compression_quality = 100;
-        ImGui::SliderInt ("Compression Quality", &jxr_compression_quality, 80, 100);
-        ImGui::EndTabItem      ();
-      }
+      ///if (ImGui::BeginTabItem ("JPEG XR", nullptr, ImGuiTabItemFlags_NoTooltip))
+      ///{
+      ///  selection = 2;
+      ///  //ImGui::TextUnformatted ("XR");
+      ///  static int                                jxr_compression_quality = 100;
+      ///  ImGui::SliderInt ("Compression Quality", &jxr_compression_quality, 80, 100);
+      ///  ImGui::EndTabItem      ();
+      ///}
       if (ImGui::BeginTabItem ("PNG", nullptr, ImGuiTabItemFlags_NoTooltip))
       {
         selection = 3;
-        //ImGui::TextUnformatted ("PNG");
-        static int                      png_bit_depth = 16;
-        ImGui::SliderInt ("Bit Depth", &png_bit_depth, 10, 16);
+        if (ImGui::SliderInt ("HDR Bit Depth", &_registry.png.hdr_bitdepth, 10, 16))
+          _registry.regKVJXLQuality.putData    (_registry.png.hdr_bitdepth);
         ImGui::EndTabItem      ();
       }
       //if (ImGui::BeginTabItem ("Ultra HDR", nullptr, ImGuiTabItemFlags_NoTooltip))

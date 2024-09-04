@@ -311,6 +311,38 @@ struct SKIF_RegistrySettings {
     SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(Diagnostics)" );
 
+  KeyValue <int> regKVAVIFQuality =
+    SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\AVIF\)",
+                         LR"(Quality)" );
+
+  KeyValue <int> regKVAVIFSpeed =
+    SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\AVIF\)",
+                         LR"(Speed)" );
+
+  KeyValue <int> regKVAVIFHDRBitDepth =
+    SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\AVIF\)",
+                         LR"(HDR BitDepth)" );
+
+  KeyValue <int> regKVJXLQuality =
+    SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\JPEG XL\)",
+                         LR"(Quality)" );
+
+  KeyValue <int> regKVJXLSpeed =
+    SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\JPEG XL\)",
+                         LR"(Speed)" );
+
+  KeyValue <int> regKVJXLHDRBitDepth =
+    SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\JPEG XL\)",
+                         LR"(HDR BitDepth)" );
+
+  KeyValue <int> regKVJXRQuality =
+    SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\JPEG XR\)",
+                         LR"(Quality)" );
+
+  KeyValue <int> regKVPNGHDRBitDepth =
+    SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\PNG\)",
+                         LR"(HDR BitDepth)" );
+
   // Wide Strings
 
   KeyValue <std::wstring> regKVIgnoreUpdate =
@@ -428,6 +460,28 @@ struct SKIF_RegistrySettings {
   std::wstring wsAutoUpdateVersion; // Holds the version the auto-updater is trying to install
   std::wstring wsDefaultHDRExt = L".png";
   std::wstring wsDefaultSDRExt = L".png";
+
+  // Encoder config
+  struct {
+    int hdr_bitdepth = 12;
+    int quality      = 100;
+    int speed        = 10;
+    int yuv_sampling = 444;
+  } avif;
+
+  struct {
+    int quality      = 100;
+  } jxr;
+
+  struct {
+    int quality      = 100;
+    int speed        = 10;
+    int hdr_bitdepth = 16;
+  } jxl;
+
+  struct {
+    int hdr_bitdepth = 16;
+  } png;
 
   // Windows stuff
   std::wstring wsAppRegistration;

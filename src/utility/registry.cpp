@@ -308,6 +308,27 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
   if (regKVDiagnostics.hasData(&hKey))
     iDiagnostics           =   regKVDiagnostics            .getData (&hKey);
 
+
+  if (regKVAVIFHDRBitDepth.hasData (&hKey))
+    avif.hdr_bitdepth      =   regKVAVIFHDRBitDepth        .getData (&hKey);
+  if (regKVAVIFQuality.hasData (&hKey))
+    avif.quality           =   regKVAVIFQuality            .getData (&hKey);
+  if (regKVAVIFSpeed.hasData (&hKey))
+    avif.speed             =   regKVAVIFSpeed              .getData (&hKey);
+
+  if (regKVJXLHDRBitDepth.hasData (&hKey))
+    jxl.hdr_bitdepth       =   regKVJXLHDRBitDepth         .getData (&hKey);
+  if (regKVJXLQuality.hasData (&hKey))
+    jxl.quality            =   regKVJXLQuality             .getData (&hKey);
+  if (regKVJXLSpeed.hasData (&hKey))
+    jxl.speed              =   regKVJXLSpeed               .getData (&hKey);
+
+  if (regKVJXRQuality.hasData (&hKey))
+    jxr.quality            =   regKVJXRQuality             .getData (&hKey);
+
+  if (regKVPNGHDRBitDepth.hasData (&hKey))
+    png.hdr_bitdepth       =   regKVPNGHDRBitDepth         .getData (&hKey);
+
 #if 0
   if (! SKIF_Util_GetDragFromMaximized ( ))
     bMaximizeOnDoubleClick = false; // Force disabled IF the OS prerequisites are not enabled

@@ -2392,6 +2392,9 @@ SKIV_Image_LoadUltraHDR (DirectX::ScratchImage& image, void* data, int size)
 HRESULT
 SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileName)
 {
+  SKIF_RegistrySettings& _registry =
+    SKIF_RegistrySettings::GetInstance ();
+
   using namespace DirectX;
 
   const Image* pOutputImage = &image;
@@ -2606,7 +2609,7 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
       JxlBasicInfo              basic_info = { };
       jxlEncoderInitBasicInfo (&basic_info);
 
-      const bool bLossless = false;
+      const bool bLossless = (_registry.jxl.quality == 100);
 
       basic_info.xsize                    = static_cast <uint32_t> (image.width);
       basic_info.ysize                    = static_cast <uint32_t> (image.height);
@@ -2640,8 +2643,8 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
         jxlEncoderFrameSettingsCreate (jxl_encoder, nullptr);
 
       jxlEncoderSetFrameLossless       (frame_settings, bLossless ? JXL_TRUE : JXL_FALSE);
-      jxlEncoderSetFrameDistance       (frame_settings, 0.05f);//jxlEncoderDistanceFromQuality (100.0f));
-      jxlEncoderFrameSettingsSetOption (frame_settings, JXL_ENC_FRAME_SETTING_EFFORT, 7);
+      jxlEncoderSetFrameDistance       (frame_settings, jxlEncoderDistanceFromQuality ((float)_registry.jxl.quality));
+      jxlEncoderFrameSettingsSetOption (frame_settings, JXL_ENC_FRAME_SETTING_EFFORT,         _registry.jxl.speed);
 
       if ( JXL_ENC_SUCCESS !=
              jxlEncoderAddImageFrame ( frame_settings, &pixel_format,
@@ -2748,7 +2751,7 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
     
     if (image.format == DXGI_FORMAT_R16G16B16A16_FLOAT)
     {
-      bit_depth = 12;
+      bit_depth = _registry.avif.hdr_bitdepth;
         //std::clamp (config.screenshots.avif.scrgb_bit_depth, 8, 12);
     
       // 8, 10, 12... nothing else.
@@ -2989,16 +2992,15 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
         SYSTEM_INFO     si = { };
         GetSystemInfo (&si);
 
-        encoder->quality         = 100;//config.screenshots.compression_quality;
-        encoder->qualityAlpha    = 100;//config.screenshots.compression_quality; // N/A?
+        encoder->quality         = _registry.avif.quality;
+        encoder->qualityAlpha    = _registry.avif.quality; // N/A?
         encoder->timescale       = 1;
         encoder->repetitionCount = AVIF_REPETITION_COUNT_INFINITE;
         encoder->maxThreads      = std::min (64U, std::min ((UINT)si.dwNumberOfProcessors, (UINT)__popcnt64 (si.dwActiveProcessorMask)));
-        encoder->speed           = 7;//config.screenshots.avif.compression_speed;
         encoder->minQuantizer    = AVIF_QUANTIZER_BEST_QUALITY;
         encoder->maxQuantizer    = AVIF_QUANTIZER_BEST_QUALITY;
         encoder->codecChoice     = AVIF_CODEC_CHOICE_AUTO;
-        encoder->speed           = AVIF_SPEED_FASTEST;
+        encoder->speed           = _registry.avif.speed;
     
         addResult    = SK_avifEncoderAddImage (encoder, avif_image, 1, AVIF_ADD_IMAGE_FLAG_SINGLE);
         encodeResult = SK_avifEncoderFinish   (encoder, &avifOutput);
