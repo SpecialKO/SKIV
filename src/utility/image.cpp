@@ -2479,7 +2479,6 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
     }
   }
 
-#ifdef _M_X64
   else if (StrStrIW (wszExtension, L"jxl"))
   {
     extern bool isJXLDecoderAvailable (void);
@@ -2700,7 +2699,6 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
     return
       succeeded ? S_OK : E_FAIL;
   }
-#endif
 
   else if (StrStrIW (wszExtension, L"avif"))
   {
@@ -3014,7 +3012,9 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
         encoder->qualityAlpha    = _registry.avif.quality; // N/A?
         encoder->timescale       = 1;
         encoder->repetitionCount = AVIF_REPETITION_COUNT_INFINITE;
+#ifdef _M_X64
         encoder->maxThreads      = std::min (64U, std::min ((UINT)si.dwNumberOfProcessors, (UINT)__popcnt64 (si.dwActiveProcessorMask)));
+#endif
         encoder->minQuantizer    = AVIF_QUANTIZER_BEST_QUALITY;
         encoder->maxQuantizer    = AVIF_QUANTIZER_BEST_QUALITY;
         encoder->codecChoice     = AVIF_CODEC_CHOICE_AUTO;
