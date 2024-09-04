@@ -650,6 +650,9 @@ SKIV_HDR_CalculateContentLightInfo (const DirectX::Image& img)
 static bool
 SKIV_HDR_ConvertImageToPNG (const DirectX::Image& raw_hdr_img, DirectX::ScratchImage& png_img)
 {
+  static SKIF_RegistrySettings& _registry =
+    SKIF_RegistrySettings::GetInstance ( );
+
   using namespace DirectX;
 
   if (auto typeless_fmt = DirectX::MakeTypeless (raw_hdr_img.format);
@@ -687,29 +690,34 @@ SKIV_HDR_ConvertImageToPNG (const DirectX::Image& raw_hdr_img, DirectX::ScratchI
       UNREFERENCED_PARAMETER(y);
 
       static const XMVECTOR pq_range_10bpc = XMVectorReplicate (1023.0f),
+                            pq_range_11bpc = XMVectorReplicate (2047.0f),
                             pq_range_12bpc = XMVectorReplicate (4095.0f),
+                            pq_range_13bpc = XMVectorReplicate (8191.0f),
+                            pq_range_14bpc = XMVectorReplicate (16383.0f),
+                            pq_range_15bpc = XMVectorReplicate (32767.0f),
                             pq_range_16bpc = XMVectorReplicate (65535.0f),
                             pq_range_32bpc = XMVectorReplicate (4294967295.0f);
 
       auto pq_range_out =
-        (typeless_fmt == DXGI_FORMAT_R10G10B10A2_TYPELESS)  ? pq_range_10bpc :
-        (typeless_fmt == DXGI_FORMAT_R16G16B16A16_TYPELESS) ? pq_range_12bpc :
-                                                              pq_range_12bpc;//pq_range_16bpc;
-
-      pq_range_out = pq_range_16bpc;
+        (typeless_fmt == DXGI_FORMAT_R10G10B10A2_TYPELESS) ? pq_range_10bpc :
+                          _registry.png.hdr_bitdepth == 10 ? pq_range_10bpc :
+                          _registry.png.hdr_bitdepth == 11 ? pq_range_11bpc :
+                          _registry.png.hdr_bitdepth == 12 ? pq_range_12bpc :
+                          _registry.png.hdr_bitdepth == 13 ? pq_range_13bpc :
+                          _registry.png.hdr_bitdepth == 14 ? pq_range_14bpc :
+                          _registry.png.hdr_bitdepth == 15 ? pq_range_15bpc :
+                                                             pq_range_16bpc;
 
       const auto pq_range_in  =
         (typeless_fmt == DXGI_FORMAT_R10G10B10A2_TYPELESS)  ? pq_range_10bpc :
         (typeless_fmt == DXGI_FORMAT_R16G16B16A16_TYPELESS) ? pq_range_16bpc :
                                                               pq_range_32bpc;
 
-      int intermediate_bits = 16;
       int output_bits       = 
         (typeless_fmt == DXGI_FORMAT_R10G10B10A2_TYPELESS)  ? 10 :
-        (typeless_fmt == DXGI_FORMAT_R16G16B16A16_TYPELESS) ? 12 :
-                                                              12;//16;
-
-      output_bits = 16;
+        (typeless_fmt == DXGI_FORMAT_R16G16B16A16_TYPELESS) ? _registry.png.hdr_bitdepth :
+                                                              _registry.png.hdr_bitdepth;
+      int intermediate_bits = 16;
 
       for (size_t j = 0; j < width; ++j)
       {
@@ -748,6 +756,9 @@ SKIV_PNG_MakeHDR ( const wchar_t*        wszFilePath,
                    const DirectX::Image& encoded_img,
                    const DirectX::Image& raw_img )
 {
+  static SKIF_RegistrySettings& _registry =
+    SKIF_RegistrySettings::GetInstance ( );
+
   std::ignore = encoded_img;
 
   static const BYTE _test [] = { 0x49, 0x45, 0x4E, 0x44 };
@@ -857,10 +868,13 @@ SKIV_PNG_MakeHDR ( const wchar_t*        wszFilePath,
         static_cast <unsigned char> (DirectX::BitsPerColor (raw_img.format))
       };
 
-      // If using compression optimization, max bits = 12
-      sbit_data.red_bits   = 16;//std::min (sbit_data.red_bits,   12ui8);
-      sbit_data.green_bits = 16;//std::min (sbit_data.green_bits, 12ui8);
-      sbit_data.blue_bits  = 16;//std::min (sbit_data.blue_bits,  12ui8);
+      if (raw_img.format != DXGI_FORMAT_R10G10B10A2_UNORM)
+      {
+        // If using compression optimization, max bits = 12
+        sbit_data.red_bits   = static_cast <uint8_t> (_registry.png.hdr_bitdepth);
+        sbit_data.green_bits = static_cast <uint8_t> (_registry.png.hdr_bitdepth);
+        sbit_data.blue_bits  = static_cast <uint8_t> (_registry.png.hdr_bitdepth);
+      }
 
       // We don't actually know the mastering display, but some effort should be made
       //   to read this metadata and preserve it if it exists when SKIV originally
@@ -2399,7 +2413,8 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
 
   const Image* pOutputImage = &image;
 
-  if (image.format != DXGI_FORMAT_R16G16B16A16_FLOAT &&
+  if (image.format != DXGI_FORMAT_R10G10B10A2_UNORM  &&
+      image.format != DXGI_FORMAT_R16G16B16A16_FLOAT &&
       image.format != DXGI_FORMAT_R32G32B32A32_FLOAT)
   {
     // SKIV always uses scRGB internally for HDR, any other format
@@ -2550,33 +2565,6 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
         break;
       }
 
-#if 0
-      JxlDataType type = JXL_TYPE_FLOAT16;
-      size_t      size = sizeof (uint16_t);
-
-      std::vector <uint16_t> fp_pixels (image.width * image.height * 3);
-
-      auto fp_pixel_comp =
-        fp_pixels.begin ();
-
-      using namespace DirectX::PackedVector;
-
-      EvaluateImage ( image,
-        [&](const XMVECTOR* pixels, size_t width, size_t y)
-        {
-          UNREFERENCED_PARAMETER(y);
-
-          for (size_t j = 0; j < width; ++j)
-          {
-            XMHALF4 v (pixels++->m128_f32);
-
-            *fp_pixel_comp++ = v.x;
-            *fp_pixel_comp++ = v.y;
-            *fp_pixel_comp++ = v.z;
-          }
-        }
-      );
-#else
       JxlDataType type = JXL_TYPE_FLOAT;
       size_t      size = sizeof (float);
 
@@ -2601,7 +2589,6 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
           }
         }
       );
-#endif
 
       JxlPixelFormat pixel_format =
         { 3, type, JXL_NATIVE_ENDIAN, 0 };
@@ -2749,18 +2736,16 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
         break;
     }
     
-    if (image.format == DXGI_FORMAT_R16G16B16A16_FLOAT)
+    if (image.format == DXGI_FORMAT_R16G16B16A16_FLOAT ||
+        image.format == DXGI_FORMAT_R32G32B32A32_FLOAT)
     {
-      bit_depth = _registry.avif.hdr_bitdepth;
-        //std::clamp (config.screenshots.avif.scrgb_bit_depth, 8, 12);
+      bit_depth =
+        std::clamp (_registry.avif.hdr_bitdepth, 8, 12);
     
       // 8, 10, 12... nothing else.
       if ( bit_depth == 9 ||
            bit_depth == 11 )
            bit_depth++;
-    
-      //// Write a valid value back to INI
-      //config.screenshots.avif.scrgb_bit_depth = bit_depth;
     }
     
     avifResult rgbToYuvResult = AVIF_RESULT_NO_CONTENT;
@@ -2781,6 +2766,7 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
       {
         case DXGI_FORMAT_R10G10B10A2_UNORM:
         case DXGI_FORMAT_R16G16B16A16_FLOAT:
+        case DXGI_FORMAT_R32G32B32A32_FLOAT:
           avif_image->colorPrimaries          = AVIF_COLOR_PRIMARIES_BT2020;
           avif_image->transferCharacteristics = AVIF_TRANSFER_CHARACTERISTICS_SMPTE2084;
           avif_image->matrixCoefficients      = AVIF_MATRIX_COEFFICIENTS_BT2020_NCL;
@@ -2791,7 +2777,7 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
     
       SK_avifRGBImageSetDefaults (&rgb, avif_image);
     
-      rgb.depth       = image.format == DXGI_FORMAT_R10G10B10A2_UNORM ? 10 : 12;
+      rgb.depth       = bit_depth;
       rgb.ignoreAlpha = true;
       rgb.isFloat     = false;
       rgb.format      = AVIF_RGB_FORMAT_RGB;
@@ -2821,8 +2807,10 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
         } break;
     
         case DXGI_FORMAT_R16G16B16A16_FLOAT:
+        case DXGI_FORMAT_R32G32B32A32_FLOAT:
         {
-          uint16_t* rgb_pixels = (uint16_t *)rgb.pixels;
+          uint16_t* rgb16_pixels = (uint16_t *)rgb.pixels;
+          uint8_t*  rgb8_pixels  = (uint8_t  *)rgb.pixels;
 
           float N          =       0.0f;
           float fLumAccum  =       0.0f;
@@ -2953,7 +2941,24 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
             avif_image->clli.maxPALL =
               static_cast <uint16_t> (80.0f * (fLumAccum / N));
           }
-    
+
+          const float fMaxVal =
+            _registry.avif.hdr_bitdepth ==  8 ?  256.0f :
+            _registry.avif.hdr_bitdepth == 10 ? 1024.0f :
+            _registry.avif.hdr_bitdepth == 12 ? 4096.0f :
+                                                4096.0f;
+
+          const float fClampVal =
+            _registry.avif.hdr_bitdepth ==  8 ?  255.0f :
+            _registry.avif.hdr_bitdepth == 10 ? 1023.0f :
+            _registry.avif.hdr_bitdepth == 12 ? 4095.0f :
+                                                4095.0f;
+
+          XMVECTOR vMaxVal =
+            XMVectorReplicate (fMaxVal);
+          XMVECTOR vClampVal =
+            XMVectorReplicate (fClampVal);
+
           EvaluateImage ( image,
           [&](_In_reads_ (width) const XMVECTOR* pixels, size_t width, size_t y)
           {
@@ -2970,9 +2975,22 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
                   )
                 );
 
-              *(rgb_pixels++) = static_cast <uint16_t> (std::min (DirectX::XMVectorGetX (value) * 4096.0f, 4095.0f));
-              *(rgb_pixels++) = static_cast <uint16_t> (std::min (DirectX::XMVectorGetY (value) * 4096.0f, 4095.0f));
-              *(rgb_pixels++) = static_cast <uint16_t> (std::min (DirectX::XMVectorGetZ (value) * 4096.0f, 4095.0f));
+              value =
+                XMVectorMin (XMVectorMultiply (value, vMaxVal), vClampVal);
+
+              if (bit_depth > 8)
+              {
+                *(rgb16_pixels++) = static_cast <uint16_t> (DirectX::XMVectorGetX (value));
+                *(rgb16_pixels++) = static_cast <uint16_t> (DirectX::XMVectorGetY (value));
+                *(rgb16_pixels++) = static_cast <uint16_t> (DirectX::XMVectorGetZ (value));
+              }
+
+              else
+              {
+                *(rgb8_pixels++) = static_cast <uint8_t> (DirectX::XMVectorGetX (value));
+                *(rgb8_pixels++) = static_cast <uint8_t> (DirectX::XMVectorGetY (value));
+                *(rgb8_pixels++) = static_cast <uint8_t> (DirectX::XMVectorGetZ (value));
+              }
             }
           } );
         } break;
@@ -3016,9 +3034,6 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
     
     if (encodeResult == AVIF_RESULT_OK)
     {
-      PathRemoveExtensionW (wszImplicitFileName);
-      PathAddExtensionW    (wszImplicitFileName, L".avif");
-    
       FILE* fAVIF =
         _wfopen (wszImplicitFileName, L"wb");
     

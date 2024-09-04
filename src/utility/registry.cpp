@@ -309,25 +309,42 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
     iDiagnostics           =   regKVDiagnostics            .getData (&hKey);
 
 
-  if (regKVAVIFHDRBitDepth.hasData (&hKey))
-    avif.hdr_bitdepth      =   regKVAVIFHDRBitDepth        .getData (&hKey);
-  if (regKVAVIFQuality.hasData (&hKey))
-    avif.quality           =   regKVAVIFQuality            .getData (&hKey);
-  if (regKVAVIFSpeed.hasData (&hKey))
-    avif.speed             =   regKVAVIFSpeed              .getData (&hKey);
+  lsKey =
+    RegCreateKeyW ( HKEY_CURRENT_USER,
+                      LR"(SOFTWARE\Kaldaien\Special K\Viewer\AVIF\)",
+                        &avif.key.m_hKey );
+  lsKey =
+    RegCreateKeyW ( HKEY_CURRENT_USER,
+                      LR"(SOFTWARE\Kaldaien\Special K\Viewer\JPEG XL\)",
+                        &jxl.key.m_hKey );
+  lsKey =
+    RegCreateKeyW ( HKEY_CURRENT_USER,
+                      LR"(SOFTWARE\Kaldaien\Special K\Viewer\JPEG XR\)",
+                        &jxr.key.m_hKey );
+  lsKey =
+    RegCreateKeyW ( HKEY_CURRENT_USER,
+                      LR"(SOFTWARE\Kaldaien\Special K\Viewer\PNG\)",
+                        &png.key.m_hKey );
 
-  if (regKVJXLHDRBitDepth.hasData (&hKey))
-    jxl.hdr_bitdepth       =   regKVJXLHDRBitDepth         .getData (&hKey);
-  if (regKVJXLQuality.hasData (&hKey))
-    jxl.quality            =   regKVJXLQuality             .getData (&hKey);
-  if (regKVJXLSpeed.hasData (&hKey))
-    jxl.speed              =   regKVJXLSpeed               .getData (&hKey);
+  if (regKVAVIFHDRBitDepth.hasData (&avif.key.m_hKey))
+    avif.hdr_bitdepth      =   regKVAVIFHDRBitDepth        .getData (&avif.key.m_hKey);
+  if (regKVAVIFQuality.hasData     (&avif.key.m_hKey))
+    avif.quality           =   regKVAVIFQuality            .getData (&avif.key.m_hKey);
+  if (regKVAVIFSpeed.hasData       (&avif.key.m_hKey))
+    avif.speed             =   regKVAVIFSpeed              .getData (&avif.key.m_hKey);
 
-  if (regKVJXRQuality.hasData (&hKey))
-    jxr.quality            =   regKVJXRQuality             .getData (&hKey);
+  if (regKVJXLHDRBitDepth.hasData  (&jxl.key.m_hKey))
+    jxl.hdr_bitdepth       =   regKVJXLHDRBitDepth         .getData (&jxl.key.m_hKey);
+  if (regKVJXLQuality.hasData      (&jxl.key.m_hKey))
+    jxl.quality            =   regKVJXLQuality             .getData (&jxl.key.m_hKey);
+  if (regKVJXLSpeed.hasData        (&jxl.key.m_hKey))
+    jxl.speed              =   regKVJXLSpeed               .getData (&jxl.key.m_hKey);
 
-  if (regKVPNGHDRBitDepth.hasData (&hKey))
-    png.hdr_bitdepth       =   regKVPNGHDRBitDepth         .getData (&hKey);
+  if (regKVJXRQuality.hasData      (&jxr.key.m_hKey))
+    jxr.quality            =   regKVJXRQuality             .getData (&jxr.key.m_hKey);
+
+  if (regKVPNGHDRBitDepth.hasData  (&png.key.m_hKey))
+    png.hdr_bitdepth       =   regKVPNGHDRBitDepth         .getData (&png.key.m_hKey);
 
 #if 0
   if (! SKIF_Util_GetDragFromMaximized ( ))

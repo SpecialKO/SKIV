@@ -824,6 +824,13 @@ typedef struct
      stbi_uc matrix_coeffs;
      stbi_uc full_range;
    };
+
+   struct sbit_s {
+     stbi_uc red_bits;
+     stbi_uc green_bits;
+     stbi_uc blue_bits;
+     stbi_uc alpha_bits;
+   };
 } stbi__context;
 
 

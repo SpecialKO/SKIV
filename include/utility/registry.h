@@ -463,24 +463,28 @@ struct SKIF_RegistrySettings {
 
   // Encoder config
   struct {
-    int hdr_bitdepth = 12;
-    int quality      = 100;
-    int speed        = 10;
-    int yuv_sampling = 444;
+    CRegKey key;
+    int     hdr_bitdepth = 12;
+    int     quality      = 100;
+    int     speed        = 10;
+    int     yuv_sampling = 444;
   } avif;
 
   struct {
-    int quality      = 100;
+    CRegKey key;
+    int     quality      = 100;
   } jxr;
 
   struct {
-    int quality      = 100;
-    int speed        = 10;
-    int hdr_bitdepth = 16;
+    CRegKey key;
+    int     quality      = 100;
+    int     speed        = 10;
+    int     hdr_bitdepth = 16;
   } jxl;
 
   struct {
-    int hdr_bitdepth = 16;
+    CRegKey key;
+    int     hdr_bitdepth = 16;
   } png;
 
   // Windows stuff

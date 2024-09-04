@@ -92,6 +92,7 @@ ImRect copyRect = { 0,0,0,0 };
 bool wantCopyToClipboard = false;
 
 thread_local stbi__context::cicp_s SKIV_STBI_CICP;
+thread_local stbi__context::sbit_s SKIV_STBI_SBIT;
 thread_local stbi__result_info     SKIV_STBI_ResultInfo;
 
 float SKIV_HDR_SDRWhite = 80.0f;
@@ -1131,6 +1132,7 @@ LoadLibraryTexture (image_s& image)
         desired_channels = STBI_rgb_alpha;
 
     SKIV_STBI_CICP       = { };
+    SKIV_STBI_SBIT       = { };
     SKIV_STBI_ResultInfo = { };
 
 #define STBI_FLOAT
@@ -1151,6 +1153,19 @@ LoadLibraryTexture (image_s& image)
                cicp_pos != data_view.npos)
       {
         memcpy (&SKIV_STBI_CICP, &_scratchMemory.get ()[cicp_pos+4], 4);
+      }
+
+      if (auto sbit_pos  = data_view.find ("sBIT", 0, 4);
+               sbit_pos != data_view.npos)
+      {
+        unsigned long size =
+          *((unsigned long *)&_scratchMemory.get ()[sbit_pos-4]);
+
+#if (defined _M_IX86) || (defined _M_X64)
+        size = _byteswap_ulong (size);
+#endif
+
+        memcpy (&SKIV_STBI_SBIT, &_scratchMemory.get ()[sbit_pos+4], std::min (4ul, size));
       }
     }
 
@@ -1263,6 +1278,18 @@ LoadLibraryTexture (image_s& image)
               meta.format = DXGI_FORMAT_R16G16B16A16_FLOAT;
               converted   = true;
               succeeded   = true;
+
+              if (SKIV_STBI_SBIT.red_bits != 0)
+              {
+                image.bpc = SKIV_STBI_SBIT.red_bits;
+
+                image.channels = 0;
+
+                if (SKIV_STBI_SBIT.red_bits   > 0) image.channels++;
+                if (SKIV_STBI_SBIT.green_bits > 0) image.channels++;
+                if (SKIV_STBI_SBIT.blue_bits  > 0) image.channels++;
+                if (SKIV_STBI_SBIT.alpha_bits > 0) image.channels++;
+              }
             }
           }
         }
@@ -3783,7 +3810,7 @@ SKIF_UI_Tab_DrawViewer (void)
       {
         selection = 3;
         if (ImGui::SliderInt ("HDR Bit Depth", &_registry.png.hdr_bitdepth, 10, 16))
-          _registry.regKVJXLQuality.putData    (_registry.png.hdr_bitdepth);
+          _registry.regKVPNGHDRBitDepth.putData(_registry.png.hdr_bitdepth);
         ImGui::EndTabItem      ();
       }
       //if (ImGui::BeginTabItem ("Ultra HDR", nullptr, ImGuiTabItemFlags_NoTooltip))
