@@ -3575,6 +3575,13 @@ isAVIFEncoderAvailable (void)
           SK_avifDecoderSetIOMemory     != nullptr &&
           SK_avifDecoderParse           != nullptr &&
           SK_avifDecoderNextImage       != nullptr );
+
+      // The AVIF DLL is out-of-date, delete it and attempt to reacquire.
+      if (! init)
+      {
+        FreeLibrary (hModAVIF);
+        DeleteFileW (avif_dll.c_str ());
+      }
     }
   });
 

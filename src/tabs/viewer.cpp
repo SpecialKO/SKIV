@@ -1532,108 +1532,111 @@ LoadLibraryTexture (image_s& image)
   {
     if (! isAVIFEncoderAvailable ())
     {
-      // ...
+      PLOG_ERROR << L"Unworkable libavif DLL present, will attempt to re-download the next time an AVIF image is decoded.";
     }
 
-    auto avif_decoder =
-      SK_avifDecoderCreate ();
-
-    SYSTEM_INFO     si = { };
-    GetSystemInfo (&si);
-
-    avif_decoder->maxThreads =
-      std::min (64U, std::min ((UINT)si.dwNumberOfProcessors, (UINT)__popcnt64 (si.dwActiveProcessorMask)));
-
-    fseek  (pImageFile,                                 0, SEEK_SET  );
-    fread  (_scratchMemory.get (), _.getInitialSize (), 1, pImageFile);
-    rewind (pImageFile);
-
-    SK_avifDecoderSetIOMemory (avif_decoder, _scratchMemory.get (), _.getInitialSize ());
-    SK_avifDecoderParse       (avif_decoder);
-
-    // We only want 1 image, if there are more... too bad.
-    if (SK_avifDecoderNextImage  (avif_decoder) == AVIF_RESULT_OK)
+    else
     {
-      avifRGBImage                 rgb;
-      SK_avifRGBImageSetDefaults (&rgb, avif_decoder->image);
+      auto avif_decoder =
+        SK_avifDecoderCreate ();
 
-      int bpc = rgb.depth;
+      SYSTEM_INFO     si = { };
+      GetSystemInfo (&si);
 
+      avif_decoder->maxThreads =
+        std::min (64U, std::min ((UINT)si.dwNumberOfProcessors, (UINT)__popcnt64 (si.dwActiveProcessorMask)));
 
-      rgb.depth       = 16;
-      rgb.format      = AVIF_RGB_FORMAT_RGBA;
-      rgb.maxThreads  = std::min (64U, std::min ((UINT)si.dwNumberOfProcessors, (UINT)__popcnt64 (si.dwActiveProcessorMask)));
-      rgb.ignoreAlpha = true;
-      rgb.isFloat     = true;
+      fseek  (pImageFile,                                 0, SEEK_SET  );
+      fread  (_scratchMemory.get (), _.getInitialSize (), 1, pImageFile);
+      rewind (pImageFile);
 
-      SK_avifRGBImageAllocatePixels (                     &rgb);
-      SK_avifImageYUVToRGB          (avif_decoder->image, &rgb);
+      SK_avifDecoderSetIOMemory (avif_decoder, _scratchMemory.get (), _.getInitialSize ());
+      SK_avifDecoderParse       (avif_decoder);
 
-      image.width    = static_cast <float> (rgb.width);
-      image.height   = static_cast <float> (rgb.height);
-
-      DirectX::ScratchImage temp_img;
-
-      if (SUCCEEDED (temp_img.Initialize2D (DXGI_FORMAT_R16G16B16A16_FLOAT, static_cast <size_t> (image.width),
-                                                                            static_cast <size_t> (image.height), 1, 1)))
+      // We only want 1 image, if there are more... too bad.
+      if (SK_avifDecoderNextImage  (avif_decoder) == AVIF_RESULT_OK)
       {
-        using namespace DirectX;
+        avifRGBImage                 rgb;
+        SK_avifRGBImageSetDefaults (&rgb, avif_decoder->image);
 
-        image.channels = 3;
-        image.bpc      = bpc;
+        int bpc = rgb.depth;
 
-        // XXX
-        image.light_info.isHDR = true;
-        image.is_hdr           = true;
 
-        succeeded      = true;
+        rgb.depth       = 16;
+        rgb.format      = AVIF_RGB_FORMAT_RGBA;
+        rgb.maxThreads  = std::min (64U, std::min ((UINT)si.dwNumberOfProcessors, (UINT)__popcnt64 (si.dwActiveProcessorMask)));
+        rgb.ignoreAlpha = true;
+        rgb.isFloat     = true;
 
-        meta.format    = DXGI_FORMAT_R16G16B16A16_FLOAT;
-        meta.width     = static_cast <size_t> (image.width);
-        meta.height    = static_cast <size_t> (image.height);
-        meta.depth     = 1;
-        meta.arraySize = 1;
-        meta.mipLevels = 1;
-        meta.dimension = DirectX::TEX_DIMENSION_TEXTURE2D;
+        SK_avifRGBImageAllocatePixels (                     &rgb);
+        SK_avifImageYUVToRGB          (avif_decoder->image, &rgb);
 
-        void*  pixels_buffer      = static_cast <void *>(temp_img.GetPixels ());
+        image.width    = static_cast <float> (rgb.width);
+        image.height   = static_cast <float> (rgb.height);
+
+        DirectX::ScratchImage temp_img;
+
+        if (SUCCEEDED (temp_img.Initialize2D (DXGI_FORMAT_R16G16B16A16_FLOAT, static_cast <size_t> (image.width),
+                                                                              static_cast <size_t> (image.height), 1, 1)))
+        {
+          using namespace DirectX;
+
+          image.channels = 3;
+          image.bpc      = bpc;
+
+          // XXX
+          image.light_info.isHDR = true;
+          image.is_hdr           = true;
+
+          succeeded      = true;
+
+          meta.format    = DXGI_FORMAT_R16G16B16A16_FLOAT;
+          meta.width     = static_cast <size_t> (image.width);
+          meta.height    = static_cast <size_t> (image.height);
+          meta.depth     = 1;
+          meta.arraySize = 1;
+          meta.mipLevels = 1;
+          meta.dimension = DirectX::TEX_DIMENSION_TEXTURE2D;
+
+          void*  pixels_buffer      = static_cast <void *>(temp_img.GetPixels ());
 
 #ifdef _DEBUG
-        size_t pixels_buffer_size = temp_img.GetPixelsSize ();
-        assert (pixels_buffer_size >= rgb.rowBytes * rgb.height);
+          size_t pixels_buffer_size = temp_img.GetPixelsSize ();
+          assert (pixels_buffer_size >= rgb.rowBytes * rgb.height);
 #endif
 
-        memcpy (pixels_buffer, rgb.pixels, rgb.rowBytes * rgb.height);
+          memcpy (pixels_buffer, rgb.pixels, rgb.rowBytes * rgb.height);
 
-        if ( SUCCEEDED ( TransformImage (*temp_img.GetImages (),
-              [&](      XMVECTOR* outPixels,
-                  const XMVECTOR* inPixels,
-                        size_t    width,
-                        size_t    y)
-              {
-                UNREFERENCED_PARAMETER(y);
-              
-                for (size_t j = 0; j < width; ++j)
+          if ( SUCCEEDED ( TransformImage (*temp_img.GetImages (),
+                [&](      XMVECTOR* outPixels,
+                    const XMVECTOR* inPixels,
+                          size_t    width,
+                          size_t    y)
                 {
-                  XMVECTOR v = inPixels [j];
+                  UNREFERENCED_PARAMETER(y);
+                
+                  for (size_t j = 0; j < width; ++j)
+                  {
+                    XMVECTOR v = inPixels [j];
 
-                  v =
-                    XMVector3Transform (SKIV_Image_PQToLinear (v), c_Bt2100toscRGB);
+                    v =
+                      XMVector3Transform (SKIV_Image_PQToLinear (v), c_Bt2100toscRGB);
 
-                  outPixels [j] = v;
-                }
-              }, img )
+                    outPixels [j] = v;
+                  }
+                }, img )
+              )
             )
-          )
-        {
-          temp_img.Release ();
+          {
+            temp_img.Release ();
+          }
         }
+
+        SK_avifRGBImageFreePixels     (                     &rgb);
       }
 
-      SK_avifRGBImageFreePixels     (                     &rgb);
+      SK_avifDecoderDestroy (avif_decoder);
     }
-
-    SK_avifDecoderDestroy (avif_decoder);
   }
 
   if (decoder == ImageDecoder_JXL)
