@@ -97,8 +97,11 @@
 #include <utility/droptarget.hpp>
 #include <plog/Log.h>
 
+// This is why copying and pasting code is BAD, the window class name is visible outside
+//   the application and used to continue referring to itself as SKIF, making it impossible
+//     to tell the difference between SKIF and SKIV!
 #ifdef SKIF_Win32
-constexpr const wchar_t* SKIF_ImGui_WindowClass = L"SKIF_ImGuiWindow";
+constexpr const wchar_t* SKIF_ImGui_WindowClass = L"SKIV_ImGuiWindow";
 constexpr const wchar_t* SKIF_ImGui_WindowTitle = L"Special K Popup"; // Default
 extern HWND SKIF_ImGui_hWnd;
 extern int  SKIF_nCmdShow;
