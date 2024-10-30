@@ -157,8 +157,8 @@ bool  HoverTipActive               = false;
 DWORD HoverTipDuration             = 0;
 
 // Notification icon stuff
-static const GUID SKIF_NOTIFY_GUID = // {8142287D-5BC6-4131-95CD-709A2613E1F5}
-{ 0x8142287d, 0x5bc6, 0x4131, { 0x95, 0xcd, 0x70, 0x9a, 0x26, 0x13, 0xe1, 0xf5 } };
+static const GUID SKIF_NOTIFY_GUID = // {8142287D-5BC6-4131-95CD-709A2613E1F4}
+{ 0x8142287d, 0x5bc6, 0x4131, { 0x95, 0xcd, 0x70, 0x9a, 0x26, 0x13, 0xe1, 0xf4 } };
 #define SKIF_NOTIFY_ICON                    0x1330 // 4912
 #define SKIF_NOTIFY_EXIT                    0x1331 // 4913
 #define SKIF_NOTIFY_OPEN                    0x1332 // 4914
@@ -1135,8 +1135,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
   }
 
   SKIF_Notify_hWnd      =
-    CreateWindowExW (                                            WS_EX_NOACTIVATE,
-      wcNotify.lpszClassName, _T("Special K Notification Icon"), WS_ICONIC,
+    CreateWindowExW (                                                  WS_EX_NOACTIVATE,
+      wcNotify.lpszClassName, _T("Special K Image Notification Icon"), WS_ICONIC,
                          0, 0,
                          0, 0,
                    nullptr, nullptr,
