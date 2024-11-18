@@ -2338,12 +2338,14 @@ SKIF_Util_SetClipboardData (const std::wstring_view& data)
 
   bool clipboard_open = false;
 
-  for (UINT i = 0 ; i < 5 ; ++i)
+  for (UINT i = 0 ; i < 20 ; ++i)
   {
     clipboard_open = OpenClipboard (SKIF_ImGui_hWnd);
   
-    if (! clipboard_open)
-      Sleep (2);
+    if (clipboard_open)
+      break;
+
+    Sleep (5);
   }
 
   if (clipboard_open)
