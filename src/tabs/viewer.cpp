@@ -1047,7 +1047,7 @@ LoadLibraryTexture (image_s& image)
              (type.mime_type == L"image/jpeg"                ) ?
                    (SKIV_Image_IsUltraHDR (imagePath.c_str ()) ? ImageDecoder_UHDR :
                                                                  SKIV_DEFAULT_GENERAL_PURPOSE_DECODER):
-             (type.mime_type == L"image/png"                 ) ? SKIV_DEFAULT_GENERAL_PURPOSE_DECODER : // Use WIC for proper color correction
+             (type.mime_type == L"image/png"                 ) ? ImageDecoder_stbi : // Use WIC for proper color correction
              (type.mime_type == L"image/bmp"                 ) ? SKIV_DEFAULT_GENERAL_PURPOSE_DECODER :
              (type.mime_type == L"image/vnd.adobe.photoshop" ) ? ImageDecoder_stbi : // Consider gamma broken, since stbi doesn't handle it correctly
              (type.mime_type == L"image/gif"                 ) ? SKIV_DEFAULT_GENERAL_PURPOSE_DECODER :
@@ -1139,8 +1139,11 @@ LoadLibraryTexture (image_s& image)
     SKIV_STBI_ResultInfo = { };
     SKIV_STBI_srgb       = false;
 
+// Stop using STB, it was convenient to parse a few of the chunks,
+//   but it cannot be used for anything else due to gamma issues.
+//#define HAS_WORKING_STB_GAMMA
 #define STBI_FLOAT
-#ifdef STBI_FLOAT
+#if defined (STBI_FLOAT) || !defined(HAS_WORKING_STB_GAMMA)
     // Check whether the image is a HDR image or not
     image.light_info.isHDR = stbi_is_hdr_from_file (pImageFile);
 
@@ -1178,7 +1181,7 @@ LoadLibraryTexture (image_s& image)
                                    stbi_loadf_from_memory (_scratchMemory.get (), static_cast <int> (_.getInitialSize ()), &width, &height, &channels_in_file, desired_channels);
     typedef float         pixel_size;
     DXGI_FORMAT           dxgi_format = DXGI_FORMAT::DXGI_FORMAT_R32G32B32A32_FLOAT;
-#else
+#ifndef STBI_FLOAT
     unsigned char*        pixels = stbi_load  (szPath.c_str(), &width, &height, &channels_in_file, desired_channels);
     typedef unsigned char pixel_size;
     constexpr DXGI_FORMAT dxgi_format = DXGI_FORMAT::DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -1196,6 +1199,7 @@ LoadLibraryTexture (image_s& image)
       decoder = ImageDecoder_WIC;
       PLOG_ERROR << "Using WIC decoder due to STB incorrectly handling sRGB";
     }
+#endif
 
     else
     {
@@ -1240,6 +1244,13 @@ LoadLibraryTexture (image_s& image)
       if ( dxgi_format == DXGI_FORMAT_R32G32B32A32_FLOAT ||
           (dxgi_format == DXGI_FORMAT_R16G16B16A16_FLOAT && image.is_hdr))
       {
+#ifndef HAS_WORKING_STB_GAMMA
+        if (! (dxgi_format == DXGI_FORMAT_R16G16B16A16_FLOAT && image.is_hdr))
+        {
+          decoder = ImageDecoder_WIC;
+          PLOG_ERROR << "Using WIC decoder due to STB incorrectly handling sRGB";
+        }
+#endif
         // Good grief this is inefficient, let's convert it to something reasonable...
         DirectX::ScratchImage raw_fp32_img;
 
@@ -1303,7 +1314,6 @@ LoadLibraryTexture (image_s& image)
             }
           }
         }
-
 
         if ((! converted) && SUCCEEDED (raw_fp32_img.Initialize2D (meta.format, width, height, 1, 1)))
         {
