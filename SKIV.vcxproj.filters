@@ -777,6 +777,9 @@
     <ClInclude Include="packages\openexr-msvc-x64.2.3.0.8788\build\native\include\OpenEXR\OpenEXRConfig.h">
       <Filter>Header Files\Image Libraries\OpenEXR</Filter>
     </ClInclude>
+    <ClInclude Include="include\MinHook.h">
+      <Filter>Header Files\Utility</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\imgui\imgui.cpp">
@@ -837,6 +840,21 @@
       <Filter>Source Files\Utility</Filter>
     </ClCompile>
     <ClCompile Include="src\utility\DirectXTexEXR.cpp">
+      <Filter>Source Files\Utility</Filter>
+    </ClCompile>
+    <ClCompile Include="src\MinHook\buffer.c">
+      <Filter>Source Files\Utility</Filter>
+    </ClCompile>
+    <ClCompile Include="src\MinHook\hook.c">
+      <Filter>Source Files\Utility</Filter>
+    </ClCompile>
+    <ClCompile Include="src\MinHook\trampoline.c">
+      <Filter>Source Files\Utility</Filter>
+    </ClCompile>
+    <ClCompile Include="src\MinHook\hde\hde32.c">
+      <Filter>Source Files\Utility</Filter>
+    </ClCompile>
+    <ClCompile Include="src\MinHook\hde\hde64.c">
       <Filter>Source Files\Utility</Filter>
     </ClCompile>
   </ItemGroup>

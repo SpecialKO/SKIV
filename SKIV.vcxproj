@@ -398,6 +398,7 @@
     <ClInclude Include="include\jxl\thread_parallel_runner.h" />
     <ClInclude Include="include\jxl\thread_parallel_runner_cxx.h" />
     <ClInclude Include="include\jxl\types.h" />
+    <ClInclude Include="include\MinHook.h" />
     <ClInclude Include="include\ultrahdr\editorhelper.h" />
     <ClInclude Include="include\ultrahdr\gainmapmath.h" />
     <ClInclude Include="include\ultrahdr\gainmapmetadata.h" />
@@ -620,6 +621,11 @@
     <ClCompile Include="src\imgui\imgui_impl_dx11.cpp" />
     <ClCompile Include="src\imgui\imgui_impl_win32.cpp" />
     <ClCompile Include="src\imgui\imgui_tables.cpp" />
+    <ClCompile Include="src\MinHook\buffer.c" />
+    <ClCompile Include="src\MinHook\hde\hde32.c" />
+    <ClCompile Include="src\MinHook\hde\hde64.c" />
+    <ClCompile Include="src\MinHook\hook.c" />
+    <ClCompile Include="src\MinHook\trampoline.c" />
     <ClCompile Include="src\utility\DirectXTexEXR.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
     </ClCompile>

@@ -1040,14 +1040,19 @@ SKIV_PNG_CopyToClipboard (const DirectX::Image& image, const void *pData, size_t
   wcscpy ((wchar_t*)&df [1], (const wchar_t *)pData);
 
   bool clipboard_open = false;
-  for (UINT i = 0 ; i < 20 ; ++i)
+
+  for (auto attempts = 0; attempts < 8; ++attempts)
   {
-    clipboard_open = OpenClipboard (SKIF_ImGui_hWnd);
-
-    if (clipboard_open)
+    if (attempts > 0)
+    {
+      Sleep (1 << (attempts - 1));
+    }
+    
+    if (OpenClipboard (SKIF_ImGui_hWnd))
+    {
+      clipboard_open = true;
       break;
-
-    Sleep (5);
+    }
   }
 
   if (clipboard_open)
@@ -1225,14 +1230,19 @@ using namespace DirectX;
       SelectObject     (hdcDst, hbmpDst);
 
       bool clipboard_open = false;
-      for (UINT i = 0 ; i < 20 ; ++i)
+
+      for (auto attempts = 0; attempts < 8; ++attempts)
       {
-        clipboard_open = OpenClipboard (SKIF_ImGui_hWnd);
-
-        if (clipboard_open)
+        if (attempts > 0)
+        {
+          Sleep (1 << (attempts - 1));
+        }
+        
+        if (OpenClipboard (SKIF_ImGui_hWnd))
+        {
+          clipboard_open = true;
           break;
-
-        Sleep (5);
+        }
       }
 
       if (clipboard_open)

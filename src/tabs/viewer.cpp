@@ -60,6 +60,8 @@
 
 #include <imgui/imgui_impl_dx11.h>
 
+#define SKIV_DEFAULT_GENERAL_PURPOSE_DECODER ImageDecoder_WIC
+//#define SKIV_DEFAULT_GENERAL_PURPOSE_DECODER ImageDecoder_stbi
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_WINDOWS_UTF8
 #define STBI_ONLY_JPEG
@@ -91,6 +93,7 @@
 ImRect copyRect = { 0,0,0,0 };
 bool wantCopyToClipboard = false;
 
+thread_local bool                  SKIV_STBI_srgb;
 thread_local stbi__context::cicp_s SKIV_STBI_CICP;
 thread_local stbi__context::sbit_s SKIV_STBI_SBIT;
 thread_local stbi__result_info     SKIV_STBI_ResultInfo;
@@ -1000,7 +1003,7 @@ LoadLibraryTexture (image_s& image)
   ImageDecoder decoder = ImageDecoder_None;
 
   if (ext == L".tga")
-    decoder = ImageDecoder_stbi;
+    decoder = SKIV_DEFAULT_GENERAL_PURPOSE_DECODER;
 
         FILE*          pImageFile = nullptr;
   const FileSignature* image_sig  = nullptr;
@@ -1043,11 +1046,11 @@ LoadLibraryTexture (image_s& image)
           decoder = 
              (type.mime_type == L"image/jpeg"                ) ?
                    (SKIV_Image_IsUltraHDR (imagePath.c_str ()) ? ImageDecoder_UHDR :
-                                                                 ImageDecoder_stbi):
-             (type.mime_type == L"image/png"                 ) ? ImageDecoder_stbi : // Use WIC for proper color correction
-             (type.mime_type == L"image/bmp"                 ) ? ImageDecoder_stbi :
-             (type.mime_type == L"image/vnd.adobe.photoshop" ) ? ImageDecoder_stbi :
-             (type.mime_type == L"image/gif"                 ) ? ImageDecoder_stbi :
+                                                                 SKIV_DEFAULT_GENERAL_PURPOSE_DECODER):
+             (type.mime_type == L"image/png"                 ) ? SKIV_DEFAULT_GENERAL_PURPOSE_DECODER : // Use WIC for proper color correction
+             (type.mime_type == L"image/bmp"                 ) ? SKIV_DEFAULT_GENERAL_PURPOSE_DECODER :
+             (type.mime_type == L"image/vnd.adobe.photoshop" ) ? ImageDecoder_stbi : // Consider gamma broken, since stbi doesn't handle it correctly
+             (type.mime_type == L"image/gif"                 ) ? SKIV_DEFAULT_GENERAL_PURPOSE_DECODER :
              (type.mime_type == L"image/vnd.radiance"        ) ? ImageDecoder_HDR  :
            //(type.mime_type == L"image/x-targa"             ) ? ImageDecoder_stbi : // TGA has no real unique header identifier, so just use the file extension on those
              (type.mime_type == L"image/vnd.ms-photo"        ) ? ImageDecoder_WIC  :
@@ -1134,6 +1137,7 @@ LoadLibraryTexture (image_s& image)
     SKIV_STBI_CICP       = { };
     SKIV_STBI_SBIT       = { };
     SKIV_STBI_ResultInfo = { };
+    SKIV_STBI_srgb       = false;
 
 #define STBI_FLOAT
 #ifdef STBI_FLOAT
@@ -1185,6 +1189,12 @@ LoadLibraryTexture (image_s& image)
     {
       decoder = ImageDecoder_WIC;
       PLOG_ERROR << "Using WIC decoder due to STB failing with: " << stbi_failure_reason();
+    }
+
+    else if (pixels != nullptr && SKIV_STBI_srgb)
+    {
+      decoder = ImageDecoder_WIC;
+      PLOG_ERROR << "Using WIC decoder due to STB incorrectly handling sRGB";
     }
 
     else

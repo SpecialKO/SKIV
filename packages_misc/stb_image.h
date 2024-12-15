@@ -5124,6 +5124,12 @@ static int stbi__parse_png_file(stbi__png *z, int scan, int req_comp)
             stbi__skip(s, c.length);
             break;
 
+         case STBI__PNG_TYPE ('s','R','G','B'):
+            extern thread_local bool SKIV_STBI_srgb;
+            SKIV_STBI_srgb = true;
+            stbi__skip(s, c.length);
+            break;
+
          //
          // SKIV modification for HDR
          //
