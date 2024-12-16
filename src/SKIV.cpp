@@ -2041,20 +2041,21 @@ wWinMain ( _In_     HINSTANCE hInstance,
         SKIF_ImGui_SetFullscreen (SKIF_ImGui_hWnd, false);
 
         // Put SKIV back in the correct Z-order
+        SetWindowPos (SKIF_ImGui_hWnd, HWND_NOTOPMOST,    0,0,0,0, SWP_NOSIZE|SWP_NOMOVE|SWP_NOACTIVATE);
         SetWindowPos (SKIF_ImGui_hWnd, hwndTopBeforeSnip, 0,0,0,0, SWP_NOSIZE|SWP_NOMOVE|SWP_NOACTIVATE);
 
         if (iconicBeforeSnip)
-          ShowWindow (SKIF_ImGui_hWnd, SW_MINIMIZE);
+          ShowWindow (SKIF_ImGui_hWnd, SW_SHOWMINNOACTIVE);
 
         if (trayedBeforeSnip)
         {
-          ShowWindow (SKIF_ImGui_hWnd, SW_MINIMIZE);
+          ShowWindow (SKIF_ImGui_hWnd, SW_SHOWMINNOACTIVE);
           SKIF_isTrayed = true;
         }
 
         else
         {
-          ShowWindow (SKIF_ImGui_hWnd, SW_SHOWNA);
+          ShowWindow (SKIF_ImGui_hWnd, SW_SHOWNOACTIVATE);
         }
 
         ImGui::GetIO ().MouseDown         [0] = false;
@@ -4110,11 +4111,13 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
           if (SKIF_isTrayed)
           {   SKIF_isTrayed = false;
-            ShowWindow (SKIF_ImGui_hWnd, SW_SHOW);
+            ShowWindow (SKIF_ImGui_hWnd, SW_SHOWNORMAL);
           }
 
           if (iconicBeforeSnip)
             ShowWindow (SKIF_ImGui_hWnd, SW_RESTORE);
+
+          SetWindowPos (SKIF_ImGui_hWnd, HWND_TOPMOST, 0,0,0,0, SWP_NOSIZE|SWP_NOMOVE|SWP_NOACTIVATE);
 
           HMONITOR monitor =
             MonitorFromPoint (capture_point, MONITOR_DEFAULTTONEAREST);
