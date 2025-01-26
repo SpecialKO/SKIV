@@ -2041,21 +2041,26 @@ wWinMain ( _In_     HINSTANCE hInstance,
         SKIF_ImGui_SetFullscreen (SKIF_ImGui_hWnd, false);
 
         // Put SKIV back in the correct Z-order
-        SetWindowPos (SKIF_ImGui_hWnd, HWND_NOTOPMOST,    0,0,0,0, SWP_NOSIZE|SWP_NOMOVE|SWP_NOACTIVATE);
-        SetWindowPos (SKIF_ImGui_hWnd, hwndTopBeforeSnip, 0,0,0,0, SWP_NOSIZE|SWP_NOMOVE|SWP_NOACTIVATE);
+        DWORD exStyle  = (DWORD)GetWindowLongPtrW (SKIF_ImGui_hWnd, GWL_EXSTYLE);
+              exStyle &= ~(WS_EX_NOACTIVATE | WS_EX_TOPMOST);
+        SetWindowLongPtrW (SKIF_ImGui_hWnd, GWL_EXSTYLE, exStyle);
+
+        SetWindowPos (SKIF_ImGui_hWnd, HWND_BOTTOM, 0,0,0,0, SWP_NOSIZE|SWP_NOMOVE|SWP_NOACTIVATE|SWP_ASYNCWINDOWPOS);
 
         if (iconicBeforeSnip)
-          ShowWindow (SKIF_ImGui_hWnd, SW_SHOWMINNOACTIVE);
+          ShowWindowAsync (SKIF_ImGui_hWnd, SW_SHOWMINNOACTIVE);
 
         if (trayedBeforeSnip)
         {
-          ShowWindow (SKIF_ImGui_hWnd, SW_SHOWMINNOACTIVE);
+          ShowWindowAsync (SKIF_ImGui_hWnd, SW_SHOWMINNOACTIVE);
           SKIF_isTrayed = true;
         }
 
         else
         {
-          ShowWindow (SKIF_ImGui_hWnd, SW_SHOWNOACTIVATE);
+          ShowWindowAsync (SKIF_ImGui_hWnd, SW_SHOWNOACTIVATE);
+          SetWindowPos    (SKIF_ImGui_hWnd, hwndTopBeforeSnip != SKIF_ImGui_hWnd ?
+                                            hwndTopBeforeSnip                    : HWND_TOP, 0,0,0,0, SWP_NOSIZE|SWP_NOMOVE|SWP_NOACTIVATE|SWP_ASYNCWINDOWPOS);
         }
 
         ImGui::GetIO ().MouseDown         [0] = false;
@@ -4103,7 +4108,7 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         // CaptureMode_Region
         else
         {
-          hwndTopBeforeSnip = GetWindow (SKIF_ImGui_hWnd, GW_HWNDNEXT);
+          hwndTopBeforeSnip = GetWindow (SKIF_ImGui_hWnd, GW_HWNDPREV);
 
           trayedBeforeSnip = SKIF_isTrayed;
           iconicBeforeSnip =

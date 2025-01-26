@@ -157,6 +157,7 @@ using avifDecoderReadMemory_pfn      = avifResult  (*)(avifDecoder*  decoder, av
 using avifImageCreate_pfn            = avifImage*  (*)(uint32_t width, uint32_t height, uint32_t depth, avifPixelFormat yuvFormat);
 using avifImageRGBToYUV_pfn          = avifResult  (*)(      avifImage* image, const avifRGBImage* rgb);
 using avifImageYUVToRGB_pfn          = avifResult  (*)(const avifImage* image,       avifRGBImage* rgb);
+using avifImageSetProfileICC_pfn     = avifResult  (*)(      avifImage* image, const uint8_t* icc, size_t iccSize);
 using avifImageDestroy_pfn           = void        (*)(      avifImage* image);
 
 using avifRGBImageAllocatePixels_pfn = avifResult  (*)(avifRGBImage* rgb);
