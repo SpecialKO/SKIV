@@ -3033,15 +3033,15 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
         SYSTEM_INFO     si = { };
         GetSystemInfo (&si);
 
-        encoder->quality         = _registry.avif.quality;
-        encoder->qualityAlpha    = _registry.avif.quality; // N/A?
+        encoder->quality         = std::clamp (_registry.avif.quality, AVIF_QUALITY_WORST, AVIF_QUALITY_BEST);
+        encoder->qualityAlpha    = std::clamp (_registry.avif.quality, AVIF_QUALITY_WORST, AVIF_QUALITY_BEST); // N/A?
         encoder->timescale       = 1;
         encoder->repetitionCount = AVIF_REPETITION_COUNT_INFINITE;
 #ifdef _M_X64
         encoder->maxThreads      = std::min (64U, std::min ((UINT)si.dwNumberOfProcessors, (UINT)__popcnt64 (si.dwActiveProcessorMask)));
 #endif
         encoder->minQuantizer    = AVIF_QUANTIZER_BEST_QUALITY;
-        encoder->maxQuantizer    = AVIF_QUANTIZER_BEST_QUALITY;
+        encoder->maxQuantizer    = AVIF_QUANTIZER_WORST_QUALITY;
         encoder->codecChoice     = AVIF_CODEC_CHOICE_AUTO;
         encoder->speed           = _registry.avif.speed;
 
