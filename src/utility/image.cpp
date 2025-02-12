@@ -3033,8 +3033,8 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
         SYSTEM_INFO     si = { };
         GetSystemInfo (&si);
 
-        encoder->quality         = std::clamp (_registry.avif.quality, AVIF_QUALITY_WORST, AVIF_QUALITY_BEST);
-        encoder->qualityAlpha    = std::clamp (_registry.avif.quality, AVIF_QUALITY_WORST, AVIF_QUALITY_BEST); // N/A?
+        encoder->quality         = _registry.avif.quality;
+        encoder->qualityAlpha    = _registry.avif.quality; // N/A?
         encoder->timescale       = 1;
         encoder->repetitionCount = AVIF_REPETITION_COUNT_INFINITE;
 #ifdef _M_X64
