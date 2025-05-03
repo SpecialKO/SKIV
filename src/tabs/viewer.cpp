@@ -1,5 +1,5 @@
 //
-// Copyright 2024 Andon "Kaldaien" Coleman
+// Copyright 2024-2025 Andon "Kaldaien" Coleman
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to
@@ -1047,7 +1047,8 @@ LoadLibraryTexture (image_s& image)
              (type.mime_type == L"image/jpeg"                ) ?
                    (SKIV_Image_IsUltraHDR (imagePath.c_str ()) ? ImageDecoder_UHDR :
                                                                  SKIV_DEFAULT_GENERAL_PURPOSE_DECODER):
-             (type.mime_type == L"image/png"                 ) ? ImageDecoder_stbi : // Use WIC for proper color correction
+           //(type.mime_type == L"image/png"                 ) ? ImageDecoder_stbi :
+             (type.mime_type == L"image/png"                 ) ? ImageDecoder_WIC  : // Use WIC for proper color correction and for decoding many PNG images that stbi cannot
              (type.mime_type == L"image/bmp"                 ) ? SKIV_DEFAULT_GENERAL_PURPOSE_DECODER :
              (type.mime_type == L"image/vnd.adobe.photoshop" ) ? ImageDecoder_stbi : // Consider gamma broken, since stbi doesn't handle it correctly
              (type.mime_type == L"image/gif"                 ) ? SKIV_DEFAULT_GENERAL_PURPOSE_DECODER :
