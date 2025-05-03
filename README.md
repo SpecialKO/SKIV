@@ -19,9 +19,10 @@ New versions will probably be distributed through their own packaged installer o
 
 ## Format support
 
+* Ultra HDR (.jpg)
+* AVIF* (.avif)
+* JPEG XL (.jxl)
 * JPEG XR (.jxr)
-* JPEG XL* (.jxl)
-* AVIF* (Windows 11 only)
 * OpenEXR (.exr)
 * Radiance HDR (.hdr)
 * PNG* (+ HDR support)
