@@ -63,10 +63,6 @@ jobs:
       run: |
         msbuild SKIV.sln -p:Configuration="Release" -p:Platform="x64" -m
 
-    - name: Build the codebase (32-bit)
-      run: |
-        msbuild SKIV.sln -p:Configuration="Release" -p:Platform="Win32" -m
-
     - name: Prepare environment variables for the artifact name
       run: |
         $Version = (Get-Item ".\Builds\SKIV*.exe").VersionInfo.ProductVersion | Select-Object -First 1
