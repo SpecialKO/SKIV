@@ -93,6 +93,7 @@
 ImRect copyRect = { 0,0,0,0 };
 bool wantCopyToClipboard = false;
 
+thread_local stbi__context::iccp_s SKIV_STBI_ICCP;
 thread_local bool                  SKIV_STBI_srgb;
 thread_local stbi__context::cicp_s SKIV_STBI_CICP;
 thread_local stbi__context::sbit_s SKIV_STBI_SBIT;
@@ -1047,8 +1048,8 @@ LoadLibraryTexture (image_s& image)
              (type.mime_type == L"image/jpeg"                ) ?
                    (SKIV_Image_IsUltraHDR (imagePath.c_str ()) ? ImageDecoder_UHDR :
                                                                  SKIV_DEFAULT_GENERAL_PURPOSE_DECODER):
-           //(type.mime_type == L"image/png"                 ) ? ImageDecoder_stbi :
-             (type.mime_type == L"image/png"                 ) ? ImageDecoder_WIC  : // Use WIC for proper color correction and for decoding many PNG images that stbi cannot
+             (type.mime_type == L"image/png"                 ) ? ImageDecoder_stbi :
+             //(type.mime_type == L"image/png"                 ) ? ImageDecoder_WIC  : // Use WIC for proper color correction and for decoding many PNG images that stbi cannot
              (type.mime_type == L"image/bmp"                 ) ? SKIV_DEFAULT_GENERAL_PURPOSE_DECODER :
              (type.mime_type == L"image/vnd.adobe.photoshop" ) ? ImageDecoder_stbi : // Consider gamma broken, since stbi doesn't handle it correctly
              (type.mime_type == L"image/gif"                 ) ? SKIV_DEFAULT_GENERAL_PURPOSE_DECODER :
@@ -1154,13 +1155,19 @@ LoadLibraryTexture (image_s& image)
     fread  (_scratchMemory.get (), _.getInitialSize (), 1, pImageFile);
     rewind (pImageFile);
 
+    bool cicp = false;
+
     if (image_sig->mime_type == L"image/png")
     {
+      SKIV_STBI_ICCP.iCCP = false;
+
       std::string_view     data_view ((const char *)_scratchMemory.get (), _.getInitialSize ());
       if (auto cicp_pos  = data_view.find ("cICP", 0, 4);
                cicp_pos != data_view.npos)
       {
         memcpy (&SKIV_STBI_CICP, &_scratchMemory.get ()[cicp_pos+4], 4);
+
+        cicp = true;
       }
 
       if (auto sbit_pos  = data_view.find ("sBIT", 0, 4);
@@ -1174,6 +1181,20 @@ LoadLibraryTexture (image_s& image)
 #endif
 
         memcpy (&SKIV_STBI_SBIT, &_scratchMemory.get ()[sbit_pos+4], std::min (4ul, size));
+      }
+
+      if (auto iccp_pos  = data_view.find ("iCCP", 0, 4);
+               iccp_pos != data_view.npos)
+      {
+        unsigned long size =
+          *((unsigned long *)&_scratchMemory.get ()[iccp_pos-4]);
+
+#if (defined _M_IX86) || (defined _M_X64)
+        size = _byteswap_ulong (size);
+#endif
+
+        SKIV_STBI_ICCP.iCCP = true;
+        //memcpy (&SKIV_STBI_SBIT, &_scratchMemory.get ()[iccp_pos+4], std::min (4ul, size));
       }
     }
 
@@ -1195,7 +1216,7 @@ LoadLibraryTexture (image_s& image)
       PLOG_ERROR << "Using WIC decoder due to STB failing with: " << stbi_failure_reason();
     }
 
-    else if (pixels != nullptr && SKIV_STBI_srgb)
+    else if (pixels != nullptr && SKIV_STBI_srgb && !cicp && !SKIV_STBI_ICCP.iCCP)
     {
       decoder = ImageDecoder_WIC;
       PLOG_ERROR << "Using WIC decoder due to STB incorrectly handling sRGB";
@@ -1214,9 +1235,19 @@ LoadLibraryTexture (image_s& image)
 
 #endif // _DEBUG
 
+      if (SKIV_STBI_ICCP.iCCP && SKIV_STBI_SBIT.red_bits <= 8)
+      {
+        SKIV_STBI_CICP.primaries     =  9;
+        SKIV_STBI_CICP.transfer_func = 16;
+        SKIV_STBI_CICP.matrix_coeffs =  0;
+      }
+
       if (SKIV_STBI_CICP.primaries != 0)
       {
-        dxgi_format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+        if (SKIV_STBI_SBIT.red_bits > 8)
+          dxgi_format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+        else
+          dxgi_format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
 
         assert (SKIV_STBI_CICP.primaries     ==  9); // BT 2020
         assert (SKIV_STBI_CICP.transfer_func == 16); // ST 2084
@@ -1242,11 +1273,13 @@ LoadLibraryTexture (image_s& image)
       meta.format    = dxgi_format; // STBI_rgb_alpha
       meta.dimension = DirectX::TEX_DIMENSION_TEXTURE2D;
 
-      if ( dxgi_format == DXGI_FORMAT_R32G32B32A32_FLOAT ||
-          (dxgi_format == DXGI_FORMAT_R16G16B16A16_FLOAT && image.is_hdr))
+      if ( dxgi_format == DXGI_FORMAT_R32G32B32A32_FLOAT  ||
+         ((dxgi_format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB ||
+           dxgi_format == DXGI_FORMAT_R16G16B16A16_FLOAT) && image.is_hdr))
       {
 #ifndef HAS_WORKING_STB_GAMMA
-        if (! (dxgi_format == DXGI_FORMAT_R16G16B16A16_FLOAT && image.is_hdr))
+        if (! ((dxgi_format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB ||
+                dxgi_format == DXGI_FORMAT_R16G16B16A16_FLOAT) && image.is_hdr))
         {
           decoder = ImageDecoder_WIC;
           PLOG_ERROR << "Using WIC decoder due to STB incorrectly handling sRGB";
@@ -1387,6 +1420,9 @@ LoadLibraryTexture (image_s& image)
       }
 
       stbi_image_free (pixels);
+
+      //decoder = ImageDecoder_WIC;
+      //PLOG_INFO << "Using WIC decoder";
     }
   }
 

@@ -831,6 +831,10 @@ typedef struct
      stbi_uc blue_bits;
      stbi_uc alpha_bits;
    };
+
+   struct iccp_s {
+     bool iCCP;
+   };
 } stbi__context;
 
 
