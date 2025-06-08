@@ -125,29 +125,30 @@ CComPtr <ID3D11ShaderResourceView>
 // Identify file type by reading the file signature
 const std::initializer_list<FileSignature> supported_formats =
 {
-  FileSignature { L"image/jpeg",                { L".jpg", L".jpeg" }, { 0xFF, 0xD8, 0x00, 0x00 },   // JPEG (SOI; Start of Image)
-                                                                       { 0xFF, 0xFF, 0x00, 0x00 } }, // JPEG App Markers are masked as they can be all over the place (e.g. 0xFF 0xD8 0xFF 0xED)
-  FileSignature { L"image/png",                 { L".png"  },          { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A } },
-  FileSignature { L"image/webp",                { L".webp" },          { 0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50 },   // 52 49 46 46 ?? ?? ?? ?? 57 45 42 50
-                                                                       { 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF } }, // mask
-  FileSignature { L"image/bmp",                 { L".bmp"  },          { 0x42, 0x4D } },
-  FileSignature { L"image/vnd.ms-photo",        { L".jxr", L".hdp"  }, { 0x49, 0x49, 0xBC } },
-  FileSignature { L"image/vnd.adobe.photoshop", { L".psd"  },          { 0x38, 0x42, 0x50, 0x53 } },
-  FileSignature { L"image/tiff",                { L".tiff", L".tif" }, { 0x49, 0x49, 0x2A, 0x00 } }, // TIFF: little-endian
-  FileSignature { L"image/tiff",                { L".tiff", L".tif" }, { 0x4D, 0x4D, 0x00, 0x2A } }, // TIFF: big-endian
-  FileSignature { L"image/gif",                 { L".gif"  },          { 0x47, 0x49, 0x46, 0x38, 0x37, 0x61 } }, // GIF87a
-  FileSignature { L"image/gif",                 { L".gif"  },          { 0x47, 0x49, 0x46, 0x38, 0x39, 0x61 } }, // GIF89a
-  FileSignature { L"image/vnd.radiance",        { L".hdr"  },          { 0x23, 0x3F, 0x52, 0x41, 0x44, 0x49, 0x41, 0x4E, 0x43, 0x45, 0x0A } }, // Radiance High Dynamic Range image file
+  FileSignature { L"image/jpeg",                { L".jpg", L".jpeg" },  { 0xFF, 0xD8, 0x00, 0x00 },   // JPEG (SOI; Start of Image)
+                                                                        { 0xFF, 0xFF, 0x00, 0x00 } }, // JPEG App Markers are masked as they can be all over the place (e.g. 0xFF 0xD8 0xFF 0xED)
+  FileSignature { L"image/png",                 { L".png"  },           { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A } },
+  FileSignature { L"image/webp",                { L".webp" },           { 0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50 },   // 52 49 46 46 ?? ?? ?? ?? 57 45 42 50
+                                                                        { 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF } }, // mask
+  FileSignature { L"image/bmp",                 { L".bmp"  },           { 0x42, 0x4D } },
+  FileSignature { L"image/vnd.ms-photo",        { L".jxr", L".hdp"  },  { 0x49, 0x49, 0xBC } },
+  FileSignature { L"image/vnd.adobe.photoshop", { L".psd"  },           { 0x38, 0x42, 0x50, 0x53 } },
+  FileSignature { L"image/tiff",                { L".tiff", L".tif" },  { 0x49, 0x49, 0x2A, 0x00 } }, // TIFF: little-endian
+  FileSignature { L"image/tiff",                { L".tiff", L".tif" },  { 0x4D, 0x4D, 0x00, 0x2A } }, // TIFF: big-endian
+  FileSignature { L"image/gif",                 { L".gif"  },           { 0x47, 0x49, 0x46, 0x38, 0x37, 0x61 } }, // GIF87a
+  FileSignature { L"image/gif",                 { L".gif"  },           { 0x47, 0x49, 0x46, 0x38, 0x39, 0x61 } }, // GIF89a
+  FileSignature { L"image/vnd.radiance",        { L".hdr"  },           { 0x23, 0x3F, 0x52, 0x41, 0x44, 0x49, 0x41, 0x4E, 0x43, 0x45, 0x0A } }, // Radiance High Dynamic Range image file
 #ifdef _M_X64
-  FileSignature { L"image/x-exr",               { L".exr"  },          { 0x76, 0x2F, 0x31, 0x01 } },
+  FileSignature { L"image/x-exr",               { L".exr"  },           { 0x76, 0x2F, 0x31, 0x01 } },
 #endif
-  FileSignature { L"image/avif",                { L".avif" },          { 0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x61, 0x76, 0x69, 0x66 },   // ftypavif
-
-                                                                       { 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF } }, // ?? ?? ?? ?? 66 74 79 70 61 76 69 66
-  FileSignature { L"image/jxl",                 { L".jxl"  },          { 0xFF, 0x0A } },                                                             // Naked
-  FileSignature { L"image/jxl",                 { L".jxl"  },          { 0x00, 0x00, 0x00, 0x0C, 0x4A, 0x58, 0x4C, 0x20, 0x0D, 0x0A, 0x87, 0x0A } }, // ISOBMFF-based container
-  FileSignature { L"image/vnd-ms.dds",          { L".dds"  },          { 0x44, 0x44, 0x53, 0x20 } },
-//FileSignature { L"image/x-targa",             { L".tga"  },          { 0x00, } }, // TGA has no real unique header identifier, so just use the file extension on those
+  FileSignature { L"image/heic",                { L".heic" },           { 0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63 },   // ftypheic
+                                                                        { 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF } }, // ?? ?? ?? ?? 66 74 79 70 68 65 69 63
+  FileSignature { L"image/avif",                { L".avif" },           { 0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x61, 0x76, 0x69, 0x66 },   // ftypavif
+                                                                        { 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF } }, // ?? ?? ?? ?? 66 74 79 70 61 76 69 66
+  FileSignature { L"image/jxl",                 { L".jxl"  },           { 0xFF, 0x0A } },                                                             // Naked
+  FileSignature { L"image/jxl",                 { L".jxl"  },           { 0x00, 0x00, 0x00, 0x0C, 0x4A, 0x58, 0x4C, 0x20, 0x0D, 0x0A, 0x87, 0x0A } }, // ISOBMFF-based container
+  FileSignature { L"image/vnd-ms.dds",          { L".dds"  },           { 0x44, 0x44, 0x53, 0x20 } },
+//FileSignature { L"image/x-targa",             { L".tga"  },           { 0x00, } }, // TGA has no real unique header identifier, so just use the file extension on those
 };
 
 const std::initializer_list<FileSignature> supported_sdr_encode_formats =
@@ -1058,6 +1059,8 @@ LoadLibraryTexture (image_s& image)
              (type.mime_type == L"image/vnd.ms-photo"        ) ? ImageDecoder_WIC  :
              (type.mime_type == L"image/webp"                ) ? ImageDecoder_WIC  :
              (type.mime_type == L"image/tiff"                ) ? ImageDecoder_WIC  :
+             (type.mime_type == L"image/heif"                ) ? ImageDecoder_WIC  :
+             (type.mime_type == L"image/heic"                ) ? ImageDecoder_WIC  :
              (type.mime_type == L"image/avif"                ) ? ImageDecoder_AVIF :
              (type.mime_type == L"image/jxl"                 ) ? ImageDecoder_JXL  :
              (type.mime_type == L"image/vnd-ms.dds"          ) ? ImageDecoder_DDS  :
