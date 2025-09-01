@@ -1667,28 +1667,115 @@ LoadLibraryTexture (image_s& image)
 
           memcpy (pixels_buffer, rgb.pixels, rgb.rowBytes * rgb.height);
 
-          if ( SUCCEEDED ( TransformImage (*temp_img.GetImages (),
-                [&](      XMVECTOR* outPixels,
-                    const XMVECTOR* inPixels,
-                          size_t    width,
-                          size_t    y)
-                {
-                  UNREFERENCED_PARAMETER(y);
-                
-                  for (size_t j = 0; j < width; ++j)
-                  {
-                    XMVECTOR v = inPixels [j];
-
-                    v =
-                      XMVector3Transform (SKIV_Image_PQToLinear (v), c_Bt2100toscRGB);
-
-                    outPixels [j] = v;
-                  }
-                }, img )
-              )
-            )
+          if (avif_decoder->image->transferCharacteristics != AVIF_TRANSFER_CHARACTERISTICS_PQ)
           {
-            temp_img.Release ();
+            ImGui::InsertNotification (
+              {
+                ImGuiToastType::Error,
+                15000,
+                "Unsupported AVIF Transfer Characteristics: %d",
+                avif_decoder->image->transferCharacteristics
+              }
+            );
+          }
+
+          if (avif_decoder->image->colorPrimaries == AVIF_COLOR_PRIMARIES_XYZ)
+          {
+            if ( SUCCEEDED ( TransformImage (*temp_img.GetImages (),
+                  [&](      XMVECTOR* outPixels,
+                      const XMVECTOR* inPixels,
+                            size_t    width,
+                            size_t    y)
+                  {
+                    UNREFERENCED_PARAMETER(y);
+                  
+                    for (size_t j = 0; j < width; ++j)
+                    {
+                      XMVECTOR v = inPixels [j];
+
+                      v =
+                        XMVectorScale (
+                          XMVector3Transform (SKIV_Image_PQToLinear (v), c_fromXYZto709), 125.0f
+                        );
+
+                      outPixels [j] = v;
+                    }
+                  }, img )
+                )
+              )
+            {
+              temp_img.Release ();
+            }
+          }
+
+          else if (avif_decoder->image->colorPrimaries == AVIF_COLOR_PRIMARIES_BT709 ||
+                   avif_decoder->image->colorPrimaries == AVIF_COLOR_PRIMARIES_SRGB)
+          {
+            if ( SUCCEEDED ( TransformImage (*temp_img.GetImages (),
+                  [&](      XMVECTOR* outPixels,
+                      const XMVECTOR* inPixels,
+                            size_t    width,
+                            size_t    y)
+                  {
+                    UNREFERENCED_PARAMETER(y);
+                  
+                    for (size_t j = 0; j < width; ++j)
+                    {
+                      XMVECTOR v = inPixels [j];
+
+                      v =
+                        XMVectorScale (
+                          SKIV_Image_PQToLinear (v), 125.0f
+                        );
+
+                      outPixels [j] = v;
+                    }
+                  }, img )
+                )
+              )
+            {
+              temp_img.Release ();
+            }
+          }
+
+          else
+          {
+            if (avif_decoder->image->colorPrimaries != AVIF_COLOR_PRIMARIES_BT2100 &&
+                avif_decoder->image->colorPrimaries != AVIF_COLOR_PRIMARIES_BT2020)
+            {
+              ImGui::InsertNotification (
+                {
+                  ImGuiToastType::Error,
+                  15000,
+                  "Unsupported AVIF Color Primaries: %d",
+                  avif_decoder->image->colorPrimaries
+                }
+              );
+            }
+
+            if ( SUCCEEDED ( TransformImage (*temp_img.GetImages (),
+                  [&](      XMVECTOR* outPixels,
+                      const XMVECTOR* inPixels,
+                            size_t    width,
+                            size_t    y)
+                  {
+                    UNREFERENCED_PARAMETER(y);
+                  
+                    for (size_t j = 0; j < width; ++j)
+                    {
+                      XMVECTOR v = inPixels [j];
+
+                      v =
+                        XMVector3Transform (SKIV_Image_PQToLinear (v), c_Bt2100toscRGB);
+
+                      outPixels [j] = v;
+                    }
+                  }, img )
+                )
+              )
+            {
+              temp_img.Release ();
+            }
           }
         }
 
