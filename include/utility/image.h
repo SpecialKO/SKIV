@@ -104,6 +104,14 @@ constexpr DirectX::XMMATRIX c_Bt2100toscRGB = // Transposed
   {                             0.0f,                              0.0f,                              0.0f, 1.0f }
 };
 
+constexpr DirectX::XMMATRIX c_from601to709 = // Transposed
+{
+  { 1.0000f,  0.0000f,  0.0000f,  0.0f },
+  { 0.0000f,  1.0000f,  0.0000f,  0.0f },
+  { 0.0000f,  0.0000f,  0.9184f,  0.0f },
+  { 0.0000f,  0.0000f,  0.0000f,  1.0f }
+};
+
 struct ParamsPQ
 {
   DirectX::XMVECTOR N,       M;
