@@ -40,6 +40,14 @@ constexpr DirectX::XMMATRIX c_from709toDCIP3 = // Transposed
   { 0.0f,                          0.0f,                          0.0f,                         1.0f }
 };
 
+constexpr DirectX::XMMATRIX c_fromDCIP3to709 = // Transposed inverse
+{
+  {  1.215661f,  -0.041757f,  -0.022841f,  0.0f },
+  { -0.223146f,   1.038042f,  -0.080108f,  0.0f },
+  {  0.0f,        0.0f,        1.098369f,  0.0f },
+  {  0.0f,        0.0f,        0.0f,       1.0f }
+};
+
 constexpr DirectX::XMMATRIX c_from709toAP0 = // Transposed
 {
   { 0.4339316189289093017578125f, 0.088618390262126922607421875f, 0.01775003969669342041015625f,  0.0f },
