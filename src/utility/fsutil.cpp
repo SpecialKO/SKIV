@@ -337,6 +337,7 @@ SKIF_CommonPathsCache::SKIF_CommonPathsCache (void)
 {
   // Cache user profile locations
   SKIF_GetFolderPath ( &my_documents       );
+  SKIF_GetFolderPath ( &my_pictures        );
   SKIF_GetFolderPath ( &app_data_local     );
   SKIF_GetFolderPath ( &app_data_local_low );
   SKIF_GetFolderPath ( &app_data_roaming   );

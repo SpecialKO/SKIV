@@ -53,6 +53,10 @@ struct SKIF_CommonPathsCache {
   {            FOLDERID_Documents,
     L"%USERPROFILE%\\My Documents"
   };
+  win_path_s my_pictures    =
+  {          FOLDERID_Pictures,
+    L"%USERPROFILE%\\My Documents\\My Pictures"
+  };
   win_path_s app_data_local     =
   {                  FOLDERID_LocalAppData,
     L"%USERPROFILE%\\AppData\\Local"
@@ -92,7 +96,9 @@ struct SKIF_CommonPathsCache {
   wchar_t skiv_install      [MAX_PATH + 2] = { }; // Holds the install folder for SKIV
   wchar_t skiv_userdata     [MAX_PATH + 2] = { }; // Holds the user data folder for SKIV
   wchar_t specialk_userdata [MAX_PATH + 2] = { }; // Holds the user data folder for SK (often lines up with its install folder)
-  wchar_t skiv_temp         [MAX_PATH + 2] = { }; // Holds the temp data folder for SKIV (images downloaded from the web; cleared out on every launch): %APPDATA%\TEMP\SKIV\
+  wchar_t skiv_temp         [MAX_PATH + 2] = { }; // Holds the temp data folder for SKIV (images downloaded from the web; cleared out on every launch): %APPDATA%\TEMP\SKIV
+  wchar_t skiv_screenshots  [MAX_PATH + 2] = { }; // Holds the screenshot folder for SKIV
+   char   skiv_screenshotsA [MAX_PATH + 2] = { }; // UTF-8
 
   
   // Functions
