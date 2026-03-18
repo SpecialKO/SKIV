@@ -134,6 +134,17 @@ static const ParamsPQ PQ =
 
 #pragma warning( pop )
 
+struct SKIV_Rect {
+  ImRect        _area;
+  std::wstring  _title;
+
+  SKIV_Rect (ImRect area = ImRect(), std::wstring title = L"")
+  {
+    _area  = area;
+    _title = title;
+  }
+};
+
 // Declarations
 DirectX::XMVECTOR SKIV_Image_PQToLinear    (DirectX::XMVECTOR N, DirectX::XMVECTOR maxPQValue = DirectX::g_XMOne);
 DirectX::XMVECTOR SKIV_Image_LinearToPQ    (DirectX::XMVECTOR N, DirectX::XMVECTOR maxPQValue = DirectX::g_XMOne);
@@ -141,11 +152,11 @@ float             SKIV_Image_LinearToPQY   (float N);
 DirectX::XMVECTOR SKIV_Image_Rec709toICtCp (DirectX::XMVECTOR N);
 DirectX::XMVECTOR SKIV_Image_ICtCptoRec709 (DirectX::XMVECTOR N);
 
-bool    SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool snipped, bool isHDR);
+bool    SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool isHDR, const wchar_t* wszFileName); // SKIV_Clipboard
 HRESULT SKIV_Image_SaveToDisk_HDR  (const DirectX::Image& image, const wchar_t* wszFileName);
 HRESULT SKIV_Image_SaveToDisk_SDR  (const DirectX::Image& image, const wchar_t* wszFileName, bool force_sRGB);
 HRESULT SKIV_Image_CaptureDesktop  (DirectX::ScratchImage& image, POINT pos, int flags = 0x0);
-void    SKIV_Image_CaptureRegion   (ImRect capture_area);
+void    SKIV_Image_CaptureRegion   (SKIV_Rect capture_area);
 HRESULT SKIV_Image_TonemapToSDR    (const DirectX::Image& image, DirectX::ScratchImage& final_sdr, float mastering_max_nits, float mastering_sdr_nits);
 
 bool    SKIV_Image_IsUltraHDR      (const wchar_t* wszFileName);

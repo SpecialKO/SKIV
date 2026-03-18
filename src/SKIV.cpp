@@ -79,6 +79,8 @@
 #include <html_coder.hpp>
 #include <utility/image.h>
 
+#include "psapi.h"
+
 const int SKIF_STEAM_APPID      = 1157970;
 bool  RecreateSwapChains        = false;
 bool  RecreateSwapChainsPending = false;
@@ -986,6 +988,15 @@ void SKIF_Initialize (LPWSTR lpCmdLine)
 
     FindClose (hFind);
   }
+
+  // Populate SKIV's default screenshot folder
+  const std::wstring screenshotsDir =
+    SKIF_Util_NormalizeFullPath (std::wstring (_path_cache.my_pictures.path) + LR"(\Special K\SKIV\)");
+
+  wcsncpy_s (_path_cache.skiv_screenshots, MAX_PATH,
+                              screenshotsDir.c_str(), _TRUNCATE);
+  strncpy_s (_path_cache.skiv_screenshotsA, MAX_PATH,
+    SK_WideCharToUTF8 (_path_cache.skiv_screenshots).data(), _TRUNCATE);
 }
 
 bool bKeepWindowAlive  = true,
@@ -1193,6 +1204,36 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
     // Always force registration for SKIV
     SKIF_Util_RegisterApp (true);
+  }
+
+  // Read screenshots folder from registry if populated
+  if (! _registry.wsPathScreenshots.empty())
+  {
+    if (_registry.wsPathScreenshots.back() != '\\')
+      _registry.wsPathScreenshots += '\\';
+
+    wcsncpy_s (_path_cache.skiv_screenshots, MAX_PATH,
+                _registry.wsPathScreenshots.c_str(), _TRUNCATE);
+    strncpy_s (_path_cache.skiv_screenshotsA, MAX_PATH,
+      SK_WideCharToUTF8 (_path_cache.skiv_screenshots).data(), _TRUNCATE);
+  }
+
+  // Create the folder for our screenshots (or fall back to skiv_temp if we cannot create it)
+  std::error_code ec;
+  if (! std::filesystem::exists               (_path_cache.skiv_screenshots, ec))
+  {
+    if (! std::filesystem::create_directories (_path_cache.skiv_screenshots, ec))
+    {
+      if (! std::filesystem::exists           (_path_cache.skiv_screenshots, ec))
+      {
+        wcsncpy_s (_path_cache.skiv_screenshots, MAX_PATH,
+                   _path_cache.skiv_temp, _TRUNCATE);
+        strncpy_s (_path_cache.skiv_screenshotsA, MAX_PATH,
+          SK_WideCharToUTF8 (_path_cache.skiv_screenshots).data(), _TRUNCATE);
+      }
+      else
+        PLOG_INFO << "Created screenshot folder: " << _path_cache.skiv_screenshots;
+    }
   }
 
   PLOG_INFO << "Creating notification icon...";
@@ -2087,7 +2128,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
         ImRect allowable (SKIV_DesktopImage._desktop_pos,
                           SKIV_DesktopImage._desktop_pos + resolution);
-        ImRect capture_area;
+        SKIV_Rect capture_area;
 
         bool HDR_Image = SKIV_DesktopImage._hdr_image;
         bool SKIV_HDR  = (HDR_Image ? SKIF_ImGui_IsViewportHDR (SKIF_ImGui_hWnd) : false);
@@ -2120,8 +2161,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
           draw_list->AddRectFilled (allowable.Min, allowable.Max, ImGui::GetColorU32 (IM_COL32 (0, 0, 0, 20)));
         }
 
-        static ImRect selection;
-        static ImRect selection_auto;
+        static SKIV_Rect selection      = SKIV_Rect (ImRect(), L"SKIV_Snip");
+        static SKIV_Rect selection_auto = SKIV_Rect (ImRect(), L"SKIV_Snip");
 
         if (GetForegroundWindow () != SKIF_ImGui_hWnd)
             SetForegroundWindow (     SKIF_ImGui_hWnd);
@@ -2169,8 +2210,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
           if (SKIV_DesktopImage._rotation == DXGI_MODE_ROTATION_ROTATE90 ||
               SKIV_DesktopImage._rotation == DXGI_MODE_ROTATION_ROTATE270)
           {
-            selection_auto.Min = ImVec2 (0.0f, 0.0f);
-            selection_auto.Max = ImVec2 (0.0f, 0.0f);
+            selection_auto._area.Min = ImVec2 (0.0f, 0.0f);
+            selection_auto._area.Max = ImVec2 (0.0f, 0.0f);
             return;
           }
 
@@ -2233,10 +2274,10 @@ wWinMain ( _In_     HINSTANCE hInstance,
                     }
                     */
 
-                    selection_auto.Min.x = static_cast<float> (rect.left);
-                    selection_auto.Min.y = static_cast<float> (rect.top);
-                    selection_auto.Max.x = static_cast<float> (rect.right);
-                    selection_auto.Max.y = static_cast<float> (rect.bottom);
+                    selection_auto._area.Min.x = static_cast<float> (rect.left);
+                    selection_auto._area.Min.y = static_cast<float> (rect.top);
+                    selection_auto._area.Max.x = static_cast<float> (rect.right);
+                    selection_auto._area.Max.y = static_cast<float> (rect.bottom);
 
                     /*
                     PLOG_VERBOSE << "----------------------";
@@ -2337,7 +2378,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
         if (! bHoveringSnipToolbar)
         {
-          if (! clicked && SKIF_ImGui_SelectionRect (&selection, allowable, 0, SelectionFlag_Filled))
+          if (! clicked && SKIF_ImGui_SelectionRect (&selection._area, allowable, 0, SelectionFlag_Filled))
           {
             _registry._SnippingModeExit = true;
             capture_area = selection;
@@ -2348,7 +2389,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
             _GetRectBelowCursor ( );
 
             // Keep the selection within the allowed rectangle
-            selection_auto.ClipWithFull (allowable);
+            selection_auto._area.ClipWithFull (allowable);
 
             if (ImGui::IsMouseClicked (ImGuiMouseButton_Left))
               clicked = true;
@@ -2360,20 +2401,20 @@ wWinMain ( _In_     HINSTANCE hInstance,
               capture_area = selection_auto;
             }
 
-            else if (selection_auto.Min != selection_auto.Max)
+            else if (selection_auto._area.Min != selection_auto._area.Max)
             {
               ImDrawList* draw_list =
                 ImGui::GetForegroundDrawList ();
 
-              draw_list->AddRect       (selection_auto.Min, selection_auto.Max, ImGui::GetColorU32 (IM_COL32(0,130,216,255)), 0.0f, 0, 5.0f); // Border
-            //draw_list->AddRectFilled (selection_auto.Min, selection_auto.Max, ImGui::GetColorU32 (IM_COL32(0,130,216,50)));                 // Background
+              draw_list->AddRect       (selection_auto._area.Min, selection_auto._area.Max, ImGui::GetColorU32 (IM_COL32(0,130,216,255)), 0.0f, 0, 5.0f); // Border
+            //draw_list->AddRectFilled (selection_auto._area.Min, selection_auto._area.Max, ImGui::GetColorU32 (IM_COL32(0,130,216,50)));                 // Background
             }
           }
 
           else
             clicked = false;
 
-          if (capture_area.GetArea() != 0)
+          if (capture_area._area.GetArea() != 0)
           {
             ignoredWindows.clear();
 
@@ -4034,8 +4075,9 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
       extern HWND hwndBeforeSnip;
       hwndBeforeSnip = GetForegroundWindow ();
 
-      POINT capture_point = { };
-      RECT  capture_rect  = { };
+      POINT capture_point        = { };
+      RECT  capture_rect         = { };
+      std::wstring filename_base = L"";
 
       if (mode == CaptureMode_Window)
       {
@@ -4060,6 +4102,42 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
           capture_rect.right  = std::min (capture_rect.right,  minfo.rcMonitor.right);
           capture_rect.bottom = std::min (capture_rect.bottom, minfo.rcMonitor.bottom);
+
+          // Window title, if retrievable (limited to 60 characters)
+          wchar_t buffer[60];
+          if (GetWindowTextW (hwndBeforeSnip, buffer, 60) > 0)
+          {
+            filename_base = std::wstring(buffer);
+          }
+
+          // Process name
+          else {
+            DWORD dwProcessId = 0;
+            if (GetWindowThreadProcessId (hwndBeforeSnip, &dwProcessId))
+            {
+              HANDLE hProcess = OpenProcess (PROCESS_QUERY_LIMITED_INFORMATION, FALSE, dwProcessId);
+
+              if (hProcess != NULL)
+              {
+                wchar_t                             wszProcessName [MAX_PATH + 2] = { };
+                GetProcessImageFileNameW (hProcess, wszProcessName, MAX_PATH);
+                PathStripPathW (wszProcessName);
+
+                std::wstring wsProcessName = std::wstring(wszProcessName);
+
+                // Strip all null terminator \0 characters from the string
+                wsProcessName.erase (std::find(wsProcessName.begin(), wsProcessName.end(), '\0'), wsProcessName.end());
+
+                if (wsProcessName.size() > 0)
+                {
+                  filename_base = wsProcessName;
+                }
+                else {
+                  filename_base = L"";
+                }
+              }
+            }
+          }
         }
       }
 
@@ -4074,6 +4152,9 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
       {
         PLOG_VERBOSE << "Capture was successful!";
 
+        // Strip all null terminator \0 characters from the string
+        filename_base.erase (std::find(filename_base.begin(), filename_base.end(), '\0'), filename_base.end());
+
         extern HWND hwndTopBeforeSnip;
         extern bool iconicBeforeSnip;
         extern bool trayedBeforeSnip;
@@ -4082,10 +4163,13 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
         if (mode == CaptureMode_Window)
         {
-          const ImRect area = ImRect (static_cast<float> (capture_rect.left  ),
-                                      static_cast<float> (capture_rect.top   ),
-                                      static_cast<float> (capture_rect.right ),
-                                      static_cast<float> (capture_rect.bottom)
+          const SKIV_Rect rect =
+                SKIV_Rect (
+                  ImRect (static_cast<float> (capture_rect.left  ),
+                          static_cast<float> (capture_rect.top   ),
+                          static_cast<float> (capture_rect.right ),
+                          static_cast<float> (capture_rect.bottom)),
+                  filename_base
           );
 
           //PLOG_VERBOSE << "capture_rect.left  : " << capture_rect.left;
@@ -4093,15 +4177,15 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
           //PLOG_VERBOSE << "capture_rect.right : " << capture_rect.right;
           //PLOG_VERBOSE << "capture_rect.bottom: " << capture_rect.bottom;
 
-          SKIV_Image_CaptureRegion (area);
+          SKIV_Image_CaptureRegion (rect);
           _registry._SnippingMode = false;
         }
 
         else if (mode == CaptureMode_Screen)
         {
           extern skiv_image_desktop_s SKIV_DesktopImage;
-          const ImRect area = ImRect (ImVec2 (0, 0), SKIV_DesktopImage._resolution);
-          SKIV_Image_CaptureRegion (area);
+          const SKIV_Rect rect = SKIV_Rect (ImRect (ImVec2 (0, 0), SKIV_DesktopImage._resolution));
+          SKIV_Image_CaptureRegion (rect);
           _registry._SnippingMode = false;
         }
 

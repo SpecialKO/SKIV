@@ -2725,7 +2725,7 @@ SKIF_UI_Tab_DrawViewer (void)
                   SUCCEEDED (DirectX::CopyRectangle (*captured_img.GetImages   (), src_rect,
                                                                                    *subrect.GetImages (), DirectX::TEX_FILTER_DEFAULT, 0, 0)))
               {
-                if (SKIV_Image_CopyToClipboard (subrect.GetImages (), true, cover.is_hdr))
+                if (SKIV_Image_CopyToClipboard (subrect.GetImages (), cover.is_hdr, L"SKIV_Snip"))
                 {
                   ImGui::InsertNotification (
                     {
@@ -2760,7 +2760,7 @@ SKIF_UI_Tab_DrawViewer (void)
 
             else
             {
-              if (SKIV_Image_CopyToClipboard (captured_img.GetImages (), false, cover.is_hdr))
+              if (SKIV_Image_CopyToClipboard (captured_img.GetImages (), cover.is_hdr, L"SKIV_Clipboard"))
               {
                 ImGui::InsertNotification (
                   {
