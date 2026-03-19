@@ -2161,8 +2161,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
           draw_list->AddRectFilled (allowable.Min, allowable.Max, ImGui::GetColorU32 (IM_COL32 (0, 0, 0, 20)));
         }
 
-        static SKIV_Rect selection      = SKIV_Rect (ImRect(), L"SKIV_Snip");
-        static SKIV_Rect selection_auto = SKIV_Rect (ImRect(), L"SKIV_Snip");
+        static SKIV_Rect selection      = SKIV_Rect (ImRect(), L"Desktop");
+        static SKIV_Rect selection_auto = SKIV_Rect (ImRect(), L"Desktop");
 
         if (GetForegroundWindow () != SKIF_ImGui_hWnd)
             SetForegroundWindow (     SKIF_ImGui_hWnd);
@@ -4077,7 +4077,7 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
       POINT capture_point        = { };
       RECT  capture_rect         = { };
-      std::wstring filename_base = L"";
+      std::wstring filename_base = L"Display";
 
       if (mode == CaptureMode_Window)
       {
@@ -4184,7 +4184,13 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         else if (mode == CaptureMode_Screen)
         {
           extern skiv_image_desktop_s SKIV_DesktopImage;
-          const SKIV_Rect rect = SKIV_Rect (ImRect (ImVec2 (0, 0), SKIV_DesktopImage._resolution));
+          const SKIV_Rect rect =
+                SKIV_Rect (
+                  ImRect (ImVec2 (0, 0),
+                          SKIV_DesktopImage._resolution),
+                  L"Display"
+          );
+
           SKIV_Image_CaptureRegion (rect);
           _registry._SnippingMode = false;
         }
