@@ -415,7 +415,7 @@ bool                   iconicBeforeSnip  = false;
 bool                   trayedBeforeSnip  = false;
 HWND                   hwndBeforeSnip    =  0;
 HWND                   hwndTopBeforeSnip =  0; // Window above SKIV in z-order
-ImRect                 selection_rect    = { };
+//ImRect               selection_rect    = { };
 
 bool                   coverRefresh      = false; // This just triggers a refresh of the cover
 std::wstring           coverRefreshPath  = L"";
@@ -2725,7 +2725,7 @@ SKIF_UI_Tab_DrawViewer (void)
                   SUCCEEDED (DirectX::CopyRectangle (*captured_img.GetImages   (), src_rect,
                                                                                    *subrect.GetImages (), DirectX::TEX_FILTER_DEFAULT, 0, 0)))
               {
-                if (SKIV_Image_CopyToClipboard (subrect.GetImages (), cover.is_hdr, L"Desktop"))
+                if (SKIV_Image_CopyToClipboard (subrect.GetImages (), cover.is_hdr, true, L"cp_rect"))
                 {
                   ImGui::InsertNotification (
                     {
@@ -2760,7 +2760,7 @@ SKIF_UI_Tab_DrawViewer (void)
 
             else
             {
-              if (SKIV_Image_CopyToClipboard (captured_img.GetImages (), cover.is_hdr, L"SKIV_Clipboard"))
+              if (SKIV_Image_CopyToClipboard (captured_img.GetImages (), cover.is_hdr, true, L"cp_full"))
               {
                 ImGui::InsertNotification (
                   {
@@ -3304,6 +3304,8 @@ SKIF_UI_Tab_DrawViewer (void)
         ImGui::InsertNotification (toast);
     }
 
+    static ImRect selection_rect = ImRect ();
+
     if ((io.KeyCtrl && SKIF_ImGui_SelectionRect (&selection_rect, image_rect)))
     {
       // Flip an inverted rectangle
@@ -3337,7 +3339,8 @@ SKIF_UI_Tab_DrawViewer (void)
         }
       );
       */
-
+      
+      selection_rect = ImRect (); // Reset
       wantCopyToClipboard = true;
       copyRect            = translated;
     }
