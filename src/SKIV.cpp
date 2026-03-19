@@ -79,6 +79,8 @@
 #include <html_coder.hpp>
 #include <utility/image.h>
 
+#include "psapi.h"
+
 const int SKIF_STEAM_APPID      = 1157970;
 bool  RecreateSwapChains        = false;
 bool  RecreateSwapChainsPending = false;
@@ -986,6 +988,54 @@ void SKIF_Initialize (LPWSTR lpCmdLine)
 
     FindClose (hFind);
   }
+
+  // Populate SKIV's default screenshot folder
+  const std::wstring screenshotsDir =
+    SKIF_Util_NormalizeFullPath (std::wstring (_path_cache.my_pictures.path) + LR"(\Special K\SKIV\)");
+
+  wcsncpy_s (_path_cache.skiv_screenshots, MAX_PATH,
+                              screenshotsDir.c_str(), _TRUNCATE);
+  strncpy_s (_path_cache.skiv_screenshotsA, MAX_PATH,
+    SK_WideCharToUTF8 (_path_cache.skiv_screenshots).data(), _TRUNCATE);
+}
+
+static
+std::wstring
+SKIV_GetBaseFilename (HWND hWnd)
+{
+  // Limit window title / process name to 60 characters
+  const size_t len = MAX_PATH + 2;
+  wchar_t wszFilename [len] = { };
+
+  // Window title, if retrievable, else process name
+  if (GetWindowTextW (hWnd, wszFilename, len) == 0)
+  {
+    // Process name
+    DWORD dwProcessId = 0;
+    if (GetWindowThreadProcessId (hWnd, &dwProcessId))
+    {
+      HANDLE hProcess = OpenProcess (PROCESS_QUERY_LIMITED_INFORMATION, FALSE, dwProcessId);
+
+      if (hProcess != NULL)
+      {
+        GetProcessImageFileNameW (hProcess, wszFilename, MAX_PATH);
+        PathStripPathW                     (wszFilename);
+        PathRemoveExtensionW               (wszFilename);
+      }
+    }
+  }
+
+  std::wstring wsFilename = std::wstring (wszFilename);
+
+  // Strip all null terminator \0 characters from the string
+  wsFilename.erase (std::find(wsFilename.begin(), wsFilename.end(), '\0'), wsFilename.end());
+
+  if (wsFilename.size() > 60)
+    wsFilename = wsFilename.substr(0, 60);
+  else if (wsFilename.empty())
+    wsFilename = L"explorer";
+
+  return wsFilename;
 }
 
 bool bKeepWindowAlive  = true,
@@ -1193,6 +1243,36 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
     // Always force registration for SKIV
     SKIF_Util_RegisterApp (true);
+  }
+
+  // Read screenshots folder from registry if populated
+  if (! _registry.wsPathScreenshots.empty())
+  {
+    if (_registry.wsPathScreenshots.back() != '\\')
+      _registry.wsPathScreenshots += '\\';
+
+    wcsncpy_s (_path_cache.skiv_screenshots, MAX_PATH,
+                _registry.wsPathScreenshots.c_str(), _TRUNCATE);
+    strncpy_s (_path_cache.skiv_screenshotsA, MAX_PATH,
+      SK_WideCharToUTF8 (_path_cache.skiv_screenshots).data(), _TRUNCATE);
+  }
+
+  // Create the folder for our screenshots (or fall back to skiv_temp if we cannot create it)
+  std::error_code ec;
+  if (! std::filesystem::exists               (_path_cache.skiv_screenshots, ec))
+  {
+    if (! std::filesystem::create_directories (_path_cache.skiv_screenshots, ec))
+    {
+      if (! std::filesystem::exists           (_path_cache.skiv_screenshots, ec))
+      {
+        wcsncpy_s (_path_cache.skiv_screenshots, MAX_PATH,
+                   _path_cache.skiv_temp, _TRUNCATE);
+        strncpy_s (_path_cache.skiv_screenshotsA, MAX_PATH,
+          SK_WideCharToUTF8 (_path_cache.skiv_screenshots).data(), _TRUNCATE);
+      }
+      else
+        PLOG_INFO << "Created screenshot folder: " << _path_cache.skiv_screenshots;
+    }
   }
 
   PLOG_INFO << "Creating notification icon...";
@@ -2087,7 +2167,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
         ImRect allowable (SKIV_DesktopImage._desktop_pos,
                           SKIV_DesktopImage._desktop_pos + resolution);
-        ImRect capture_area;
+        SKIV_Region capture_area;
 
         bool HDR_Image = SKIV_DesktopImage._hdr_image;
         bool SKIV_HDR  = (HDR_Image ? SKIF_ImGui_IsViewportHDR (SKIF_ImGui_hWnd) : false);
@@ -2120,8 +2200,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
           draw_list->AddRectFilled (allowable.Min, allowable.Max, ImGui::GetColorU32 (IM_COL32 (0, 0, 0, 20)));
         }
 
-        static ImRect selection;
-        static ImRect selection_auto;
+        static SKIV_Region selection      = SKIV_Region (ImRect(), L"Desktop_Region");
+        static SKIV_Region selection_auto = SKIV_Region (ImRect(), L"Desktop_Auto");
 
         if (GetForegroundWindow () != SKIF_ImGui_hWnd)
             SetForegroundWindow (     SKIF_ImGui_hWnd);
@@ -2162,15 +2242,18 @@ wWinMain ( _In_     HINSTANCE hInstance,
           return false;
         };
 
-        auto _GetRectBelowCursor = [&](void) -> void
+        auto _GetRectBelowCursor = [&](SKIV_Region* _region, bool isAutoSelection) -> void
         {
           // This feature is unsupported on rotated displays
           //
           if (SKIV_DesktopImage._rotation == DXGI_MODE_ROTATION_ROTATE90 ||
               SKIV_DesktopImage._rotation == DXGI_MODE_ROTATION_ROTATE270)
           {
-            selection_auto.Min = ImVec2 (0.0f, 0.0f);
-            selection_auto.Max = ImVec2 (0.0f, 0.0f);
+            if (isAutoSelection)
+            {
+              _region->_rect.Min = ImVec2 (0.0f, 0.0f);
+              _region->_rect.Max = ImVec2 (0.0f, 0.0f);
+            }
             return;
           }
 
@@ -2232,11 +2315,16 @@ wWinMain ( _In_     HINSTANCE hInstance,
                         break;
                     }
                     */
+                    
+                    if (isAutoSelection)
+                    {
+                      _region->_rect.Min.x = static_cast<float> (rect.left);
+                      _region->_rect.Min.y = static_cast<float> (rect.top);
+                      _region->_rect.Max.x = static_cast<float> (rect.right);
+                      _region->_rect.Max.y = static_cast<float> (rect.bottom);
+                    }
 
-                    selection_auto.Min.x = static_cast<float> (rect.left);
-                    selection_auto.Min.y = static_cast<float> (rect.top);
-                    selection_auto.Max.x = static_cast<float> (rect.right);
-                    selection_auto.Max.y = static_cast<float> (rect.bottom);
+                    _region->_title = SKIV_GetBaseFilename (hWnd);
 
                     /*
                     PLOG_VERBOSE << "----------------------";
@@ -2245,8 +2333,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
                     if (RealGetWindowClassW (top_most,  wszRealWindowClass, 64))
                     PLOG_VERBOSE << "Class: " << wszRealWindowClass;
                     PLOG_VERBOSE << "Pos:   " << point.x << "," << point.y;
-                    PLOG_VERBOSE << "Min:   " << selection_auto.Min.x << "," << selection_auto.Min.y;
-                    PLOG_VERBOSE << "Max:   " << selection_auto.Max.x << "," << selection_auto.Max.y;
+                    PLOG_VERBOSE << "Min:   " << _region.Min.x << "," << _region.Min.y;
+                    PLOG_VERBOSE << "Max:   " << _region.Max.x << "," << _region.Max.y;
                     */
 
                     breakLoop = true;
@@ -2337,18 +2425,19 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
         if (! bHoveringSnipToolbar)
         {
-          if (! clicked && SKIF_ImGui_SelectionRect (&selection, allowable, 0, SelectionFlag_Filled))
+          if (! clicked && SKIF_ImGui_SelectionRect (&selection._rect, allowable, 0, SelectionFlag_Filled))
           {
             _registry._SnippingModeExit = true;
+            _GetRectBelowCursor (&selection, false);
             capture_area = selection;
           }
 
           else if (! ImGui::IsMouseDragging (ImGuiMouseButton_Left))
           {
-            _GetRectBelowCursor ( );
+            _GetRectBelowCursor (&selection_auto, true);
 
             // Keep the selection within the allowed rectangle
-            selection_auto.ClipWithFull (allowable);
+            selection_auto._rect.ClipWithFull (allowable);
 
             if (ImGui::IsMouseClicked (ImGuiMouseButton_Left))
               clicked = true;
@@ -2360,20 +2449,20 @@ wWinMain ( _In_     HINSTANCE hInstance,
               capture_area = selection_auto;
             }
 
-            else if (selection_auto.Min != selection_auto.Max)
+            else if (selection_auto._rect.Min != selection_auto._rect.Max)
             {
               ImDrawList* draw_list =
                 ImGui::GetForegroundDrawList ();
 
-              draw_list->AddRect       (selection_auto.Min, selection_auto.Max, ImGui::GetColorU32 (IM_COL32(0,130,216,255)), 0.0f, 0, 5.0f); // Border
-            //draw_list->AddRectFilled (selection_auto.Min, selection_auto.Max, ImGui::GetColorU32 (IM_COL32(0,130,216,50)));                 // Background
+              draw_list->AddRect       (selection_auto._rect.Min, selection_auto._rect.Max, ImGui::GetColorU32 (IM_COL32(0,130,216,255)), 0.0f, 0, 5.0f); // Border
+            //draw_list->AddRectFilled (selection_auto._rect.Min, selection_auto._rect.Max, ImGui::GetColorU32 (IM_COL32(0,130,216,50)));                 // Background
             }
           }
 
           else
             clicked = false;
 
-          if (capture_area.GetArea() != 0)
+          if (capture_area._rect.GetArea() != 0)
           {
             ignoredWindows.clear();
 
@@ -4034,8 +4123,9 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
       extern HWND hwndBeforeSnip;
       hwndBeforeSnip = GetForegroundWindow ();
 
-      POINT capture_point = { };
-      RECT  capture_rect  = { };
+      POINT capture_point        = { };
+      RECT  capture_rect         = { };
+      std::wstring filename = L"Display";
 
       if (mode == CaptureMode_Window)
       {
@@ -4060,11 +4150,17 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
           capture_rect.right  = std::min (capture_rect.right,  minfo.rcMonitor.right);
           capture_rect.bottom = std::min (capture_rect.bottom, minfo.rcMonitor.bottom);
+
+          filename = SKIV_GetBaseFilename (hwndBeforeSnip);
         }
       }
 
       else
+      {
         GetCursorPos (&capture_point);
+        HWND hWndBelowCursor = WindowFromPoint (capture_point);
+        filename = SKIV_GetBaseFilename (hWndBelowCursor);
+      }
 
       DirectX::ScratchImage captured_img;
       HRESULT hr =
@@ -4078,14 +4174,17 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         extern bool iconicBeforeSnip;
         extern bool trayedBeforeSnip;
 
-        extern ImRect selection_rect;
+      //extern ImRect selection_rect;
 
         if (mode == CaptureMode_Window)
         {
-          const ImRect area = ImRect (static_cast<float> (capture_rect.left  ),
-                                      static_cast<float> (capture_rect.top   ),
-                                      static_cast<float> (capture_rect.right ),
-                                      static_cast<float> (capture_rect.bottom)
+          const SKIV_Region region =
+                SKIV_Region (
+                  ImRect (static_cast<float> (capture_rect.left  ),
+                          static_cast<float> (capture_rect.top   ),
+                          static_cast<float> (capture_rect.right ),
+                          static_cast<float> (capture_rect.bottom)),
+                  filename
           );
 
           //PLOG_VERBOSE << "capture_rect.left  : " << capture_rect.left;
@@ -4093,15 +4192,21 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
           //PLOG_VERBOSE << "capture_rect.right : " << capture_rect.right;
           //PLOG_VERBOSE << "capture_rect.bottom: " << capture_rect.bottom;
 
-          SKIV_Image_CaptureRegion (area);
+          SKIV_Image_CaptureRegion (region);
           _registry._SnippingMode = false;
         }
 
         else if (mode == CaptureMode_Screen)
         {
           extern skiv_image_desktop_s SKIV_DesktopImage;
-          const ImRect area = ImRect (ImVec2 (0, 0), SKIV_DesktopImage._resolution);
-          SKIV_Image_CaptureRegion (area);
+          const SKIV_Region region =
+                SKIV_Region (
+                  ImRect (ImVec2 (0, 0),
+                          SKIV_DesktopImage._resolution),
+                  filename
+          );
+
+          SKIV_Image_CaptureRegion (region);
           _registry._SnippingMode = false;
         }
 
@@ -4130,8 +4235,8 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
           SKIF_ImGui_SetFullscreen (SKIF_ImGui_hWnd, true, monitor);
           UpdateWindow             (SKIF_ImGui_hWnd);
 
-          selection_rect.Min = ImVec2 (0.0f, 0.0f);
-          selection_rect.Max = ImVec2 (0.0f, 0.0f);
+        //selection_rect.Min = ImVec2 (0.0f, 0.0f);
+        //selection_rect.Max = ImVec2 (0.0f, 0.0f);
 
           ImGui::GetIO ().MouseDown         [0] = false;
           ImGui::GetIO ().MouseDownDuration [0] = -1.0f;

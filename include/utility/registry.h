@@ -265,6 +265,10 @@ struct SKIF_RegistrySettings {
     SKIF_MakeRegKeyB ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(99th Percentile MaxCLL)" );
 
+  KeyValue <bool> regKVSaveScreenshots =
+    SKIF_MakeRegKeyB ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(Save Screenshots)" );
+
   // Integers (DWORDs)
 
   KeyValue <int> regKVImageScaling =
@@ -356,6 +360,10 @@ struct SKIF_RegistrySettings {
   KeyValue <std::wstring> regKVPathViewer =
     SKIF_MakeRegKeyWS ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(Path)" );
+
+  KeyValue <std::wstring> regKVPathScreenshots =
+    SKIF_MakeRegKeyWS ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(Screenshots)" );
 
   KeyValue <std::wstring> regKVAutoUpdateVersion =
     SKIF_MakeRegKeyWS ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
@@ -451,11 +459,13 @@ struct SKIF_RegistrySettings {
   bool bFadeCovers              =  true;
   bool bControllers             =  true; // Should SKIF support controller input ?
   bool bLoggingDeveloper        = false; // This is a log level "above" verbose logging that also includes stuff like window messages. Only useable for SKIF developers
+  bool bSaveScreenshots         =  true;
 
   // Wide strings
   std::wstring wsUpdateChannel  = L"Website"; // Default to stable channel
   std::wstring wsIgnoreUpdate;
   std::wstring wsPathViewer;
+  std::wstring wsPathScreenshots;
   std::wstring wsPathSpecialK;
   std::wstring wsAutoUpdateVersion; // Holds the version the auto-updater is trying to install
   std::wstring wsDefaultHDRExt = L".png";

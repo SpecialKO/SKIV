@@ -62,9 +62,65 @@ SKIF_UI_Tab_DrawSettings (void)
   ImGui::Spacing ();
   ImGui::Spacing ();
 
+#pragma region Section: Screenshots
+
+  if (ImGui::CollapsingHeader ("Screenshots###SKIF_SettingsHeader-0", ImGuiTreeNodeFlags_DefaultOpen))
+  {
+    ImGui::PushStyleColor   (
+      ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextBase)
+                              );
+
+    SKIF_ImGui_Spacing      ( );
+    
+
+    if ( ImGui::Checkbox ( "Save screenshots", &_registry.bSaveScreenshots ) )
+      _registry.regKVSaveScreenshots.putData (  _registry.bSaveScreenshots);
+
+    ImGui::TreePush ("ScreenshotsFolder");
+
+    if (! _registry.bSaveScreenshots)
+      SKIF_ImGui_PushDisableState ( );
+
+    if (ImGui::Button ("Browse"))
+    {
+      std::wstring newPath = SKIF_Util_FileExplorer_BrowseFolder (_path_cache.skiv_screenshots);
+
+      if (PathFileExistsW (newPath.c_str()))
+      {
+        if (newPath.back() != '\\')
+          newPath += '\\';
+
+        wcsncpy_s (_path_cache.skiv_screenshots, MAX_PATH,
+                               newPath.c_str(), _TRUNCATE);
+        strncpy_s (_path_cache.skiv_screenshotsA, MAX_PATH,
+          SK_WideCharToUTF8 (_path_cache.skiv_screenshots).data(), _TRUNCATE);
+
+        _registry.regKVPathScreenshots.putData (_path_cache.skiv_screenshots);
+
+        PLOG_INFO << "Screenshots folder was changed: " << _path_cache.skiv_screenshots;
+      }
+    }
+
+    ImGui::SameLine ( );
+    ImGui::Spacing  ( );
+    ImGui::SameLine ( );
+
+    ImGui::Text ("%s", _path_cache.skiv_screenshotsA);
+
+    if (! _registry.bSaveScreenshots)
+      SKIF_ImGui_PopDisableState ( );
+
+    ImGui::TreePop  ( );
+  }
+
+  ImGui::Spacing ();
+  ImGui::Spacing ();
+
+#pragma endregion
+
 #pragma region Section: Keybindings
 
-  if (ImGui::CollapsingHeader ("Keybindings###SKIF_SettingsHeader-0", ImGuiTreeNodeFlags_DefaultOpen))
+  if (ImGui::CollapsingHeader ("Keybindings###SKIF_SettingsHeader-1", ImGuiTreeNodeFlags_DefaultOpen))
   {
     SKIF_ImGui_Spacing      ( );
 
@@ -123,7 +179,7 @@ SKIF_UI_Tab_DrawSettings (void)
 
 #pragma region Section: Image
 
-  if (ImGui::CollapsingHeader ("Images###SKIF_SettingsHeader-1", ImGuiTreeNodeFlags_DefaultOpen))
+  if (ImGui::CollapsingHeader ("Images###SKIF_SettingsHeader-2", ImGuiTreeNodeFlags_DefaultOpen))
   {
     ImGui::PushStyleColor   (
       ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextBase)
@@ -244,7 +300,7 @@ SKIF_UI_Tab_DrawSettings (void)
 
 
 #pragma region Section: Appearances
-  if (ImGui::CollapsingHeader ("Appearance###SKIF_SettingsHeader-2", ImGuiTreeNodeFlags_DefaultOpen))
+  if (ImGui::CollapsingHeader ("Appearance###SKIF_SettingsHeader-3", ImGuiTreeNodeFlags_DefaultOpen))
   {
     ImGui::PushStyleColor   (
       ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextBase)
@@ -629,7 +685,7 @@ SKIF_UI_Tab_DrawSettings (void)
 #pragma endregion
 
 #pragma region Section: Advanced
-  if (ImGui::CollapsingHeader ("Advanced###SKIF_SettingsHeader-3", ImGuiTreeNodeFlags_DefaultOpen))
+  if (ImGui::CollapsingHeader ("Advanced###SKIF_SettingsHeader-4", ImGuiTreeNodeFlags_DefaultOpen))
   {
     ImGui::PushStyleColor   (
       ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextBase)

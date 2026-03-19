@@ -378,6 +378,9 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
   if (regKVPathViewer.hasData(&hKey))
     wsPathViewer           =   regKVPathViewer             .getData (&hKey);
 
+  if (regKVPathScreenshots.hasData(&hKey))
+    wsPathScreenshots      =   regKVPathScreenshots        .getData (&hKey);
+
   if (regKVAutoUpdateVersion.hasData(&hKey))
     wsAutoUpdateVersion    =   regKVAutoUpdateVersion      .getData (&hKey);
 
@@ -396,6 +399,9 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
 
   if (regKV99thPercentileMaxCLL.hasData(&hKey))
     b99thPercentileMaxCLL  =   regKV99thPercentileMaxCLL   .getData (&hKey);
+
+  if (regKVSaveScreenshots.hasData(&hKey))
+    bSaveScreenshots       =   regKVSaveScreenshots        .getData (&hKey);
 
   // These defaults to false, so no need to check if the registry has another value
   //   since getData ( ) defaults to false for non-existent registry values

@@ -2700,6 +2700,50 @@ SKIF_Util_FileExplorer_SelectFile (PCWSTR filePath)
     delete data;
 }
 
+static int
+CALLBACK
+SKIF_Util_FileExplorer_BrowseFolder_CallbackProc (HWND hWnd,UINT uMsg, LPARAM lParam, LPARAM lpData)
+{
+  UNREFERENCED_PARAMETER (lParam);
+
+  if (uMsg == BFFM_INITIALIZED)
+    SendMessage (hWnd, BFFM_SETSELECTION, TRUE, lpData);
+
+  return 0;
+}
+
+std::wstring
+SKIF_Util_FileExplorer_BrowseFolder (PCWSTR defaultPath)
+{
+  TCHAR path[MAX_PATH];
+
+  BROWSEINFO
+    bi = { };
+    bi.lpszTitle  = L"Select a new screenshot folder for SKIV to use:";
+    bi.ulFlags    = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
+    bi.lpfn       = SKIF_Util_FileExplorer_BrowseFolder_CallbackProc;
+    bi.lParam     = (LPARAM) defaultPath;
+
+  LPITEMIDLIST pidl = SHBrowseForFolder ( &bi );
+
+  if ( pidl != 0 )
+  {
+    // Get the name of the folder and put it in path
+    SHGetPathFromIDList ( pidl, path );
+
+    // Free memory used
+    IMalloc * imalloc = 0;
+    if ( SUCCEEDED( SHGetMalloc ( &imalloc )) )
+    {
+      imalloc->Free ( pidl );
+      imalloc->Release ( );
+    }
+
+    return path;
+  }
+
+  return L"";
+}
 
 #if NTDDI_VERSION < NTDDI_WIN10_RS5
 // Effective Power Mode (Windows 10 1809+)

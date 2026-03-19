@@ -216,6 +216,7 @@ std::wstring    SKIF_Util_GetClipboardHDROP           (void);
 DirectX::Image  SKIF_Util_GetClipboardBitmapData      (void);
 std::wstring    SKIF_Util_AddEnvironmentBlock         (const void* pEnvBlock, const std::wstring& varName, const std::wstring& varValue);
 void            SKIF_Util_FileExplorer_SelectFile     (PCWSTR filePath);
+std::wstring    SKIF_Util_FileExplorer_BrowseFolder   (PCWSTR defaultPath);
 std::string     SKIF_Util_GetWindowMessageAsStr       (UINT msg);
 
 
