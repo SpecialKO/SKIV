@@ -1180,15 +1180,17 @@ using namespace DirectX;
     if (snipping_tonemap_mode && isHDR)
     {
       if (SUCCEEDED (SKIV_Image_TonemapToSDR (*pImage, tonemapped_sdr, SKIV_DesktopImage._max_display_nits, SKIV_DesktopImage._sdr_display_nits)))
-      {
         pImage = tonemapped_sdr.GetImage (0,0,0);
-
-        if (_registry.bSaveScreenshots && SUCCEEDED (SKIV_Image_SaveToDisk_SDR (*pImage, wsPNGPath.c_str(), false)))
-          PLOG_INFO << "SKIV_Image_SaveToDisk_SDR ( ): SUCCEEDED!";
-      }
-
       else
         PLOG_INFO << "SKIV_Image_TonemapToSDR ( ): FAILED!";
+    }
+
+    if (_registry.bSaveScreenshots)
+    {
+      if (SUCCEEDED (SKIV_Image_SaveToDisk_SDR (*pImage, wsPNGPath.c_str(), false)))
+        PLOG_VERBOSE << "SKIV_Image_SaveToDisk_SDR ( ): SUCCEEDED!";
+      else
+        PLOG_VERBOSE << "SKIF_Image_SaveToDisk_HDR ( ): FAILED";
     }
 
     const int
