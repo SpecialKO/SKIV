@@ -1731,6 +1731,9 @@ wWinMain ( _In_     HINSTANCE hInstance,
     {
       SKIF_FrameCount.store(ImGui::GetFrameCount());
 
+      // Reset every frame
+      g_activeKeybindPopup = false;
+
       // Update hotkey variables
       hotkeyF1    = (              ImGui::GetKeyData (ImGuiKey_F1    )->DownDuration == 0.0f); // Switch to Viewer
       hotkeyF2    = (              ImGui::GetKeyData (ImGuiKey_F2    )->DownDuration == 0.0f); // Switch to Settings
@@ -2167,7 +2170,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
         ImRect allowable (SKIV_DesktopImage._desktop_pos,
                           SKIV_DesktopImage._desktop_pos + resolution);
-        SKIV_Region capture_area;
+        SKIV_Region capture_area = SKIV_Region (ImRect(), L"", CaptureMode_None);
 
         bool HDR_Image = SKIV_DesktopImage._hdr_image;
         bool SKIV_HDR  = (HDR_Image ? SKIF_ImGui_IsViewportHDR (SKIF_ImGui_hWnd) : false);
@@ -2200,8 +2203,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
           draw_list->AddRectFilled (allowable.Min, allowable.Max, ImGui::GetColorU32 (IM_COL32 (0, 0, 0, 20)));
         }
 
-        static SKIV_Region selection      = SKIV_Region (ImRect(), L"Desktop_Region");
-        static SKIV_Region selection_auto = SKIV_Region (ImRect(), L"Desktop_Auto");
+        static SKIV_Region selection      = SKIV_Region (ImRect(), L"Desktop_Region", CaptureMode_Region);
+        static SKIV_Region selection_auto = SKIV_Region (ImRect(), L"Desktop_Auto",   CaptureMode_Region);
 
         if (GetForegroundWindow () != SKIF_ImGui_hWnd)
             SetForegroundWindow (     SKIF_ImGui_hWnd);
@@ -2430,6 +2433,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
             _registry._SnippingModeExit = true;
             _GetRectBelowCursor (&selection, false);
             capture_area = selection;
+            capture_area._mode = (_registry.eScreenshotsAutosave & CaptureMode_Region) ? CaptureMode_Region : CaptureMode_None;
           }
 
           else if (! ImGui::IsMouseDragging (ImGuiMouseButton_Left))
@@ -2447,6 +2451,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
               clicked = false;
               _registry._SnippingModeExit = true;
               capture_area = selection_auto;
+              capture_area._mode = (_registry.eScreenshotsAutosave & CaptureMode_Region) ? CaptureMode_Region : CaptureMode_None;
             }
 
             else if (selection_auto._rect.Min != selection_auto._rect.Max)
@@ -2753,7 +2758,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
               bKeepProcessAlive = false;
             break;
           case UITab_Settings:
-            SKIF_Tab_ChangeTo = UITab_Viewer;
+            if (! g_activeKeybindPopup)
+              SKIF_Tab_ChangeTo = UITab_Viewer;
             break;
           case UITab_About:
             break;
@@ -4184,7 +4190,8 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
                           static_cast<float> (capture_rect.top   ),
                           static_cast<float> (capture_rect.right ),
                           static_cast<float> (capture_rect.bottom)),
-                  filename
+                  filename,
+                  ((_registry.eScreenshotsAutosave & mode) == CaptureMode_Window) ? CaptureMode_Window : CaptureMode_None
           );
 
           //PLOG_VERBOSE << "capture_rect.left  : " << capture_rect.left;
@@ -4203,7 +4210,8 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 SKIV_Region (
                   ImRect (ImVec2 (0, 0),
                           SKIV_DesktopImage._resolution),
-                  filename
+                  filename,
+                  ((_registry.eScreenshotsAutosave & mode) == CaptureMode_Screen) ? CaptureMode_Screen : CaptureMode_None
           );
 
           SKIV_Image_CaptureRegion (region);

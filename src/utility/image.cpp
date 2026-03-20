@@ -1078,7 +1078,7 @@ SKIV_PNG_CopyToClipboard (const DirectX::Image& image, const void *pData, size_t
   return false;
 }
 
-bool SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool isHDR, bool isTemp, const wchar_t* wszFileName)
+bool SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool isHDR, CaptureMode mode, const wchar_t* wszFileName)
 {
 using namespace DirectX;
 
@@ -1087,7 +1087,8 @@ using namespace DirectX;
 
   static SKIF_CommonPathsCache& _path_cache = SKIF_CommonPathsCache::GetInstance ( );
 
-  std::wstring wsPNGPath  = (isTemp) ? _path_cache.skiv_temp : _path_cache.skiv_screenshots;
+  bool isPersistent = (mode != CaptureMode_None);
+  std::wstring wsPNGPath  = (isPersistent) ? _path_cache.skiv_screenshots : _path_cache.skiv_temp;
   std::wstring wsFilename = std::wstring (wszFileName);
 
   wsFilename += L"_";
@@ -1183,7 +1184,7 @@ using namespace DirectX;
         PLOG_INFO << "SKIV_Image_TonemapToSDR ( ): FAILED!";
     }
 
-    if (_registry.bSaveScreenshots)
+    if (isPersistent)
     {
       if (SUCCEEDED (SKIV_Image_SaveToDisk_SDR (*pImage, wsPNGPath.c_str(), false)))
         PLOG_VERBOSE << "SKIV_Image_SaveToDisk_SDR ( ): SUCCEEDED!";
@@ -3516,7 +3517,7 @@ SKIV_Image_CaptureRegion (SKIV_Region capture_area)
             PLOG_VERBOSE << "DirectX::FlipRotate        ( ): FAILED";
         }
 
-        if (SKIV_Image_CopyToClipboard (final, SKIV_DesktopImage._hdr_image, false, capture_area._title.c_str()))
+        if (SKIV_Image_CopyToClipboard (final, SKIV_DesktopImage._hdr_image, capture_area._mode, capture_area._title.c_str()))
         {
           PLOG_VERBOSE << "SKIV_Image_CopyToClipboard ( ): SUCCEEDED";
 

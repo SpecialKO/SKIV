@@ -4,6 +4,7 @@
 #include <imgui/imgui_internal.h>
 #include <ImGuiNotify.hpp>
 #include <atlbase.h>
+#include "utility.h"
 
 #pragma warning( push )
 #pragma warning( disable : 4305 )
@@ -135,13 +136,15 @@ static const ParamsPQ PQ =
 #pragma warning( pop )
 
 struct SKIV_Region {
-  ImRect        _rect;
-  std::wstring  _title;
+  ImRect         _rect;
+  std::wstring   _title;
+  CaptureMode    _mode;
 
-  SKIV_Region (ImRect r_ = ImRect(), std::wstring t_ = L"")
+  SKIV_Region (ImRect r_, std::wstring t_, CaptureMode m_)
   {
     _rect  = r_;
     _title = t_;
+    _mode  = m_;
   }
 };
 
@@ -152,7 +155,7 @@ float             SKIV_Image_LinearToPQY   (float N);
 DirectX::XMVECTOR SKIV_Image_Rec709toICtCp (DirectX::XMVECTOR N);
 DirectX::XMVECTOR SKIV_Image_ICtCptoRec709 (DirectX::XMVECTOR N);
 
-bool    SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool isHDR, bool isTemp, const wchar_t* wszFileName);
+bool    SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool isHDR, CaptureMode mode, const wchar_t* wszFileName);
 HRESULT SKIV_Image_SaveToDisk_HDR  (const DirectX::Image& image, const wchar_t* wszFileName);
 HRESULT SKIV_Image_SaveToDisk_SDR  (const DirectX::Image& image, const wchar_t* wszFileName, bool force_sRGB);
 HRESULT SKIV_Image_CaptureDesktop  (DirectX::ScratchImage& image, POINT pos, int flags = 0x0);

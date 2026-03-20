@@ -20,12 +20,38 @@
 
 extern bool allowShortcutCtrlA;
 
+struct kb_kv_s
+{
+  SK_KeybindMultiState*                           _key;
+  SKIF_RegistrySettings::KeyValue <std::wstring>* _reg;
+  std::function <void (SK_KeybindMultiState*)>    _callback;
+  std::function <bool (void)>                     _show;
+};
+
+struct m_s
+{
+  CaptureMode                  _type;
+  char*                        _label;
+  char*                        _unique_id;
+  bool                         _value;
+  kb_kv_s*                     _keybind;
+};
+
 void
 SKIF_UI_Tab_DrawSettings (void)
 {
   static SKIF_CommonPathsCache& _path_cache = SKIF_CommonPathsCache::GetInstance ( );
   static SKIF_RegistrySettings& _registry   = SKIF_RegistrySettings::GetInstance ( );
-  
+
+  static kb_kv_s kbToggleHDRDisplay =
+    { &_registry.kbToggleHDRDisplay, &_registry.regKVHotkeyToggleHDRDisplay, { [](SK_KeybindMultiState* ptr) { SKIF_Util_RegisterHotKeyHDRToggle (ptr->getKeybind()                    ); } }, { []() { return (SKIF_Util_IsWindows10v1709OrGreater ( ) && SKIF_Util_IsHDRSupported (NULL)); } } };
+  static kb_kv_s kbCaptureWindow    =
+    { &_registry.kbCaptureWindow,    &_registry.regKVHotkeyCaptureWindow,    { [](SK_KeybindMultiState* ptr) { SKIF_Util_RegisterHotKeyCapture   (CaptureMode_Window, ptr->getKeybind()); } }, { []() { return true; } } };
+  static kb_kv_s kbCaptureRegion    =
+    { &_registry.kbCaptureRegion,    &_registry.regKVHotkeyCaptureRegion,    { [](SK_KeybindMultiState* ptr) { SKIF_Util_RegisterHotKeyCapture   (CaptureMode_Region, ptr->getKeybind()); } }, { []() { return true; } } };
+  static kb_kv_s kbCaptureScreen    =
+    { &_registry.kbCaptureScreen,    &_registry.regKVHotkeyCaptureScreen,    { [](SK_KeybindMultiState* ptr) { SKIF_Util_RegisterHotKeyCapture   (CaptureMode_Screen, ptr->getKeybind()); } }, { []() { return true; } } };
+
   if (ImGui::Button (ICON_FA_LEFT_LONG " Go back###GoBackBtn1", ImVec2 (150.0f * SKIF_ImGui_GlobalDPIScale, 30.0f * SKIF_ImGui_GlobalDPIScale)))
     SKIF_Tab_ChangeTo = UITab_Viewer;
 
@@ -69,19 +95,15 @@ SKIF_UI_Tab_DrawSettings (void)
     ImGui::PushStyleColor   (
       ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextBase)
                               );
-
     SKIF_ImGui_Spacing      ( );
     
-
-    if ( ImGui::Checkbox ( "Save screenshots", &_registry.bSaveScreenshots ) )
-      _registry.regKVSaveScreenshots.putData (  _registry.bSaveScreenshots);
-
-    ImGui::TreePush ("ScreenshotsFolder");
-
-    if (! _registry.bSaveScreenshots)
-      SKIF_ImGui_PushDisableState ( );
-
-    if (ImGui::Button ("Browse"))
+    
+    ImGui::TextColored (
+      ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextCaption),
+        "Screenshots Folder: "
+    );
+    ImGui::SameLine ( );
+    if (ImGui::Selectable(_path_cache.skiv_screenshotsA))
     {
       std::wstring newPath = SKIF_Util_FileExplorer_BrowseFolder (_path_cache.skiv_screenshots);
 
@@ -101,75 +123,77 @@ SKIF_UI_Tab_DrawSettings (void)
       }
     }
 
-    ImGui::SameLine ( );
-    ImGui::Spacing  ( );
-    ImGui::SameLine ( );
+    ImGui::Spacing ();
 
-    ImGui::Text ("%s", _path_cache.skiv_screenshotsA);
-
-    if (! _registry.bSaveScreenshots)
-      SKIF_ImGui_PopDisableState ( );
-
-    ImGui::TreePop  ( );
-  }
-
-  ImGui::Spacing ();
-  ImGui::Spacing ();
-
-#pragma endregion
-
-#pragma region Section: Keybindings
-
-  if (ImGui::CollapsingHeader ("Keybindings###SKIF_SettingsHeader-1", ImGuiTreeNodeFlags_DefaultOpen))
-  {
-    SKIF_ImGui_Spacing      ( );
-
-    struct kb_kv_s
-    {
-      SK_KeybindMultiState*                           _key;
-      SKIF_RegistrySettings::KeyValue <std::wstring>* _reg;
-      std::function <void (SK_KeybindMultiState*)>    _callback;
-      std::function <bool (void)>                     _show;
+    static std::vector <m_s>
+      modes = {
+        { CaptureMode_Window, "Window", "###ModeToggle-Window", ((_registry.eScreenshotsAutosave & CaptureMode_Window) == CaptureMode_Window), &kbCaptureWindow },
+        { CaptureMode_Region, "Region", "###ModeToggle-Region", ((_registry.eScreenshotsAutosave & CaptureMode_Region) == CaptureMode_Region), &kbCaptureRegion },
+        { CaptureMode_Screen, "Screen", "###ModeToggle-Screen", ((_registry.eScreenshotsAutosave & CaptureMode_Screen) == CaptureMode_Screen), &kbCaptureScreen }
     };
+    
+    ImGui::TextColored (
+      ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextCaption),
+        "Capture Mode:"
+    );
+    ImGui::SameLine ( );
+    ImGui::ItemSize (ImVec2 (ImGui::GetFrameHeight (), ImGui::GetFrameHeight ()), ImGui::GetStyle().FramePadding.y);
+    ImGui::SameLine ( );
 
-    static std::vector <kb_kv_s>
-      keybinds = {
-      { &_registry.kbCaptureWindow,    &_registry.regKVHotkeyCaptureWindow,    { [](SK_KeybindMultiState* ptr) { SKIF_Util_RegisterHotKeyCapture   (CaptureMode_Window, ptr->getKeybind()); } }, { []() { return true; } } },
-      { &_registry.kbCaptureRegion,    &_registry.regKVHotkeyCaptureRegion,    { [](SK_KeybindMultiState* ptr) { SKIF_Util_RegisterHotKeyCapture   (CaptureMode_Region, ptr->getKeybind()); } }, { []() { return true; } } },
-      { &_registry.kbCaptureScreen,    &_registry.regKVHotkeyCaptureScreen,    { [](SK_KeybindMultiState* ptr) { SKIF_Util_RegisterHotKeyCapture   (CaptureMode_Screen, ptr->getKeybind()); } }, { []() { return true; } } },
-      { &_registry.kbToggleHDRDisplay, &_registry.regKVHotkeyToggleHDRDisplay, { [](SK_KeybindMultiState* ptr) { SKIF_Util_RegisterHotKeyHDRToggle (ptr->getKeybind()                    ); } }, { []() { return (SKIF_Util_IsWindows10v1709OrGreater ( ) && SKIF_Util_IsHDRSupported (NULL)); } } }
-    };
+    float col2 = ImGui::GetCursorPosX ();
+    ImGui::TextColored (ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info), " " ICON_FA_FLOPPY_DISK);
+    SKIF_ImGui_SetHoverTip ("Save screenshot on disk");
+    ImGui::SameLine ( );
+    ImGui::ItemSize (ImVec2 (ImGui::GetFrameHeight (), ImGui::GetFrameHeight ()), ImGui::GetStyle().FramePadding.y);
+    ImGui::SameLine ( );
 
+    float col3 = ImGui::GetCursorPosX ();
+
+    ImGui::TextColored (
+      ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextCaption),
+       "Keybinding: " ICON_FA_KEYBOARD
+    );
+
+    ImGui::TreePush ("CaptureModes");
+    
     ImGui::BeginGroup ();
-    for (auto& keybind : keybinds)
+    for (auto& mode : modes)
     {
-      if (! keybind._show())
-        continue;
+      ImGui::ItemSize (ImVec2 (0.0f, ImGui::GetFrameHeight ()), ImGui::GetStyle().FramePadding.y);
+      ImGui::SameLine      ();
+      ImGui::Text          ( "%s",
+                            mode._label);
 
-      ImGui::Text          ( "%s:  ",
-                            keybind._key->bind_name );
-      ImGui::Spacing ();
-    }
-    ImGui::EndGroup   ();
-    ImGui::SameLine   ();
-    ImGui::BeginGroup ();
-    for (auto& keybind : keybinds)
-    {
-      if (! keybind._show())
-        continue;
+      ImGui::SameLine      ();
+      ImGui::SetCursorPosX (col2);
 
-      if (SK_ImGui_Keybinding (keybind._key))
+      if (ImGui::Checkbox (mode._unique_id, &mode._value))
       {
-        // Only update the registry if we are done assigning
-        if (! keybind._key->assigning)
-          keybind._reg->putData (keybind._key->saved.human_readable);
+        if (mode._value)
+          _registry.eScreenshotsAutosave |=  mode._type;
+        else
+          _registry.eScreenshotsAutosave &= ~mode._type;
 
-        keybind._callback (keybind._key);
+        _registry.regKVScreenshotsAutosave.putData (_registry.eScreenshotsAutosave);
       }
 
-      ImGui::Spacing ();
+      ImGui::SameLine      ();
+      ImGui::SetCursorPosX (col3);
+
+      if (SK_ImGui_Keybinding (mode._keybind->_key))
+      {
+        // Only update the registry if we are done assigning
+        if (! mode._keybind->_key->assigning)
+          mode._keybind->_reg->putData (mode._keybind->_key->saved.human_readable);
+
+        mode._keybind->_callback (mode._keybind->_key);
+      }
     }
     ImGui::EndGroup   ();
+
+    ImGui::TreePop  ( );
+    
+    ImGui::PopStyleColor ();
   }
 
   ImGui::Spacing ();
@@ -179,12 +203,8 @@ SKIF_UI_Tab_DrawSettings (void)
 
 #pragma region Section: Image
 
-  if (ImGui::CollapsingHeader ("Images###SKIF_SettingsHeader-2", ImGuiTreeNodeFlags_DefaultOpen))
+  if (ImGui::CollapsingHeader ("Images###SKIF_SettingsHeader-1"))
   {
-    ImGui::PushStyleColor   (
-      ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextBase)
-                              );
-
     SKIF_ImGui_Spacing      ( );
 
 #if 0
@@ -300,7 +320,7 @@ SKIF_UI_Tab_DrawSettings (void)
 
 
 #pragma region Section: Appearances
-  if (ImGui::CollapsingHeader ("Appearance###SKIF_SettingsHeader-3", ImGuiTreeNodeFlags_DefaultOpen))
+  if (ImGui::CollapsingHeader ("Appearance###SKIF_SettingsHeader-2"))
   {
     ImGui::PushStyleColor   (
       ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextBase)
@@ -682,6 +702,62 @@ SKIF_UI_Tab_DrawSettings (void)
 
   ImGui::Spacing ();
   ImGui::Spacing ();
+#pragma endregion
+
+#pragma region Section: Keybindings
+
+  if (ImGui::CollapsingHeader ("Keybindings###SKIF_SettingsHeader-3", ImGuiTreeNodeFlags_DefaultOpen))
+  {
+    ImGui::PushStyleColor   (
+      ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextBase)
+                              );
+    SKIF_ImGui_Spacing      ( );
+
+    static std::vector <kb_kv_s*>
+      keybinds = {
+        &kbToggleHDRDisplay,
+        &kbCaptureWindow,
+        &kbCaptureRegion,
+        &kbCaptureScreen
+    };
+
+    ImGui::BeginGroup ();
+    for (auto& keybind : keybinds)
+    {
+      if (! keybind->_show())
+        continue;
+
+      ImGui::Text          ( "%s:  ",
+                            keybind->_key->bind_name );
+      ImGui::Spacing ();
+    }
+    ImGui::EndGroup   ();
+    ImGui::SameLine   ();
+    ImGui::BeginGroup ();
+    for (auto& keybind : keybinds)
+    {
+      if (! keybind->_show())
+        continue;
+
+      // TODO: Fix bug that causes the hotkey to remain unregistered if SKIV loses focus while the keybind dialog is visible
+      if (SK_ImGui_Keybinding (keybind->_key))
+      {
+        // Only update the registry if we are done assigning
+        if (! keybind->_key->assigning)
+          keybind->_reg->putData (keybind->_key->saved.human_readable);
+
+        keybind->_callback (keybind->_key);
+      }
+
+      ImGui::Spacing ();
+    }
+    ImGui::EndGroup   ();
+    ImGui::PopStyleColor ();
+  }
+
+  ImGui::Spacing ();
+  ImGui::Spacing ();
+
 #pragma endregion
 
 #pragma region Section: Advanced

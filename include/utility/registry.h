@@ -4,7 +4,7 @@
 #include <typeindex>
 #include <sstream>
 #include <vector>
-#include "sk_utility.h"
+#include "utility.h"
 
 #ifndef RRF_SUBKEY_WOW6464KEY
 #define RRF_SUBKEY_WOW6464KEY  0x00010000
@@ -265,10 +265,6 @@ struct SKIF_RegistrySettings {
     SKIF_MakeRegKeyB ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(99th Percentile MaxCLL)" );
 
-  KeyValue <bool> regKVSaveScreenshots =
-    SKIF_MakeRegKeyB ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
-                         LR"(Save Screenshots)" );
-
   // Integers (DWORDs)
 
   KeyValue <int> regKVImageScaling =
@@ -346,6 +342,10 @@ struct SKIF_RegistrySettings {
   KeyValue <int> regKVPNGHDRBitDepth =
     SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\PNG\)",
                          LR"(HDR BitDepth)" );
+
+  KeyValue <int> regKVScreenshotsAutosave =
+    SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(Screenshots Autosave)" );
 
   // Wide Strings
 
@@ -431,6 +431,7 @@ struct SKIF_RegistrySettings {
   int iHDRToneMapType          = 8;   // 0 = Do Nothing,                  1 = Clip Luminance,         8 = Map to Display
   int iUIMode                  = 1;   // 0 = Safe Mode (BitBlt),          1 = Normal,                 2 = VRR Compatibility
   int iDiagnostics             = 1;   // 0 = None,                        1 = Normal,                 2 = Enhanced (not actually used yet)
+  CaptureMode eScreenshotsAutosave = CaptureMode_ALL; // Default to saving all types of screen captures
 
   // Default settings (booleans)
   bool bAdjustWindow            = false; // Adjust window size based on the image size?
@@ -459,7 +460,6 @@ struct SKIF_RegistrySettings {
   bool bFadeCovers              =  true;
   bool bControllers             =  true; // Should SKIF support controller input ?
   bool bLoggingDeveloper        = false; // This is a log level "above" verbose logging that also includes stuff like window messages. Only useable for SKIF developers
-  bool bSaveScreenshots         =  true;
 
   // Wide strings
   std::wstring wsUpdateChannel  = L"Website"; // Default to stable channel

@@ -30,6 +30,8 @@
 
 UINT CF_HTML = NULL;
 
+bool g_activeKeybindPopup = false;
+
 std::vector<HANDLE> vWatchHandles[UITab_ALL];
 INT64               SKIF_TimeInMilliseconds = 0;
 

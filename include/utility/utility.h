@@ -57,11 +57,20 @@ enum UITab {
   UITab_ALL      // Total number of elements in enum (technically against Microsoft's enum design guidelines, but whatever)
 };
 
-enum CaptureMode {
-  CaptureMode_Window,
-  CaptureMode_Region,
-  CaptureMode_Screen
+typedef unsigned int CaptureMode;  // -> enum CaptureMode_
+enum CaptureMode_ {
+  CaptureMode_None   = 0,
+
+  CaptureMode_Window = 1 << 0,
+  CaptureMode_Region = 1 << 1,
+  CaptureMode_Screen = 1 << 2,
+
+  CaptureMode_ALL    =
+    CaptureMode_Window | CaptureMode_Region | CaptureMode_Screen
 };
+
+// Workaround for SKIF_ImGui_IsAnyPopupOpen() not detecting keybind popups
+extern bool g_activeKeybindPopup;
 
 struct FileSignature {
   std::wstring               mime_type       = L"";

@@ -369,6 +369,9 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
   if (regKVCheckForUpdates.hasData(&hKey))
     iCheckForUpdates       =   regKVCheckForUpdates        .getData (&hKey);
 
+  if (regKVScreenshotsAutosave.hasData(&hKey))
+    eScreenshotsAutosave   =   regKVScreenshotsAutosave    .getData (&hKey);
+
   if (regKVIgnoreUpdate.hasData(&hKey))
     wsIgnoreUpdate         =   regKVIgnoreUpdate           .getData (&hKey);
 
@@ -400,9 +403,6 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
   if (regKV99thPercentileMaxCLL.hasData(&hKey))
     b99thPercentileMaxCLL  =   regKV99thPercentileMaxCLL   .getData (&hKey);
 
-  if (regKVSaveScreenshots.hasData(&hKey))
-    bSaveScreenshots       =   regKVSaveScreenshots        .getData (&hKey);
-
   // These defaults to false, so no need to check if the registry has another value
   //   since getData ( ) defaults to false for non-existent registry values
   bFirstLaunch             =   regKVFirstLaunch            .getData (&hKey);
@@ -419,13 +419,13 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
   //   then parse the human_readable data through .parse()
 
   if (regKVHotkeyCaptureWindow.hasData(&hKey))
-    kbCaptureWindow.pending.human_readable = regKVHotkeyCaptureWindow.getData (&hKey);
+    kbCaptureWindow.pending.human_readable    = regKVHotkeyCaptureWindow   .getData (&hKey);
 
   if (regKVHotkeyCaptureRegion.hasData(&hKey))
-    kbCaptureRegion.pending.human_readable = regKVHotkeyCaptureRegion.getData (&hKey);
+    kbCaptureRegion.pending.human_readable    = regKVHotkeyCaptureRegion   .getData (&hKey);
 
   if (regKVHotkeyCaptureScreen.hasData(&hKey))
-    kbCaptureScreen.pending.human_readable = regKVHotkeyCaptureScreen.getData (&hKey);
+    kbCaptureScreen.pending.human_readable    = regKVHotkeyCaptureScreen   .getData (&hKey);
 
   if (regKVHotkeyToggleHDRDisplay.hasData(&hKey))
     kbToggleHDRDisplay.pending.human_readable = regKVHotkeyToggleHDRDisplay.getData (&hKey);
