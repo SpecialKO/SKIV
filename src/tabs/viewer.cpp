@@ -2931,6 +2931,9 @@ SKIF_UI_Tab_DrawViewer (void)
     // Identify when we're dealing with a whole new folder
     if (cover.file_info.folder_path != _current_folder.folder_path)
     {
+      //PLOG_DEBUG << "cover.file_info.folder_path: " << cover.file_info.folder_path;
+      //PLOG_DEBUG << "_current_folder.folder_path: " << _current_folder.folder_path;
+
       _current_folder.reset();
       
     //_current_folder.orig_path   = cover.file_info.path;
@@ -2948,11 +2951,16 @@ SKIF_UI_Tab_DrawViewer (void)
     if (! _current_folder.fileList.empty() &&
       cover.file_info.filename != _current_folder.activeFile->filename)
     {
-      // Re-sort the folder if the sort columns have changed
-      if (_current_folder.updateSortColumns ( ))
-        _current_folder.sortByColumns ( );
+      //PLOG_DEBUG << "            cover.file_info.filename: " << cover.file_info.filename;
+      //PLOG_DEBUG << "_current_folder.activeFile->filename: " << _current_folder.activeFile->filename;
 
+      // Re-sort the folder if the sort columns have changed
+      _current_folder.updateSortOrder    ( );
       _current_folder.updateFileIterator (cover.file_info.path);
+
+      // If the selected file was changed from within _current_folder
+      if (cover.file_info.filename != _current_folder.activeFile->filename)
+        dragDroppedFilePath = _current_folder.activeFile->path;
     }
 
     // Identify when the folder was changed outside of the app
@@ -2964,8 +2972,18 @@ SKIF_UI_Tab_DrawViewer (void)
 
     if (dwLastSignaled != 0 && dwLastSignaled + 500 < SKIF_Util_timeGetTime())
     {
-      _current_folder.updateFolderData   ( );
-      _current_folder.updateFileIterator (cover.file_info.path);
+      if (! _current_folder.fileDeleted)
+      {
+        _current_folder.updateFolderData   ( );
+        _current_folder.updateSortOrder    ( );
+        _current_folder.updateFileIterator (cover.file_info.path);
+
+        // If the selected file was changed from within _current_folder
+        if (cover.file_info.filename != _current_folder.activeFile->filename)
+          dragDroppedFilePath = _current_folder.activeFile->path;
+      } else
+        _current_folder.fileDeleted = false;
+
       dwLastSignaled = 0;
     }
   }

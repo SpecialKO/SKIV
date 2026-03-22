@@ -355,6 +355,7 @@ struct skiv_image_directory_s {
   std::vector<fd_s>           fileList;
   std::vector<fd_s>::iterator activeFile;
   std::vector<SORTCOLUMN>     sortColumns; // File Explorer
+  bool                        fileDeleted = false;
 
   void         reset       (void);
   void         setImage    (const std::wstring& path);
@@ -369,7 +370,7 @@ struct skiv_image_directory_s {
   void        updateFolderData (void);
 
   // Win32 File Explorer based sorting
-  bool        sortByColumns     (void);
-  void        sortByFilename    (void);
-  bool        updateSortColumns (void); // Returns true if the sort columns have changed
+  bool        sortByColumns    (void);
+  bool        sortByFilename   (void);
+  bool        updateSortOrder  (void); // Returns true when sorted
 };

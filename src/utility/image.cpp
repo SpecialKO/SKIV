@@ -4031,6 +4031,8 @@ skiv_image_directory_s::deleteImage (void)
   if (fileList.empty())
     return L"";
 
+  fileDeleted = true;
+
   activeFile = fileList.erase (activeFile);
 
   // Apparently erase() does not select the new populated end() ? Odd...
@@ -4046,17 +4048,10 @@ skiv_image_directory_s::updateFileIterator (const std::wstring& path)
 {
   activeFile = std::find_if (fileList.begin(), fileList.end(), [&](const fd_s& file) { return file.path == path; });
 
-  /*
-  // Set the index to the proper position
-  fileListIndex = 0;
-  for (auto& file : fileList)
-  {
-    if (filename != file.name)
-      fileListIndex++;
-    else
-      break;
-  }
-  */
+  // If the file was removed from File Explorer, reset to first item
+  // TODO: Fix proper file tracking so we can detect removed files and just go to one of the nearby ones
+  if (activeFile->path.empty() && ! fileList.empty())
+    activeFile = fileList.begin();
 }
 
 // Retrieve all files in the folder, and identify our current place among them...
@@ -4065,6 +4060,9 @@ skiv_image_directory_s::updateFolderData (void)
 {
   HANDLE hFind        = INVALID_HANDLE_VALUE;
   WIN32_FIND_DATA ffd = { };
+
+  auto old   = fileList;
+  auto oldIt = std::find_if(old.begin(), old.end(), [&](const fd_s& file) { return file.path == activeFile->path; });
   fileList.clear();
 
   PLOG_DEBUG << "Discovering ... " << (folder_path + LR"(\*.*)");
@@ -4098,15 +4096,6 @@ skiv_image_directory_s::updateFolderData (void)
         filtered.push_back (file);
 
     fileList = filtered;
-
-    if (! fileList.empty())
-    {
-      temp_time = SKIF_Util_timeGetTime1();
-
-      // Let us try File Explorer sort first
-      if (updateSortColumns ( ) && sortByColumns ( )) { }
-      else sortByFilename ( );
-    }
   }
 
   PLOG_DEBUG << "Found " << fileList.size() << " supported images in the folder.";
@@ -4289,26 +4278,26 @@ GetFolderSortColumns (const std::wstring& path, std::vector<SORTCOLUMN>& sortCol
 }
 
 bool
-skiv_image_directory_s::updateSortColumns (void)
+skiv_image_directory_s::updateSortOrder (void)
 {
   std::vector<SORTCOLUMN> oldSort = sortColumns;
   if (! GetFolderSortColumns (folder_path, sortColumns))
-    return true;
+    return sortByFilename ( );
 
   if (sortColumns.size() != oldSort.size())
-    return true;
+    return sortByColumns ( );
 
   for (int i = 0; i < oldSort.size(); i++)
   {
     if ((oldSort[i].propkey   != sortColumns[i].propkey) ||
         (oldSort[i].direction != sortColumns[i].direction))
-      return true;
+      return sortByColumns ( );
   }
 
-  return false;
+  return sortByColumns ( );
 }
 
-void
+bool
 skiv_image_directory_s::sortByFilename (void)
 {
   std::sort (fileList.begin(),
@@ -4321,13 +4310,15 @@ skiv_image_directory_s::sortByFilename (void)
   );
 
   PLOG_VERBOSE << "Sorted alphabetically!";
+
+  return true;
 }
 
 bool
 skiv_image_directory_s::sortByColumns (void)
 {
   if (sortColumns.empty())
-    return false;
+    return sortByFilename ( );
 
   struct cf_s
   {
@@ -4351,7 +4342,7 @@ skiv_image_directory_s::sortByColumns (void)
   {
     _com_error err(hr);
     PLOG_ERROR << "Operation [CreateBindCtx] failed with error: " << SK_WideCharToUTF8 (err.ErrorMessage());
-    return false;
+    return sortByFilename ( );
   }
 
   for (const auto& file : fileList)
@@ -4398,7 +4389,8 @@ skiv_image_directory_s::sortByColumns (void)
 
   temp_time = SKIF_Util_timeGetTime1();
 
-  std::sort (cache.begin(), cache.end(), [&](const cf_s& a, const cf_s& b)
+  std::sort (cache.begin(), cache.end(),
+    [&](const cf_s& a, const cf_s& b)
     {
       for (size_t i = 0; i < sortColumns.size(); ++i)
       {
