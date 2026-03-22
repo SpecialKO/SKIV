@@ -4004,7 +4004,7 @@ SKIF_UI_Tab_DrawViewer (void)
 
       ImGui::Separator ( );
 
-      if (SKIF_ImGui_MenuItemEx2 ("Copy",          ICON_FA_CLIPBOARD,   ImGui::GetStyleColorVec4(ImGuiCol_Text),      "Ctrl+C"))
+      if (SKIF_ImGui_MenuItemEx2 ("Copy",         ICON_FA_CLIPBOARD,    ImGui::GetStyleColorVec4(ImGuiCol_Text),      "Ctrl+C"))
         wantCopyToClipboard = true;
       if (SKIF_ImGui_MenuItemEx2 ("Close", 0,                           ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info), "Ctrl+W"))
         _SwapOutCover ();
@@ -4106,8 +4106,14 @@ SKIF_UI_Tab_DrawViewer (void)
 
       ImGui::Separator       ( );
 
-      if (! cover.file_info.path.empty() && SKIF_ImGui_MenuItemEx2 ("Browse Folder", ICON_FA_FOLDER_OPEN, ImColor(255, 207, 72), "Ctrl+E"))
-        SKIF_Util_FileExplorer_SelectFile (cover.file_info.path.c_str());
+      if (! cover.file_info.path.empty())
+      {
+        if (SKIF_ImGui_MenuItemEx2 ("Browse Folder", ICON_FA_FOLDER_OPEN, ImColor(255, 207, 72), "Ctrl+E"))
+          SKIF_Util_FileExplorer_SelectFile (cover.file_info.path.c_str());
+
+        if (SKIF_ImGui_MenuItemEx2 ("Context Menu", ICON_FA_WINDOWS,      ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info)))
+          SKIF_Util_FileExplorer_ContextMenuFile (cover.file_info.path.c_str(), SKIF_Notify_hWnd);
+      }
     }
 
     ImGui::Separator       ( );

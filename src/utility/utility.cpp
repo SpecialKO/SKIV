@@ -2680,7 +2680,7 @@ SKIF_Util_FileExplorer_SelectFile (PCWSTR filePath)
         { } // Success
 
         // Use the task allocator to free to returned pidl
-        ILFree (iidlPtr);
+        CoTaskMemFree (iidlPtr);
       }
     }
 
@@ -2733,6 +2733,57 @@ SKIF_Util_FileExplorer_DeleteFile (PCWSTR filePath, bool hideWarning)
   }
 
   return ret;
+}
+
+void
+SKIF_Util_FileExplorer_ContextMenuFile (PCWSTR filePath, HWND hWndOwner)
+{
+  // You should call this function from a background thread.
+  // Failure to do so could cause the UI to stop responding.
+  PIDLIST_ABSOLUTE iidlPtr = nullptr;
+  HRESULT hr = SHParseDisplayName (filePath, NULL, &iidlPtr, 0, nullptr);
+  // Let us take the risk since TrackPopupMenuEx() needs to be called from the UI thread
+
+  if (SUCCEEDED (hr))
+  {
+    CComPtr<IShellFolder> parentFolder;
+    LPCITEMIDLIST child        = nullptr;
+
+    hr = SHBindToParent (iidlPtr, IID_PPV_ARGS(&parentFolder), &child);
+
+    if (SUCCEEDED (hr))
+    {
+      CComPtr<IContextMenu> ctxMenu;
+      hr = parentFolder->GetUIObjectOf (hWndOwner, 1, &child, IID_IContextMenu, nullptr, (void**)&ctxMenu);
+
+      if (SUCCEEDED (hr))
+      {
+        HMENU hMenu = CreatePopupMenu();
+        ctxMenu->QueryContextMenu (hMenu, 0, 1, 0x7FFF, CMF_NORMAL);
+
+        POINT cur = { };
+        GetCursorPos (&cur);
+
+        int cmd = TrackPopupMenuEx (hMenu, TPM_RETURNCMD, cur.x, cur.y, hWndOwner, nullptr);
+
+        if (cmd > 0)
+        {
+          CMINVOKECOMMANDINFOEX
+            info        = { sizeof(info) };
+            info.fMask  = CMIC_MASK_UNICODE;
+            info.hwnd   = hWndOwner;
+            info.lpVerb = MAKEINTRESOURCEA(cmd - 1);
+            info.nShow  = SW_SHOWNORMAL;
+
+          ctxMenu->InvokeCommand ((LPCMINVOKECOMMANDINFO)&info);
+        }
+
+        DestroyMenu (hMenu);
+      }
+    }
+
+    CoTaskMemFree (iidlPtr);
+  }
 }
 
 static int
