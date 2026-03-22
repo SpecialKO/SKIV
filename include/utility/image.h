@@ -281,3 +281,95 @@ struct skiv_image_desktop_s {
     _rotation         = DXGI_MODE_ROTATION_UNSPECIFIED;
   }
 };
+
+// Image Directory
+
+#include <shobjidl_core.h>
+
+struct skiv_image_directory_s {
+
+  class FileSystemBindData : public IFileSystemBindData
+  {
+  public:
+    FileSystemBindData() : _ref(1)
+    {
+      ZeroMemory(&_fd, sizeof(_fd));
+    }
+
+    // IUnknown
+    IFACEMETHODIMP QueryInterface(REFIID riid, void** ppv) override
+    {
+      if (riid == IID_IUnknown || riid == IID_IFileSystemBindData)
+      {
+        *ppv = static_cast<IFileSystemBindData*>(this);
+        AddRef();
+        return S_OK;
+      }
+      *ppv = nullptr;
+      return E_NOINTERFACE;
+    }
+
+    IFACEMETHODIMP_(ULONG) AddRef() override
+    {
+      return InterlockedIncrement(&_ref);
+    }
+
+    IFACEMETHODIMP_(ULONG) Release() override
+    {
+      ULONG r = InterlockedDecrement(&_ref);
+      if (r == 0) delete this;
+      return r;
+    }
+
+    // IFileSystemBindData
+    IFACEMETHODIMP SetFindData (const WIN32_FIND_DATAW* pfd) override
+    {
+      _fd = *pfd;
+      return S_OK;
+    }
+
+    IFACEMETHODIMP GetFindData (WIN32_FIND_DATAW* pfd) override
+    {
+      *pfd = _fd;
+      return S_OK;
+    }
+
+  private:
+    ~FileSystemBindData() = default;
+
+    LONG _ref;
+    WIN32_FIND_DATAW _fd;
+  };
+
+  struct fd_s {
+    std::wstring     filename;    // Image filename
+  //std::wstring     folder_path; // Parent folder path
+    std::wstring     path;        // Image path (full)
+    WIN32_FIND_DATA  ffd;
+  };
+
+//std::wstring                orig_path;   // Holds a cached copy of cover.path
+//std::wstring                filename;    // Image filename
+  std::wstring                folder_path; // Parent folder path
+  SKIF_DirectoryWatch         watch;
+  std::vector<fd_s>           fileList;
+  std::vector<fd_s>::iterator activeFile;
+  std::vector<SORTCOLUMN>     sortColumns; // File Explorer
+
+  void         reset       (void);
+  void         setImage    (const std::wstring& path);
+  std::wstring nextImage   (void);
+  std::wstring prevImage   (void);
+  std::wstring deleteImage (void);
+
+  // Find the position of the image in the current folder
+  void        updateFileIterator (const std::wstring& path);
+
+  // Retrieve all files in the folder, and identify our current place among them...
+  void        updateFolderData (void);
+
+  // Win32 File Explorer based sorting
+  bool        sortByColumns     (void);
+  void        sortByFilename    (void);
+  bool        updateSortColumns (void); // Returns true if the sort columns have changed
+};

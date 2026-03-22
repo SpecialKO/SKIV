@@ -105,7 +105,7 @@ SKIF_UI_Tab_DrawSettings (void)
     ImGui::SameLine ( );
     if (ImGui::Selectable(_path_cache.skiv_screenshotsA))
     {
-      std::wstring newPath = SKIF_Util_FileExplorer_BrowseFolder (_path_cache.skiv_screenshots);
+      std::wstring newPath = SKIF_Util_FileExplorer_BrowseForFolder (_path_cache.skiv_screenshots);
 
       if (PathFileExistsW (newPath.c_str()))
       {

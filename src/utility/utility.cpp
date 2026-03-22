@@ -2702,9 +2702,42 @@ SKIF_Util_FileExplorer_SelectFile (PCWSTR filePath)
     delete data;
 }
 
+bool
+SKIF_Util_FileExplorer_DeleteFile (PCWSTR filePath, bool hideWarning)
+{
+  bool ret = false;
+
+  IShellItem* psi = nullptr;
+  if (SUCCEEDED (SHCreateItemFromParsingName (filePath, nullptr, IID_PPV_ARGS(&psi))))
+  {
+    IFileOperation* pfo = nullptr;
+    if (SUCCEEDED (CoCreateInstance (CLSID_FileOperation, nullptr, CLSCTX_ALL, IID_PPV_ARGS(&pfo))))
+    {
+      // This primarily adheres to Explorer's "Display delete confirmation dialog" setting
+      //   i.e. if that setting is disabled, the confirmation won't appear regardless
+      DWORD flags  =
+        FOF_FILESONLY | FOFX_RECYCLEONDELETE | FOFX_ADDUNDORECORD | ((hideWarning) ? FOF_NOCONFIRMATION : FOF_WANTNUKEWARNING); // FOF_WANTNUKEWARNING only seems to trigger on network shares
+
+      if (SUCCEEDED (pfo->SetOperationFlags (flags)))
+      {
+        if (SUCCEEDED (pfo->DeleteItem (psi, nullptr)))
+        {
+          ret = SUCCEEDED (pfo->PerformOperations());
+        }
+      }
+
+      pfo->Release();
+    }
+
+    psi->Release();
+  }
+
+  return ret;
+}
+
 static int
 CALLBACK
-SKIF_Util_FileExplorer_BrowseFolder_CallbackProc (HWND hWnd,UINT uMsg, LPARAM lParam, LPARAM lpData)
+SKIF_Util_FileExplorer_BrowseForFolder_CallbackProc (HWND hWnd,UINT uMsg, LPARAM lParam, LPARAM lpData)
 {
   UNREFERENCED_PARAMETER (lParam);
 
@@ -2715,7 +2748,7 @@ SKIF_Util_FileExplorer_BrowseFolder_CallbackProc (HWND hWnd,UINT uMsg, LPARAM lP
 }
 
 std::wstring
-SKIF_Util_FileExplorer_BrowseFolder (PCWSTR defaultPath)
+SKIF_Util_FileExplorer_BrowseForFolder (PCWSTR defaultPath)
 {
   TCHAR path[MAX_PATH];
 
@@ -2723,7 +2756,7 @@ SKIF_Util_FileExplorer_BrowseFolder (PCWSTR defaultPath)
     bi = { };
     bi.lpszTitle  = L"Select a new screenshot folder for SKIV to use:";
     bi.ulFlags    = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
-    bi.lpfn       = SKIF_Util_FileExplorer_BrowseFolder_CallbackProc;
+    bi.lpfn       = SKIF_Util_FileExplorer_BrowseForFolder_CallbackProc;
     bi.lParam     = (LPARAM) defaultPath;
 
   LPITEMIDLIST pidl = SHBrowseForFolder ( &bi );
@@ -2746,6 +2779,8 @@ SKIF_Util_FileExplorer_BrowseFolder (PCWSTR defaultPath)
 
   return L"";
 }
+
+
 
 #if NTDDI_VERSION < NTDDI_WIN10_RS5
 // Effective Power Mode (Windows 10 1809+)

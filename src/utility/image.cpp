@@ -3959,3 +3959,480 @@ void sk_avif_add_icc_to_image (avifImage* img)
             RGB_D65_202_Rel_PeQ,
     sizeof (RGB_D65_202_Rel_PeQ) );
 }
+
+
+// Image Directory
+void
+skiv_image_directory_s::reset (void)
+{
+  PLOG_VERBOSE << "reset _current_folder!";
+
+  //orig_path.clear();
+  //filename.clear();
+  folder_path.clear();
+  fileList.clear();
+  activeFile = fileList.begin();
+  //fileListIndex = 0;
+  watch.reset();
+}
+
+void
+skiv_image_directory_s::setImage (const std::wstring& path)
+{
+  if (fileList.empty())
+    return;
+
+  activeFile = std::find_if (fileList.begin(), fileList.end(), [&](const fd_s& file) { return file.path == path; });
+
+  //fileListIndex = 0;
+  /*
+  for (auto& file : fileList)
+  {
+    if (file.path == path)
+    {
+      activeFile = std::next (fileList.begin(), fileListIndex);
+      return;
+    }
+  }
+  */
+}
+
+std::wstring
+skiv_image_directory_s::nextImage (void)
+{
+  if (fileList.empty() || activeFile == fileList.end())
+    return L"";
+
+  std::advance (activeFile,  1);
+  return activeFile->path;
+
+  //fileListIndex++;
+  //fileListIndex %= fileList.size();
+  //return (fileList[fileListIndex].path);
+}
+
+std::wstring
+skiv_image_directory_s::prevImage (void)
+{
+  if (fileList.empty() || activeFile == fileList.begin())
+    return L"";
+
+  std::advance (activeFile, -1);
+  return activeFile->path;
+
+  //fileListIndex--;
+  //fileListIndex %= fileList.size();
+  //return (fileList[fileListIndex].path);
+}
+
+std::wstring
+skiv_image_directory_s::deleteImage (void)
+{
+  if (fileList.empty())
+    return L"";
+
+  activeFile = fileList.erase (activeFile);
+
+  // Apparently erase() does not select the new populated end() ? Odd...
+  if (activeFile->path.empty() && ! fileList.empty())
+    prevImage();
+
+  return activeFile->path;
+}
+
+// Find the position of the image in the current folder
+void
+skiv_image_directory_s::updateFileIterator (const std::wstring& path)
+{
+  activeFile = std::find_if (fileList.begin(), fileList.end(), [&](const fd_s& file) { return file.path == path; });
+
+  /*
+  // Set the index to the proper position
+  fileListIndex = 0;
+  for (auto& file : fileList)
+  {
+    if (filename != file.name)
+      fileListIndex++;
+    else
+      break;
+  }
+  */
+}
+
+// Retrieve all files in the folder, and identify our current place among them...
+void
+skiv_image_directory_s::updateFolderData (void)
+{
+  HANDLE hFind        = INVALID_HANDLE_VALUE;
+  WIN32_FIND_DATA ffd = { };
+  fileList.clear();
+
+  PLOG_DEBUG << "Discovering ... " << (folder_path + LR"(\*.*)");
+
+  DWORD temp_time = SKIF_Util_timeGetTime1();
+
+  hFind = 
+    FindFirstFileExW ((folder_path + LR"(\*.*)").c_str(), FindExInfoBasic, &ffd, FindExSearchNameMatch, NULL, FIND_FIRST_EX_LARGE_FETCH);
+
+  if (INVALID_HANDLE_VALUE != hFind)
+  {
+    fileList.push_back ({ ffd.cFileName, folder_path + LR"(\)" + ffd.cFileName, ffd });
+
+    while (FindNextFile (hFind, &ffd))
+      fileList.push_back ({ ffd.cFileName, folder_path + LR"(\)" + ffd.cFileName, ffd });
+
+    FindClose (hFind);
+  }
+
+  PLOG_DEBUG << "Operation [FindFirstFileExW/FindNextFile] took " << (SKIF_Util_timeGetTime1() - temp_time) << " ms.";
+  temp_time = SKIF_Util_timeGetTime1();
+
+  if (! fileList.empty())
+  {
+    std::vector<fd_s> filtered;
+    extern bool isExtensionSupported (const std::wstring extension);
+
+    // Filter out unsupported file formats using their file extension
+    for (auto& file : fileList)
+      if (isExtensionSupported (std::filesystem::path(file.filename).extension().wstring()))
+        filtered.push_back (file);
+
+    fileList = filtered;
+
+    if (! fileList.empty())
+    {
+      temp_time = SKIF_Util_timeGetTime1();
+
+      // Let us try File Explorer sort first
+      if (updateSortColumns ( ) && sortByColumns ( )) { }
+      else sortByFilename ( );
+    }
+  }
+
+  PLOG_DEBUG << "Found " << fileList.size() << " supported images in the folder.";
+}
+
+
+#pragma comment(lib, "Propsys.lib")
+
+#include <propsys.h>
+#include <propkey.h>
+#include <propvarutil.h>
+
+static std::wstring
+PropertyKeyToString (const PROPERTYKEY& key)
+{
+  PWSTR pszName = nullptr;
+
+  if (SUCCEEDED(PSGetNameFromPropertyKey(key, &pszName)))
+  {
+    std::wstring result(pszName);
+    CoTaskMemFree(pszName);
+    return result;
+  }
+
+  return L"(unknown)";
+}
+
+static bool
+GetPropertyValue (const std::wstring&  path,
+                  const PROPERTYKEY&   key,
+                        PROPVARIANT*  pVar)
+{
+  CComPtr<IPropertyStore> spStore;
+
+  HRESULT hr = SHGetPropertyStoreFromParsingName(
+      path.c_str(),
+      NULL,
+      GPS_FASTPROPERTIESONLY, // GPS_FASTPROPERTIESONLY / GPS_DEFAULT
+      IID_PPV_ARGS (&spStore));
+
+  if (FAILED(hr))
+  {
+    _com_error err(hr);
+    PLOG_ERROR << "Failed with path: " << path << ", error: " << SK_WideCharToUTF8(err.ErrorMessage());
+    return false;
+  }
+
+  return SUCCEEDED(spStore->GetValue(key, pVar));
+}
+
+static int
+ComparePropVariants (const PROPVARIANT& a, const PROPVARIANT& b)
+{
+  return PropVariantCompare(a, b);
+}
+
+static bool
+GetFolderSortColumns (const std::wstring& path, std::vector<SORTCOLUMN>& sortColumns)
+{
+  sortColumns.clear();
+
+  CComPtr<IShellWindows> spWindows;
+  if (FAILED (spWindows.CoCreateInstance (CLSID_ShellWindows)))
+    return false;
+
+  long count = 0;
+  spWindows->get_Count (&count);
+
+  struct c_s {
+    HWND                    hWnd = NULL;
+    std::vector<SORTCOLUMN> sortColumns;
+  };
+
+  std::vector<c_s> candidates;
+
+  for (long i = 0; i < count; ++i)
+  {
+    CComVariant vtIndex(i);
+    CComPtr<IDispatch> spDisp;
+
+    if (FAILED (spWindows->Item (vtIndex, &spDisp)) || !spDisp)
+      continue;
+
+    CComPtr<IWebBrowserApp> spBrowser;
+    if (FAILED (spDisp->QueryInterface (IID_PPV_ARGS(&spBrowser))))
+      continue;
+
+    // Get location URL (file:///C:/...)
+    BSTR bstrURL;
+    if (FAILED (spBrowser->get_LocationURL (&bstrURL)))
+      continue;
+
+    std::wstring url(bstrURL, SysStringLen (bstrURL));
+    SysFreeString   (bstrURL);
+
+    // Convert URL → path
+    wchar_t wszPath[MAX_PATH];
+    DWORD size = MAX_PATH;
+    if (FAILED (PathCreateFromUrlW (url.c_str(), wszPath, &size, 0)))
+      continue;
+
+    // Compare with target path
+    if (_wcsicmp (wszPath, path.c_str()) != 0)
+      continue;
+
+    // Found matching Explorer window
+    CComPtr<IServiceProvider> spSP;
+    if (FAILED (spBrowser->QueryInterface (IID_PPV_ARGS(&spSP))))
+      continue;
+
+    CComPtr<IShellBrowser> spShellBrowser;
+    if (FAILED (spSP->QueryService (SID_STopLevelBrowser, IID_PPV_ARGS(&spShellBrowser))))
+      continue;
+
+    CComPtr<IShellView> spView;
+    if (FAILED (spShellBrowser->QueryActiveShellView (&spView)))
+      continue;
+
+    CComPtr<IFolderView2> spFV2;
+    if (FAILED (spView->QueryInterface (IID_PPV_ARGS(&spFV2))))
+      continue;
+
+    // We have a candidate
+    c_s item;
+
+    // Retrieve the window HWND
+    spBrowser->get_HWND ((SHANDLE_PTR*)& item.hWnd);
+
+    // Get sort columns
+    int sortColumnCount = 0;
+    if (SUCCEEDED (spFV2->GetSortColumnCount (&sortColumnCount)))
+    {
+      item.sortColumns = std::vector<SORTCOLUMN> (sortColumnCount);
+
+      if (SUCCEEDED (spFV2->GetSortColumns (item.sortColumns.data(), sortColumnCount)))
+      {
+        PLOG_VERBOSE << "Sort column count: " << sortColumnCount;
+
+        for (int col = 0; col < sortColumnCount; ++col)
+        {
+          PROPERTYKEY key         = item.sortColumns[col].propkey;
+          SORTDIRECTION direction = item.sortColumns[col].direction;
+
+          PLOG_VERBOSE << "Column " << col << " [" << PropertyKeyToString(key) << "], direction: " << (direction == SORT_ASCENDING ? "ASC" : "DESC");
+        }
+
+        candidates.push_back (std::move (item));
+      }
+    }
+  }
+
+  if (! candidates.empty())
+  {
+    // Walk downard through the Z-order
+    for (HWND wnd = GetWindow (candidates[0].hWnd, GW_HWNDFIRST); wnd != NULL; wnd = GetNextWindow (wnd, GW_HWNDNEXT))
+    {
+      auto it = std::find_if (candidates.begin(), candidates.end(), [&](const c_s& c) { return c.hWnd == wnd; } );
+
+      if (it == candidates.end())
+        continue;
+
+      PLOG_VERBOSE << "Found sort columns!";
+      sortColumns = it->sortColumns;
+
+      /*
+      for (int col = 0; col < sortColumns.size(); ++col)
+      {
+        PROPERTYKEY key         = sortColumns[col].propkey;
+        SORTDIRECTION direction = sortColumns[col].direction;
+
+        PLOG_VERBOSE << "Column " << col << " [" << PropertyKeyToString(key) << "], direction: " << (direction == SORT_ASCENDING ? "ASC" : "DESC");
+      }
+      */
+
+      return true;
+    }
+  }
+
+  return false;
+}
+
+bool
+skiv_image_directory_s::updateSortColumns (void)
+{
+  std::vector<SORTCOLUMN> oldSort = sortColumns;
+  if (! GetFolderSortColumns (folder_path, sortColumns))
+    return true;
+
+  if (sortColumns.size() != oldSort.size())
+    return true;
+
+  for (int i = 0; i < oldSort.size(); i++)
+  {
+    if ((oldSort[i].propkey   != sortColumns[i].propkey) ||
+        (oldSort[i].direction != sortColumns[i].direction))
+      return true;
+  }
+
+  return false;
+}
+
+void
+skiv_image_directory_s::sortByFilename (void)
+{
+  std::sort (fileList.begin(),
+              fileList.end  (), 
+    []( const fd_s& a,
+        const fd_s& b ) -> int
+    {
+      return StrCmpLogicalW (a.filename.c_str(), b.filename.c_str()) < 0;
+    }
+  );
+
+  PLOG_VERBOSE << "Sorted alphabetically!";
+}
+
+bool
+skiv_image_directory_s::sortByColumns (void)
+{
+  if (sortColumns.empty())
+    return false;
+
+  struct cf_s
+  {
+    fd_s                     file;
+    std::vector<PROPVARIANT> values;
+  };
+  std::vector<cf_s> cache;
+
+  DWORD temp_time         = SKIF_Util_timeGetTime1();
+  DWORD sum_time_parsing  = 0;
+  DWORD sum_time_getvalue = 0;
+
+  // Cache the properties of all files
+  CComPtr<IBindCtx>            bindCtx;
+  CComPtr<IPropertyStore>      spStore;
+  CComPtr<IFileSystemBindData> spFSBD = new FileSystemBindData();
+
+  HRESULT hr = CreateBindCtx (0, &bindCtx);
+
+  if (FAILED (hr))
+  {
+    _com_error err(hr);
+    PLOG_ERROR << "Operation [CreateBindCtx] failed with error: " << SK_WideCharToUTF8 (err.ErrorMessage());
+    return false;
+  }
+
+  for (const auto& file : fileList)
+  {
+    cf_s item;
+    item.file = file;
+    item.values.resize (sortColumns.size());
+
+    DWORD tmp = SKIF_Util_timeGetTime1();
+
+    spFSBD->SetFindData(&file.ffd); // Always returns S_OK claims the docs
+    hr = bindCtx->RegisterObjectParam (STR_FILE_SYS_BIND_DATA, spFSBD);
+
+    if (FAILED (hr))
+    {
+      _com_error err(hr);
+      PLOG_ERROR << "Operation [RegisterObjectParam] failed with error: " << SK_WideCharToUTF8 (err.ErrorMessage());
+    }
+
+    hr = SHGetPropertyStoreFromParsingName (file.path.c_str(), bindCtx, GPS_FASTPROPERTIESONLY | GPS_BESTEFFORT | GPS_NO_OPLOCK, IID_PPV_ARGS(&spStore));
+    sum_time_parsing += (SKIF_Util_timeGetTime1() - tmp);
+
+    if (FAILED (hr))
+    {
+      _com_error err(hr);
+      PLOG_ERROR << "Failed to retrieve properties for path: " << file.path;
+      PLOG_ERROR << "Error: " << SK_WideCharToUTF8 (err.ErrorMessage());
+      continue;
+    }
+
+    for (size_t i = 0; i < sortColumns.size(); ++i)
+    {
+      PropVariantInit (&item.values[i]);
+      DWORD tmp2 = SKIF_Util_timeGetTime1();
+      spStore->GetValue (sortColumns[i].propkey, &item.values[i]);
+      sum_time_getvalue += (SKIF_Util_timeGetTime1() - tmp2);
+    }
+
+    cache.push_back (std::move(item));
+  }
+
+  PLOG_DEBUG << "Operation [SHGetPropertyStoreFromParsingName] took " << sum_time_parsing << " ms.";
+  PLOG_DEBUG << "Operation [IPropertyStore::GetValue] took " << sum_time_getvalue << " ms.";
+
+  temp_time = SKIF_Util_timeGetTime1();
+
+  std::sort (cache.begin(), cache.end(), [&](const cf_s& a, const cf_s& b)
+    {
+      for (size_t i = 0; i < sortColumns.size(); ++i)
+      {
+        int cmp = PropVariantCompare(a.values[i], b.values[i]);
+
+        if (cmp != 0)
+        {
+          if (sortColumns[i].direction == SORT_DESCENDING)
+            cmp = -cmp;
+
+          return cmp < 0;
+        }
+      }
+      return false;
+    }
+  );
+
+  PLOG_DEBUG << "Operation [SortItems] took " << (SKIF_Util_timeGetTime1() - temp_time) << " ms.";
+  temp_time = SKIF_Util_timeGetTime1();
+
+  fileList.clear();
+
+  for (auto& item : cache)
+  {
+    fileList.push_back (item.file);
+
+    for (auto& v : item.values)
+      PropVariantClear (&v);
+  }
+
+  PLOG_DEBUG << "Operation [Cleanup] took " << (SKIF_Util_timeGetTime1() - temp_time) << " ms.";
+  PLOG_DEBUG << "Operation took ~" << (sum_time_parsing + sum_time_getvalue) << " ms.";
+
+  PLOG_VERBOSE << "Sorted based on File Explorer columns!";
+
+  return true;
+}
