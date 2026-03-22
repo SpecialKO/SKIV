@@ -4055,29 +4055,28 @@ skiv_image_directory_s::updateFileIterator (const std::wstring& path)
 }
 
 // Retrieve all files in the folder, and identify our current place among them...
+// TODO: Move this over unto a thread so as to not freeze the main UI thread
 void
 skiv_image_directory_s::updateFolderData (void)
 {
   HANDLE hFind        = INVALID_HANDLE_VALUE;
   WIN32_FIND_DATA ffd = { };
 
-  auto old   = fileList;
-  auto oldIt = std::find_if(old.begin(), old.end(), [&](const fd_s& file) { return file.path == activeFile->path; });
-  fileList.clear();
+  std::vector<fd_s> newList;
 
   PLOG_DEBUG << "Discovering ... " << (folder_path + LR"(\*.*)");
 
   DWORD temp_time = SKIF_Util_timeGetTime1();
 
-  hFind = 
+  hFind =
     FindFirstFileExW ((folder_path + LR"(\*.*)").c_str(), FindExInfoBasic, &ffd, FindExSearchNameMatch, NULL, FIND_FIRST_EX_LARGE_FETCH);
 
   if (INVALID_HANDLE_VALUE != hFind)
   {
-    fileList.push_back ({ ffd.cFileName, folder_path + LR"(\)" + ffd.cFileName, ffd });
+    newList.push_back ({ ffd.cFileName, folder_path + LR"(\)" + ffd.cFileName, ffd });
 
     while (FindNextFile (hFind, &ffd))
-      fileList.push_back ({ ffd.cFileName, folder_path + LR"(\)" + ffd.cFileName, ffd });
+      newList.push_back ({ ffd.cFileName, folder_path + LR"(\)" + ffd.cFileName, ffd });
 
     FindClose (hFind);
   }
@@ -4085,20 +4084,37 @@ skiv_image_directory_s::updateFolderData (void)
   PLOG_DEBUG << "Operation [FindFirstFileExW/FindNextFile] took " << (SKIF_Util_timeGetTime1() - temp_time) << " ms.";
   temp_time = SKIF_Util_timeGetTime1();
 
-  if (! fileList.empty())
+  if (! newList.empty())
   {
     std::vector<fd_s> filtered;
     extern bool isExtensionSupported (const std::wstring extension);
 
     // Filter out unsupported file formats using their file extension
-    for (auto& file : fileList)
+    for (auto& file : newList)
       if (isExtensionSupported (std::filesystem::path(file.filename).extension().wstring()))
         filtered.push_back (file);
 
-    fileList = filtered;
+    newList = filtered;
   }
 
-  PLOG_DEBUG << "Found " << fileList.size() << " supported images in the folder.";
+  bool  changed = (newList.size() != fileList.size());
+  if (! changed)
+  {
+    // Both lists can be sorted differently (alphabetical vs. sort columns) so use find_if for each element
+    for (auto& item : newList)
+    {
+      if (std::find_if (fileList.begin(), fileList.end(), [&](const fd_s& file) { return file.path == item.path; }) == fileList.end())
+        changed = true;
+    }
+  }
+
+  if (changed)
+  {
+    fileList = std::move(newList);
+    PLOG_DEBUG << "Found " << fileList.size() << " supported images in the folder.";
+    // Update the sort order
+    updateSortOrder ( );
+  }
 }
 
 
@@ -4301,7 +4317,7 @@ bool
 skiv_image_directory_s::sortByFilename (void)
 {
   std::sort (fileList.begin(),
-              fileList.end  (), 
+             fileList.end  (), 
     []( const fd_s& a,
         const fd_s& b ) -> int
     {

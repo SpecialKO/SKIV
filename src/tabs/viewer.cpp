@@ -2960,27 +2960,27 @@ SKIF_UI_Tab_DrawViewer (void)
 
       // If the selected file was changed from within _current_folder
       if (cover.file_info.filename != _current_folder.activeFile->filename)
-        dragDroppedFilePath = _current_folder.activeFile->path;
+               dragDroppedFilePath  = _current_folder.activeFile->path;
     }
 
     // Identify when the folder was changed outside of the app
+    // TODO: Filter out various changes (e.g. Thumbs.db updates)
     if (_current_folder.watch.isSignaled (_current_folder.folder_path))
     {
       dwLastSignaled = SKIF_Util_timeGetTime();
-      PLOG_VERBOSE << "_current_folder.watch was signaled! Delay checking the folder for another 500ms...";
+      PLOG_VERBOSE << "_current_folder.watch was signaled! Delay checking the folder for another 2500 ms...";
     }
 
-    if (dwLastSignaled != 0 && dwLastSignaled + 500 < SKIF_Util_timeGetTime())
+    if (dwLastSignaled != 0 && dwLastSignaled + 2500 < SKIF_Util_timeGetTime())
     {
       if (! _current_folder.fileDeleted)
       {
         _current_folder.updateFolderData   ( );
-        _current_folder.updateSortOrder    ( );
         _current_folder.updateFileIterator (cover.file_info.path);
 
         // If the selected file was changed from within _current_folder
         if (cover.file_info.filename != _current_folder.activeFile->filename)
-          dragDroppedFilePath = _current_folder.activeFile->path;
+                 dragDroppedFilePath  = _current_folder.activeFile->path;
       } else
         _current_folder.fileDeleted = false;
 
