@@ -4057,35 +4057,138 @@ skiv_image_directory_s::updateFileIterator (const std::wstring& path)
     activeFile = fileList.begin();
 }
 
+bool
+skiv_image_directory_s::workerThread (bool runThread)
+{
+  struct worker_thread_s {
+    std::wstring            _path;
+    std::vector<fd_s>       _fileList;
+    std::vector<SORTCOLUMN> _sortColumns;
+    HANDLE        hWorker    = NULL;
+    unsigned int  sWorker    = 0;
+  };
+
+  static worker_thread_s* pthread_data = nullptr;
+  static std::wstring pending;
+
+  // Only run one worker at once
+  if (runThread || ! pending.empty())
+  {
+    // Add new stuff to the pending cache.
+    pending = folder_path;
+
+    if (pthread_data == nullptr)
+    {
+      pthread_data = new worker_thread_s;
+
+      // Swap over the pending path, with copies of our existing data...
+      pthread_data->_path        = pending;
+      pthread_data->_fileList    = fileList;
+      pthread_data->_sortColumns = sortColumns;
+
+      HANDLE hWorkerThread = (HANDLE)
+      _beginthreadex (nullptr, 0x0, [](void* _input) -> unsigned
+      {
+        SKIF_Util_SetThreadDescription (GetCurrentThread (), L"SKIV_FolderWorker");
+
+        // Is this combo really appropriate for this thread?
+        //SKIF_Util_SetThreadPowerThrottling (GetCurrentThread (), 1); // Enable EcoQoS for this thread
+        //SetThreadPriority (GetCurrentThread (), THREAD_MODE_BACKGROUND_BEGIN);
+
+        PLOG_VERBOSE << "SKIV_FolderWorker thread started!";
+      
+        DWORD start = SKIF_Util_timeGetTime1();
+
+        worker_thread_s* _data = static_cast<worker_thread_s*>(_input);
+
+        updateFolderData (_data->_fileList, _data->_sortColumns, _data->_path);
+
+        PLOG_VERBOSE << "Thread [SKIF_LibraryWorker] took " << (SKIF_Util_timeGetTime1() - start) << " ms to complete!";
+
+        PLOG_VERBOSE << "SKIF_LibraryWorker thread stopped!";
+
+        //SetThreadPriority (GetCurrentThread (), THREAD_MODE_BACKGROUND_END);
+
+        return 0;
+      }, pthread_data, 0x0, nullptr);
+
+      bool threadCreated = (hWorkerThread != NULL);
+
+      if (threadCreated)
+      {
+        pthread_data->hWorker = hWorkerThread;
+        pthread_data->sWorker = 1;
+      }
+      else // Someting went wrong during thread creation, so free up the memory we allocated earlier
+      {
+        delete pthread_data;
+        pthread_data = nullptr;
+      }
+    }
+  }
+
+  // Only check our work if processNewWork is unset
+  if (! runThread && pthread_data != nullptr && pthread_data->sWorker == 1 && WaitForSingleObject (pthread_data->hWorker, 0) == WAIT_OBJECT_0)
+  {
+    // Only swap in the data if it is fresh
+    if (pending == pthread_data->_path)
+    {
+      fileList    = pthread_data->_fileList;
+      sortColumns = pthread_data->_sortColumns;
+      pending.clear();
+    }
+
+    CloseHandle (pthread_data->hWorker);
+    pthread_data->hWorker = NULL;
+    pthread_data->sWorker = 2;
+    pthread_data->_path.clear();
+    pthread_data->_fileList.clear();
+
+    delete pthread_data;
+    pthread_data = nullptr;
+
+    PLOG_VERBOSE << "Swapped in the new folder data!";
+
+    return true;
+  }
+
+  return false;
+}
+
 // Retrieve all files in the folder, and identify our current place among them...
 // TODO: Move this over unto a thread so as to not freeze the main UI thread
 void
-skiv_image_directory_s::updateFolderData (void)
+skiv_image_directory_s::updateFolderData (std::vector<fd_s>& list, std::vector<SORTCOLUMN>& sortColumns, const std::wstring& path)
 {
   HANDLE hFind        = INVALID_HANDLE_VALUE;
   WIN32_FIND_DATA ffd = { };
 
   std::vector<fd_s> newList;
 
-  PLOG_DEBUG << "Discovering ... " << (folder_path + LR"(\*.*)");
+  PLOG_DEBUG << "Discovering ... " << (path + LR"(\*.*)");
 
   DWORD temp_time = SKIF_Util_timeGetTime1();
 
+  // This excludes the . and .. items
+  auto _isValid = [](const wchar_t* str) -> bool
+  { return (! ((str[0] == '.') && ((str[1] == '\0') || (str[1] == '.' && str[2] == '\0')))); };
+
   hFind =
-    FindFirstFileExW ((folder_path + LR"(\*.*)").c_str(), FindExInfoBasic, &ffd, FindExSearchNameMatch, NULL, FIND_FIRST_EX_LARGE_FETCH);
+    FindFirstFileExW ((path + LR"(\*.*)").c_str(), FindExInfoBasic, &ffd, FindExSearchNameMatch, NULL, FIND_FIRST_EX_LARGE_FETCH);
 
   if (INVALID_HANDLE_VALUE != hFind)
   {
-    newList.push_back ({ ffd.cFileName, folder_path + LR"(\)" + ffd.cFileName, ffd });
+    if (_isValid (ffd.cFileName))
+      newList.push_back ({ ffd.cFileName, path + LR"(\)" + ffd.cFileName, ffd });
 
     while (FindNextFile (hFind, &ffd))
-      newList.push_back ({ ffd.cFileName, folder_path + LR"(\)" + ffd.cFileName, ffd });
+      if (_isValid (ffd.cFileName))
+        newList.push_back ({ ffd.cFileName, path + LR"(\)" + ffd.cFileName, ffd });
 
     FindClose (hFind);
   }
 
-  PLOG_DEBUG << "Operation [FindFirstFileExW/FindNextFile] took " << (SKIF_Util_timeGetTime1() - temp_time) << " ms.";
-  temp_time = SKIF_Util_timeGetTime1();
+  PLOG_VERBOSE << "Operation [FindFirstFileExW/FindNextFile] took " << (SKIF_Util_timeGetTime1() - temp_time) << " ms.";
 
   if (! newList.empty())
   {
@@ -4099,25 +4202,11 @@ skiv_image_directory_s::updateFolderData (void)
 
     newList = filtered;
   }
-
-  bool  changed = (newList.size() != fileList.size());
-  if (! changed)
-  {
-    // Both lists can be sorted differently (alphabetical vs. sort columns) so use find_if for each element
-    for (auto& item : newList)
-    {
-      if (std::find_if (fileList.begin(), fileList.end(), [&](const fd_s& file) { return file.path == item.path; }) == fileList.end())
-        changed = true;
-    }
-  }
-
-  if (changed)
-  {
-    fileList = std::move(newList);
-    PLOG_DEBUG << "Found " << fileList.size() << " supported images in the folder.";
-    // Update the sort order
-    updateSortOrder ( );
-  }
+  
+  list = std::move(newList);
+  PLOG_DEBUG << "Found " << list.size() << " supported images in the folder.";
+  // Update the sort order
+  updateSortOrder (list, sortColumns, path);
 }
 
 
@@ -4172,7 +4261,7 @@ ComparePropVariants (const PROPVARIANT& a, const PROPVARIANT& b)
 }
 
 static bool
-GetFolderSortColumns (const std::wstring& path, std::vector<SORTCOLUMN>& sortColumns)
+GetFolderSortColumns (std::vector<SORTCOLUMN>& sortColumns, const std::wstring& path)
 {
   sortColumns.clear();
 
@@ -4297,30 +4386,30 @@ GetFolderSortColumns (const std::wstring& path, std::vector<SORTCOLUMN>& sortCol
 }
 
 bool
-skiv_image_directory_s::updateSortOrder (void)
+skiv_image_directory_s::updateSortOrder (std::vector<fd_s>& list, std::vector<SORTCOLUMN>& sortColumns, const std::wstring& path)
 {
   std::vector<SORTCOLUMN> oldSort = sortColumns;
-  if (! GetFolderSortColumns (folder_path, sortColumns))
-    return sortByFilename ( );
+  if (! GetFolderSortColumns (sortColumns, path))
+    return sortByFilename (list);
 
   if (sortColumns.size() != oldSort.size())
-    return sortByColumns ( );
+    return sortByColumns (list, sortColumns);
 
   for (int i = 0; i < oldSort.size(); i++)
   {
     if ((oldSort[i].propkey   != sortColumns[i].propkey) ||
         (oldSort[i].direction != sortColumns[i].direction))
-      return sortByColumns ( );
+      return sortByColumns (list, sortColumns);
   }
 
-  return sortByColumns ( );
+  return sortByColumns (list, sortColumns);
 }
 
 bool
-skiv_image_directory_s::sortByFilename (void)
+skiv_image_directory_s::sortByFilename (std::vector<fd_s>& list)
 {
-  std::sort (fileList.begin(),
-             fileList.end  (), 
+  std::sort (list.begin(),
+             list.end  (), 
     []( const fd_s& a,
         const fd_s& b ) -> int
     {
@@ -4334,10 +4423,10 @@ skiv_image_directory_s::sortByFilename (void)
 }
 
 bool
-skiv_image_directory_s::sortByColumns (void)
+skiv_image_directory_s::sortByColumns (std::vector<fd_s>& list, const std::vector<SORTCOLUMN>& sortColumns)
 {
   if (sortColumns.empty())
-    return sortByFilename ( );
+    return sortByFilename (list);
 
   struct cf_s
   {
@@ -4361,10 +4450,10 @@ skiv_image_directory_s::sortByColumns (void)
   {
     _com_error err(hr);
     PLOG_ERROR << "Operation [CreateBindCtx] failed with error: " << SK_WideCharToUTF8 (err.ErrorMessage());
-    return sortByFilename ( );
+    return sortByFilename (list);
   }
 
-  for (const auto& file : fileList)
+  for (const auto& file : list)
   {
     cf_s item;
     item.file = file;
@@ -4381,6 +4470,8 @@ skiv_image_directory_s::sortByColumns (void)
       PLOG_ERROR << "Operation [RegisterObjectParam] failed with error: " << SK_WideCharToUTF8 (err.ErrorMessage());
     }
 
+    // Using GPS_FASTPROPERTIESONLY speeds up the performance here a lot... but it also means that all sort methods will not be supported.
+    // For example, "System.ItemDate" (sort by Date) will not work and will instead mirror "System.ItemModified" (Date Modified)
     hr = SHGetPropertyStoreFromParsingName (file.path.c_str(), bindCtx, GPS_FASTPROPERTIESONLY | GPS_BESTEFFORT | GPS_NO_OPLOCK, IID_PPV_ARGS(&spStore));
     sum_time_parsing += (SKIF_Util_timeGetTime1() - tmp);
 
@@ -4403,8 +4494,8 @@ skiv_image_directory_s::sortByColumns (void)
     cache.push_back (std::move(item));
   }
 
-  PLOG_DEBUG << "Operation [SHGetPropertyStoreFromParsingName] took " << sum_time_parsing << " ms.";
-  PLOG_DEBUG << "Operation [IPropertyStore::GetValue] took " << sum_time_getvalue << " ms.";
+  PLOG_VERBOSE << "Operation [SHGetPropertyStoreFromParsingName] took " << sum_time_parsing << " ms.";
+  PLOG_VERBOSE << "Operation [IPropertyStore::GetValue] took " << sum_time_getvalue << " ms.";
 
   temp_time = SKIF_Util_timeGetTime1();
 
@@ -4427,21 +4518,21 @@ skiv_image_directory_s::sortByColumns (void)
     }
   );
 
-  PLOG_DEBUG << "Operation [SortItems] took " << (SKIF_Util_timeGetTime1() - temp_time) << " ms.";
+  PLOG_VERBOSE << "Operation [SortItems] took " << (SKIF_Util_timeGetTime1() - temp_time) << " ms.";
   temp_time = SKIF_Util_timeGetTime1();
 
-  fileList.clear();
+  list.clear();
 
   for (auto& item : cache)
   {
-    fileList.push_back (item.file);
+    list.push_back (item.file);
 
     for (auto& v : item.values)
       PropVariantClear (&v);
   }
 
-  PLOG_DEBUG << "Operation [Cleanup] took " << (SKIF_Util_timeGetTime1() - temp_time) << " ms.";
-  PLOG_DEBUG << "Operation took ~" << (sum_time_parsing + sum_time_getvalue) << " ms.";
+  PLOG_VERBOSE << "Operation [Cleanup] took " << (SKIF_Util_timeGetTime1() - temp_time) << " ms.";
+  PLOG_VERBOSE << "Operation took ~" << (sum_time_parsing + sum_time_getvalue) << " ms.";
 
   PLOG_VERBOSE << "Sorted based on File Explorer columns!";
 

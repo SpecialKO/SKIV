@@ -2955,12 +2955,14 @@ SKIF_UI_Tab_DrawViewer (void)
       //PLOG_DEBUG << "_current_folder.activeFile->filename: " << _current_folder.activeFile->filename;
 
       // Re-sort the folder if the sort columns have changed
-      _current_folder.updateSortOrder    ( );
-      _current_folder.updateFileIterator (cover.file_info.path);
+      //_current_folder.updateSortOrder    ( );
+      //_current_folder.updateFileIterator (cover.file_info.path);
+      _current_folder.workerThread (true);
+      //  _current_folder.updateFileIterator (cover.file_info.path);
 
       // If the selected file was changed from within _current_folder
-      if (cover.file_info.filename != _current_folder.activeFile->filename)
-               dragDroppedFilePath  = _current_folder.activeFile->path;
+      //if (cover.file_info.filename != _current_folder.activeFile->filename)
+      //         dragDroppedFilePath  = _current_folder.activeFile->path;
     }
 
     // Identify when the folder was changed outside of the app
@@ -2974,17 +2976,27 @@ SKIF_UI_Tab_DrawViewer (void)
     if (dwLastSignaled != 0 && dwLastSignaled + 2500 < SKIF_Util_timeGetTime())
     {
       if (! _current_folder.fileDeleted)
-      {
-        _current_folder.updateFolderData   ( );
-        _current_folder.updateFileIterator (cover.file_info.path);
-
-        // If the selected file was changed from within _current_folder
-        if (cover.file_info.filename != _current_folder.activeFile->filename)
-                 dragDroppedFilePath  = _current_folder.activeFile->path;
-      } else
+        _current_folder.workerThread (true);
+      else
         _current_folder.fileDeleted = false;
 
       dwLastSignaled = 0;
+    }
+
+    if (_current_folder.workerThread (false))
+    {
+      _current_folder.updateFileIterator (cover.file_info.path);
+
+      // If the selected file was changed from within _current_folder
+      if (cover.file_info.filename != _current_folder.activeFile->filename)
+               dragDroppedFilePath  = _current_folder.activeFile->path;
+
+      ImGui::InsertNotification (
+      {
+        ImGuiToastType::Info,
+        5000,
+        "Background Scan", "Surrounding images have been refreshed!"
+      });
     }
   }
 
