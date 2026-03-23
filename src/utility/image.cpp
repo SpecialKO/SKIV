@@ -1093,6 +1093,9 @@ using namespace DirectX;
 
   wsFilename += L"_";
 
+  if (! isPersistent)
+    SKIF_Util_Files_PruneToLatestN (_path_cache.skiv_temp, 10);
+
   // DateTime
   SYSTEMTIME st;
   GetLocalTime(&st);

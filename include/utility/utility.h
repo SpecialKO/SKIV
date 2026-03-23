@@ -149,6 +149,7 @@ bool            SKIF_Util_HasFileSignature            (const std::vector<char>& 
 bool            SKIF_Util_HasFileExtension            (const std::wstring extension,    const FileSignature& signature);
 
 // Usernames
+
 std:: string    SKIF_Util_StripPersonalData           (std:: string input);
 std::wstring    SKIF_Util_StripPersonalData           (std::wstring input);
 void            SKIF_Util_Debug_LogUserNames          (void);
@@ -228,6 +229,8 @@ void            SKIF_Util_FileExplorer_SelectFile     (PCWSTR filePath);
 bool            SKIF_Util_FileExplorer_DeleteFile     (PCWSTR filePath, bool hideWarning);
 void            SKIF_Util_FileExplorer_ContextMenuFile(PCWSTR filePath, HWND hWndOwner);
 std::wstring    SKIF_Util_FileExplorer_BrowseForFolder(PCWSTR defaultPath);
+bool            SKIF_Util_Files_PruneOlderThan        (std::wstring path, ULONGLONG secondsSince);
+bool            SKIF_Util_Files_PruneToLatestN        (std::wstring path, int filesToRetain);
 std::string     SKIF_Util_GetWindowMessageAsStr       (UINT msg);
 
 

@@ -2831,6 +2831,112 @@ SKIF_Util_FileExplorer_BrowseForFolder (PCWSTR defaultPath)
   return L"";
 }
 
+bool
+SKIF_Util_Files_PruneOlderThan (std::wstring path, ULONGLONG secondsSince)
+{
+  if (path.empty())
+    return false;
+
+  if (! path.ends_with (LR"(\)"))
+    path += LR"(\)";
+
+  // Clear out any temp files older than the threshold
+  auto _isLastModified = [&](FILETIME ftLastWriteTime) -> bool
+  {
+    FILETIME ftSystemTime{}, ftAdjustedFileTime{};
+    SYSTEMTIME systemTime{};
+    GetSystemTime (&systemTime);
+
+    if (SystemTimeToFileTime (&systemTime, &ftSystemTime))
+    {
+      ULARGE_INTEGER uintLastWriteTime{};
+
+      // Copy to ULARGE_INTEGER union to perform 64-bit arithmetic
+      uintLastWriteTime.HighPart        = ftLastWriteTime.dwHighDateTime;
+      uintLastWriteTime.LowPart         = ftLastWriteTime.dwLowDateTime;
+
+      // Perform 64-bit arithmetic to add the required amount of seconds to last modified timestamp
+      uintLastWriteTime.QuadPart        = uintLastWriteTime.QuadPart + ULONGLONG(1 * (secondsSince) * 1.0e+7);
+
+      // Copy the results to an FILETIME struct
+      ftAdjustedFileTime.dwHighDateTime = uintLastWriteTime.HighPart;
+      ftAdjustedFileTime.dwLowDateTime  = uintLastWriteTime.LowPart;
+
+      // Compare with system time, and if system time is later (1), then return true
+      if (CompareFileTime (&ftSystemTime, &ftAdjustedFileTime) == 1)
+        return true;
+    }
+
+    return false;
+  };
+
+  HANDLE hFind        = INVALID_HANDLE_VALUE;
+  WIN32_FIND_DATA ffd = { };
+
+  hFind = 
+    FindFirstFileExW ((path + L"*").c_str(), FindExInfoBasic, &ffd, FindExSearchNameMatch, NULL, NULL);
+
+  if (INVALID_HANDLE_VALUE != hFind)
+  {
+    if (_isLastModified   (ffd.ftLastWriteTime))
+      DeleteFile  ((path + ffd.cFileName).c_str());
+
+    while (FindNextFile (hFind, &ffd))
+      if (_isLastModified   (ffd.ftLastWriteTime))
+        DeleteFile  ((path + ffd.cFileName).c_str());
+
+    FindClose (hFind);
+  } else return false;
+
+  return true;
+}
+
+bool
+SKIF_Util_Files_PruneToLatestN (std::wstring path, int filesToRetain)
+{
+  if (path.empty())
+    return false;
+
+  if (! path.ends_with (LR"(\)"))
+    path += LR"(\)";
+
+  HANDLE hFind        = INVALID_HANDLE_VALUE;
+  WIN32_FIND_DATA ffd = { };
+  std::vector<WIN32_FIND_DATA> files;
+
+  // This excludes the . and .. items
+  auto _isValid = [](const wchar_t* str) -> bool
+  { return (! ((str[0] == '.') && ((str[1] == '\0') || (str[1] == '.' && str[2] == '\0')))); };
+
+  hFind = 
+    FindFirstFileExW ((path + L"*").c_str(), FindExInfoBasic, &ffd, FindExSearchNameMatch, NULL, NULL);
+
+  if (INVALID_HANDLE_VALUE != hFind)
+  {
+    if (_isValid (ffd.cFileName))
+      files.push_back (ffd);
+
+    while (FindNextFile (hFind, &ffd))
+      if (_isValid (ffd.cFileName))
+        files.push_back (ffd);
+
+    FindClose (hFind);
+  } else return false;
+
+  if (files.size() > filesToRetain)
+  {
+    std::sort (files.begin(), files.end(), [](const WIN32_FIND_DATA& a, const WIN32_FIND_DATA& b)
+      { return (CompareFileTime (&a.ftLastWriteTime, &b.ftLastWriteTime) == -1); } // First file time is earlier than second file time.
+    );
+
+    for (int i = 0; i < (files.size() - filesToRetain); i++)
+      DeleteFile ((path + files[i].cFileName).c_str());
+
+    return true;
+  }
+
+  return false;
+}
 
 
 #if NTDDI_VERSION < NTDDI_WIN10_RS5
