@@ -39,6 +39,8 @@ struct m_s
   kb_kv_s*                     _keybind;
 };
 
+PopupState ContextMenuSettings = PopupState_Closed;
+
 void
 SKIF_UI_Tab_DrawSettings (void)
 {
@@ -1224,6 +1226,96 @@ SKIF_UI_Tab_DrawSettings (void)
 
   ImGui::Spacing ();
   ImGui::Spacing ();
+
+#pragma endregion
+
+#pragma region ContextMenuSettings
+
+  auto _IsRightClicked = [&](void) -> bool
+  {
+    if (ImGui::IsMouseClicked (ImGuiMouseButton_Right))
+    {
+      return true;
+    }
+
+    // Activate button held for >= .4 seconds -> right-click
+    if (ImGui::GetKeyData (ImGuiKey_GamepadFaceDown)->DownDuration > 0.4f &&
+        ImGui::GetKeyData (ImGuiKey_GamepadFaceDown)->DownDuration < 5.0f)
+    {
+      ImGui::GetKeyData (ImGuiKey_GamepadFaceDown)->DownDuration     = 5.0f;
+      ImGui::GetKeyData (ImGuiKey_GamepadFaceDown)->DownDurationPrev = 0.0f;
+
+      ImGui::ClearActiveID ( );
+
+      return true;
+    }
+
+    // Start button = Menu
+    if (ImGui::IsKeyPressed (ImGuiKey_GamepadStart))
+    {
+      ImGui::GetKeyData (ImGuiKey_GamepadStart)->DownDuration     =  0.01f;
+      ImGui::GetKeyData (ImGuiKey_GamepadStart)->DownDurationPrev =  0.00f;
+
+      ImGui::ClearActiveID ( );
+
+      return true;
+    }
+
+    return false;
+  };
+
+  // Act on all right clicks, because why not? :D
+  if (! SKIF_ImGui_IsAnyPopupOpen ( ) && _IsRightClicked ())
+    ContextMenuSettings = PopupState_Open;
+
+  // Open the Empty Space Menu
+  if (ContextMenuSettings == PopupState_Open)
+    ImGui::OpenPopup    ("ContextMenuSettings");
+
+
+  if (ImGui::BeginPopup   ("ContextMenuSettings", ImGuiWindowFlags_NoMove))
+  {
+    ContextMenuSettings = PopupState_Opened;
+
+    ImGui::PushStyleColor (ImGuiCol_NavHighlight, ImVec4(0,0,0,0));
+
+    if (SKIF_ImGui_MenuItemEx2 ("Go back###GoBackCM", ICON_FA_LEFT_LONG)) // ICON_FA_LIST_CHECK
+      SKIF_Tab_ChangeTo = UITab_Viewer;
+
+    ImGui::Separator ( );
+
+    if (SKIF_ImGui_MenuItemEx2 ("Fullscreen", SKIF_ImGui_IsFullscreen (SKIF_ImGui_hWnd) ? ICON_FA_DOWN_LEFT_AND_UP_RIGHT_TO_CENTER : ICON_FA_UP_RIGHT_AND_DOWN_LEFT_FROM_CENTER, ImGui::GetStyleColorVec4 (ImGuiCol_Text), "Ctrl+F"))
+    {
+      SKIF_ImGui_SetFullscreen (SKIF_ImGui_hWnd, ! SKIF_ImGui_IsFullscreen (SKIF_ImGui_hWnd));
+    }
+
+    ImGui::Separator ( );
+
+    if (_registry.bCloseToTray)
+    {
+      if (SKIF_ImGui_MenuItemEx2 ("Close app", 0, ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info), "Esc"))
+        PostMessage (SKIF_Notify_hWnd, WM_SKIF_MINIMIZE, 0x0, 0x0);
+    }
+
+    else
+    {
+      if (SKIF_ImGui_MenuItemEx2 ("Minimize", 0, ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info), "Ctrl+N"))
+        PostMessage (SKIF_Notify_hWnd, WM_SKIF_MINIMIZE, 0x0, 0x0);
+    }
+
+    if (SKIF_ImGui_MenuItemEx2 ("Exit", 0, ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Info), "Ctrl+Q"))
+    {
+      extern bool bKeepWindowAlive;
+      bKeepWindowAlive = false;
+    }
+
+
+    ImGui::PopStyleColor  ( );
+    ImGui::EndPopup       ( );
+  }
+
+  else
+    ContextMenuSettings = PopupState_Closed;
 
 #pragma endregion
 
