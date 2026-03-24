@@ -4057,10 +4057,11 @@ skiv_image_directory_s::updateFileIterator (const std::wstring& path)
     activeFile = fileList.begin();
 }
 
-bool
+int
 skiv_image_directory_s::workerThread (bool runThread)
 {
   struct worker_thread_s {
+    bool                    _changed = false;
     std::wstring            _path;
     std::vector<fd_s>       _fileList;
     std::vector<SORTCOLUMN> _sortColumns;
@@ -4101,7 +4102,7 @@ skiv_image_directory_s::workerThread (bool runThread)
 
         worker_thread_s* _data = static_cast<worker_thread_s*>(_input);
 
-        updateFolderData (_data->_fileList, _data->_sortColumns, _data->_path);
+        _data->_changed = updateFolderData (_data->_fileList, _data->_sortColumns, _data->_path);
 
         PLOG_VERBOSE << "Thread [SKIF_LibraryWorker] took " << (SKIF_Util_timeGetTime1() - start) << " ms to complete!";
 
@@ -4130,11 +4131,20 @@ skiv_image_directory_s::workerThread (bool runThread)
   // Only check our work if processNewWork is unset
   if (! runThread && pthread_data != nullptr && pthread_data->sWorker == 1 && WaitForSingleObject (pthread_data->hWorker, 0) == WAIT_OBJECT_0)
   {
+    int state = 1;
+
     // Only swap in the data if it is fresh
     if (pending == pthread_data->_path)
     {
-      fileList    = pthread_data->_fileList;
-      sortColumns = pthread_data->_sortColumns;
+      if (pthread_data->_changed)
+      {
+        state       = 2;
+        fileList    = pthread_data->_fileList;
+        sortColumns = pthread_data->_sortColumns;
+
+        PLOG_VERBOSE << "Swapped in the new folder data!";
+      }
+
       pending.clear();
     }
 
@@ -4147,23 +4157,22 @@ skiv_image_directory_s::workerThread (bool runThread)
     delete pthread_data;
     pthread_data = nullptr;
 
-    PLOG_VERBOSE << "Swapped in the new folder data!";
-
-    return true;
+    return state;
   }
 
-  return false;
+  return 0;
 }
 
 // Retrieve all files in the folder, and identify our current place among them...
-// TODO: Move this over unto a thread so as to not freeze the main UI thread
-void
+bool
 skiv_image_directory_s::updateFolderData (std::vector<fd_s>& list, std::vector<SORTCOLUMN>& sortColumns, const std::wstring& path)
 {
-  HANDLE hFind        = INVALID_HANDLE_VALUE;
+  HANDLE        hFind = INVALID_HANDLE_VALUE;
   WIN32_FIND_DATA ffd = { };
-
+  
   std::vector<fd_s> newList;
+  std::vector<fd_s> oldList = list;
+  list.clear();
 
   PLOG_DEBUG << "Discovering ... " << (path + LR"(\*.*)");
 
@@ -4192,21 +4201,40 @@ skiv_image_directory_s::updateFolderData (std::vector<fd_s>& list, std::vector<S
 
   if (! newList.empty())
   {
-    std::vector<fd_s> filtered;
     extern bool isExtensionSupported (const std::wstring extension);
 
     // Filter out unsupported file formats using their file extension
     for (auto& file : newList)
       if (isExtensionSupported (std::filesystem::path(file.filename).extension().wstring()))
-        filtered.push_back (file);
-
-    newList = filtered;
+        list.push_back (file);
   }
-  
-  list = std::move(newList);
-  PLOG_DEBUG << "Found " << list.size() << " supported images in the folder.";
-  // Update the sort order
-  updateSortOrder (list, sortColumns, path);
+
+  bool  changed = (list.size() != oldList.size());
+  if (! changed)
+  {
+    // Normalize sort order (A-Z)
+    sortByFilename (oldList);
+    sortByFilename (list);
+
+    // Have an item changed?
+    for (int i = 0; i < list.size(); i++)
+    {
+      if (list[i].path != oldList[i].path)
+      {
+        changed = true;
+        break;
+      }
+    }
+  }
+
+  // Update sort order (SortColumns)
+  if (changed)
+  {
+    PLOG_DEBUG << "Found " << list.size() << " supported images in the folder.";
+    updateSortOrder (list, sortColumns, path);
+  }
+
+  return changed;
 }
 
 
@@ -4340,8 +4368,6 @@ GetFolderSortColumns (std::vector<SORTCOLUMN>& sortColumns, const std::wstring& 
 
       if (SUCCEEDED (spFV2->GetSortColumns (item.sortColumns.data(), sortColumnCount)))
       {
-        PLOG_VERBOSE << "Sort column count: " << sortColumnCount;
-
         for (int col = 0; col < sortColumnCount; ++col)
         {
           PROPERTYKEY key         = item.sortColumns[col].propkey;
@@ -4365,8 +4391,9 @@ GetFolderSortColumns (std::vector<SORTCOLUMN>& sortColumns, const std::wstring& 
       if (it == candidates.end())
         continue;
 
-      PLOG_VERBOSE << "Found sort columns!";
       sortColumns = it->sortColumns;
+
+      //PLOG_VERBOSE << "Found sort columns!";
 
       /*
       for (int col = 0; col < sortColumns.size(); ++col)
@@ -4385,27 +4412,15 @@ GetFolderSortColumns (std::vector<SORTCOLUMN>& sortColumns, const std::wstring& 
   return false;
 }
 
-bool
+void
 skiv_image_directory_s::updateSortOrder (std::vector<fd_s>& list, std::vector<SORTCOLUMN>& sortColumns, const std::wstring& path)
 {
-  std::vector<SORTCOLUMN> oldSort = sortColumns;
-  if (! GetFolderSortColumns (sortColumns, path))
-    return sortByFilename (list);
-
-  if (sortColumns.size() != oldSort.size())
-    return sortByColumns (list, sortColumns);
-
-  for (int i = 0; i < oldSort.size(); i++)
-  {
-    if ((oldSort[i].propkey   != sortColumns[i].propkey) ||
-        (oldSort[i].direction != sortColumns[i].direction))
-      return sortByColumns (list, sortColumns);
-  }
-
-  return sortByColumns (list, sortColumns);
+  if (GetFolderSortColumns  (sortColumns, path))
+       sortByColumns  (list, sortColumns);
+  else sortByFilename (list);
 }
 
-bool
+void
 skiv_image_directory_s::sortByFilename (std::vector<fd_s>& list)
 {
   std::sort (list.begin(),
@@ -4416,13 +4431,9 @@ skiv_image_directory_s::sortByFilename (std::vector<fd_s>& list)
       return StrCmpLogicalW (a.filename.c_str(), b.filename.c_str()) < 0;
     }
   );
-
-  PLOG_VERBOSE << "Sorted alphabetically!";
-
-  return true;
 }
 
-bool
+void
 skiv_image_directory_s::sortByColumns (std::vector<fd_s>& list, const std::vector<SORTCOLUMN>& sortColumns)
 {
   if (sortColumns.empty())
@@ -4519,7 +4530,6 @@ skiv_image_directory_s::sortByColumns (std::vector<fd_s>& list, const std::vecto
   );
 
   PLOG_VERBOSE << "Operation [SortItems] took " << (SKIF_Util_timeGetTime1() - temp_time) << " ms.";
-  temp_time = SKIF_Util_timeGetTime1();
 
   list.clear();
 
@@ -4531,10 +4541,5 @@ skiv_image_directory_s::sortByColumns (std::vector<fd_s>& list, const std::vecto
       PropVariantClear (&v);
   }
 
-  PLOG_VERBOSE << "Operation [Cleanup] took " << (SKIF_Util_timeGetTime1() - temp_time) << " ms.";
   PLOG_VERBOSE << "Operation took ~" << (sum_time_parsing + sum_time_getvalue) << " ms.";
-
-  PLOG_VERBOSE << "Sorted based on File Explorer columns!";
-
-  return true;
 }

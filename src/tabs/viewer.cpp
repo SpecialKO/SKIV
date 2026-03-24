@@ -2966,14 +2966,11 @@ SKIF_UI_Tab_DrawViewer (void)
     }
 
     // Identify when the folder was changed outside of the app
-    // TODO: Filter out various changes (e.g. Thumbs.db updates)
+    //PLOG_VERBOSE << "_current_folder.watch was signaled! Delay checking the folder for another 5000 ms...";
     if (_current_folder.watch.isSignaled (_current_folder.folder_path))
-    {
       dwLastSignaled = SKIF_Util_timeGetTime();
-      PLOG_VERBOSE << "_current_folder.watch was signaled! Delay checking the folder for another 2500 ms...";
-    }
 
-    if (dwLastSignaled != 0 && dwLastSignaled + 2500 < SKIF_Util_timeGetTime())
+    if (dwLastSignaled != 0 && dwLastSignaled + 5000 < SKIF_Util_timeGetTime())
     {
       if (! _current_folder.fileDeleted)
         _current_folder.workerThread (true);
@@ -2983,7 +2980,8 @@ SKIF_UI_Tab_DrawViewer (void)
       dwLastSignaled = 0;
     }
 
-    if (_current_folder.workerThread (false))
+    int results = _current_folder.workerThread (false);
+    if (results > 0)
     {
       _current_folder.updateFileIterator (cover.file_info.path);
 
@@ -2991,12 +2989,13 @@ SKIF_UI_Tab_DrawViewer (void)
       if (cover.file_info.filename != _current_folder.activeFile->filename)
                dragDroppedFilePath  = _current_folder.activeFile->path;
 
-      ImGui::InsertNotification (
-      {
-        ImGuiToastType::Info,
-        5000,
-        "Background Scan", "Surrounding images have been refreshed!"
-      });
+      if (results == 2)
+        ImGui::InsertNotification (
+        {
+          ImGuiToastType::Info,
+          5000,
+          "Background Scan", "Surrounding images have been refreshed!"
+        });
     }
   }
 

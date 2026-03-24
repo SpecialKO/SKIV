@@ -367,12 +367,12 @@ struct skiv_image_directory_s {
   void        updateFileIterator (const std::wstring& path);
 
   // Retrieve all files in the folder, and identify our current place among them...
-  bool        workerThread  (bool runThread); // Returns true once new data have been swapped in (used to update the iterator elsewhere)
+  int         workerThread  (bool runThread); // 0 = Not done, 1 = No change in sort order (i.e. same files as before) , 2 = Change in the sort order (i.e. new files/folder)
 
   // Win32 File Explorer based sorting
 private:
-  static void updateFolderData (std::vector<fd_s>& list, std::vector<SORTCOLUMN>& sortColumns, const std::wstring& path);
-  static bool updateSortOrder  (std::vector<fd_s>& list, std::vector<SORTCOLUMN>& sortColumns, const std::wstring& path); // Returns true when sorted
-  static bool sortByColumns    (std::vector<fd_s>& list, const std::vector<SORTCOLUMN>& sortColumns);
-  static bool sortByFilename   (std::vector<fd_s>& list);
+  static bool updateFolderData (std::vector<fd_s>& list, std::vector<SORTCOLUMN>& sortColumns, const std::wstring& path);
+  static void updateSortOrder  (std::vector<fd_s>& list, std::vector<SORTCOLUMN>& sortColumns, const std::wstring& path);
+  static void sortByColumns    (std::vector<fd_s>& list, const std::vector<SORTCOLUMN>& sortColumns);
+  static void sortByFilename   (std::vector<fd_s>& list);
 };
