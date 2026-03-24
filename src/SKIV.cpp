@@ -2024,6 +2024,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
       {
         _registry._SnippingMode       = false;
         _registry._SnippingModeExit   = false;
+        _registry._SnippingModeInit   =  true;
 
         extern HWND hwndBeforeSnip;
         extern HWND hwndTopBeforeSnip;
@@ -2309,9 +2310,16 @@ wWinMain ( _In_     HINSTANCE hInstance,
           }
         };
 
-        static bool clicked = false;
+        static bool clicked      = false;
+        static bool _saveToDisk  = false;
+        if (_registry._SnippingModeInit)
+        {
+          _registry._SnippingModeInit = false;
+          _saveToDisk = (_registry.eScreenshotsAutosave & CaptureMode_Region);
+        }
 
-        if (HDR_Image && SKIV_HDR)
+        static bool toolbar = true; // HDR_Image && SKIV_HDR
+        if (toolbar)
         {
           static ImVec2 vSnippingToolbarSize = ImVec2 (128.0f, 32.0f);
 
@@ -2340,38 +2348,96 @@ wWinMain ( _In_     HINSTANCE hInstance,
           ImGui::TextUnformatted   (ICON_FA_SCISSORS " Snipping Tool");
           ImGui::Separator         ();
           ImGui::PopStyleColor     ();
-          ImGui::TreePush          ("");
-          ImGui::RadioButton       ("Keep HDR",       &_registry._SnippingTonemapsHDR, 0);
-          if (ImGui::IsItemHovered ())
-          {
-            ImGui::BeginTooltip    ();
-            ImGui::TextUnformatted ("HDR PNG may have Compatibility Issues");
-            ImGui::Separator       ();
-            ImGui::BulletText      ("Generally the clipboard contents can only be pasted into browser-derived software (i.e. built using Chromium, Electron) and SKIV.");
-            ImGui::BulletText      ("Some browsers cannot interpret HDR10 PNG correctly and the image will not render in HDR when pasted.");
-            ImGui::EndTooltip      ();
-          }
+
+          ImGui::Spacing           ();
+
+          // Save To Disk
+          ImGui::PushStyleColor    (ImGuiCol_Text, ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Info));
           ImGui::SameLine          ();
-          ImGui::RadioButton       ("Tone-map to SDR", &_registry._SnippingTonemapsHDR, 1);
+          ImGui::Checkbox          (" " ICON_FA_FLOPPY_DISK "###ToolbarSaveToDisk", &_saveToDisk);
+          ImGui::PopStyleColor     ();
           if (ImGui::IsItemHovered ())
           {
             ImGui::BeginTooltip    ();
-            ImGui::TextUnformatted ("High Quality HDR to SDR Tone Map");
+            ImGui::TextUnformatted ("Save captured screenshot?");
             ImGui::Separator       ();
-            ImGui::BulletText      ("Stored in the clipboard as a Bitmap for maximum compatibility with SDR software.");
+            ImGui::TextUnformatted ("Folder:");
+            ImGui::SameLine        ();
+            ImGui::TextUnformatted (_path_cache.skiv_screenshotsA);
             ImGui::EndTooltip      ();
           }
+
+          // HDR Tonemapping
+          if (HDR_Image && SKIV_HDR)
+          {
+            ImGui::SameLine          ();
+            ImGui::SeparatorEx       (ImGuiSeparatorFlags_Vertical);
+            ImGui::SameLine          ();
+            ImGui::BeginGroup        ();
+            ImGui::TextColored       (ImGui::GetStyleColorVec4 (ImGuiCol_TextDisabled), "HDR:");
+            ImGui::SameLine          ();
+            ImGui::RadioButton       ("Keep HDR",       &_registry._SnippingTonemapsHDR, 0);
+            if (ImGui::IsItemHovered ())
+            {
+              ImGui::BeginTooltip    ();
+              ImGui::TextUnformatted ("HDR PNG may have Compatibility Issues");
+              ImGui::Separator       ();
+              ImGui::BulletText      ("Generally the clipboard contents can only be pasted into browser-derived software (i.e. built using Chromium, Electron) and SKIV.");
+              ImGui::BulletText      ("Some browsers cannot interpret HDR10 PNG correctly and the image will not render in HDR when pasted.");
+              ImGui::EndTooltip      ();
+            }
+            ImGui::SameLine          ();
+            ImGui::RadioButton       ("Tone-map to SDR", &_registry._SnippingTonemapsHDR, 1);
+            if (ImGui::IsItemHovered ())
+            {
+              ImGui::BeginTooltip    ();
+              ImGui::TextUnformatted ("High Quality HDR to SDR Tone Map");
+              ImGui::Separator       ();
+              ImGui::BulletText      ("Stored in the clipboard as a Bitmap for maximum compatibility with SDR software.");
+              ImGui::EndTooltip      ();
+            }
+            ImGui::SameLine          ();
+            ImGui::RadioButton       ("Auto",           &_registry._SnippingTonemapsHDR, 2);
+            if (ImGui::IsItemHovered ())
+            {
+              ImGui::BeginTooltip    ();
+              ImGui::TextUnformatted ("Use SDR for Snips at or Below Windows SDR Desktop Luminance");
+              ImGui::Separator       ();
+              ImGui::BulletText      ("For HDR range content, captures an unaltered HDR image");
+              ImGui::EndTooltip      ();
+            }
+            ImGui::EndGroup          ();
+          }
+
           ImGui::SameLine          ();
-          ImGui::RadioButton       ("Auto",           &_registry._SnippingTonemapsHDR, 2);
-          if (ImGui::IsItemHovered ())
+          ImGui::SeparatorEx       (ImGuiSeparatorFlags_Vertical);
+          ImGui::SameLine          ();
+
+          // X (Close) Button
+          ImGui::BeginGroup        ();
+          ImGui::PushStyleColor   (ImGuiCol_ButtonHovered, ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Failure));
+          ImGui::PushStyleColor   (ImGuiCol_ButtonActive,  ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Failure) * ImVec4(1.2f, 1.2f, 1.2f, 1.0f));
+
+          static bool closeButtonHoverActive = false;
+
+          if (_registry._StyleLightMode && closeButtonHoverActive)
+            ImGui::PushStyleColor (ImGuiCol_Text, ImGui::GetStyleColorVec4 (ImGuiCol_WindowBg)); //ImVec4 (0.9F, 0.9F, 0.9F, 1.0f));
+
+          if (ImGui::Button (ICON_FA_XMARK, ImVec2 ( 30.0f * SKIF_ImGui_GlobalDPIScale, 0.0f ) )) // HotkeyEsc is situational
+            _registry._SnippingModeExit = true;
+      
+          if (_registry._StyleLightMode)
           {
-            ImGui::BeginTooltip    ();
-            ImGui::TextUnformatted ("Use SDR for Snips at or Below Windows SDR Desktop Luminance");
-            ImGui::Separator       ();
-            ImGui::BulletText      ("For HDR range content, captures an unaltered HDR image");
-            ImGui::EndTooltip      ();
+            if (closeButtonHoverActive)
+              ImGui::PopStyleColor ( );
+          
+            closeButtonHoverActive = (ImGui::IsItemHovered () || ImGui::IsItemActivated ());
           }
-          ImGui::TreePop           ();
+
+          ImGui::PopStyleColor     (2);
+          ImGui::EndGroup          ();
+          // End of X (Close) Button
+
           ImGui::EndGroup          ();
           if ( ImGui::IsWindowHovered () ||
                ImGui::IsItemActive    () )
@@ -2391,7 +2457,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
             _registry._SnippingModeExit = true;
             _GetRectBelowCursor (&selection, false);
             capture_area = selection;
-            capture_area._mode = (_registry.eScreenshotsAutosave & CaptureMode_Region) ? CaptureMode_Region : CaptureMode_None;
+            capture_area._mode = _saveToDisk;
           }
 
           else if (! ImGui::IsMouseDragging (ImGuiMouseButton_Left))
@@ -2409,7 +2475,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
               clicked = false;
               _registry._SnippingModeExit = true;
               capture_area = selection_auto;
-              capture_area._mode = (_registry.eScreenshotsAutosave & CaptureMode_Region) ? CaptureMode_Region : CaptureMode_None;
+              capture_area._mode = _saveToDisk;
             }
 
             else if (selection_auto._rect.Min != selection_auto._rect.Max)

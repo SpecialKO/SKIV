@@ -516,6 +516,7 @@ struct SKIF_RegistrySettings {
   bool _RendererHDREnabled          = false; // HDR Enabled
   bool _TouchDevice                 = false;
   bool _SnippingMode                = false;
+  bool _SnippingModeInit            =  true;
   bool _SnippingModeExit            = false;
   bool _SnippingModeTempHDR         = false;
   int  _SnippingTonemapsHDR         = 2;
