@@ -372,6 +372,9 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
   if (regKVScreenshotsAutosave.hasData(&hKey))
     eScreenshotsAutosave   =   regKVScreenshotsAutosave    .getData (&hKey);
 
+  if (regKVScreenshotsHotkeys.hasData(&hKey))
+    eScreenshotsHotkeys    =   regKVScreenshotsHotkeys     .getData (&hKey);
+
   if (regKVIgnoreUpdate.hasData(&hKey))
     wsIgnoreUpdate         =   regKVIgnoreUpdate           .getData (&hKey);
 

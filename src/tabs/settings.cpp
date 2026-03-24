@@ -32,8 +32,10 @@ struct m_s
 {
   CaptureMode                  _type;
   char*                        _label;
-  char*                        _unique_id;
-  bool                         _value;
+  char*                        _main_id;
+  char*                        _disk_id;
+  bool                         _main_value;
+  bool                         _disk_value;
   kb_kv_s*                     _keybind;
 };
 
@@ -127,9 +129,9 @@ SKIF_UI_Tab_DrawSettings (void)
 
     static std::vector <m_s>
       modes = {
-        { CaptureMode_Window, "Window", "###ModeToggle-Window", ((_registry.eScreenshotsAutosave & CaptureMode_Window) == CaptureMode_Window), &kbCaptureWindow },
-        { CaptureMode_Region, "Region", "###ModeToggle-Region", ((_registry.eScreenshotsAutosave & CaptureMode_Region) == CaptureMode_Region), &kbCaptureRegion },
-        { CaptureMode_Screen, "Screen", "###ModeToggle-Screen", ((_registry.eScreenshotsAutosave & CaptureMode_Screen) == CaptureMode_Screen), &kbCaptureScreen }
+        { CaptureMode_Window, "Window", "###ModeToggle-Window", "###DiskToggle-Window", ((_registry.eScreenshotsHotkeys & CaptureMode_Window) == CaptureMode_Window), ((_registry.eScreenshotsAutosave & CaptureMode_Window) == CaptureMode_Window), &kbCaptureWindow },
+        { CaptureMode_Region, "Region", "###ModeToggle-Region", "###DiskToggle-Region", ((_registry.eScreenshotsHotkeys & CaptureMode_Region) == CaptureMode_Region), ((_registry.eScreenshotsAutosave & CaptureMode_Region) == CaptureMode_Region), &kbCaptureRegion },
+        { CaptureMode_Screen, "Screen", "###ModeToggle-Screen", "###DiskToggle-Screen", ((_registry.eScreenshotsHotkeys & CaptureMode_Screen) == CaptureMode_Screen), ((_registry.eScreenshotsAutosave & CaptureMode_Screen) == CaptureMode_Screen), &kbCaptureScreen }
     };
     
     ImGui::TextColored (
@@ -159,7 +161,25 @@ SKIF_UI_Tab_DrawSettings (void)
     ImGui::BeginGroup ();
     for (auto& mode : modes)
     {
-      ImGui::ItemSize (ImVec2 (0.0f, ImGui::GetFrameHeight ()), ImGui::GetStyle().FramePadding.y);
+      //ImGui::ItemSize (ImVec2 (0.0f, ImGui::GetFrameHeight ()), ImGui::GetStyle().FramePadding.y);
+      if (ImGui::Checkbox (mode._main_id, &mode._main_value))
+      {
+        if (mode._main_value)
+        {
+          _registry.eScreenshotsHotkeys |=  mode._type;
+          mode._keybind->_callback (mode._keybind->_key);
+        }
+        else {
+          _registry.eScreenshotsHotkeys &= ~mode._type;
+          SKIF_Util_UnregisterHotKeyCapture(mode._type);
+        }
+
+        _registry.regKVScreenshotsHotkeys.putData (_registry.eScreenshotsHotkeys);
+      }
+
+      if (! mode._main_value)
+        SKIF_ImGui_PushDisableState();
+
       ImGui::SameLine      ();
       ImGui::Text          ( "%s",
                             mode._label);
@@ -167,9 +187,9 @@ SKIF_UI_Tab_DrawSettings (void)
       ImGui::SameLine      ();
       ImGui::SetCursorPosX (col2);
 
-      if (ImGui::Checkbox (mode._unique_id, &mode._value))
+      if (ImGui::Checkbox (mode._disk_id, &mode._disk_value))
       {
-        if (mode._value)
+        if (mode._disk_value)
           _registry.eScreenshotsAutosave |=  mode._type;
         else
           _registry.eScreenshotsAutosave &= ~mode._type;
@@ -188,6 +208,9 @@ SKIF_UI_Tab_DrawSettings (void)
 
         mode._keybind->_callback (mode._keybind->_key);
       }
+
+      if (! mode._main_value)
+        SKIF_ImGui_PopDisableState();
     }
     ImGui::EndGroup   ();
 

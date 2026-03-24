@@ -1393,9 +1393,12 @@ wWinMain ( _In_     HINSTANCE hInstance,
   SKIF_Util_RegisterHotKeyHDRToggle (_registry.kbToggleHDRDisplay.getKeybind());
 
   // Register snipping hotkey
-  SKIF_Util_RegisterHotKeyCapture (CaptureMode_Window, _registry.kbCaptureWindow.getKeybind());
-  SKIF_Util_RegisterHotKeyCapture (CaptureMode_Region, _registry.kbCaptureRegion.getKeybind());
-  SKIF_Util_RegisterHotKeyCapture (CaptureMode_Screen, _registry.kbCaptureScreen.getKeybind());
+  if ((_registry.eScreenshotsHotkeys & CaptureMode_Window) == CaptureMode_Window)
+      SKIF_Util_RegisterHotKeyCapture (CaptureMode_Window, _registry.kbCaptureWindow.getKeybind());
+  if ((_registry.eScreenshotsHotkeys & CaptureMode_Region) == CaptureMode_Region)
+      SKIF_Util_RegisterHotKeyCapture (CaptureMode_Region, _registry.kbCaptureRegion.getKeybind());
+  if ((_registry.eScreenshotsHotkeys & CaptureMode_Screen) == CaptureMode_Screen)
+      SKIF_Util_RegisterHotKeyCapture (CaptureMode_Screen, _registry.kbCaptureScreen.getKeybind());
 
   // Register the HTML Format for the clipboard
   CF_HTML = RegisterClipboardFormatW (L"HTML Format");

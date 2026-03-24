@@ -347,6 +347,10 @@ struct SKIF_RegistrySettings {
     SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(Screenshots Autosave)" );
 
+  KeyValue <int> regKVScreenshotsHotkeys =
+    SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(Screenshots Hotkeys)" );
+
   // Wide Strings
 
   KeyValue <std::wstring> regKVIgnoreUpdate =
@@ -431,7 +435,8 @@ struct SKIF_RegistrySettings {
   int iHDRToneMapType          = 8;   // 0 = Do Nothing,                  1 = Clip Luminance,         8 = Map to Display
   int iUIMode                  = 1;   // 0 = Safe Mode (BitBlt),          1 = Normal,                 2 = VRR Compatibility
   int iDiagnostics             = 1;   // 0 = None,                        1 = Normal,                 2 = Enhanced (not actually used yet)
-  CaptureMode eScreenshotsAutosave = CaptureMode_ALL; // Default to saving all types of screen captures
+  CaptureMode eScreenshotsAutosave = CaptureMode_ALL, // Default to saving all types of screen captures
+              eScreenshotsHotkeys  = CaptureMode_ALL; // Default to enabling all hotkeys
 
   // Default settings (booleans)
   bool bAdjustWindow            = false; // Adjust window size based on the image size?

@@ -756,14 +756,14 @@ SK_ImGui_KeybindSelect (SK_Keybind* keybind)
   if (! keybind)
     return false;
 
-  ImGui::PushStyleColor (ImGuiCol_Text, ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_TextBase)); //ImVec4 (0.667f, 0.667f, 0.667f, 1.0f));
+  //ImGui::PushStyleColor (ImGuiCol_Text, ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_TextBase)); //ImVec4 (0.667f, 0.667f, 0.667f, 1.0f));
   ImGui::PushItemWidth  (ImGui::GetContentRegionAvail ().x);
 
   bool ret =
     ImGui::Selectable (keybind->human_readable_utf8.c_str(), false);
 
   ImGui::PopItemWidth  ();
-  ImGui::PopStyleColor ();
+  //ImGui::PopStyleColor ();
 
   return ret;
 }
