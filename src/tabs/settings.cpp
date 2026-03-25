@@ -16,6 +16,7 @@
 #include <utility/gamepad.h>
 #include "../../version.h"
 #include <tabs/common_ui.h>
+#include <ImGuiNotify.hpp>
 #include <set>
 
 extern bool allowShortcutCtrlA;
@@ -100,13 +101,76 @@ SKIF_UI_Tab_DrawSettings (void)
       ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextBase)
                               );
     SKIF_ImGui_Spacing      ( );
+
+    static float folderPosX = 0.0f;
+
+    ImGui::TextColored (
+      ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextCaption),
+        "Name Pattern: "
+    );
+
+    constexpr int       maxChars  = 50;
+    static char pattern[maxChars] = {};
+    static bool warnNonUnique = false;
+           bool savePattern   = false;
+
+    SK_RunOnce (strncpy_s (pattern, maxChars, SK_WideCharToUTF8 (_registry.wsScreenshotsPattern).data(), _TRUNCATE));
     
-    
+    ImGui::SameLine ( );
+    ImGui::SetCursorPosX(folderPosX);
+
+    if (ImGui::InputTextEx ("###PatternInput", "<app>_<date>_<time>", pattern, maxChars, ImVec2(250.0f * SKIF_ImGui_GlobalDPIScale, 0.0f), ImGuiInputTextFlags_EnterReturnsTrue))
+      savePattern = true;
+
+    if (! ImGui::IsItemActive ())
+    {
+      if (pattern[0] == '\0')
+        strncpy (pattern, "<app>_<date>_<time>", maxChars);
+    }
+    else if (ImGui::GetIO().KeyCtrl && ImGui::GetKeyData(ImGuiKey_S)->DownDuration == 0.0f)
+    {
+      savePattern = true;
+
+      if (pattern[0] == '\0')
+        ImGui::SetWindowFocus (NULL);
+    }
+
+    ImGui::SameLine ( );
+
+    ImGui::PushStyleColor (ImGuiCol_Text, ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Success));
+    if (ImGui::Button (ICON_FA_FLOPPY_DISK))
+      savePattern = true;
+    ImGui::PopStyleColor ();
+
+    if (savePattern)
+    {
+      savePattern = false;
+
+      if (pattern[0] == '\0')
+        strncpy (pattern, "<app>_<date>_<time>", maxChars);
+
+      StrTrimA (pattern, " \t\r\n");
+      _registry.wsScreenshotsPattern = SK_UTF8ToWideChar (pattern);
+      _registry.regKVScreenshotsPattern.putData (_registry.wsScreenshotsPattern);
+      
+      ImGui::InsertNotification ({ ImGuiToastType::Success, 1000, "Saved", ""});
+    }
+
+    if ((StrStrA (pattern, "<app>") == NULL && StrStrA (pattern, "<date>") == NULL && StrStrA (pattern, "<time>") == NULL))
+    {
+      ImGui::TextColored (ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Yellow), ICON_FA_TRIANGLE_EXCLAMATION);
+      ImGui::SameLine    ( );
+      ImGui::Text        ("Missing <app>, <date>, and <time>. Any captured shot will overwrite the existing file!");
+    }
+
+    ImGui::Spacing ();
+
     ImGui::TextColored (
       ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextCaption),
         "Screenshots Folder: "
     );
     ImGui::SameLine ( );
+    folderPosX = ImGui::GetCursorPosX();
     if (ImGui::Selectable(_path_cache.skiv_screenshotsA))
     {
       std::wstring newPath = SKIF_Util_FileExplorer_BrowseForFolder (_path_cache.skiv_screenshots);

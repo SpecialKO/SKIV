@@ -369,6 +369,10 @@ struct SKIF_RegistrySettings {
     SKIF_MakeRegKeyWS ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(Screenshots)" );
 
+  KeyValue <std::wstring> regKVScreenshotsPattern =
+    SKIF_MakeRegKeyWS ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(Screenshots Pattern)" );
+
   KeyValue <std::wstring> regKVAutoUpdateVersion =
     SKIF_MakeRegKeyWS ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(Auto-Update Version)" );
@@ -470,8 +474,9 @@ struct SKIF_RegistrySettings {
   std::wstring wsUpdateChannel  = L"Website"; // Default to stable channel
   std::wstring wsIgnoreUpdate;
   std::wstring wsPathViewer;
-  std::wstring wsPathScreenshots;
   std::wstring wsPathSpecialK;
+  std::wstring wsPathScreenshots;
+  std::wstring wsScreenshotsPattern = L"<app>_<date>_<time>";
   std::wstring wsAutoUpdateVersion; // Holds the version the auto-updater is trying to install
   std::wstring wsDefaultHDRExt = L".png";
   std::wstring wsDefaultSDRExt = L".png";

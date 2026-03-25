@@ -387,6 +387,9 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
   if (regKVPathScreenshots.hasData(&hKey))
     wsPathScreenshots      =   regKVPathScreenshots        .getData (&hKey);
 
+  if (regKVScreenshotsPattern.hasData(&hKey))
+    wsScreenshotsPattern   =   regKVScreenshotsPattern     .getData (&hKey);
+
   if (regKVAutoUpdateVersion.hasData(&hKey))
     wsAutoUpdateVersion    =   regKVAutoUpdateVersion      .getData (&hKey);
 

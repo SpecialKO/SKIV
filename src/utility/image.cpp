@@ -1086,42 +1086,44 @@ using namespace DirectX;
     return false;
 
   static SKIF_CommonPathsCache& _path_cache = SKIF_CommonPathsCache::GetInstance ( );
+  static SKIF_RegistrySettings& _registry   = SKIF_RegistrySettings::GetInstance ( );
 
   bool isPersistent = (capture_data._mode != CaptureMode_None);
   std::wstring wsPNGPath  = (isPersistent) ? _path_cache.skiv_screenshots : _path_cache.skiv_temp;
-  std::wstring wsFilename = capture_data._title;
-
-  wsFilename += L"_";
+  std::wstring wsFilename = _registry.wsScreenshotsPattern;
+  const std::wstring pApps = L"<app>",
+                     pDate = L"<date>",
+                     pTime = L"<time>";
 
   if (! isPersistent)
     SKIF_Util_Files_PruneToLatestN (_path_cache.skiv_temp, 10);
 
   // DateTime
   SYSTEMTIME st;
-  GetLocalTime(&st);
+  GetLocalTime (&st);
 
-  // Buffers for formatted output
-  wchar_t dateBuffer[100];
-  wchar_t timeBuffer[100];
+  if (wsFilename.find (pApps) != std::wstring::npos)
+    wsFilename.replace (wsFilename.find (pApps), pApps.length(), capture_data._title);
 
   // Get locale-aware date
-  if (GetDateFormatEx (LOCALE_NAME_USER_DEFAULT, DATE_SHORTDATE, &st, NULL, dateBuffer, 100, NULL))
-    wsFilename += std::wstring(dateBuffer);
-
-  wsFilename += L"_";
+  if (wsFilename.find (pDate) != std::wstring::npos)
+  {
+    wchar_t dateBuffer[100];
+    if (GetDateFormatEx (LOCALE_NAME_USER_DEFAULT, DATE_SHORTDATE, &st, NULL, dateBuffer, 100, NULL))
+      wsFilename.replace (wsFilename.find (pDate), pDate.length(), dateBuffer);
+  }
 
   // Get locale-aware time
-  if (GetTimeFormatEx (LOCALE_NAME_USER_DEFAULT, 0, &st, NULL, timeBuffer, 100))
-    wsFilename += std::wstring(timeBuffer);
+  if (wsFilename.find (pTime) != std::wstring::npos)
+  {
+    wchar_t timeBuffer[100];
+    if (GetTimeFormatEx (LOCALE_NAME_USER_DEFAULT, 0, &st, NULL, timeBuffer, 100))
+      wsFilename.replace (wsFilename.find (pTime), pTime.length(), timeBuffer);
+  }
 
   wsFilename = SKIF_Util_StripInvalidFilenameChars (wsFilename);
 
   wsPNGPath += wsFilename + L".png";
-
-  //PLOG_VERBOSE << wsPNGPath;
-
-  static SKIF_RegistrySettings& _registry =
-    SKIF_RegistrySettings::GetInstance ( );
 
   int snipping_tonemap_mode = _registry._SnippingTonemapsHDR;
 
