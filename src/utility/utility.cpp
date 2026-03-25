@@ -23,6 +23,9 @@
 #pragma comment(lib, "Userenv.lib")
 #pragma comment(lib, "Gdiplus.lib")
 
+#pragma comment(lib, "RuntimeObject.lib")
+#pragma comment(lib, "mincore.lib")
+
 #include <SKIV.h>
 #include <utility/fsutil.h>
 #include <utility/registry.h>
