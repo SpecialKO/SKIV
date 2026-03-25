@@ -3439,7 +3439,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
             SKIF_Util_GetClipboardBitmapData ( );
 
-            ImGui::InsertNotification({ ImGuiToastType::Info, 3000, "Received a bitmap paste" });
+            ImGui::InsertNotification({ ImGuiToastType::Info, 3000, "Received a bitmap paste", "" });
           }
 
           else if ((cbd & ClipboardData_HDROP))

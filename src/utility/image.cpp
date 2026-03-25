@@ -3533,7 +3533,7 @@ SKIV_Image_CaptureRegion (SKIV_CaptureData capture_data)
 
           ImGui::InsertNotification (
             {
-              ImGuiToastType::Info,
+              ImGuiToastType::Success,
               3000,
               "Copied image to clipboard", ""
             }

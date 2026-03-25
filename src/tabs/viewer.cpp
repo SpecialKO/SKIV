@@ -2732,7 +2732,7 @@ SKIF_UI_Tab_DrawViewer (void)
                 {
                   ImGui::InsertNotification (
                     {
-                      ImGuiToastType::Info,
+                      ImGuiToastType::Success,
                       3000,
                       "Copied area to clipboard", "%.fx%.f -> %.fx%.f",
                       copyRect.Min.x,
@@ -2767,7 +2767,7 @@ SKIF_UI_Tab_DrawViewer (void)
               {
                 ImGui::InsertNotification (
                   {
-                    ImGuiToastType::Info,
+                    ImGuiToastType::Success,
                     3000,
                     "Copied image to clipboard", ""
                   }
@@ -2991,12 +2991,7 @@ SKIF_UI_Tab_DrawViewer (void)
                dragDroppedFilePath  = _current_folder.activeFile->path;
 
       if (results == 2)
-        ImGui::InsertNotification (
-        {
-          ImGuiToastType::Info,
-          5000,
-          "Background Scan", "Surrounding images have been refreshed!"
-        });
+        ImGui::InsertNotification ({ ImGuiToastType::Info, 5000, "Refreshed nearby images.", "" });
     }
   }
 
