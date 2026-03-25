@@ -2319,6 +2319,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
         {
           _registry._SnippingModeInit = false;
           _saveToDisk = (_registry.eScreenshotsAutosave & CaptureMode_Region);
+          _selectFile = false; // Reset on each capture (for now)
         }
 
         static bool toolbar = true; // HDR_Image && SKIV_HDR
