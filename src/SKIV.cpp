@@ -1459,8 +1459,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
                 hotkeyCtrlF = false, // Toggle Fullscreen Mode
                 hotkeyCtrlV = false, // Paste data through the clipboard
                 hotkeyCtrlN = false, // Minimize app
-                hotkeyCtrlS = false, // Viewer: Save Current Image (in same Dynamic Range), Snipping Mode: Toggle save to Disk
-                hotkeyCtrlX = false,
+                hotkeyCtrlS = false, // Viewer: Save Current Image (in same Dynamic Range), Snipping Mode: Toggle save to Disk, Settings: Save Screenshots Pattern
+                hotkeyCtrlX = false, // Export Current Image (HDR -> SDR)
                 hotkeyCtrlB = false, // Encoder Config
                 hotkeyCtrlE = false; // Snipping Mode: Toggle browse to folder
 
@@ -1976,31 +1976,16 @@ wWinMain ( _In_     HINSTANCE hInstance,
               SKIF_Tab_ChangeTo  = UITab_About;
         }
 
-        if (allowShortcutCtrlA && (hotkeyCtrlA || hotkeyCtrlO))
+        if (SKIF_Tab_Selected == UITab_Viewer && allowShortcutCtrlA)
         {
-          if (SKIF_Tab_Selected != UITab_Viewer)
-              SKIF_Tab_ChangeTo  = UITab_Viewer;
-
-          OpenFileDialog = PopupState_Open;
-        }
-
-        if (allowShortcutCtrlA && (hotkeyCtrlX || hotkeyCtrlS))
-        {
-          if (SKIF_Tab_Selected != UITab_Viewer)
-              SKIF_Tab_ChangeTo  = UITab_Viewer;
-
+          if (hotkeyCtrlA || hotkeyCtrlO)
+            OpenFileDialog = PopupState_Open;
           if (hotkeyCtrlX)
             ExportSDRDialog = PopupState_Open;
           if (hotkeyCtrlS)
             SaveFileDialog = PopupState_Open;
-        }
-
-        if (allowShortcutCtrlA && hotkeyCtrlB)
-        {
-          if (SKIF_Tab_Selected != UITab_Viewer)
-              SKIF_Tab_ChangeTo  = UITab_Viewer;
-
-          ConfigEncoders = PopupState_Open;
+          if (hotkeyCtrlB)
+            ConfigEncoders = PopupState_Open;
         }
       }
 
