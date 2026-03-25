@@ -1078,7 +1078,7 @@ SKIV_PNG_CopyToClipboard (const DirectX::Image& image, const void *pData, size_t
   return false;
 }
 
-bool SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool isHDR, CaptureMode mode, const wchar_t* wszFileName)
+bool SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool isHDR, SKIV_CaptureData capture_data)
 {
 using namespace DirectX;
 
@@ -1087,9 +1087,9 @@ using namespace DirectX;
 
   static SKIF_CommonPathsCache& _path_cache = SKIF_CommonPathsCache::GetInstance ( );
 
-  bool isPersistent = (mode != CaptureMode_None);
+  bool isPersistent = (capture_data._mode != CaptureMode_None);
   std::wstring wsPNGPath  = (isPersistent) ? _path_cache.skiv_screenshots : _path_cache.skiv_temp;
-  std::wstring wsFilename = std::wstring (wszFileName);
+  std::wstring wsFilename = capture_data._title;
 
   wsFilename += L"_";
 
@@ -1118,7 +1118,7 @@ using namespace DirectX;
 
   wsPNGPath += wsFilename + L".png";
 
-  PLOG_VERBOSE << wsPNGPath;
+  //PLOG_VERBOSE << wsPNGPath;
 
   static SKIF_RegistrySettings& _registry =
     SKIF_RegistrySettings::GetInstance ( );
@@ -1165,6 +1165,9 @@ using namespace DirectX;
     {
       PLOG_VERBOSE << "SKIF_Image_SaveToDisk_HDR ( ): SUCCEEDED";
 
+      if (capture_data._select)
+        SKIF_Util_FileExplorer_SelectFile (wsPNGPath.c_str());
+
       if (SKIV_PNG_CopyToClipboard (*pImage, wsPNGPath.c_str(), 0))
       {
         PLOG_VERBOSE << "SKIV_PNG_CopyToClipboard ( ): TRUE";
@@ -1190,8 +1193,12 @@ using namespace DirectX;
     if (isPersistent)
     {
       if (SUCCEEDED (SKIV_Image_SaveToDisk_SDR (*pImage, wsPNGPath.c_str(), false)))
+      {
         PLOG_VERBOSE << "SKIV_Image_SaveToDisk_SDR ( ): SUCCEEDED!";
-      else
+
+        if (capture_data._select)
+          SKIF_Util_FileExplorer_SelectFile (wsPNGPath.c_str());
+      } else
         PLOG_VERBOSE << "SKIF_Image_SaveToDisk_HDR ( ): FAILED";
     }
 
@@ -3405,11 +3412,11 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
 }
 
 void
-SKIV_Image_CaptureRegion (SKIV_Region capture_area)
+SKIV_Image_CaptureRegion (SKIV_CaptureData capture_data)
 {
   HMONITOR hMonCaptured =
-    MonitorFromPoint ({ static_cast <long> (capture_area._rect.Min.x),
-                        static_cast <long> (capture_area._rect.Min.y) }, MONITOR_DEFAULTTONEAREST);
+    MonitorFromPoint ({ static_cast <long> (capture_data._rect.Min.x),
+                        static_cast <long> (capture_data._rect.Min.y) }, MONITOR_DEFAULTTONEAREST);
 
   MONITORINFO                    minfo = { .cbSize = sizeof (MONITORINFO) };
   GetMonitorInfo (hMonCaptured, &minfo);
@@ -3417,11 +3424,11 @@ SKIV_Image_CaptureRegion (SKIV_Region capture_area)
   // Fixes snipping rectangles on non-primary (origin != 0,0) displays
   auto _AdjustCaptureAreaRelativeToDisplayOrigin = [&](void)
   {
-    capture_area._rect.Min.x -= minfo.rcMonitor.left;
-    capture_area._rect.Max.x -= minfo.rcMonitor.left;
+    capture_data._rect.Min.x -= minfo.rcMonitor.left;
+    capture_data._rect.Max.x -= minfo.rcMonitor.left;
 
-    capture_area._rect.Min.y -= minfo.rcMonitor.top;
-    capture_area._rect.Max.y -= minfo.rcMonitor.top;
+    capture_data._rect.Min.y -= minfo.rcMonitor.top;
+    capture_data._rect.Max.y -= minfo.rcMonitor.top;
   };
 
   _AdjustCaptureAreaRelativeToDisplayOrigin ();
@@ -3434,34 +3441,34 @@ SKIV_Image_CaptureRegion (SKIV_Region capture_area)
                 width  =
       static_cast <float> (minfo.rcMonitor.bottom - minfo.rcMonitor.top);
 
-    std::swap (capture_area._rect.Min.x, capture_area._rect.Min.y);
-    std::swap (capture_area._rect.Max.x, capture_area._rect.Max.y);
+    std::swap (capture_data._rect.Min.x, capture_data._rect.Min.y);
+    std::swap (capture_data._rect.Max.x, capture_data._rect.Max.y);
 
     const float capture_height =
-      static_cast <float> (capture_area._rect.Max.y - capture_area._rect.Min.y),
+      static_cast <float> (capture_data._rect.Max.y - capture_data._rect.Min.y),
                 capture_width  =
-      static_cast <float> (capture_area._rect.Max.x - capture_area._rect.Min.x);
+      static_cast <float> (capture_data._rect.Max.x - capture_data._rect.Min.x);
 
     if (SKIV_DesktopImage._rotation == DXGI_MODE_ROTATION_ROTATE90)
     {
-      capture_area._rect.Min.y = height - capture_area._rect.Max.y;
-      capture_area._rect.Max.y = height - capture_area._rect.Max.y + capture_height;
+      capture_data._rect.Min.y = height - capture_data._rect.Max.y;
+      capture_data._rect.Max.y = height - capture_data._rect.Max.y + capture_height;
     }
 
     else
     {
       std::ignore = capture_width;
       std::ignore = width;
-      //capture_area.Min.x = width - capture_width;
-      //capture_area.Max.x = width;
+      //capture_data.Min.x = width - capture_width;
+      //capture_data.Max.x = width;
     }
   }
 
   const size_t
-    x      = static_cast <size_t> (std::max (0.0f, capture_area._rect.Min.x)),
-    y      = static_cast <size_t> (std::max (0.0f, capture_area._rect.Min.y)),
-    width  = static_cast <size_t> (std::max (0.0f, capture_area._rect.GetWidth  ())),
-    height = static_cast <size_t> (std::max (0.0f, capture_area._rect.GetHeight ()));
+    x      = static_cast <size_t> (std::max (0.0f, capture_data._rect.Min.x)),
+    y      = static_cast <size_t> (std::max (0.0f, capture_data._rect.Min.y)),
+    width  = static_cast <size_t> (std::max (0.0f, capture_data._rect.GetWidth  ())),
+    height = static_cast <size_t> (std::max (0.0f, capture_data._rect.GetHeight ()));
 
   const DirectX::Rect
     src_rect (x,y, width,height);
@@ -3520,7 +3527,7 @@ SKIV_Image_CaptureRegion (SKIV_Region capture_area)
             PLOG_VERBOSE << "DirectX::FlipRotate        ( ): FAILED";
         }
 
-        if (SKIV_Image_CopyToClipboard (final, SKIV_DesktopImage._hdr_image, capture_area._mode, capture_area._title.c_str()))
+        if (SKIV_Image_CopyToClipboard (final, SKIV_DesktopImage._hdr_image, capture_data))
         {
           PLOG_VERBOSE << "SKIV_Image_CopyToClipboard ( ): SUCCEEDED";
 

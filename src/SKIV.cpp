@@ -1459,9 +1459,10 @@ wWinMain ( _In_     HINSTANCE hInstance,
                 hotkeyCtrlF = false, // Toggle Fullscreen Mode
                 hotkeyCtrlV = false, // Paste data through the clipboard
                 hotkeyCtrlN = false, // Minimize app
-                hotkeyCtrlS = false,
+                hotkeyCtrlS = false, // Viewer: Save Current Image (in same Dynamic Range), Snipping Mode: Toggle save to Disk
                 hotkeyCtrlX = false,
-                hotkeyCtrlB = false; // Encoder Config
+                hotkeyCtrlB = false, // Encoder Config
+                hotkeyCtrlE = false; // Snipping Mode: Toggle browse to folder
 
     // Handled in viewer.cpp
        //hotkeyCtrl1 = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_1     )->DownDuration == 0.0f), // Viewer -> Image Scaling: View actual size (1:1 / None)
@@ -1711,9 +1712,10 @@ wWinMain ( _In_     HINSTANCE hInstance,
       hotkeyCtrlF = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_F     )->DownDuration == 0.0f); // Toggle Fullscreen Mode
       hotkeyCtrlV = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_V     )->DownDuration == 0.0f); // Paste data through the clipboard
       hotkeyCtrlN = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_N     )->DownDuration == 0.0f); // Minimize app
-      hotkeyCtrlS = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_S     )->DownDuration == 0.0f); // Save Current Image (in same Dynamic Range)
+      hotkeyCtrlS = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_S     )->DownDuration == 0.0f); // Viewer: Save Current Image (in same Dynamic Range), Snipping Mode: Toggle save to Disk
       hotkeyCtrlX = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_X     )->DownDuration == 0.0f); // Export Current Image (HDR -> SDR)
-      hotkeyCtrlB = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_E     )->DownDuration == 0.0f); // Configure Image Encoders
+      hotkeyCtrlB = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_B     )->DownDuration == 0.0f); // Configure Image Encoders
+      hotkeyCtrlE = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_E     )->DownDuration == 0.0f); // Snipping Toolbar: Toggle browse to folder
 
       const bool hotkeyCycleScaling       = ImGui::IsKeyPressed (ImGuiKey_GamepadL3);
       const bool hotkeyCycleVisualization = ImGui::IsKeyPressed (ImGuiKey_GamepadR3);
@@ -1954,7 +1956,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
         RepositionSKIF = false;
 
       // Only allow navigational hotkeys when in Large Mode and as long as no popups are opened
-      if (! SKIF_ImGui_IsAnyPopupOpen ( ))
+      if (! SKIF_ImGui_IsAnyPopupOpen ( ) && ! _registry._SnippingMode)
       {
         if (hotkeyF1)
         {
@@ -2129,7 +2131,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
         ImRect allowable (SKIV_DesktopImage._desktop_pos,
                           SKIV_DesktopImage._desktop_pos + resolution);
-        SKIV_Region capture_area = SKIV_Region (ImRect(), L"", CaptureMode_None);
+        SKIV_CaptureData capture_data = SKIV_CaptureData (ImRect(), L"", CaptureMode_None);
 
         bool HDR_Image = SKIV_DesktopImage._hdr_image;
         bool SKIV_HDR  = (HDR_Image ? SKIF_ImGui_IsViewportHDR (SKIF_ImGui_hWnd) : false);
@@ -2162,8 +2164,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
           draw_list->AddRectFilled (allowable.Min, allowable.Max, ImGui::GetColorU32 (IM_COL32 (0, 0, 0, 20)));
         }
 
-        static SKIV_Region selection      = SKIV_Region (ImRect(), L"Desktop_Region", CaptureMode_Region);
-        static SKIV_Region selection_auto = SKIV_Region (ImRect(), L"Desktop_Auto",   CaptureMode_Region);
+        static SKIV_CaptureData selection      = SKIV_CaptureData (ImRect(), L"Desktop_Region", CaptureMode_Region);
+        static SKIV_CaptureData selection_auto = SKIV_CaptureData (ImRect(), L"Desktop_Auto",   CaptureMode_Region);
 
         if (GetForegroundWindow () != SKIF_ImGui_hWnd)
             SetForegroundWindow (     SKIF_ImGui_hWnd);
@@ -2204,7 +2206,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
           return false;
         };
 
-        auto _GetRectBelowCursor = [&](SKIV_Region* _region, bool isAutoSelection) -> void
+        auto _GetRectBelowCursor = [&](SKIV_CaptureData* _data, bool isAutoSelection) -> void
         {
           // This feature is unsupported on rotated displays
           //
@@ -2213,8 +2215,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
           {
             if (isAutoSelection)
             {
-              _region->_rect.Min = ImVec2 (0.0f, 0.0f);
-              _region->_rect.Max = ImVec2 (0.0f, 0.0f);
+              _data->_rect.Min = ImVec2 (0.0f, 0.0f);
+              _data->_rect.Max = ImVec2 (0.0f, 0.0f);
             }
             return;
           }
@@ -2280,13 +2282,13 @@ wWinMain ( _In_     HINSTANCE hInstance,
                     
                     if (isAutoSelection)
                     {
-                      _region->_rect.Min.x = static_cast<float> (rect.left);
-                      _region->_rect.Min.y = static_cast<float> (rect.top);
-                      _region->_rect.Max.x = static_cast<float> (rect.right);
-                      _region->_rect.Max.y = static_cast<float> (rect.bottom);
+                      _data->_rect.Min.x = static_cast<float> (rect.left);
+                      _data->_rect.Min.y = static_cast<float> (rect.top);
+                      _data->_rect.Max.x = static_cast<float> (rect.right);
+                      _data->_rect.Max.y = static_cast<float> (rect.bottom);
                     }
 
-                    _region->_title = SKIV_GetBaseFilename (hWnd);
+                    _data->_title = SKIV_GetBaseFilename (hWnd);
 
                     /*
                     PLOG_VERBOSE << "----------------------";
@@ -2295,8 +2297,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
                     if (RealGetWindowClassW (top_most,  wszRealWindowClass, 64))
                     PLOG_VERBOSE << "Class: " << wszRealWindowClass;
                     PLOG_VERBOSE << "Pos:   " << point.x << "," << point.y;
-                    PLOG_VERBOSE << "Min:   " << _region.Min.x << "," << _region.Min.y;
-                    PLOG_VERBOSE << "Max:   " << _region.Max.x << "," << _region.Max.y;
+                    PLOG_VERBOSE << "Min:   " << _data.Min.x << "," << _data.Min.y;
+                    PLOG_VERBOSE << "Max:   " << _data.Max.x << "," << _data.Max.y;
                     */
 
                     breakLoop = true;
@@ -2312,6 +2314,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
         static bool clicked      = false;
         static bool _saveToDisk  = false;
+        static bool _selectFile  = false;
         if (_registry._SnippingModeInit)
         {
           _registry._SnippingModeInit = false;
@@ -2350,22 +2353,51 @@ wWinMain ( _In_     HINSTANCE hInstance,
           ImGui::PopStyleColor     ();
 
           ImGui::Spacing           ();
+          ImGui::SameLine          ();
 
           // Save To Disk
+          if (hotkeyCtrlS)
+            _saveToDisk = ! _saveToDisk;
+
           ImGui::PushStyleColor    (ImGuiCol_Text, ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Info));
-          ImGui::SameLine          ();
           ImGui::Checkbox          (" " ICON_FA_FLOPPY_DISK "###ToolbarSaveToDisk", &_saveToDisk);
           ImGui::PopStyleColor     ();
           if (ImGui::IsItemHovered ())
           {
             ImGui::BeginTooltip    ();
             ImGui::TextUnformatted ("Save captured screenshot?");
+            ImGui::SameLine        ();
+            ImGui::TextColored     (ImGui::GetStyleColorVec4 (ImGuiCol_TextDisabled), "Ctrl+S");
             ImGui::Separator       ();
             ImGui::TextUnformatted ("Folder:");
             ImGui::SameLine        ();
             ImGui::TextUnformatted (_path_cache.skiv_screenshotsA);
             ImGui::EndTooltip      ();
           }
+
+          ImGui::SameLine          ();
+
+          // Show File In Explorer
+          if (! _saveToDisk)
+            SKIF_ImGui_PushDisableState ();
+          else if (hotkeyCtrlE)
+            _selectFile = ! _selectFile;
+
+          static bool _tOpenFolderDisabled = false;
+          ImGui::PushStyleColor    (ImGuiCol_Text, ImColor(255, 207, 72).Value);
+          ImGui::Checkbox          (" " ICON_FA_FOLDER_OPEN "###ToolbarOpenFolder", &_selectFile);
+          ImGui::PopStyleColor     ();
+          if (ImGui::IsItemHovered ())
+          {
+            ImGui::BeginTooltip    ();
+            ImGui::TextUnformatted ("Open folder after capture?");
+            ImGui::SameLine        ();
+            ImGui::TextColored     (ImGui::GetStyleColorVec4 (ImGuiCol_TextDisabled), "Ctrl+E");
+            ImGui::EndTooltip      ();
+          }
+
+          if (! _saveToDisk)
+            SKIF_ImGui_PopDisableState ();
 
           // HDR Tonemapping
           if (HDR_Image && SKIV_HDR)
@@ -2455,9 +2487,10 @@ wWinMain ( _In_     HINSTANCE hInstance,
           if (! clicked && SKIF_ImGui_SelectionRect (&selection._rect, allowable, 0, SelectionFlag_Filled))
           {
             _registry._SnippingModeExit = true;
-            _GetRectBelowCursor (&selection, false);
-            capture_area = selection;
-            capture_area._mode = _saveToDisk;
+            _GetRectBelowCursor  (&selection, false);
+            capture_data         = selection;
+            capture_data._mode   = _saveToDisk;
+            capture_data._select = _selectFile;
           }
 
           else if (! ImGui::IsMouseDragging (ImGuiMouseButton_Left))
@@ -2474,8 +2507,9 @@ wWinMain ( _In_     HINSTANCE hInstance,
             {
               clicked = false;
               _registry._SnippingModeExit = true;
-              capture_area = selection_auto;
-              capture_area._mode = _saveToDisk;
+              capture_data         = selection_auto;
+              capture_data._mode   = _saveToDisk;
+              capture_data._select = _selectFile;
             }
 
             else if (selection_auto._rect.Min != selection_auto._rect.Max)
@@ -2491,13 +2525,13 @@ wWinMain ( _In_     HINSTANCE hInstance,
           else
             clicked = false;
 
-          if (capture_area._rect.GetArea() != 0)
+          if (capture_data._rect.GetArea() != 0)
           {
             ignoredWindows.clear();
 
             PLOG_VERBOSE << "Attempting to capture region...";
 
-            SKIV_Image_CaptureRegion (capture_area);
+            SKIV_Image_CaptureRegion (capture_data);
           }
         }
 #pragma endregion
@@ -4208,8 +4242,8 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
         if (mode == CaptureMode_Window)
         {
-          const SKIV_Region region =
-                SKIV_Region (
+          const SKIV_CaptureData region =
+                SKIV_CaptureData (
                   ImRect (static_cast<float> (capture_rect.left  ),
                           static_cast<float> (capture_rect.top   ),
                           static_cast<float> (capture_rect.right ),
@@ -4230,8 +4264,8 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         else if (mode == CaptureMode_Screen)
         {
           extern skiv_image_desktop_s SKIV_DesktopImage;
-          const SKIV_Region region =
-                SKIV_Region (
+          const SKIV_CaptureData region =
+                SKIV_CaptureData (
                   ImRect (ImVec2 (0, 0),
                           SKIV_DesktopImage._resolution),
                   filename,
