@@ -2802,9 +2802,9 @@ SKIF_Util_FileExplorer_BrowseForFolder_CallbackProc (HWND hWnd,UINT uMsg, LPARAM
 }
 
 std::wstring
-SKIF_Util_FileExplorer_BrowseForFolder (PCWSTR defaultPath)
+SKIF_Util_FileExplorer_BrowseForFolderXP (PCWSTR defaultPath)
 {
-  TCHAR path[MAX_PATH];
+  TCHAR path[MAX_PATH] = { };
 
   BROWSEINFO
     bi = { };
@@ -2817,21 +2817,52 @@ SKIF_Util_FileExplorer_BrowseForFolder (PCWSTR defaultPath)
 
   if ( pidl != 0 )
   {
-    // Get the name of the folder and put it in path
     SHGetPathFromIDList ( pidl, path );
-
-    // Free memory used
-    IMalloc * imalloc = 0;
-    if ( SUCCEEDED( SHGetMalloc ( &imalloc )) )
-    {
-      imalloc->Free ( pidl );
-      imalloc->Release ( );
-    }
-
-    return path;
+    CoTaskMemFree (pidl);
   }
 
-  return L"";
+  return path;
+}
+
+std::wstring
+SKIF_Util_FileExplorer_BrowseForFolder (PCWSTR defaultPath)
+{
+  std::wstring path;
+
+  IFileDialog* pfd = nullptr;
+  if (SUCCEEDED (CoCreateInstance (CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&pfd))))
+  {
+    DWORD dwFlags;
+    pfd->GetOptions(&dwFlags);
+    pfd->SetOptions (dwFlags | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
+
+    // Force the dialogue to open a specific folder
+    IShellItem* psiFolder = nullptr;
+    if (SUCCEEDED (SHCreateItemFromParsingName (defaultPath, nullptr, IID_PPV_ARGS(&psiFolder))))
+      pfd->SetFolder (psiFolder);
+
+    if (SUCCEEDED (pfd->Show (SKIF_ImGui_hWnd)))
+    {
+      IShellItem* psiResult = nullptr;
+      if (SUCCEEDED (pfd->GetResult (&psiResult)))
+      {
+        PWSTR pszFolderPath = nullptr;
+        if (SUCCEEDED (psiResult->GetDisplayName (SIGDN_FILESYSPATH, &pszFolderPath)))
+        {
+          path = pszFolderPath;
+          CoTaskMemFree (pszFolderPath);
+        }
+        psiResult->Release();
+      }
+    }
+
+    if (psiFolder != nullptr)
+      psiFolder->Release();
+
+    pfd->Release();
+  }
+
+  return path;
 }
 
 bool

@@ -228,6 +228,7 @@ std::wstring    SKIF_Util_AddEnvironmentBlock         (const void* pEnvBlock, co
 void            SKIF_Util_FileExplorer_SelectFile     (PCWSTR filePath);
 bool            SKIF_Util_FileExplorer_DeleteFile     (PCWSTR filePath, bool hideWarning);
 void            SKIF_Util_FileExplorer_ContextMenuFile(PCWSTR filePath, HWND hWndOwner);
+std::wstring    SKIF_Util_FileExplorer_BrowseForFolderXP(PCWSTR defaultPath);
 std::wstring    SKIF_Util_FileExplorer_BrowseForFolder(PCWSTR defaultPath);
 bool            SKIF_Util_Files_PruneOlderThan        (std::wstring path, ULONGLONG secondsSince);
 bool            SKIF_Util_Files_PruneToLatestN        (std::wstring path, int filesToRetain);
