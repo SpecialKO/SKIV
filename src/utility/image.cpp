@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <string_view>
 #include <filesystem>
+#include <pathcch.h>
+#include <unordered_set>
 #include <plog/Log.h>
 #include <strsafe.h>
 #include <wincodec.h>
@@ -1088,42 +1090,101 @@ using namespace DirectX;
   static SKIF_CommonPathsCache& _path_cache = SKIF_CommonPathsCache::GetInstance ( );
   static SKIF_RegistrySettings& _registry   = SKIF_RegistrySettings::GetInstance ( );
 
+  // Retrieve local time first
+  SYSTEMTIME st;
+  GetLocalTime (&st);
+
   bool isPersistent = (capture_data._mode != CaptureMode_None);
   std::wstring wsPNGPath  = (isPersistent) ? _path_cache.skiv_screenshots : _path_cache.skiv_temp;
   std::wstring wsFilename = _registry.wsScreenshotsPattern;
-  const std::wstring pApps = L"<app>",
-                     pDate = L"<date>",
-                     pTime = L"<time>";
+  size_t pos = std::wstring::npos;
+  static const std::wstring
+    pApp  = L"<app>",
+    pExe  = L"<exe>",
+    pPro  = L"<pro>",
+    pWnd  = L"<win>",
+    pDate = L"<date>",
+    pTime = L"<time>";
 
   if (! isPersistent)
     SKIF_Util_Files_PruneToLatestN (_path_cache.skiv_temp, 10);
 
-  // DateTime
-  SYSTEMTIME st;
-  GetLocalTime (&st);
+  // Process path
 
-  if (wsFilename.find (pApps) != std::wstring::npos)
-    wsFilename.replace (wsFilename.find (pApps), pApps.length(), capture_data._title);
+  // Automatic app name population...
+  pos = wsFilename.find (pApp);
+  if (pos != std::wstring::npos)
+  {
+    if (! capture_data._names.custom.empty())
+      wsFilename.replace (pos, pApp.length(), capture_data._names.custom);
+    else if (! capture_data._names.product.empty())
+      wsFilename.replace (pos, pApp.length(), capture_data._names.product);
+    else if (! capture_data._names.executable.empty())
+      wsFilename.replace (pos, pApp.length(), capture_data._names.executable);
+    else
+      wsFilename.replace (pos, pApp.length(), L"unknown");
+  }
 
-  // Get locale-aware date
-  if (wsFilename.find (pDate) != std::wstring::npos)
+  // Product name
+  pos = wsFilename.find (pPro);
+  if (pos != std::wstring::npos)
+    wsFilename.replace (pos, pPro.length(), (capture_data._names.product.empty()) ? L"unknown" : capture_data._names.product);
+
+  // Executable name
+  pos = wsFilename.find (pExe);
+  if (pos != std::wstring::npos)
+    wsFilename.replace (pos, pExe.length(), (capture_data._names.executable.empty()) ? L"unknown" : capture_data._names.executable);
+
+  // Window title
+  pos = wsFilename.find (pWnd);
+  if (pos != std::wstring::npos)
+    wsFilename.replace (pos, pWnd.length(), (capture_data._names.window.empty()) ? L"unknown" : capture_data._names.window);
+
+  // Locale-aware date
+  pos = wsFilename.find (pDate);
+  if (pos != std::wstring::npos)
   {
     wchar_t dateBuffer[100];
     if (GetDateFormatEx (LOCALE_NAME_USER_DEFAULT, DATE_SHORTDATE, &st, NULL, dateBuffer, 100, NULL))
-      wsFilename.replace (wsFilename.find (pDate), pDate.length(), dateBuffer);
+      wsFilename.replace (pos, pDate.length(), dateBuffer);
   }
 
-  // Get locale-aware time
-  if (wsFilename.find (pTime) != std::wstring::npos)
+  // Locale-aware time
+  pos = wsFilename.find (pTime);
+  if (pos != std::wstring::npos)
   {
     wchar_t timeBuffer[100];
     if (GetTimeFormatEx (LOCALE_NAME_USER_DEFAULT, 0, &st, NULL, timeBuffer, 100))
-      wsFilename.replace (wsFilename.find (pTime), pTime.length(), timeBuffer);
+      wsFilename.replace (pos, pTime.length(), timeBuffer);
   }
 
-  wsFilename = SKIF_Util_StripInvalidFilenameChars (wsFilename);
+  // Replace : with .
+  std::replace (wsFilename.begin(), wsFilename.end(), ':', '.');
+
+  // Windows-style folder separators
+  std::replace (wsFilename.begin(), wsFilename.end(), '/', '\\');
+
+  auto _stripInvalidCharacters = [](wchar_t tval) {
+    static const std::unordered_set <wchar_t> invalid_file_char =
+    { L':', L'*',  L'?', L'\"', L'<',  L'>', L'|', };
+
+    return (invalid_file_char.find(tval) != invalid_file_char.end());
+  };
+  
+  wsFilename.erase (std::remove_if (wsFilename.begin(), wsFilename.end(), _stripInvalidCharacters), wsFilename.end());
+
+  // Strip trailing spaces from name, these are usually the result of
+  //   deleting one of the non-useable characters above.
+  for (auto it = wsFilename.rbegin (); it != wsFilename.rend (); ++it)
+    if (*it == L' ') *it = L'\0'; else break;
 
   wsPNGPath += wsFilename + L".png";
+
+  // Create any missing folders...
+  std::error_code       ec;
+  std::filesystem::path p = wsPNGPath;
+  if (! std::filesystem::exists         (p.parent_path(), ec))
+    std::filesystem::create_directories (p.parent_path(), ec);
 
   int snipping_tonemap_mode = _registry._SnippingTonemapsHDR;
 
@@ -1631,7 +1692,7 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
   // For silly users who don't give us filenames...
   if (! wszExtension)
   {
-    PathAddExtension (wszImplicitFileName, defaultSDRFileExt.c_str ());
+    PathCchAddExtension (wszImplicitFileName, MAX_PATH, defaultSDRFileExt.c_str ());
     wszExtension =
       PathFindExtensionW (wszImplicitFileName);
   }
@@ -2506,7 +2567,7 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
   // For doofus users who don't give us filenames...
   if (! wszExtension)
   {
-    PathAddExtension (wszImplicitFileName, defaultHDRFileExt.c_str ());
+    PathCchAddExtension (wszImplicitFileName, MAX_PATH, defaultHDRFileExt.c_str ());
     wszExtension =
       PathFindExtensionW (wszImplicitFileName);
   }

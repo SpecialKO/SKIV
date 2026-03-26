@@ -55,6 +55,7 @@
 #include <unordered_set>
 #include <oleidl.h>
 #include <utility/droptarget.hpp>
+#include <pathcch.h>
 
 #include <d3d11.h>
 #define DIRECTINPUT_VERSION 0x0800
@@ -955,42 +956,77 @@ void SKIF_Initialize (LPWSTR lpCmdLine)
 }
 
 static
-std::wstring
-SKIV_GetBaseFilename (HWND hWnd)
+SKIV_CaptureData::Application
+SKIV_GetApplicationNames (HWND hWnd)
 {
   // Limit window title / process name to 60 characters
   const size_t len = MAX_PATH + 2;
-  wchar_t wszFilename [len] = { };
+  wchar_t buffer [len] = { };
+  SKIV_CaptureData::Application names = { };
 
-  // Window title, if retrievable, else process name
-  if (GetWindowTextW (hWnd, wszFilename, len) == 0)
+  // Window title
+  if (GetWindowTextW (hWnd, buffer, len))
+    names.window = std::wstring(buffer);
+
+  // Process name
+  DWORD dwProcessId = 0;
+  if (GetWindowThreadProcessId (hWnd, &dwProcessId))
   {
-    // Process name
-    DWORD dwProcessId = 0;
-    if (GetWindowThreadProcessId (hWnd, &dwProcessId))
-    {
-      HANDLE hProcess = OpenProcess (PROCESS_QUERY_LIMITED_INFORMATION, FALSE, dwProcessId);
+    HANDLE hProcess = OpenProcess (PROCESS_QUERY_LIMITED_INFORMATION, FALSE, dwProcessId);
 
-      if (hProcess != NULL)
+    if (hProcess != NULL)
+    {
+      DWORD lenPath = len;
+
+      if (QueryFullProcessImageNameW (hProcess, NULL, buffer, &lenPath))
       {
-        GetProcessImageFileNameW (hProcess, wszFilename, MAX_PATH);
-        PathStripPathW                     (wszFilename);
-        PathRemoveExtensionW               (wszFilename);
+        std::filesystem::path path = std::wstring (buffer);
+
+        // Product name
+        PLOG_DEBUG << "Parent path: " << path.parent_path();
+        names.product = SKIF_Util_GetProductName (path.c_str());
+
+        // Executable
+        PathStripPathW         (buffer);
+        PathCchRemoveExtension (buffer, lenPath);
+        names.executable = std::wstring(buffer);
+
+        // Custom name
+        HKEY     hKey;
+        if (ERROR_SUCCESS == RegCreateKeyExW (HKEY_CURRENT_USER, LR"(SOFTWARE\Kaldaien\Special K\Profiles)", NULL, NULL, REG_OPTION_NON_VOLATILE, KEY_QUERY_VALUE, NULL, &hKey, NULL))
+        {
+          DWORD size = len * sizeof(wchar_t);
+          if (ERROR_SUCCESS == RegGetValueW (hKey, NULL, path.parent_path().c_str(), RRF_RT_REG_SZ, NULL, buffer, &size))
+            names.custom = std::wstring(buffer);
+
+          RegCloseKey (hKey);
+        }
       }
     }
   }
 
-  std::wstring wsFilename = std::wstring (wszFilename);
+  // Strip all null terminator \0 characters from the strings
+  names.executable.erase (std::find(names.executable.begin(), names.executable.end(), '\0'), names.executable.end());
+  names.product.erase    (std::find(names.product.begin(),    names.product.end(),    '\0'), names.product.end());
+  names.window.erase     (std::find(names.window.begin(),     names.window.end(),     '\0'), names.window.end());
+  names.custom.erase     (std::find(names.custom.begin(),     names.custom.end(),     '\0'), names.custom.end());
 
-  // Strip all null terminator \0 characters from the string
-  wsFilename.erase (std::find(wsFilename.begin(), wsFilename.end(), '\0'), wsFilename.end());
+  if (names.executable.size() > 30)
+    names.executable = names.executable.substr(0, 30);
 
-  if (wsFilename.size() > 60)
-    wsFilename = wsFilename.substr(0, 60);
-  else if (wsFilename.empty())
-    wsFilename = L"explorer";
+  if (names.product.size() > 30)
+    names.product = names.product.substr(0, 30);
 
-  return wsFilename;
+  if (names.window.size() > 30)
+    names.window = names.window.substr(0, 30);
+
+  PLOG_DEBUG << "Application names:";
+  PLOG_DEBUG << "Executable: " << names.executable;
+  PLOG_DEBUG << "   Product: " << names.product;
+  PLOG_DEBUG << "    Window: " << names.window;
+  PLOG_DEBUG << "    Custom: " << names.custom;
+
+  return names;
 }
 
 bool bKeepWindowAlive  = true,
@@ -2273,7 +2309,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
                       _data->_rect.Max.y = static_cast<float> (rect.bottom);
                     }
 
-                    _data->_title = SKIV_GetBaseFilename (hWnd);
+                    _data->_hwnd = hWnd;
 
                     /*
                     PLOG_VERBOSE << "----------------------";
@@ -2475,8 +2511,6 @@ wWinMain ( _In_     HINSTANCE hInstance,
             _registry._SnippingModeExit = true;
             _GetRectBelowCursor  (&selection, false);
             capture_data         = selection;
-            capture_data._mode   = _saveToDisk;
-            capture_data._select = _selectFile;
           }
 
           else if (! ImGui::IsMouseDragging (ImGuiMouseButton_Left))
@@ -2493,9 +2527,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
             {
               clicked = false;
               _registry._SnippingModeExit = true;
-              capture_data         = selection_auto;
-              capture_data._mode   = _saveToDisk;
-              capture_data._select = _selectFile;
+              capture_data = selection_auto;
             }
 
             else if (selection_auto._rect.Min != selection_auto._rect.Max)
@@ -2513,6 +2545,9 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
           if (capture_data._rect.GetArea() != 0)
           {
+            capture_data._mode   = _saveToDisk;
+            capture_data._select = _selectFile;
+            capture_data._names = SKIV_GetApplicationNames (capture_data._hwnd);
             ignoredWindows.clear();
 
             PLOG_VERBOSE << "Attempting to capture region...";
@@ -4175,7 +4210,7 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
       POINT capture_point        = { };
       RECT  capture_rect         = { };
-      std::wstring filename = L"Display";
+      SKIV_CaptureData::Application app_names = { L"Display"};
 
       if (mode == CaptureMode_Window)
       {
@@ -4201,7 +4236,7 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
           capture_rect.right  = std::min (capture_rect.right,  minfo.rcMonitor.right);
           capture_rect.bottom = std::min (capture_rect.bottom, minfo.rcMonitor.bottom);
 
-          filename = SKIV_GetBaseFilename (hwndBeforeSnip);
+          app_names = SKIV_GetApplicationNames (hwndBeforeSnip);
         }
       }
 
@@ -4209,7 +4244,7 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
       {
         GetCursorPos (&capture_point);
         HWND hWndBelowCursor = WindowFromPoint (capture_point);
-        filename = SKIV_GetBaseFilename (hWndBelowCursor);
+        app_names = SKIV_GetApplicationNames (hWndBelowCursor);
       }
 
       DirectX::ScratchImage captured_img;
@@ -4234,7 +4269,7 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
                           static_cast<float> (capture_rect.top   ),
                           static_cast<float> (capture_rect.right ),
                           static_cast<float> (capture_rect.bottom)),
-                  filename,
+                  app_names,
                   ((_registry.eScreenshotsAutosave & mode) == CaptureMode_Window) ? CaptureMode_Window : CaptureMode_None
           );
 
@@ -4254,7 +4289,7 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 SKIV_CaptureData (
                   ImRect (ImVec2 (0, 0),
                           SKIV_DesktopImage._resolution),
-                  filename,
+                  app_names,
                   ((_registry.eScreenshotsAutosave & mode) == CaptureMode_Screen) ? CaptureMode_Screen : CaptureMode_None
           );
 

@@ -122,6 +122,21 @@ SKIF_UI_Tab_DrawSettings (void)
     if (ImGui::InputTextEx ("###PatternInput", "<app>_<date>_<time>", pattern, maxChars, ImVec2(250.0f * SKIF_ImGui_GlobalDPIScale, 0.0f), ImGuiInputTextFlags_EnterReturnsTrue))
       savePattern = true;
 
+    if (ImGui::IsItemHovered ())
+    {
+      ImGui::BeginTooltip    ();
+      ImGui::TextUnformatted ("How to use:");
+      ImGui::Separator       ();
+      ImGui::BulletText      ("<app> = Uses Special K profile name, executable product name, or filename, in that order.");
+      ImGui::BulletText      ("<pro> = Uses product name.");
+      ImGui::BulletText      ("<exe> = Uses executable name.");
+      ImGui::BulletText      ("<wnd> = Uses window title.");
+      ImGui::BulletText      ("<date> = Uses local-aware date format.");
+      ImGui::BulletText      ("<time> = Uses local-aware time format.");
+      ImGui::TextUnformatted ("Hint: Folder separators (\\) are also supported! ;)");
+      ImGui::EndTooltip      ();
+    }
+
     if (! ImGui::IsItemActive ())
     {
       if (pattern[0] == '\0')
@@ -156,11 +171,16 @@ SKIF_UI_Tab_DrawSettings (void)
       ImGui::InsertNotification ({ ImGuiToastType::Success, 1000, "Saved", ""});
     }
 
-    if ((StrStrA (pattern, "<app>") == NULL && StrStrA (pattern, "<date>") == NULL && StrStrA (pattern, "<time>") == NULL))
+    if (StrStrA (pattern, "<app>")  == NULL &&
+        StrStrA (pattern, "<pro>")  == NULL &&
+        StrStrA (pattern, "<exe>")  == NULL &&
+        StrStrA (pattern, "<wnd>")  == NULL &&
+        StrStrA (pattern, "<date>") == NULL &&
+        StrStrA (pattern, "<time>") == NULL)
     {
       ImGui::TextColored (ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Yellow), ICON_FA_TRIANGLE_EXCLAMATION);
       ImGui::SameLine    ( );
-      ImGui::Text        ("Missing <app>, <date>, and <time>. Any captured shot will overwrite the existing file!");
+      ImGui::Text        ("Missing variables. Any captured shot will overwrite the existing file!");
     }
 
     ImGui::Spacing ();

@@ -137,15 +137,28 @@ static const ParamsPQ PQ =
 
 struct SKIV_CaptureData {
   ImRect         _rect;
-  std::wstring   _title;
+  struct Application {
+    std::wstring custom;     // #1 - SK/SKIF profiles name
+    std::wstring product;    // #2 - Product name from executable
+    std::wstring executable; // #3 - Executable filename
+    std::wstring window;     // -optional-
+  }              _names;
   CaptureMode    _mode;
   bool           _select = false;
+  HWND           _hwnd = NULL;
+
+  SKIV_CaptureData (ImRect r_, Application n_, CaptureMode m_)
+  {
+    _rect  = r_;
+    _names = n_;
+    _mode  = m_;
+  }
 
   SKIV_CaptureData (ImRect r_, std::wstring t_, CaptureMode m_)
   {
-    _rect  = r_;
-    _title = t_;
-    _mode  = m_;
+    _rect = r_;
+    _mode = m_;
+    _names.custom = t_;
   }
 };
 
