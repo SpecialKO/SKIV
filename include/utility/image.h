@@ -362,23 +362,59 @@ struct skiv_image_directory_s {
     WIN32_FIND_DATA  ffd;
   };
 
+  struct fl_s {
+    fd_s* getActiveFile (void)
+    {
+      return (_ptr != nullptr) ? _ptr : nullptr;
+    }
+
+    std::vector<fd_s> getList (void)
+    {
+      return _list;
+    }
+
+    void setList (std::vector<fd_s> list)
+    {
+      _list = std::move(list);
+      _it   = _list.end();
+      _ptr  = _it._Ptr;
+    }
+
+    void clear (void)
+    {
+      _list.clear();
+      _it  = _list.end();
+      _ptr = nullptr;
+    }
+
+    bool empty (void)
+    {
+      return _list.empty();
+    }
+
+    void         setImage    (const std::wstring& path);
+    std::wstring nextImage   (void);
+    std::wstring prevImage   (void);
+    std::wstring deleteImage (void);
+    void         updateFileIterator (const std::wstring& path); // Find the position of the image in the current folder
+
+    bool fileDeleted = false;
+
+  private:
+    std::vector<fd_s>           _list;
+    std::vector<fd_s>::iterator _it;
+                fd_s*           _ptr;
+  } fileList;
+
 //std::wstring                orig_path;   // Holds a cached copy of cover.path
 //std::wstring                filename;    // Image filename
   std::wstring                folder_path; // Parent folder path
   SKIF_DirectoryWatch         watch;
-  std::vector<fd_s>           fileList;
-  std::vector<fd_s>::iterator activeFile;
+  
+
   std::vector<SORTCOLUMN>     sortColumns; // File Explorer
-  bool                        fileDeleted = false;
 
   void         reset       (void);
-  void         setImage    (const std::wstring& path);
-  std::wstring nextImage   (void);
-  std::wstring prevImage   (void);
-  std::wstring deleteImage (void);
-
-  // Find the position of the image in the current folder
-  void        updateFileIterator (const std::wstring& path);
 
   // Retrieve all files in the folder, and identify our current place among them...
   int         workerThread  (bool runThread); // 0 = Not done, 1 = No change in sort order (i.e. same files as before) , 2 = Change in the sort order (i.e. new files/folder)

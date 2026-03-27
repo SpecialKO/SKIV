@@ -2832,12 +2832,15 @@ SKIF_UI_Tab_DrawViewer (void)
 
   auto _DeleteImage = [&](void) -> void
   {
+    if (_current_folder.fileList.getActiveFile() == nullptr)
+      return;
+
     //DeleteFile (_current_folder.activeFile->path.c_str());
 
     // TODO: Fix focus loss bug when a warning is shown...
-    if (SKIF_Util_FileExplorer_DeleteFile (_current_folder.activeFile->path.c_str(), true))
+    if (SKIF_Util_FileExplorer_DeleteFile (_current_folder.fileList.getActiveFile()->path.c_str(), true))
     {
-      dragDroppedFilePath = _current_folder.deleteImage ( );
+      dragDroppedFilePath = _current_folder.fileList.deleteImage ( );
 
       if (dragDroppedFilePath.empty())
         _SwapOutCover ();
@@ -2926,20 +2929,23 @@ SKIF_UI_Tab_DrawViewer (void)
     if (cover.file_info.path.empty())
     {
       if (! _current_folder.folder_path.empty())
+      {
+        PLOG_VERBOSE << "cover.file_info.folder_path: " << cover.file_info.folder_path;
+        PLOG_VERBOSE << "_current_folder.folder_path: " << _current_folder.folder_path;
         _current_folder.reset();
+      }
+
+      PLOG_VERBOSE << "cover.file_info.path: " << cover.file_info.path;
     }
 
     // Identify when we're dealing with a whole new folder
     if (cover.file_info.folder_path != _current_folder.folder_path)
     {
-      //PLOG_DEBUG << "cover.file_info.folder_path: " << cover.file_info.folder_path;
-      //PLOG_DEBUG << "_current_folder.folder_path: " << _current_folder.folder_path;
-
+      PLOG_VERBOSE << "cover.file_info.folder_path: " << cover.file_info.folder_path;
+      PLOG_VERBOSE << "_current_folder.folder_path: " << _current_folder.folder_path;
       _current_folder.reset();
       
-    //_current_folder.orig_path   = cover.file_info.path;
       std::filesystem::path path  = SKIF_Util_NormalizeFullPath (cover.file_info.path);
-    //_current_folder.filename    = path.filename().wstring();
       _current_folder.folder_path = path.parent_path().wstring();
 
       PLOG_VERBOSE << "Watching the folder... " << _current_folder.folder_path;
@@ -2949,21 +2955,13 @@ SKIF_UI_Tab_DrawViewer (void)
     }
 
     // Identify when a new file from the same folder has been dropped
-    if (! _current_folder.fileList.empty() &&
-      cover.file_info.filename != _current_folder.activeFile->filename)
+    if (! _current_folder.fileList.empty() && _current_folder.fileList.getActiveFile() != nullptr &&
+      cover.file_info.filename != _current_folder.fileList.getActiveFile()->filename)
     {
       //PLOG_DEBUG << "            cover.file_info.filename: " << cover.file_info.filename;
       //PLOG_DEBUG << "_current_folder.activeFile->filename: " << _current_folder.activeFile->filename;
 
-      // Re-sort the folder if the sort columns have changed
-      //_current_folder.updateSortOrder    ( );
-      //_current_folder.updateFileIterator (cover.file_info.path);
       _current_folder.workerThread (true);
-      //  _current_folder.updateFileIterator (cover.file_info.path);
-
-      // If the selected file was changed from within _current_folder
-      //if (cover.file_info.filename != _current_folder.activeFile->filename)
-      //         dragDroppedFilePath  = _current_folder.activeFile->path;
     }
 
     // Identify when the folder was changed outside of the app
@@ -2973,10 +2971,10 @@ SKIF_UI_Tab_DrawViewer (void)
 
     if (dwLastSignaled != 0 && dwLastSignaled + 5000 < SKIF_Util_timeGetTime())
     {
-      if (! _current_folder.fileDeleted)
+      if (! _current_folder.fileList.fileDeleted)
         _current_folder.workerThread (true);
       else
-        _current_folder.fileDeleted = false;
+        _current_folder.fileList.fileDeleted = false;
 
       dwLastSignaled = 0;
     }
@@ -2984,11 +2982,15 @@ SKIF_UI_Tab_DrawViewer (void)
     int results = _current_folder.workerThread (false);
     if (results > 0)
     {
-      _current_folder.updateFileIterator (cover.file_info.path);
+      _current_folder.fileList.updateFileIterator (cover.file_info.path);
 
-      // If the selected file was changed from within _current_folder
-      if (cover.file_info.filename != _current_folder.activeFile->filename)
-               dragDroppedFilePath  = _current_folder.activeFile->path;
+      PLOG_VERBOSE << "cover.file_info.path: " << cover.file_info.path;
+      PLOG_VERBOSE << "_current_folder.fileList.getActiveFile(): " << _current_folder.fileList.getActiveFile()->path;
+
+      // If the selected file was changed from within _current_folder, also update dragDroppedFilePath
+      if (_current_folder.fileList.getActiveFile() != nullptr &&
+          cover.file_info.filename != _current_folder.fileList.getActiveFile()->filename)
+               dragDroppedFilePath  = _current_folder.fileList.getActiveFile()->path;
 
       if (results == 2)
         ImGui::InsertNotification ({ ImGuiToastType::Info, 5000, "Refreshed nearby images.", "" });
@@ -2998,7 +3000,8 @@ SKIF_UI_Tab_DrawViewer (void)
   // Only apply changes to the scaling method if we actually have an image loaded
   if (cover.pRawTexSRV.p != nullptr)
   {
-    if (ImGui::GetKeyData (ImGuiKey_Delete)->DownDuration == 0.0f) // Delete - Delete the opened image
+    if (_current_folder.fileList.getActiveFile() != nullptr && ! _current_folder.fileList.getActiveFile()->path.empty() &&
+        ImGui::GetKeyData (ImGuiKey_Delete)->DownDuration == 0.0f) // Delete - Delete the opened image
       _DeleteImage ();
 
     // These keybindings requires Ctrl to be held down
@@ -4015,7 +4018,8 @@ SKIF_UI_Tab_DrawViewer (void)
         wantCopyToClipboard = true;
       if (SKIF_ImGui_MenuItemEx2 ("Close", 0,                           ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info), "Ctrl+W"))
         _SwapOutCover ();
-      if (SKIF_ImGui_MenuItemEx2 ("Delete", ICON_FA_TRASH_CAN,          ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Failure), "Delete"))
+      if (_current_folder.fileList.getActiveFile() != nullptr && ! _current_folder.fileList.getActiveFile()->path.empty() &&
+          SKIF_ImGui_MenuItemEx2 ("Delete", ICON_FA_TRASH_CAN,          ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Failure), "Delete"))
         _DeleteImage ();
 
       // Image scaling
@@ -4504,13 +4508,13 @@ SKIF_UI_Tab_DrawViewer (void)
     if (ImGui::IsKeyPressed (ImGuiKey_RightArrow) ||
         ImGui::IsKeyPressed (ImGuiKey_GamepadR1))
     {
-      dragDroppedFilePath = _current_folder.nextImage ( );
+      dragDroppedFilePath = _current_folder.fileList.nextImage ( );
     }
 
     else if (ImGui::IsKeyPressed (ImGuiKey_LeftArrow) ||
              ImGui::IsKeyPressed (ImGuiKey_GamepadL1))
     {
-      dragDroppedFilePath = _current_folder.prevImage ( );
+      dragDroppedFilePath = _current_folder.fileList.prevImage ( );
     }
   }
 

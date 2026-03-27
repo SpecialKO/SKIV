@@ -4040,91 +4040,76 @@ skiv_image_directory_s::reset (void)
 {
   PLOG_VERBOSE << "reset _current_folder!";
 
-  //orig_path.clear();
-  //filename.clear();
   folder_path.clear();
   fileList.clear();
-  activeFile = fileList.begin();
-  //fileListIndex = 0;
   watch.reset();
 }
 
 void
-skiv_image_directory_s::setImage (const std::wstring& path)
+skiv_image_directory_s::fl_s::setImage (const std::wstring& path)
 {
-  if (fileList.empty())
+  if (_list.empty())
     return;
 
-  activeFile = std::find_if (fileList.begin(), fileList.end(), [&](const fd_s& file) { return file.path == path; });
-
-  //fileListIndex = 0;
-  /*
-  for (auto& file : fileList)
-  {
-    if (file.path == path)
-    {
-      activeFile = std::next (fileList.begin(), fileListIndex);
-      return;
-    }
-  }
-  */
+  _it  = std::find_if (_list.begin(), _list.end(), [&](const fd_s& file) { return file.path == path; });
+  _ptr = _it._Ptr;
 }
 
 std::wstring
-skiv_image_directory_s::nextImage (void)
+skiv_image_directory_s::fl_s::nextImage (void)
 {
-  if (fileList.empty() || activeFile == fileList.end())
+  if (_list.empty() || _it == _list.end())
     return L"";
 
-  std::advance (activeFile,  1);
-  return activeFile->path;
+  std::advance (_it,  1);
+  _ptr = _it._Ptr;
 
-  //fileListIndex++;
-  //fileListIndex %= fileList.size();
-  //return (fileList[fileListIndex].path);
+  return _it->path;
 }
 
 std::wstring
-skiv_image_directory_s::prevImage (void)
+skiv_image_directory_s::fl_s::prevImage (void)
 {
-  if (fileList.empty() || activeFile == fileList.begin())
+  if (_list.empty() || _it == _list.begin())
     return L"";
 
-  std::advance (activeFile, -1);
-  return activeFile->path;
+  std::advance (_it, -1);
+  _ptr = _it._Ptr;
 
-  //fileListIndex--;
-  //fileListIndex %= fileList.size();
-  //return (fileList[fileListIndex].path);
+  return _it->path;
 }
 
 std::wstring
-skiv_image_directory_s::deleteImage (void)
+skiv_image_directory_s::fl_s::deleteImage (void)
 {
-  if (fileList.empty())
+  if (_list.empty())
     return L"";
 
   fileDeleted = true;
 
-  activeFile = fileList.erase (activeFile);
+  _it = _list.erase (_it);
 
   // Apparently erase() does not select the new populated end() ? Odd...
-  if (activeFile->path.empty() && ! fileList.empty())
+  if (_it->path.empty() && ! _list.empty())
     prevImage();
 
-  return activeFile->path;
+  _ptr = _it._Ptr;
+
+  return _it->path;
 }
 
 // Find the position of the image in the current folder
 void
-skiv_image_directory_s::updateFileIterator (const std::wstring& path)
+skiv_image_directory_s::fl_s::updateFileIterator (const std::wstring& path)
 {
-  activeFile = std::find_if (fileList.begin(), fileList.end(), [&](const fd_s& file) { return file.path == path; });
+  _it = std::find_if (_list.begin(), _list.end(), [&](const fd_s& file) { return file.path == path; });
 
   // If the file was removed from File Explorer, reset to first item
   // TODO: Fix proper file tracking so we can detect removed files and just go to one of the nearby ones
-  if (activeFile->path.empty() && ! fileList.empty())
-    activeFile = fileList.begin();
+  if (_it->path.empty() && ! _list.empty())
+    _it = _list.begin();
+
+  _ptr = _it._Ptr;
 }
 
 int
@@ -4154,7 +4139,7 @@ skiv_image_directory_s::workerThread (bool runThread)
 
       // Swap over the pending path, with copies of our existing data...
       pthread_data->_path        = pending;
-      pthread_data->_fileList    = fileList;
+      pthread_data->_fileList    = fileList.getList();
       pthread_data->_sortColumns = sortColumns;
 
       HANDLE hWorkerThread = (HANDLE)
@@ -4209,7 +4194,7 @@ skiv_image_directory_s::workerThread (bool runThread)
       if (pthread_data->_changed)
       {
         state       = 2;
-        fileList    = pthread_data->_fileList;
+        fileList.setList(pthread_data->_fileList);
         sortColumns = pthread_data->_sortColumns;
 
         PLOG_VERBOSE << "Swapped in the new folder data!";
