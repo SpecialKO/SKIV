@@ -2502,6 +2502,8 @@ SKIF_Util_GetClipboardHDROP (void)
 DirectX::Image
 SKIF_Util_GetClipboardBitmapData (void)
 {
+  static SKIF_CommonPathsCache& _path_cache = SKIF_CommonPathsCache::GetInstance ( );
+
   DirectX::Image img = { };
 
   if (true) // OpenClipboard (SKIF_ImGui_hWnd)
@@ -2565,10 +2567,12 @@ SKIF_Util_GetClipboardBitmapData (void)
             {
               GlobalUnlock (hGlobal);
 
-              if (SUCCEEDED (DirectX::SaveToWICFile (*flipped.GetImage (0,0,0), DirectX::WIC_FLAGS_FORCE_SRGB, GUID_ContainerFormatTiff, L"clipboard.tiff")))
+              std::wstring path = std::wstring(_path_cache.skiv_temp) + L"paste.tiff";
+
+              if (SUCCEEDED (DirectX::SaveToWICFile (*flipped.GetImage (0,0,0), DirectX::WIC_FLAGS_FORCE_SRGB, GUID_ContainerFormatTiff, path.c_str())))
               {
                 extern std::wstring dragDroppedFilePath;
-                dragDroppedFilePath = L"clipboard.tiff";
+                dragDroppedFilePath = path;
                 PLOG_VERBOSE << "Successfully received and saved image data from the clipboard!";
               }
             }
