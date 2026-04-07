@@ -130,6 +130,7 @@ ImVec2 SKIF_vecRegularMode          = ImVec2 (0.0f, 0.0f);
 ImVec2 SKIF_vecRegularModeDefault   = ImVec2 (1000.0f, 944.0f);   // Does not include the status bar
 ImVec2 SKIF_vecRegularModeAdjusted  = SKIF_vecRegularModeDefault; // Adjusted for status bar and tooltips (NO DPI scaling!)
 // --- Variables
+ImVec2 SKIF_vecCurrentPosition      = ImVec2 (0.0f, 0.0f); // Gets updated after ImGui::EndFrame()
 ImVec2 SKIF_vecCurrentMode          = ImVec2 (0.0f, 0.0f); // Gets updated after ImGui::EndFrame()
 ImVec2 SKIF_vecCurrentModeNext      = ImVec2 (0.0f, 0.0f); // Holds the new expected size
 ImVec2 SKIF_vecAlteredSize          = ImVec2 (0.0f, 0.0f);
@@ -1561,6 +1562,41 @@ wWinMain ( _In_     HINSTANCE hInstance,
       return ! SKIF_Shutdown.load(); // return false on exit or system shutdown
     };
 
+    // Window stuff
+
+    ImRect rectCursorMonitor; // RepositionSKIF
+
+    // RepositionSKIF -- Step 1: Retrieve monitor of cursor
+    if (RepositionSKIF)
+    {
+      ImRect t;
+      for (int monitor_n = 0; monitor_n < ImGui::GetPlatformIO().Monitors.Size; monitor_n++)
+      {
+        const ImGuiPlatformMonitor& tmpMonitor = ImGui::GetPlatformIO().Monitors[monitor_n];
+        t = ImRect(tmpMonitor.MainPos, (tmpMonitor.MainPos + tmpMonitor.MainSize));
+
+        POINT               mouse_screen_pos = { };
+        if (::GetCursorPos (&mouse_screen_pos))
+        {
+          ImVec2 os_pos = ImVec2( (float)mouse_screen_pos.x,
+                                  (float)mouse_screen_pos.y );
+          if (t.Contains (os_pos))
+          {
+            rectCursorMonitor = t;
+          //SKIF_ImGui_GlobalDPIScale = (_registry.bDPIScaling) ? tmpMonitor.DpiScale : 1.0f;
+          }
+        }
+      }
+    }
+      
+    SKIF_vecRegularMode     = SKIF_vecRegularModeAdjusted * SKIF_ImGui_GlobalDPIScale;
+      
+  //SKIF_vecRegularMode.y  -= SKIF_vecAlteredSize.y; // Replaced with SKIF_vecCurrentModeNext
+
+    SKIF_vecRegularMode     = ImFloor (SKIF_vecRegularMode);
+
+  //SKIF_vecCurrentMode     = SKIF_vecRegularMode ;
+
     // Apply any changes to the ImGui style
     // Do it at the beginning of frames to prevent ImGui::Push... from affecting the styling
     // Note that Win11 rounded border color won't be applied until after a restart
@@ -1633,6 +1669,50 @@ wWinMain ( _In_     HINSTANCE hInstance,
         repositionToCenter   = true;
       else
         RespectMonBoundaries = true;
+    }
+
+    // Restore the last remembered window size on launch,
+    //   but only if we are not running in service mode!
+    static bool
+        applySizeOnLaunch = true;
+    if (applySizeOnLaunch)
+    {   applySizeOnLaunch = false;
+
+      if (_registry.iUIWidth > 0 && _registry.iUIHeight > 0)
+        SKIF_vecCurrentModeNext =
+                        ImVec2 (static_cast<float> (_registry.iUIWidth),
+                                static_cast<float> (_registry.iUIHeight));
+      else
+      {
+        SKIF_vecCurrentModeNext = SKIF_vecRegularMode;
+      }
+    }
+
+    // SKIF_vecCurrentModeNext 1/2
+    if (SKIF_vecCurrentModeNext.x != 0.0f)
+    {
+      // Shrink the window on low-res displays (will be applied on the next frame)
+      // Emulates auto-horizon mode
+      if (ImGui::GetFrameCount() > 2 &&
+         (SKIF_vecCurrentModeNext.x > monitor_extent.GetWidth () ||
+          SKIF_vecCurrentModeNext.y > monitor_extent.GetHeight()))
+      {
+        float arWindow = SKIF_vecCurrentModeNext.x / SKIF_vecCurrentModeNext.y;
+
+        if (monitor_extent.GetWidth() < SKIF_vecCurrentModeNext.x)
+        {
+          SKIF_vecCurrentModeNext.x = monitor_extent.GetWidth();
+          SKIF_vecCurrentModeNext.y = SKIF_vecCurrentModeNext.x / arWindow;
+        }
+
+        if (monitor_extent.GetHeight() < SKIF_vecCurrentModeNext.y)
+        {
+          SKIF_vecCurrentModeNext.y = monitor_extent.GetHeight();
+          SKIF_vecCurrentModeNext.x = SKIF_vecCurrentModeNext.y * arWindow;
+        }
+      }
+
+      SKIF_vecCurrentMode = SKIF_vecCurrentModeNext;
     }
 
     // F8 to toggle UI borders
@@ -1770,44 +1850,67 @@ wWinMain ( _In_     HINSTANCE hInstance,
         addAdditionalFrames += 3; // Force a re-paint to change visualization
       }
 
-
-      ImRect rectCursorMonitor; // RepositionSKIF
-
-      // RepositionSKIF -- Step 1: Retrieve monitor of cursor
-      if (RepositionSKIF)
+      if (SKIF_vecCurrentModeNext.x != 0.0f &&
+          SKIF_vecCurrentModeNext   != SKIF_vecCurrentMode)
       {
-        ImRect t;
-        for (int monitor_n = 0; monitor_n < ImGui::GetPlatformIO().Monitors.Size; monitor_n++)
-        {
-          const ImGuiPlatformMonitor& tmpMonitor = ImGui::GetPlatformIO().Monitors[monitor_n];
-          t = ImRect(tmpMonitor.MainPos, (tmpMonitor.MainPos + tmpMonitor.MainSize));
+        SKIF_vecCurrentModeNext.x = 0.0f;
 
-          POINT               mouse_screen_pos = { };
-          if (::GetCursorPos (&mouse_screen_pos))
-          {
-            ImVec2 os_pos = ImVec2( (float)mouse_screen_pos.x,
-                                    (float)mouse_screen_pos.y );
-            if (t.Contains (os_pos))
-            {
-              rectCursorMonitor = t;
-              SKIF_ImGui_GlobalDPIScale = (_registry.bDPIScaling) ? tmpMonitor.DpiScale : 1.0f;
-            }
-          }
-        }
+        SKIF_vecCurrentMode = SKIF_vecCurrentModeNext;
       }
-      
-      SKIF_vecRegularMode     = SKIF_vecRegularModeAdjusted * SKIF_ImGui_GlobalDPIScale;
-      
-      SKIF_vecRegularMode.y  -= SKIF_vecAlteredSize.y;
 
-      SKIF_vecCurrentMode     = SKIF_vecRegularMode ;
+      static const ImVec2 wnd_minimum_size = ImVec2 (200.0f, 200.0f) * SKIF_ImGui_GlobalDPIScale;
+
+      // SKIF_vecCurrentModeNext 2/2
+      if (SKIF_vecCurrentModeNext.x != 0.0f)
+      {   SKIF_vecCurrentModeNext.x  = 0.0f;
+        ImGui::SetNextWindowSizeConstraints (SKIF_vecCurrentMode, SKIF_vecCurrentMode);
+      }
+
+      // The first time SKIF is being launched, or repositioned on launch, use a higher minimum size
+      else if (ImGui::GetFrameCount() == 1 || RepositionSKIF)
+        ImGui::SetNextWindowSizeConstraints (wnd_minimum_size * 2.0f, ImVec2 (FLT_MAX, FLT_MAX));
+
+      // On the second frame, limit the initial window size to only 80% of the monitor size
+      /*
+      else if (resizeAppWindow || ImGui::GetFrameCount() == 2)
+      {
+        ImVec2 size_current = windowRect.GetSize();
+        ImVec2 size_maximum = monitor_extent.GetSize() * 0.8f;
+
+        ImGui::SetNextWindowSizeConstraints (wnd_minimum_size, size_maximum);
+
+        // If the window size was too large, we need to reposition the window to the center as well
+        // This is handled on the next frame by the code above us
+        if (size_current.x > size_maximum.x || size_current.y > size_maximum.y)
+          repositionToCenter = true;
+      }
+      */
+
+      // The rest of the frames are uncapped
+      else
+        ImGui::SetNextWindowSizeConstraints (wnd_minimum_size, ImVec2 (FLT_MAX, FLT_MAX));
 
       ImGui::SetNextWindowClass (&SKIF_AppWindow);
+
+      // Restore the last remembered window position on launch
+      static bool
+          applyPositionOnLaunch = true;
+      if (applyPositionOnLaunch)
+      {   applyPositionOnLaunch = false;
+
+        if (_registry.iUIPositionX != -1 &&
+            _registry.iUIPositionY != -1)
+          ImGui::SetNextWindowPos (ImVec2 (static_cast<float> (_registry.iUIPositionX),
+                                           static_cast<float> (_registry.iUIPositionY)));
+        else
+          RepositionSKIF = true;
+      }
 
       // RepositionSKIF -- Step 2: Repositon the window
       // Repositions the window in the center of the monitor the cursor is currently on
       if (RepositionSKIF)
-        ImGui::SetNextWindowPos (ImVec2(rectCursorMonitor.GetCenter().x - (SKIF_vecCurrentMode.x / 2.0f), rectCursorMonitor.GetCenter().y - (SKIF_vecCurrentMode.y / 2.0f)));
+        ImGui::SetNextWindowPos (ImVec2 (rectCursorMonitor.GetCenter().x - (SKIF_vecCurrentMode.x / 2.0f),
+                                         rectCursorMonitor.GetCenter().y - (SKIF_vecCurrentMode.y / 2.0f)));
 
       // Calculate new window boundaries and changes to fit within the workspace if it doesn't fit
       //   Delay running the code to on the third frame to allow other required parts to have already executed...
@@ -1902,32 +2005,6 @@ wWinMain ( _In_     HINSTANCE hInstance,
         SKIV_ResizeApp = ImVec2 (0.0f, 0.0f);
       }
 
-      static const ImVec2 wnd_minimum_size = ImVec2 (200.0f, 200.0f) * SKIF_ImGui_GlobalDPIScale;
-
-      // The first time SKIF is being launched, or repositioned on launch, use a higher minimum size
-      if (ImGui::GetFrameCount() == 1 && RepositionSKIF)
-        ImGui::SetNextWindowSizeConstraints (wnd_minimum_size * 2.0f, ImVec2 (FLT_MAX, FLT_MAX));
-
-      // On the second frame, limit the initial window size to only 80% of the monitor size
-      /*
-      else if (resizeAppWindow || ImGui::GetFrameCount() == 2)
-      {
-        ImVec2 size_current = windowRect.GetSize();
-        ImVec2 size_maximum = monitor_extent.GetSize() * 0.8f;
-
-        ImGui::SetNextWindowSizeConstraints (wnd_minimum_size, size_maximum);
-
-        // If the window size was too large, we need to reposition the window to the center as well
-        // This is handled on the next frame by the code above us
-        if (size_current.x > size_maximum.x || size_current.y > size_maximum.y)
-          repositionToCenter = true;
-      }
-      */
-
-      // The rest of the frames are uncapped
-      else
-        ImGui::SetNextWindowSizeConstraints (wnd_minimum_size, ImVec2 (FLT_MAX, FLT_MAX));
-
       const bool bNoMove =
         (io.KeyCtrl || ! SKIF_MouseDragMoveAllowed);
 
@@ -1940,11 +2017,11 @@ wWinMain ( _In_     HINSTANCE hInstance,
                          ImGuiWindowFlags_NoTitleBar        |
                          ImGuiWindowFlags_NoScrollbar       | // Hide the scrollbar for the main window
                          ImGuiWindowFlags_NoScrollWithMouse | // Prevent scrolling with the mouse as well
+                         ImGuiWindowFlags_NoSavedSettings   | // We handle size/position persistently on our own
               (bNoMove ? ImGuiWindowFlags_NoMove       |
                          ImGuiWindowFlags_NoResize     |
                          ImGuiWindowFlags_NoDecoration :
                          ImGuiWindowFlags_None)
-                      // The only comment is that it was DPI related? This prevents Ctrl+Tab from moving the window so must not be used
       );
       ImGui::PopStyleVar (2);
 
@@ -1988,7 +2065,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
       }
 
       // RepositionSKIF -- Step 3: The Final Step -- Prevent the global DPI scale from potentially being set to outdated values
-      if (RepositionSKIF)
+      if (RepositionSKIF && ImGui::GetFrameCount() > 2)
         RepositionSKIF = false;
 
       // Only allow navigational hotkeys when in Large Mode and as long as no popups are opened
@@ -3485,6 +3562,9 @@ wWinMain ( _In_     HINSTANCE hInstance,
       // Main rendering function
       ImGui::RenderNotifications ( );
 
+      SKIF_vecCurrentMode     = ImGui::GetWindowSize ( );
+      SKIF_vecCurrentPosition = ImGui::GetWindowPos  ( );
+
       // End the main ImGui window
       ImGui::End ( );
     }
@@ -3886,6 +3966,50 @@ wWinMain ( _In_     HINSTANCE hInstance,
   SKIF_Util_UnregisterHotKeyCapture     (CaptureMode_Window);
   //SKIF_Util_UnregisterHotKeySVCTemp   ( );
   //SKIF_Util_UnregisterHotKeyHDRToggle ( );
+
+  // TODO: Make an exception for scenarios where remembering the size and pos makes sense,
+  //         e.g. when size / DPI <= regular size * 1.5x or something like that!!!
+  // 
+  // Only store window size and position to the registry if we are not in a maximized state
+  ImVec2 vecCurrentModeDPIUnaware = ImFloor (SKIF_vecCurrentMode / SKIF_ImGui_GlobalDPIScale);
+
+  if ((! IsZoomed (SKIF_ImGui_hWnd) && ! SKIF_ImGui_IsFullscreen (SKIF_ImGui_hWnd)) ||
+     (vecCurrentModeDPIUnaware.x <= SKIF_vecRegularModeDefault.x * 1.5f &&
+      vecCurrentModeDPIUnaware.y <= SKIF_vecRegularModeDefault.y * 1.5f))
+  {
+    // Only store the window size if we are not in service mode
+    if (! _registry._SnippingMode  &&
+        vecCurrentModeDPIUnaware.x > 0 &&
+        vecCurrentModeDPIUnaware.y > 0)
+    {
+      // Store a DPI-unaware size, so SKIF can automatically adjust it to the proper DPI on launch
+      _registry.iUIWidth  = static_cast<int> (vecCurrentModeDPIUnaware.x);
+      _registry.iUIHeight = static_cast<int> (vecCurrentModeDPIUnaware.y);
+    
+      _registry.regKVUIWidth .putData (_registry.iUIWidth);
+      _registry.regKVUIHeight.putData (_registry.iUIHeight);
+
+      PLOG_INFO << "Wrote the window size to the registry: " << _registry.iUIWidth << "x" << _registry.iUIHeight;
+    }
+
+    // Note that negative window positions are valid!
+    if (SKIF_vecCurrentPosition.x != -1.0f &&
+        SKIF_vecCurrentPosition.y != -1.0f)
+    {
+      // Doesn't seem to be needed
+      //RECT dwmBorder = { };
+      //if (S_OK == DwmGetWindowAttribute (SKIF_ImGui_hWnd, DWMWA_EXTENDED_FRAME_BOUNDS, &dwmBorder, sizeof(dwmBorder)))
+      //{ }
+
+      _registry.iUIPositionX = static_cast<int> (SKIF_vecCurrentPosition.x);
+      _registry.iUIPositionY = static_cast<int> (SKIF_vecCurrentPosition.y);
+    
+      _registry.regKVUIPositionX.putData (_registry.iUIPositionX);
+      _registry.regKVUIPositionY.putData (_registry.iUIPositionY);
+
+      PLOG_INFO << "Wrote the window position to the registry: " << _registry.iUIPositionX << ", " << _registry.iUIPositionY;
+    }
+  }
 
   PLOG_INFO << "Killing timers...";
   KillTimer (SKIF_Notify_hWnd, IDT_REFRESH_TOOLTIP);

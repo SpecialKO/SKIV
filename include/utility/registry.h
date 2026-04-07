@@ -307,6 +307,22 @@ struct SKIF_RegistrySettings {
     SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(UI Mode)" );
 
+  KeyValue <int> regKVUIWidth =
+    SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(UI Width)" );
+
+  KeyValue <int> regKVUIHeight =
+    SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(UI Height)" );
+
+  KeyValue <int> regKVUIPositionX =
+    SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(UI Position X)" );
+
+  KeyValue <int> regKVUIPositionY =
+    SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(UI Position Y)" );
+
   KeyValue <int> regKVDiagnostics =
     SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(Diagnostics)" );
@@ -427,18 +443,22 @@ struct SKIF_RegistrySettings {
                          LR"(AppsUseLightTheme)" );
 
   // Default settings (multiple options)
-//int iImageScaling            = 2;   // 0 = None,                        1 = Fill,                   2 = Fit (default),               3 = Stretch
-  int iStyle                   = 0;   // 0 = Dynamic,                     1 = SKIF Dark,              2 = SKIF Light,                  3 = ImGui Classic,                  4 = ImGui Dark
-  int iStyleTemp               = 0;   // Used to temporary hold changes in the style during the current session
-  int iDarkenImages            = 0;   // 0 = Never,                       1 = Always,                 2 = On mouse hover
-  int iCheckForUpdates         = 1;   // 0 = Never,                       1 = Weekly,                 2 = On each launch
-  int iLogging                 = 4;   // 0 = None,                        1 = Fatal,                  2 = Error,                       3 = Warning,                        4 = Info,       5 = Debug,       6 = Verbose
-  int iSDRMode                 = 0;   // 0 = 8 bpc,                       1 = 10 bpc,                 2 = 16 bpc
-  int iHDRMode                 = 2;   // 0 = Disabled,                    1 = HDR10 (10 bpc),         2 = scRGB (16 bpc)
+//int iImageScaling            =   2;   // 0 = None,                        1 = Fill,                   2 = Fit (default),               3 = Stretch
+  int iStyle                   =   0;   // 0 = Dynamic,                     1 = SKIF Dark,              2 = SKIF Light,                  3 = ImGui Classic,                  4 = ImGui Dark
+  int iStyleTemp               =   0;   // Used to temporary hold changes in the style during the current session
+  int iDarkenImages            =   0;   // 0 = Never,                       1 = Always,                 2 = On mouse hover
+  int iCheckForUpdates         =   1;   // 0 = Never,                       1 = Weekly,                 2 = On each launch
+  int iLogging                 =   4;   // 0 = None,                        1 = Fatal,                  2 = Error,                       3 = Warning,                        4 = Info,       5 = Debug,       6 = Verbose
+  int iSDRMode                 =   0;   // 0 = 8 bpc,                       1 = 10 bpc,                 2 = 16 bpc
+  int iHDRMode                 =   2;   // 0 = Disabled,                    1 = HDR10 (10 bpc),         2 = scRGB (16 bpc)
   int iHDRBrightness           = 203; // HDR reference white for BT.2408
-  int iHDRToneMapType          = 8;   // 0 = Do Nothing,                  1 = Clip Luminance,         8 = Map to Display
-  int iUIMode                  = 1;   // 0 = Safe Mode (BitBlt),          1 = Normal,                 2 = VRR Compatibility
-  int iDiagnostics             = 1;   // 0 = None,                        1 = Normal,                 2 = Enhanced (not actually used yet)
+  int iHDRToneMapType          =   8;   // 0 = Do Nothing,                  1 = Clip Luminance,         8 = Map to Display
+  int iUIMode                  =   1;   // 0 = Safe Mode (BitBlt),          1 = Normal,                 2 = VRR Compatibility
+  int iDiagnostics             =   1;   // 0 = None,                        1 = Normal,                 2 = Enhanced (not actually used yet)
+  int iUIWidth                 =   0; //  0 = None (default)
+  int iUIHeight                =   0; //  0 = None (default)
+  int iUIPositionX             =  -1; // -1 = None (default)
+  int iUIPositionY             =  -1; // -1 = None (default)
   CaptureMode eScreenshotsAutosave = CaptureMode_ALL, // Default to saving all types of screen captures
               eScreenshotsHotkeys  = CaptureMode_ALL; // Default to enabling all hotkeys
 

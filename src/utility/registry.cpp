@@ -238,6 +238,18 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
   if (lsKey != ERROR_SUCCESS)
     hKey = nullptr;
 
+  if (regKVUIPositionX.hasData(&hKey))
+    iUIPositionX           =   regKVUIPositionX            .getData (&hKey);
+  if (regKVUIPositionY.hasData(&hKey))
+    iUIPositionY           =   regKVUIPositionY            .getData (&hKey);
+
+  // Registry keys that don't exist defaults to 0/false, so variables that has those values
+  //   as their default value don't need to be checked before we attempt to read them.
+
+  // Remembered app window size and position
+  iUIWidth                 =   regKVUIWidth                .getData (&hKey);
+  iUIHeight                =   regKVUIHeight               .getData (&hKey);
+
   // UI elements that can be toggled
 
   if (regKVUIBorders.hasData(&hKey))
