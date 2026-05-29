@@ -257,6 +257,10 @@ struct SKIF_RegistrySettings {
     SKIF_MakeRegKeyB ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(Resize Window)" );
 
+  KeyValue <bool> regKVLoopImages =
+    SKIF_MakeRegKeyB ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(Loop)" );
+
   KeyValue <bool> regKVImageDetails =
     SKIF_MakeRegKeyB ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(Image Details)" );
@@ -473,6 +477,7 @@ struct SKIF_RegistrySettings {
   bool bDPIScaling              =  true;
   bool bWin11Corners            =  true; // 2023-08-28: Enabled by default
   bool bTouchInput              =  true; // Automatically make the UI more optimized for touch input on capable devices
+  bool bLoopImages              = false;
   bool bImageDetails            = false;
   bool b99thPercentileMaxCLL    =  true;
 

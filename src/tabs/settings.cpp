@@ -312,7 +312,7 @@ SKIF_UI_Tab_DrawSettings (void)
 
 #pragma region Section: Image
 
-  if (ImGui::CollapsingHeader ("Images###SKIF_SettingsHeader-1"))
+  if (ImGui::CollapsingHeader ("Images###SKIF_SettingsHeader-1", ImGuiTreeNodeFlags_DefaultOpen))
   {
     SKIF_ImGui_Spacing      ( );
 
@@ -354,6 +354,11 @@ SKIF_UI_Tab_DrawSettings (void)
     ImGui::Spacing         ( );
 
 #endif
+
+    if ( ImGui::Checkbox ( "Loop Images", &_registry.bLoopImages ) )
+      _registry.regKVLoopImages.putData   (_registry.bLoopImages);
+
+    ImGui::Spacing         ( );
 
     ImGui::TextColored     (ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info), ICON_FA_LIGHTBULB);
     SKIF_ImGui_SetHoverTip ("Useful if you find bright images an annoyance.");

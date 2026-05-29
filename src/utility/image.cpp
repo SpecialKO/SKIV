@@ -4058,24 +4058,46 @@ skiv_image_directory_s::fl_s::setImage (const std::wstring& path)
 std::wstring
 skiv_image_directory_s::fl_s::nextImage (void)
 {
-  if (_list.empty() || _it == std::prev(_list.end()))
+  if (_list.empty())
     return L"";
 
-  std::advance (_it,  1);
-  _ptr = _it._Ptr;
+  static SKIF_RegistrySettings& _registry =
+         SKIF_RegistrySettings::GetInstance ();
 
+  if (_it == std::prev (_list.end()))
+  {
+    if (_registry.bLoopImages)
+      _it = _list.begin();
+    else
+      return L"";
+  }
+  else
+    std::advance (_it,  1);
+
+  _ptr = _it._Ptr;
   return _it->path;
 }
 
 std::wstring
 skiv_image_directory_s::fl_s::prevImage (void)
 {
-  if (_list.empty() || _it == _list.begin())
+  if (_list.empty())
     return L"";
 
-  std::advance (_it, -1);
-  _ptr = _it._Ptr;
+  static SKIF_RegistrySettings& _registry =
+         SKIF_RegistrySettings::GetInstance ();
 
+  if (_it == _list.begin())
+  {
+    if (_registry.bLoopImages)
+      _it = std::prev (_list.end());
+    else
+      return L"";
+  }
+  else
+    std::advance (_it, -1);
+
+  _ptr = _it._Ptr;
   return _it->path;
 }
 
