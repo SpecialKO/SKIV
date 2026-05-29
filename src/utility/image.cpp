@@ -4058,7 +4058,7 @@ skiv_image_directory_s::fl_s::setImage (const std::wstring& path)
 std::wstring
 skiv_image_directory_s::fl_s::nextImage (void)
 {
-  if (_list.empty() || _it == _list.end())
+  if (_list.empty() || _it == std::prev(_list.end()))
     return L"";
 
   std::advance (_it,  1);

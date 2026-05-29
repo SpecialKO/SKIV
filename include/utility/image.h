@@ -300,60 +300,60 @@ struct skiv_image_desktop_s {
 
 #include <shobjidl_core.h>
 
-struct skiv_image_directory_s {
-
-  class FileSystemBindData : public IFileSystemBindData
+class FileSystemBindData : public IFileSystemBindData
+{
+public:
+  FileSystemBindData() : _ref(1)
   {
-  public:
-    FileSystemBindData() : _ref(1)
-    {
-      ZeroMemory(&_fd, sizeof(_fd));
-    }
+    ZeroMemory(&_fd, sizeof(_fd));
+  }
 
-    // IUnknown
-    IFACEMETHODIMP QueryInterface(REFIID riid, void** ppv) override
+  // IUnknown
+  IFACEMETHODIMP QueryInterface(REFIID riid, void** ppv) override
+  {
+    if (riid == IID_IUnknown || riid == IID_IFileSystemBindData)
     {
-      if (riid == IID_IUnknown || riid == IID_IFileSystemBindData)
-      {
-        *ppv = static_cast<IFileSystemBindData*>(this);
-        AddRef();
-        return S_OK;
-      }
-      *ppv = nullptr;
-      return E_NOINTERFACE;
-    }
-
-    IFACEMETHODIMP_(ULONG) AddRef() override
-    {
-      return InterlockedIncrement(&_ref);
-    }
-
-    IFACEMETHODIMP_(ULONG) Release() override
-    {
-      ULONG r = InterlockedDecrement(&_ref);
-      if (r == 0) delete this;
-      return r;
-    }
-
-    // IFileSystemBindData
-    IFACEMETHODIMP SetFindData (const WIN32_FIND_DATAW* pfd) override
-    {
-      _fd = *pfd;
+      *ppv = static_cast<IFileSystemBindData*>(this);
+      AddRef();
       return S_OK;
     }
+    *ppv = nullptr;
+    return E_NOINTERFACE;
+  }
 
-    IFACEMETHODIMP GetFindData (WIN32_FIND_DATAW* pfd) override
-    {
-      *pfd = _fd;
-      return S_OK;
-    }
+  IFACEMETHODIMP_(ULONG) AddRef() override
+  {
+    return InterlockedIncrement(&_ref);
+  }
 
-  private:
-    ~FileSystemBindData() = default;
+  IFACEMETHODIMP_(ULONG) Release() override
+  {
+    ULONG r = InterlockedDecrement(&_ref);
+    if (r == 0) delete this;
+    return r;
+  }
 
-    LONG _ref;
-    WIN32_FIND_DATAW _fd;
-  };
+  // IFileSystemBindData
+  IFACEMETHODIMP SetFindData (const WIN32_FIND_DATAW* pfd) override
+  {
+    _fd = *pfd;
+    return S_OK;
+  }
+
+  IFACEMETHODIMP GetFindData (WIN32_FIND_DATAW* pfd) override
+  {
+    *pfd = _fd;
+    return S_OK;
+  }
+
+private:
+  ~FileSystemBindData() = default;
+
+  LONG _ref;
+  WIN32_FIND_DATAW _fd;
+};
+
+struct skiv_image_directory_s {
 
   struct fd_s {
     std::wstring     filename;    // Image filename
@@ -376,14 +376,14 @@ struct skiv_image_directory_s {
     void setList (std::vector<fd_s> list)
     {
       _list = std::move(list);
-      _it   = _list.end();
+      _it   = _list.begin();
       _ptr  = _it._Ptr;
     }
 
     void clear (void)
     {
       _list.clear();
-      _it  = _list.end();
+      _it  = _list.begin();
       _ptr = nullptr;
     }
 
