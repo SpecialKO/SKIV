@@ -57,11 +57,20 @@ enum UITab {
   UITab_ALL      // Total number of elements in enum (technically against Microsoft's enum design guidelines, but whatever)
 };
 
-enum CaptureMode {
-  CaptureMode_Window,
-  CaptureMode_Region,
-  CaptureMode_Screen
+typedef unsigned int CaptureMode;  // -> enum CaptureMode_
+enum CaptureMode_ {
+  CaptureMode_None   = 0,
+
+  CaptureMode_Window = 1 << 0,
+  CaptureMode_Region = 1 << 1,
+  CaptureMode_Screen = 1 << 2,
+
+  CaptureMode_ALL    =
+    CaptureMode_Window | CaptureMode_Region | CaptureMode_Screen
 };
+
+// Workaround for SKIF_ImGui_IsAnyPopupOpen() not detecting keybind popups
+extern bool g_activeKeybindPopup;
 
 struct FileSignature {
   std::wstring               mime_type       = L"";
@@ -140,6 +149,7 @@ bool            SKIF_Util_HasFileSignature            (const std::vector<char>& 
 bool            SKIF_Util_HasFileExtension            (const std::wstring extension,    const FileSignature& signature);
 
 // Usernames
+
 std:: string    SKIF_Util_StripPersonalData           (std:: string input);
 std::wstring    SKIF_Util_StripPersonalData           (std::wstring input);
 void            SKIF_Util_Debug_LogUserNames          (void);
@@ -216,7 +226,12 @@ std::wstring    SKIF_Util_GetClipboardHDROP           (void);
 DirectX::Image  SKIF_Util_GetClipboardBitmapData      (void);
 std::wstring    SKIF_Util_AddEnvironmentBlock         (const void* pEnvBlock, const std::wstring& varName, const std::wstring& varValue);
 void            SKIF_Util_FileExplorer_SelectFile     (PCWSTR filePath);
-std::wstring    SKIF_Util_FileExplorer_BrowseFolder   (PCWSTR defaultPath);
+bool            SKIF_Util_FileExplorer_DeleteFile     (PCWSTR filePath, bool hideWarning);
+void            SKIF_Util_FileExplorer_ContextMenuFile(PCWSTR filePath, HWND hWndOwner);
+std::wstring    SKIF_Util_FileExplorer_BrowseForFolderXP(PCWSTR defaultPath);
+std::wstring    SKIF_Util_FileExplorer_BrowseForFolder(PCWSTR defaultPath);
+bool            SKIF_Util_Files_PruneOlderThan        (std::wstring path, ULONGLONG secondsSince);
+bool            SKIF_Util_Files_PruneToLatestN        (std::wstring path, int filesToRetain);
 std::string     SKIF_Util_GetWindowMessageAsStr       (UINT msg);
 
 

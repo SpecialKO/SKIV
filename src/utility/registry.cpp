@@ -238,6 +238,18 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
   if (lsKey != ERROR_SUCCESS)
     hKey = nullptr;
 
+  if (regKVUIPositionX.hasData(&hKey))
+    iUIPositionX           =   regKVUIPositionX            .getData (&hKey);
+  if (regKVUIPositionY.hasData(&hKey))
+    iUIPositionY           =   regKVUIPositionY            .getData (&hKey);
+
+  // Registry keys that don't exist defaults to 0/false, so variables that has those values
+  //   as their default value don't need to be checked before we attempt to read them.
+
+  // Remembered app window size and position
+  iUIWidth                 =   regKVUIWidth                .getData (&hKey);
+  iUIHeight                =   regKVUIHeight               .getData (&hKey);
+
   // UI elements that can be toggled
 
   if (regKVUIBorders.hasData(&hKey))
@@ -369,6 +381,12 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
   if (regKVCheckForUpdates.hasData(&hKey))
     iCheckForUpdates       =   regKVCheckForUpdates        .getData (&hKey);
 
+  if (regKVScreenshotsAutosave.hasData(&hKey))
+    eScreenshotsAutosave   =   regKVScreenshotsAutosave    .getData (&hKey);
+
+  if (regKVScreenshotsHotkeys.hasData(&hKey))
+    eScreenshotsHotkeys    =   regKVScreenshotsHotkeys     .getData (&hKey);
+
   if (regKVIgnoreUpdate.hasData(&hKey))
     wsIgnoreUpdate         =   regKVIgnoreUpdate           .getData (&hKey);
 
@@ -380,6 +398,9 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
 
   if (regKVPathScreenshots.hasData(&hKey))
     wsPathScreenshots      =   regKVPathScreenshots        .getData (&hKey);
+
+  if (regKVScreenshotsPattern.hasData(&hKey))
+    wsScreenshotsPattern   =   regKVScreenshotsPattern     .getData (&hKey);
 
   if (regKVAutoUpdateVersion.hasData(&hKey))
     wsAutoUpdateVersion    =   regKVAutoUpdateVersion      .getData (&hKey);
@@ -400,9 +421,6 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
   if (regKV99thPercentileMaxCLL.hasData(&hKey))
     b99thPercentileMaxCLL  =   regKV99thPercentileMaxCLL   .getData (&hKey);
 
-  if (regKVSaveScreenshots.hasData(&hKey))
-    bSaveScreenshots       =   regKVSaveScreenshots        .getData (&hKey);
-
   // These defaults to false, so no need to check if the registry has another value
   //   since getData ( ) defaults to false for non-existent registry values
   bFirstLaunch             =   regKVFirstLaunch            .getData (&hKey);
@@ -412,6 +430,7 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
   bOpenAtCursorPosition    =   regKVOpenAtCursorPosition   .getData (&hKey);
   bGhost                   =   regKVGhost                  .getData (&hKey);
   bLoggingDeveloper        =   regKVLoggingDeveloper       .getData (&hKey);
+  bLoopImages              =   regKVLoopImages             .getData (&hKey);
   bImageDetails            =   regKVImageDetails           .getData (&hKey);
 
   // Keybindings
@@ -419,13 +438,13 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
   //   then parse the human_readable data through .parse()
 
   if (regKVHotkeyCaptureWindow.hasData(&hKey))
-    kbCaptureWindow.pending.human_readable = regKVHotkeyCaptureWindow.getData (&hKey);
+    kbCaptureWindow.pending.human_readable    = regKVHotkeyCaptureWindow   .getData (&hKey);
 
   if (regKVHotkeyCaptureRegion.hasData(&hKey))
-    kbCaptureRegion.pending.human_readable = regKVHotkeyCaptureRegion.getData (&hKey);
+    kbCaptureRegion.pending.human_readable    = regKVHotkeyCaptureRegion   .getData (&hKey);
 
   if (regKVHotkeyCaptureScreen.hasData(&hKey))
-    kbCaptureScreen.pending.human_readable = regKVHotkeyCaptureScreen.getData (&hKey);
+    kbCaptureScreen.pending.human_readable    = regKVHotkeyCaptureScreen   .getData (&hKey);
 
   if (regKVHotkeyToggleHDRDisplay.hasData(&hKey))
     kbToggleHDRDisplay.pending.human_readable = regKVHotkeyToggleHDRDisplay.getData (&hKey);

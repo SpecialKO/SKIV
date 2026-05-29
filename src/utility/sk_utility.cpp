@@ -425,6 +425,14 @@ SK_Keybind::parse (void)
   shift = false;
   super = false;
 
+  // Abort if the key is unbound
+  if (human_readable == L"<Not Bound>")
+  {
+    human_readable_utf8 = SK_WideCharToUTF8 (human_readable);
+    masked_code         = 1 << 13; // Forced invalid to apply changes on launch
+    return;
+  }
+
   wchar_t   wszKeyBind [128] = { };
   lstrcatW (wszKeyBind, human_readable.c_str ());
 
@@ -748,14 +756,14 @@ SK_ImGui_KeybindSelect (SK_Keybind* keybind)
   if (! keybind)
     return false;
 
-  ImGui::PushStyleColor (ImGuiCol_Text, ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_TextBase)); //ImVec4 (0.667f, 0.667f, 0.667f, 1.0f));
+  //ImGui::PushStyleColor (ImGuiCol_Text, ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_TextBase)); //ImVec4 (0.667f, 0.667f, 0.667f, 1.0f));
   ImGui::PushItemWidth  (ImGui::GetContentRegionAvail ().x);
 
   bool ret =
     ImGui::Selectable (keybind->human_readable_utf8.c_str(), false);
 
   ImGui::PopItemWidth  ();
-  ImGui::PopStyleColor ();
+  //ImGui::PopStyleColor ();
 
   return ret;
 }
@@ -781,6 +789,8 @@ SK_ImGui_KeybindDialog (SK_KeybindMultiState* keybind)
 
     // Render over all other windows
     //ImGui::SetNextWindowFocus ( );
+
+    g_activeKeybindPopup = true;
   }
 
   if (ImGui::BeginPopupModal (keybind->bind_name, nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove     | ImGuiWindowFlags_Tooltip | // ImGuiWindowFlags_Tooltip is required to work around a pesky z-order issue on first appearance
@@ -837,13 +847,15 @@ SK_ImGui_KeybindDialog (SK_KeybindMultiState* keybind)
     bool bEscape    =
       ImGui::IsKeyPressed (ImGuiKey_Escape,    false),
          bBackspace =
-      ImGui::IsKeyPressed (ImGuiKey_Backspace, false);
+      ImGui::IsKeyPressed (ImGuiKey_Backspace, false),
+         bDelete =
+      ImGui::IsKeyPressed (ImGuiKey_Delete,    false);
 
     ImGui::Text         ("Keybinding:"); //  %hs, keybind->pending.human_readable_utf8.c_str ()); // (0x%02X), keybind->vKey
     ImGui::SameLine     ( );
     ImGui::TextColored  (ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_TextBase), keybind->pending.human_readable_utf8.c_str ());
     ImGui::Separator    ( );
-    ImGui::TextDisabled ("Press BACKSPACE to clear, or ESC to finish.");
+    ImGui::TextDisabled ("Press BACKSPACE to clear, DELETE to reset to default, or ESC to finish.");
 
     // Update the key binding after printing out the current one, to prevent a one-frame graphics glitch
     if (bBackspace)
@@ -853,6 +865,14 @@ SK_ImGui_KeybindDialog (SK_KeybindMultiState* keybind)
       keybind->pending.shift = false;
       keybind->pending.alt   = false;
       keybind->pending.super = false;
+      keybind->pending.makeMask ( );
+      keybind->pending.update   ( );
+    }
+
+    else if (bDelete)
+    {
+      keybind->pending = keybind->default;
+      keybind->pending.parse    ( );
       keybind->pending.makeMask ( );
       keybind->pending.update   ( );
     }
@@ -870,7 +890,7 @@ SK_ImGui_KeybindDialog (SK_KeybindMultiState* keybind)
     }
 
     // If we are done with the changes, mark it as such
-    if (bEscape || bBackspace)
+    if (bEscape || bBackspace || bDelete)
     {
       keybind->assigning = false;
       ImGui::CloseCurrentPopup ( );
@@ -892,9 +912,16 @@ SK_ImGui_Keybinding (SK_KeybindMultiState* binding)
   if (! binding)
     return false;
 
-  if (SK_ImGui_KeybindSelect (&binding->saved))
-    ImGui::OpenPopup (         binding->bind_name);
+  ImGui::PushID              (binding->bind_name);
 
-  return SK_ImGui_KeybindDialog (binding);
+  if (SK_ImGui_KeybindSelect (&binding->saved))
+    ImGui::OpenPopup         (binding->bind_name);
+
+  bool results =
+    SK_ImGui_KeybindDialog   (binding);
+
+  ImGui::PopID               ();
+
+  return results;
 }
 ;

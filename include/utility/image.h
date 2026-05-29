@@ -4,6 +4,7 @@
 #include <imgui/imgui_internal.h>
 #include <ImGuiNotify.hpp>
 #include <atlbase.h>
+#include "utility.h"
 
 #pragma warning( push )
 #pragma warning( disable : 4305 )
@@ -134,14 +135,30 @@ static const ParamsPQ PQ =
 
 #pragma warning( pop )
 
-struct SKIV_Region {
-  ImRect        _rect;
-  std::wstring  _title;
+struct SKIV_CaptureData {
+  ImRect         _rect;
+  struct Application {
+    std::wstring custom;     // #1 - SK/SKIF profiles name
+    std::wstring product;    // #2 - Product name from executable
+    std::wstring executable; // #3 - Executable filename
+    std::wstring window;     // -optional-
+  }              _names;
+  CaptureMode    _mode;
+  bool           _select = false;
+  HWND           _hwnd = NULL;
 
-  SKIV_Region (ImRect r_ = ImRect(), std::wstring t_ = L"")
+  SKIV_CaptureData (ImRect r_, Application n_, CaptureMode m_)
   {
     _rect  = r_;
-    _title = t_;
+    _names = n_;
+    _mode  = m_;
+  }
+
+  SKIV_CaptureData (ImRect r_, std::wstring t_, CaptureMode m_)
+  {
+    _rect = r_;
+    _mode = m_;
+    _names.custom = t_;
   }
 };
 
@@ -152,11 +169,11 @@ float             SKIV_Image_LinearToPQY   (float N);
 DirectX::XMVECTOR SKIV_Image_Rec709toICtCp (DirectX::XMVECTOR N);
 DirectX::XMVECTOR SKIV_Image_ICtCptoRec709 (DirectX::XMVECTOR N);
 
-bool    SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool isHDR, bool isTemp, const wchar_t* wszFileName);
+bool    SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool isHDR, SKIV_CaptureData capture_data);
 HRESULT SKIV_Image_SaveToDisk_HDR  (const DirectX::Image& image, const wchar_t* wszFileName);
 HRESULT SKIV_Image_SaveToDisk_SDR  (const DirectX::Image& image, const wchar_t* wszFileName, bool force_sRGB);
 HRESULT SKIV_Image_CaptureDesktop  (DirectX::ScratchImage& image, POINT pos, int flags = 0x0);
-void    SKIV_Image_CaptureRegion   (SKIV_Region capture_area);
+void    SKIV_Image_CaptureRegion   (SKIV_CaptureData capture_data);
 HRESULT SKIV_Image_TonemapToSDR    (const DirectX::Image& image, DirectX::ScratchImage& final_sdr, float mastering_max_nits, float mastering_sdr_nits);
 
 bool    SKIV_Image_IsUltraHDR      (const wchar_t* wszFileName);
@@ -277,4 +294,135 @@ struct skiv_image_desktop_s {
     _max_display_nits = 1000.0f;
     _rotation         = DXGI_MODE_ROTATION_UNSPECIFIED;
   }
+};
+
+// Image Directory
+
+#include <shobjidl_core.h>
+
+class FileSystemBindData : public IFileSystemBindData
+{
+public:
+  FileSystemBindData() : _ref(1)
+  {
+    ZeroMemory(&_fd, sizeof(_fd));
+  }
+
+  // IUnknown
+  IFACEMETHODIMP QueryInterface(REFIID riid, void** ppv) override
+  {
+    if (riid == IID_IUnknown || riid == IID_IFileSystemBindData)
+    {
+      *ppv = static_cast<IFileSystemBindData*>(this);
+      AddRef();
+      return S_OK;
+    }
+    *ppv = nullptr;
+    return E_NOINTERFACE;
+  }
+
+  IFACEMETHODIMP_(ULONG) AddRef() override
+  {
+    return InterlockedIncrement(&_ref);
+  }
+
+  IFACEMETHODIMP_(ULONG) Release() override
+  {
+    ULONG r = InterlockedDecrement(&_ref);
+    if (r == 0) delete this;
+    return r;
+  }
+
+  // IFileSystemBindData
+  IFACEMETHODIMP SetFindData (const WIN32_FIND_DATAW* pfd) override
+  {
+    _fd = *pfd;
+    return S_OK;
+  }
+
+  IFACEMETHODIMP GetFindData (WIN32_FIND_DATAW* pfd) override
+  {
+    *pfd = _fd;
+    return S_OK;
+  }
+
+private:
+  ~FileSystemBindData() = default;
+
+  LONG _ref;
+  WIN32_FIND_DATAW _fd;
+};
+
+struct skiv_image_directory_s {
+
+  struct fd_s {
+    std::wstring     filename;    // Image filename
+  //std::wstring     folder_path; // Parent folder path
+    std::wstring     path;        // Image path (full)
+    WIN32_FIND_DATA  ffd;
+  };
+
+  struct fl_s {
+    fd_s* getActiveFile (void)
+    {
+      return (_ptr != nullptr) ? _ptr : nullptr;
+    }
+
+    std::vector<fd_s> getList (void)
+    {
+      return _list;
+    }
+
+    void setList (std::vector<fd_s> list)
+    {
+      _list = std::move(list);
+      _it   = _list.begin();
+      _ptr  = _it._Ptr;
+    }
+
+    void clear (void)
+    {
+      _list.clear();
+      _it  = _list.begin();
+      _ptr = nullptr;
+    }
+
+    bool empty (void)
+    {
+      return _list.empty();
+    }
+
+    void         setImage    (const std::wstring& path);
+    std::wstring nextImage   (void);
+    std::wstring prevImage   (void);
+    std::wstring deleteImage (void);
+    void         updateFileIterator (const std::wstring& path); // Find the position of the image in the current folder
+
+    bool fileDeleted = false;
+
+  private:
+    std::vector<fd_s>           _list;
+    std::vector<fd_s>::iterator _it;
+                fd_s*           _ptr;
+  } fileList;
+
+//std::wstring                orig_path;   // Holds a cached copy of cover.path
+//std::wstring                filename;    // Image filename
+  std::wstring                folder_path; // Parent folder path
+  SKIF_DirectoryWatch         watch;
+  
+
+  std::vector<SORTCOLUMN>     sortColumns; // File Explorer
+
+  void         reset       (void);
+
+  // Retrieve all files in the folder, and identify our current place among them...
+  int         workerThread  (bool runThread); // 0 = Not done, 1 = No change in sort order (i.e. same files as before) , 2 = Change in the sort order (i.e. new files/folder)
+
+  // Win32 File Explorer based sorting
+private:
+  static bool updateFolderData (std::vector<fd_s>& list, std::vector<SORTCOLUMN>& sortColumns, const std::wstring& path);
+  static void updateSortOrder  (std::vector<fd_s>& list, std::vector<SORTCOLUMN>& sortColumns, const std::wstring& path);
+  static void sortByColumns    (std::vector<fd_s>& list, const std::vector<SORTCOLUMN>& sortColumns);
+  static void sortByFilename   (std::vector<fd_s>& list);
 };

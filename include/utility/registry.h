@@ -4,7 +4,7 @@
 #include <typeindex>
 #include <sstream>
 #include <vector>
-#include "sk_utility.h"
+#include "utility.h"
 
 #ifndef RRF_SUBKEY_WOW6464KEY
 #define RRF_SUBKEY_WOW6464KEY  0x00010000
@@ -257,6 +257,10 @@ struct SKIF_RegistrySettings {
     SKIF_MakeRegKeyB ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(Resize Window)" );
 
+  KeyValue <bool> regKVLoopImages =
+    SKIF_MakeRegKeyB ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(Loop)" );
+
   KeyValue <bool> regKVImageDetails =
     SKIF_MakeRegKeyB ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(Image Details)" );
@@ -264,10 +268,6 @@ struct SKIF_RegistrySettings {
   KeyValue <bool> regKV99thPercentileMaxCLL =
     SKIF_MakeRegKeyB ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(99th Percentile MaxCLL)" );
-
-  KeyValue <bool> regKVSaveScreenshots =
-    SKIF_MakeRegKeyB ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
-                         LR"(Save Screenshots)" );
 
   // Integers (DWORDs)
 
@@ -311,6 +311,22 @@ struct SKIF_RegistrySettings {
     SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(UI Mode)" );
 
+  KeyValue <int> regKVUIWidth =
+    SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(UI Width)" );
+
+  KeyValue <int> regKVUIHeight =
+    SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(UI Height)" );
+
+  KeyValue <int> regKVUIPositionX =
+    SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(UI Position X)" );
+
+  KeyValue <int> regKVUIPositionY =
+    SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(UI Position Y)" );
+
   KeyValue <int> regKVDiagnostics =
     SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(Diagnostics)" );
@@ -347,6 +363,14 @@ struct SKIF_RegistrySettings {
     SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\PNG\)",
                          LR"(HDR BitDepth)" );
 
+  KeyValue <int> regKVScreenshotsAutosave =
+    SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(Screenshots Autosave)" );
+
+  KeyValue <int> regKVScreenshotsHotkeys =
+    SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(Screenshots Hotkeys)" );
+
   // Wide Strings
 
   KeyValue <std::wstring> regKVIgnoreUpdate =
@@ -364,6 +388,10 @@ struct SKIF_RegistrySettings {
   KeyValue <std::wstring> regKVPathScreenshots =
     SKIF_MakeRegKeyWS ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(Screenshots)" );
+
+  KeyValue <std::wstring> regKVScreenshotsPattern =
+    SKIF_MakeRegKeyWS ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(Screenshots Pattern)" );
 
   KeyValue <std::wstring> regKVAutoUpdateVersion =
     SKIF_MakeRegKeyWS ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
@@ -419,18 +447,24 @@ struct SKIF_RegistrySettings {
                          LR"(AppsUseLightTheme)" );
 
   // Default settings (multiple options)
-//int iImageScaling            = 2;   // 0 = None,                        1 = Fill,                   2 = Fit (default),               3 = Stretch
-  int iStyle                   = 0;   // 0 = Dynamic,                     1 = SKIF Dark,              2 = SKIF Light,                  3 = ImGui Classic,                  4 = ImGui Dark
-  int iStyleTemp               = 0;   // Used to temporary hold changes in the style during the current session
-  int iDarkenImages            = 0;   // 0 = Never,                       1 = Always,                 2 = On mouse hover
-  int iCheckForUpdates         = 1;   // 0 = Never,                       1 = Weekly,                 2 = On each launch
-  int iLogging                 = 4;   // 0 = None,                        1 = Fatal,                  2 = Error,                       3 = Warning,                        4 = Info,       5 = Debug,       6 = Verbose
-  int iSDRMode                 = 0;   // 0 = 8 bpc,                       1 = 10 bpc,                 2 = 16 bpc
-  int iHDRMode                 = 2;   // 0 = Disabled,                    1 = HDR10 (10 bpc),         2 = scRGB (16 bpc)
+//int iImageScaling            =   2;   // 0 = None,                        1 = Fill,                   2 = Fit (default),               3 = Stretch
+  int iStyle                   =   0;   // 0 = Dynamic,                     1 = SKIF Dark,              2 = SKIF Light,                  3 = ImGui Classic,                  4 = ImGui Dark
+  int iStyleTemp               =   0;   // Used to temporary hold changes in the style during the current session
+  int iDarkenImages            =   0;   // 0 = Never,                       1 = Always,                 2 = On mouse hover
+  int iCheckForUpdates         =   1;   // 0 = Never,                       1 = Weekly,                 2 = On each launch
+  int iLogging                 =   4;   // 0 = None,                        1 = Fatal,                  2 = Error,                       3 = Warning,                        4 = Info,       5 = Debug,       6 = Verbose
+  int iSDRMode                 =   0;   // 0 = 8 bpc,                       1 = 10 bpc,                 2 = 16 bpc
+  int iHDRMode                 =   2;   // 0 = Disabled,                    1 = HDR10 (10 bpc),         2 = scRGB (16 bpc)
   int iHDRBrightness           = 203; // HDR reference white for BT.2408
-  int iHDRToneMapType          = 8;   // 0 = Do Nothing,                  1 = Clip Luminance,         8 = Map to Display
-  int iUIMode                  = 1;   // 0 = Safe Mode (BitBlt),          1 = Normal,                 2 = VRR Compatibility
-  int iDiagnostics             = 1;   // 0 = None,                        1 = Normal,                 2 = Enhanced (not actually used yet)
+  int iHDRToneMapType          =   8;   // 0 = Do Nothing,                  1 = Clip Luminance,         8 = Map to Display
+  int iUIMode                  =   1;   // 0 = Safe Mode (BitBlt),          1 = Normal,                 2 = VRR Compatibility
+  int iDiagnostics             =   1;   // 0 = None,                        1 = Normal,                 2 = Enhanced (not actually used yet)
+  int iUIWidth                 =   0; //  0 = None (default)
+  int iUIHeight                =   0; //  0 = None (default)
+  int iUIPositionX             =  -1; // -1 = None (default)
+  int iUIPositionY             =  -1; // -1 = None (default)
+  CaptureMode eScreenshotsAutosave = CaptureMode_ALL, // Default to saving all types of screen captures
+              eScreenshotsHotkeys  = CaptureMode_ALL; // Default to enabling all hotkeys
 
   // Default settings (booleans)
   bool bAdjustWindow            = false; // Adjust window size based on the image size?
@@ -443,6 +477,7 @@ struct SKIF_RegistrySettings {
   bool bDPIScaling              =  true;
   bool bWin11Corners            =  true; // 2023-08-28: Enabled by default
   bool bTouchInput              =  true; // Automatically make the UI more optimized for touch input on capable devices
+  bool bLoopImages              = false;
   bool bImageDetails            = false;
   bool b99thPercentileMaxCLL    =  true;
 
@@ -459,14 +494,14 @@ struct SKIF_RegistrySettings {
   bool bFadeCovers              =  true;
   bool bControllers             =  true; // Should SKIF support controller input ?
   bool bLoggingDeveloper        = false; // This is a log level "above" verbose logging that also includes stuff like window messages. Only useable for SKIF developers
-  bool bSaveScreenshots         =  true;
 
   // Wide strings
   std::wstring wsUpdateChannel  = L"Website"; // Default to stable channel
   std::wstring wsIgnoreUpdate;
   std::wstring wsPathViewer;
-  std::wstring wsPathScreenshots;
   std::wstring wsPathSpecialK;
+  std::wstring wsPathScreenshots;
+  std::wstring wsScreenshotsPattern = L"<app>_<date>_<time>";
   std::wstring wsAutoUpdateVersion; // Holds the version the auto-updater is trying to install
   std::wstring wsDefaultHDRExt = L".png";
   std::wstring wsDefaultSDRExt = L".png";
@@ -511,6 +546,7 @@ struct SKIF_RegistrySettings {
   bool _RendererHDREnabled          = false; // HDR Enabled
   bool _TouchDevice                 = false;
   bool _SnippingMode                = false;
+  bool _SnippingModeInit            =  true;
   bool _SnippingModeExit            = false;
   bool _SnippingModeTempHDR         = false;
   int  _SnippingTonemapsHDR         = 2;
