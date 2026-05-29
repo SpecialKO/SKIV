@@ -314,6 +314,9 @@ SKIF_UI_Tab_DrawSettings (void)
 
   if (ImGui::CollapsingHeader ("Images###SKIF_SettingsHeader-1", ImGuiTreeNodeFlags_DefaultOpen))
   {
+    ImGui::PushStyleColor   (
+      ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextBase)
+                              );
     SKIF_ImGui_Spacing      ( );
 
 #if 0
@@ -355,7 +358,7 @@ SKIF_UI_Tab_DrawSettings (void)
 
 #endif
 
-    if ( ImGui::Checkbox ( "Loop Images", &_registry.bLoopImages ) )
+    if ( ImGui::Checkbox ( "Loop images", &_registry.bLoopImages ) )
       _registry.regKVLoopImages.putData   (_registry.bLoopImages);
 
     ImGui::Spacing         ( );
@@ -377,8 +380,6 @@ SKIF_UI_Tab_DrawSettings (void)
     if (ImGui::RadioButton ("Based on mouse cursor", &_registry.iDarkenImages, 2))
       _registry.regKVDarkenImages.putData (                        _registry.iDarkenImages);
     ImGui::TreePop         ( );
-
-    ImGui::PopStyleColor();
 
     // nb:  Prefernece needs implementation
     // 
@@ -426,6 +427,8 @@ SKIF_UI_Tab_DrawSettings (void)
     }
     ImGui::TreePop     ( );
 #endif
+
+    ImGui::PopStyleColor ();
   }
 
   ImGui::Spacing ();
