@@ -1061,7 +1061,9 @@ LoadLibraryTexture (image_s& image)
              (type.mime_type == L"image/heif"                ) ? ImageDecoder_WIC  :
              (type.mime_type == L"image/heic"                ) ? ImageDecoder_WIC  :
              (type.mime_type == L"image/avif"                ) ? ImageDecoder_AVIF :
+#if _WIN64
              (type.mime_type == L"image/jxl"                 ) ? ImageDecoder_JXL  :
+#endif
              (type.mime_type == L"image/vnd-ms.dds"          ) ? ImageDecoder_DDS  :
 #ifdef _M_X64
              (type.mime_type == L"image/x-exr"               ) ? ImageDecoder_EXR  :
@@ -1601,9 +1603,14 @@ LoadLibraryTexture (image_s& image)
 
       SYSTEM_INFO     si = { };
       GetSystemInfo (&si);
-
+      
+#if _WIN64
       avif_decoder->maxThreads =
         std::min (64U, std::min ((UINT)si.dwNumberOfProcessors, (UINT)__popcnt64 (si.dwActiveProcessorMask)));
+#else
+      avif_decoder->maxThreads =
+        std::min (32U, std::min ((UINT)si.dwNumberOfProcessors, (UINT)__popcnt   (si.dwActiveProcessorMask)));
+#endif
 
       fseek  (pImageFile,                                 0, SEEK_SET  );
       fread  (_scratchMemory.get (), _.getInitialSize (), 1, pImageFile);
@@ -1623,7 +1630,11 @@ LoadLibraryTexture (image_s& image)
 
         rgb.depth       = 16;
         rgb.format      = AVIF_RGB_FORMAT_RGBA;
+#if _WIN64
         rgb.maxThreads  = std::min (64U, std::min ((UINT)si.dwNumberOfProcessors, (UINT)__popcnt64 (si.dwActiveProcessorMask)));
+#else
+        rgb.maxThreads  = std::min (32U, std::min ((UINT)si.dwNumberOfProcessors, (UINT)__popcnt   (si.dwActiveProcessorMask)));
+#endif
         rgb.ignoreAlpha = true;
         rgb.isFloat     = true;
 
@@ -1843,6 +1854,7 @@ LoadLibraryTexture (image_s& image)
     }
   }
 
+#if _WIN64
   if (decoder == ImageDecoder_JXL)
   {
     static HMODULE hModJXL;
@@ -2140,6 +2152,7 @@ LoadLibraryTexture (image_s& image)
     if ( jxl_runner != nullptr)
       jxlResizableParallelRunnerDestroy (nullptr);
   }
+#endif
 
   // Push the existing texture to a stack to be released after the frame
   //   Do this regardless of whether we could actually load the new cover or not
