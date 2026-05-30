@@ -365,7 +365,7 @@ struct skiv_image_directory_s {
   struct fl_s {
     fd_s* getActiveFile (void)
     {
-      return (_ptr != nullptr) ? _ptr : nullptr;
+      return _it._Ptr;
     }
 
     std::vector<fd_s> getList (void)
@@ -376,15 +376,20 @@ struct skiv_image_directory_s {
     void setList (std::vector<fd_s> list)
     {
       _list = std::move(list);
-      _it   = _list.begin();
-      _ptr  = _it._Ptr;
+
+      if (_list.empty())
+        _list.push_back({ L"", L"", WIN32_FIND_DATA { } });
+
+      _it = _list.begin();
     }
 
     void clear (void)
     {
       _list.clear();
-      _it  = _list.begin();
-      _ptr = nullptr;
+
+      _list.push_back({ L"", L"", WIN32_FIND_DATA { } });
+
+      _it = _list.begin();
     }
 
     bool empty (void)
@@ -403,7 +408,6 @@ struct skiv_image_directory_s {
   private:
     std::vector<fd_s>           _list;
     std::vector<fd_s>::iterator _it;
-                fd_s*           _ptr;
   } fileList;
 
 //std::wstring                orig_path;   // Holds a cached copy of cover.path
