@@ -2930,7 +2930,7 @@ SKIF_Util_Files_PruneOlderThan (std::wstring path, ULONGLONG secondsSince)
 }
 
 bool
-SKIF_Util_Files_PruneToLatestN (std::wstring path, int filesToRetain)
+SKIF_Util_Files_PruneToLatestN (std::wstring path, size_t filesToRetain)
 {
   if (path.empty())
     return false;
@@ -2967,7 +2967,7 @@ SKIF_Util_Files_PruneToLatestN (std::wstring path, int filesToRetain)
       { return (CompareFileTime (&a.ftLastWriteTime, &b.ftLastWriteTime) == -1); } // First file time is earlier than second file time.
     );
 
-    for (int i = 0; i < (files.size() - filesToRetain); i++)
+    for (size_t i = 0; i < (files.size() - filesToRetain); i++)
       DeleteFile ((path + files[i].cFileName).c_str());
 
     return true;

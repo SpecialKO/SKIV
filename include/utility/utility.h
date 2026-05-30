@@ -231,7 +231,7 @@ void            SKIF_Util_FileExplorer_ContextMenuFile(PCWSTR filePath, HWND hWn
 std::wstring    SKIF_Util_FileExplorer_BrowseForFolderXP(PCWSTR defaultPath);
 std::wstring    SKIF_Util_FileExplorer_BrowseForFolder(PCWSTR defaultPath);
 bool            SKIF_Util_Files_PruneOlderThan        (std::wstring path, ULONGLONG secondsSince);
-bool            SKIF_Util_Files_PruneToLatestN        (std::wstring path, int filesToRetain);
+bool            SKIF_Util_Files_PruneToLatestN        (std::wstring path, size_t filesToRetain);
 std::string     SKIF_Util_GetWindowMessageAsStr       (UINT msg);
 
 
