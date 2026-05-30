@@ -4065,7 +4065,7 @@ skiv_image_directory_s::fl_s::nextImage (void)
   static SKIF_RegistrySettings& _registry =
          SKIF_RegistrySettings::GetInstance ();
 
-  if (_it == std::prev (_list.end()))
+  if (_it == std::prev (_list.end()) || _it == _list.end())
   {
     if (_registry.bLoopImages)
       _it = _list.begin();
@@ -4106,13 +4106,24 @@ skiv_image_directory_s::fl_s::deleteImage (void)
   if (_list.empty())
     return L"";
 
+  static SKIF_RegistrySettings& _registry =
+         SKIF_RegistrySettings::GetInstance ();
+
   fileDeleted = true;
 
+  // .erase() returns the iterator following the last removed element.
+  // 1) If pos refers to the last element, then the end() iterator is returned.
   _it = _list.erase (_it);
 
-  // Apparently erase() does not select the new populated end() ? Odd...
-  if (_it->path.empty() && ! _list.empty())
-    prevImage();
+  if (_it == _list.end())
+  {
+    if (_registry.bLoopImages)
+      _it = _list.begin();
+    else
+      _it = std::prev (_list.end());
+  }
+
+  PLOG_DEBUG << "Deleted file. New path: " << _it->path;
 
   return _it->path;
 }

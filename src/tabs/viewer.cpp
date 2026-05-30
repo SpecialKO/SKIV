@@ -2935,7 +2935,7 @@ SKIF_UI_Tab_DrawViewer (void)
         _current_folder.reset();
       }
 
-      PLOG_VERBOSE << "cover.file_info.path: " << cover.file_info.path;
+      //PLOG_VERBOSE << "cover.file_info.path: " << cover.file_info.path;
     }
 
     // Identify when we're dealing with a whole new folder
