@@ -4048,11 +4048,12 @@ skiv_image_directory_s::reset (void)
 void
 skiv_image_directory_s::fl_s::setImage (const std::wstring& path)
 {
+  _it = _list.begin();
+
   if (_list.empty())
     return;
 
-  _it  = std::find_if (_list.begin(), _list.end(), [&](const fd_s& file) { return file.path == path; });
-  _ptr = _it._Ptr;
+  _it = std::find_if (_list.begin(), _list.end(), [&](const fd_s& file) { return file.path == path; });
 }
 
 std::wstring
@@ -4074,7 +4075,6 @@ skiv_image_directory_s::fl_s::nextImage (void)
   else
     std::advance (_it,  1);
 
-  _ptr = _it._Ptr;
   return _it->path;
 }
 
@@ -4097,7 +4097,6 @@ skiv_image_directory_s::fl_s::prevImage (void)
   else
     std::advance (_it, -1);
 
-  _ptr = _it._Ptr;
   return _it->path;
 }
 
@@ -4115,8 +4114,6 @@ skiv_image_directory_s::fl_s::deleteImage (void)
   if (_it->path.empty() && ! _list.empty())
     prevImage();
 
-  _ptr = _it._Ptr;
-
   return _it->path;
 }
 
@@ -4124,14 +4121,12 @@ skiv_image_directory_s::fl_s::deleteImage (void)
 void
 skiv_image_directory_s::fl_s::updateFileIterator (const std::wstring& path)
 {
-  _it = std::find_if (_list.begin(), _list.end(), [&](const fd_s& file) { return file.path == path; });
-
   // If the file was removed from File Explorer, reset to first item
   // TODO: Fix proper file tracking so we can detect removed files and just go to one of the nearby ones
-  if (_it->path.empty() && ! _list.empty())
-    _it = _list.begin();
+  _it = std::find_if (_list.begin(), _list.end(), [&](const fd_s& file) { return file.path == path; });
 
-  _ptr = _it._Ptr;
+  if (_it == _list.end())
+    _it = _list.begin();
 }
 
 int

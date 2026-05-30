@@ -2965,11 +2965,11 @@ SKIF_UI_Tab_DrawViewer (void)
     }
 
     // Identify when the folder was changed outside of the app
-    //PLOG_VERBOSE << "_current_folder.watch was signaled! Delay checking the folder for another 5000 ms...";
+    //PLOG_VERBOSE << "_current_folder.watch was signaled! Delay checking the folder for another 500 ms...";
     if (_current_folder.watch.isSignaled (_current_folder.folder_path))
       dwLastSignaled = SKIF_Util_timeGetTime();
 
-    if (dwLastSignaled != 0 && dwLastSignaled + 5000 < SKIF_Util_timeGetTime())
+    if (dwLastSignaled != 0 && dwLastSignaled + 500 < SKIF_Util_timeGetTime())
     {
       if (! _current_folder.fileList.fileDeleted)
         _current_folder.workerThread (true);
@@ -2988,7 +2988,7 @@ SKIF_UI_Tab_DrawViewer (void)
       PLOG_VERBOSE << "_current_folder.fileList.getActiveFile(): " << _current_folder.fileList.getActiveFile()->path;
 
       // If the selected file was changed from within _current_folder, also update dragDroppedFilePath
-      if (_current_folder.fileList.getActiveFile() != nullptr &&
+      if (! _current_folder.fileList.getActiveFile()->path.empty() &&
           cover.file_info.filename != _current_folder.fileList.getActiveFile()->filename)
                dragDroppedFilePath  = _current_folder.fileList.getActiveFile()->path;
 
@@ -3000,7 +3000,7 @@ SKIF_UI_Tab_DrawViewer (void)
   // Only apply changes to the scaling method if we actually have an image loaded
   if (cover.pRawTexSRV.p != nullptr)
   {
-    if (_current_folder.fileList.getActiveFile() != nullptr && ! _current_folder.fileList.getActiveFile()->path.empty() &&
+    if (! _current_folder.fileList.getActiveFile()->path.empty() &&
         ImGui::GetKeyData (ImGuiKey_Delete)->DownDuration == 0.0f) // Delete - Delete the opened image
       _DeleteImage ();
 
