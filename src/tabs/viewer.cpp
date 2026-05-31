@@ -2853,6 +2853,8 @@ SKIF_UI_Tab_DrawViewer (void)
     // TODO: Fix focus loss bug when a warning is shown...
     if (SKIF_Util_FileExplorer_DeleteFile (_current_folder.fileList.getActiveFile()->path.c_str(), true))
     {
+      ImGui::InsertNotification ({ ImGuiToastType::Success, 2000, "Deleted image:", "%s", SK_WideCharToUTF8 (_current_folder.fileList.getActiveFile()->path).c_str() });
+
       dragDroppedFilePath = _current_folder.fileList.deleteImage ( );
 
       if (dragDroppedFilePath.empty())
