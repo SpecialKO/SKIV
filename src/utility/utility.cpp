@@ -2976,6 +2976,27 @@ SKIF_Util_Files_PruneToLatestN (std::wstring path, size_t filesToRetain)
   return false;
 }
 
+// Sets a new app color mode and returns the previous one
+AppColorMode
+SKIF_Util_SetAppColorMode (AppColorMode mode)
+{
+  if (! SKIF_Util_IsWindows11orGreater ( ))
+    return AppColorMode::Default;
+
+  using SetAppColorMode_pfn =
+           AppColorMode (WINAPI *)(AppColorMode);
+
+  static SetAppColorMode_pfn
+         SetAppColorMode =
+        (SetAppColorMode_pfn)GetProcAddress (LoadLibraryEx (L"uxtheme.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32),
+        MAKEINTRESOURCEA (135)); // Ordinal 135
+
+  if (SetAppColorMode == nullptr)
+    return AppColorMode::Default;
+
+  return SetAppColorMode (mode);
+}
+
 
 #if NTDDI_VERSION < NTDDI_WIN10_RS5
 // Effective Power Mode (Windows 10 1809+)

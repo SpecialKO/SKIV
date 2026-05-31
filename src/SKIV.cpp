@@ -1284,6 +1284,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
     return 0;
   }
 
+  SKIF_Util_SetAppColorMode (AppColorMode::AllowDark);
+
   SKIF_Notify_hWnd      =
     CreateWindowExW (                                                  WS_EX_NOACTIVATE,
       wcNotify.lpszClassName, _T("Special K Image Notification Icon"), WS_ICONIC,

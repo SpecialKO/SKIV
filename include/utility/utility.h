@@ -179,6 +179,15 @@ typedef struct _SKIF_MEMORY_PRIORITY_INFORMATION {
   ULONG MemoryPriority;
 } SKIF_MEMORY_PRIORITY_INFORMATION, *SKIF_PMEMORY_PRIORITY_INFORMATION;
 
+enum class AppColorMode // PreferredAppMode
+{
+  Default,
+  AllowDark,
+  ForceDark,
+  ForceLight,
+  Max
+};
+
 HANDLE          SKIF_Util_GetCurrentProcess           (void);
 HANDLE          SKIF_Util_GetCurrentProcessToken      (void);
 BOOL            SKIF_Util_TerminateProcess            (DWORD  dwProcessId, UINT uExitCode);
@@ -232,6 +241,7 @@ std::wstring    SKIF_Util_FileExplorer_BrowseForFolderXP(PCWSTR defaultPath);
 std::wstring    SKIF_Util_FileExplorer_BrowseForFolder(PCWSTR defaultPath);
 bool            SKIF_Util_Files_PruneOlderThan        (std::wstring path, ULONGLONG secondsSince);
 bool            SKIF_Util_Files_PruneToLatestN        (std::wstring path, size_t filesToRetain);
+AppColorMode    SKIF_Util_SetAppColorMode             (AppColorMode mode);
 std::string     SKIF_Util_GetWindowMessageAsStr       (UINT msg);
 
 
