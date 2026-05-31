@@ -3629,10 +3629,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
     if (invalidatedDevice > 0 && SKIF_Tab_Selected == UITab_Viewer)
       bRefresh = false;
 
-    if (processAdditionalFrames > 0)
-      bRefresh = true;
-
-    else if (bRefresh)
+    if (bRefresh)
     {
       bRefresh = false;
       static std::vector<uint8_t>
