@@ -405,9 +405,15 @@ struct skiv_image_directory_s {
 
     bool fileDeleted = false;
 
+    fl_s (void) {
+      _list.push_back({ L"", L"", WIN32_FIND_DATA { } });
+      _it = _list.begin();
+    }
+
   private:
     std::vector<fd_s>           _list;
     std::vector<fd_s>::iterator _it;
+
   } fileList;
 
 //std::wstring                orig_path;   // Holds a cached copy of cover.path
