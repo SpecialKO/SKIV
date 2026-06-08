@@ -3678,7 +3678,7 @@ SKIF_Util_GetHotKeyStateSVCTemp (void)
 
 DWORD
 WINAPI
-SKIF_Util_GetWebUri (skif_get_web_uri_t* get)
+SKIF_Util_GetWebUri (skif_get_web_uri_t* get, std::string* response_body)
 {
   static SKIF_RegistrySettings& _registry = SKIF_RegistrySettings::GetInstance ( );
 
@@ -3715,15 +3715,16 @@ SKIF_Util_GetWebUri (skif_get_web_uri_t* get)
     return 0;
   };
   
-  PLOG_VERBOSE                                   << "Method  : " << std::wstring(get->method);
-  PLOG_VERBOSE                                   << "Target  : " << ((get->https) ? "https://" : "http://") << get->wszHostName << get->wszHostPath;
-  PLOG_VERBOSE_IF(get->wszExtraInfo[0] != L'\0') << "Fragment: " << get->wszExtraInfo;
-  PLOG_VERBOSE_IF(! get->header.empty())         << "Header  : " << get->header;
-  PLOG_VERBOSE_IF(! get->body.empty())           << "  Body  : " << get->body;
+  PLOG_VERBOSE                                     << "Method: " << std::wstring(get->method);
+  PLOG_VERBOSE                                     << "Target: " << ((get->https) ? "https://" : "http://") << get->wszHostName << get->wszHostPath;
+  PLOG_VERBOSE_IF(  get->wszExtraInfo[0] != L'\0') << " Query: " << get->wszExtraInfo;
+  PLOG_VERBOSE                                     << "   U-A: " << get->user_agent;
+  PLOG_VERBOSE_IF(! get->header.empty())           << "Header: " << get->header;
+  PLOG_VERBOSE_IF(! get->body.empty())             << "  Body: " << get->body;
 
   hInetRoot =
     InternetOpen (
-      L"Special K - Asset Crawler",
+      get->user_agent.c_str(),
         INTERNET_OPEN_TYPE_DIRECT,
           nullptr, nullptr,
             0x00 );
@@ -3842,18 +3843,34 @@ SKIF_Util_GetWebUri (skif_get_web_uri_t* get)
           break;
       }
 
-      FILE *fOut = nullptr;
-
-      _wfopen_s (&fOut, get->wszLocalPath, L"wb+" );
-
-      if (fOut != nullptr)
+      if (response_body != nullptr)
       {
-        fwrite (concat_buffer.data (), concat_buffer.size (), 1, fOut);
-        fflush (fOut);
-        fclose (fOut);
+        response_body->clear();
+        response_body->append (concat_buffer.data(), concat_buffer.size());
+      }
 
+      if (get->wszLocalPath[0] == '\0')
+      {
         CLEANUP (true);
         return 1;
+      }
+
+      // Write to file...
+      else
+      {
+        FILE *fOut = nullptr;
+
+        _wfopen_s (&fOut, get->wszLocalPath, L"wb+" );
+
+        if (fOut != nullptr)
+        {
+          fwrite (concat_buffer.data (), concat_buffer.size (), 1, fOut);
+          fflush (fOut);
+          fclose (fOut);
+
+          CLEANUP (true);
+          return 1;
+        }
       }
     }
 
@@ -3866,20 +3883,20 @@ SKIF_Util_GetWebUri (skif_get_web_uri_t* get)
 }
 
 DWORD
-SKIF_Util_GetWebResource (std::wstring url, std::wstring_view destination, std::wstring method, std::wstring header, std::string body)
+SKIF_Util_GetWebResource (std::wstring url, std::wstring_view file_path, std::wstring method, std::wstring header, std::string body, std::wstring user_agent, std::string* response_body)
 {
   auto* get =
     new skif_get_web_uri_t { };
 
   URL_COMPONENTSW urlcomps = { };
 
-  urlcomps.dwStructSize      = sizeof (URL_COMPONENTSW);
+  urlcomps.dwStructSize     = sizeof (URL_COMPONENTSW);
 
-  urlcomps.lpszHostName      = get->wszHostName;
-  urlcomps.dwHostNameLength  = INTERNET_MAX_HOST_NAME_LENGTH;
+  urlcomps.lpszHostName     = get->wszHostName;
+  urlcomps.dwHostNameLength = INTERNET_MAX_HOST_NAME_LENGTH;
 
-  urlcomps.lpszUrlPath       = get->wszHostPath;
-  urlcomps.dwUrlPathLength   = INTERNET_MAX_PATH_LENGTH;
+  urlcomps.lpszUrlPath      = get->wszHostPath;
+  urlcomps.dwUrlPathLength  = INTERNET_MAX_PATH_LENGTH;
 
   urlcomps.lpszExtraInfo     = get->wszExtraInfo;
   urlcomps.dwExtraInfoLength = INTERNET_MAX_PATH_LENGTH;
@@ -3893,15 +3910,15 @@ SKIF_Util_GetWebResource (std::wstring url, std::wstring_view destination, std::
   if (! body.empty())
     get->body = body;
 
+  if (! user_agent.empty())
+    get->user_agent = user_agent;
+
   if (InternetCrackUrl (url.c_str(), static_cast <DWORD> (url.length ()), 0x00, &urlcomps))
   {
-    wcsncpy ( get->wszLocalPath,
-                           destination.data (),
-                       MAX_PATH );
-
+    wcsncpy (get->wszLocalPath, file_path.data (), MAX_PATH);
     get->https = (urlcomps.nScheme == INTERNET_SCHEME_HTTPS);
 
-    return SKIF_Util_GetWebUri (get);
+    return SKIF_Util_GetWebUri (get, response_body);
   }
 
   else {
