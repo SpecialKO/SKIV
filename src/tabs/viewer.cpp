@@ -1604,8 +1604,13 @@ LoadLibraryTexture (image_s& image)
       SYSTEM_INFO     si = { };
       GetSystemInfo (&si);
 
+#if _WIN64
       avif_decoder->maxThreads =
-        std::min (64U, std::min ((UINT)si.dwNumberOfProcessors, (UINT)__popcnt64 (si.dwActiveProcessorMask)));
+        std::min(64U, std::min((UINT)si.dwNumberOfProcessors, (UINT)__popcnt64(si.dwActiveProcessorMask)));
+#else
+      avif_decoder->maxThreads =
+        std::min(32U, std::min((UINT)si.dwNumberOfProcessors, (UINT)__popcnt(si.dwActiveProcessorMask)));
+#endif
 
       fseek  (pImageFile,                                 0, SEEK_SET  );
       fread  (_scratchMemory.get (), _.getInitialSize (), 1, pImageFile);
@@ -1634,8 +1639,12 @@ LoadLibraryTexture (image_s& image)
 
         rgb.depth       = is_hdr_image ? 16 : 8;
         rgb.format      = is_hdr_image ? AVIF_RGB_FORMAT_RGBA : AVIF_RGB_FORMAT_BGRA;
-        rgb.maxThreads  = std::min (64U, std::min ((UINT)si.dwNumberOfProcessors, (UINT)__popcnt64 (si.dwActiveProcessorMask)));
-        rgb.ignoreAlpha = avif_decoder->image->alphaPlane ? false : true;
+#if _WIN64
+        rgb.maxThreads = std::min(64U, std::min((UINT)si.dwNumberOfProcessors, (UINT)__popcnt64(si.dwActiveProcessorMask)));
+#else
+        rgb.maxThreads = std::min(32U, std::min((UINT)si.dwNumberOfProcessors, (UINT)__popcnt(si.dwActiveProcessorMask)));
+#endif
+        rgb.ignoreAlpha = true;
         rgb.isFloat     = is_hdr_image ? true : false;
 
         SK_avifRGBImageAllocatePixels (                     &rgb);
@@ -1779,6 +1788,36 @@ LoadLibraryTexture (image_s& image)
           else if (avif_decoder->image->colorPrimaries == AVIF_COLOR_PRIMARIES_BT709 ||
                    avif_decoder->image->colorPrimaries == AVIF_COLOR_PRIMARIES_SRGB)
           {
+            if (avif_decoder->image->transferCharacteristics == AVIF_TRANSFER_CHARACTERISTICS_PQ ||
+                avif_decoder->image->transferCharacteristics == AVIF_TRANSFER_CHARACTERISTICS_SMPTE2084)
+            {
+              if ( SUCCEEDED ( TransformImage(*temp_img.GetImages (),
+                    [&](      XMVECTOR* outPixels,
+                        const XMVECTOR* inPixels,
+                              size_t    width,
+                              size_t    y)
+                {
+                  UNREFERENCED_PARAMETER(y);
+
+                  for (size_t j = 0; j < width; ++j)
+                  {
+                    XMVECTOR v = inPixels[j];
+
+                    v =
+                      XMVectorScale(
+                        SKIV_Image_PQToLinear(v), 125.0f
+                      );
+
+                    outPixels[j] = v;
+                  }
+                }, img)
+              )
+                )
+              {
+                temp_img.Release ();
+              }
+            }
+            else
             {
               std::swap(img, temp_img);
               temp_img.Release ();
