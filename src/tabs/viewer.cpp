@@ -45,7 +45,6 @@
 #include <locale>
 #include <codecvt>
 #include <fstream>
-#include <filesystem>
 #include <string>
 #include <sstream>
 #include <concurrent_queue.h>
@@ -88,7 +87,6 @@
 #include <utility/image.h>
 
 #pragma comment (lib, "dxguid.lib")
-
 
 ImRect copyRect = { 0,0,0,0 };
 bool wantCopyToClipboard = false;
@@ -178,6 +176,7 @@ const std::initializer_list<FileSignature> supported_hdr_encode_formats =
                                                                        { 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF } }, // ?? ?? ?? ?? 66 74 79 70 61 76 69 66
 //FileSignature { L"image/vnd-ms.dds",          { L".dds"  },          { 0x44, 0x44, 0x53, 0x20 } },
 };
+
 
 bool isJXLDecoderAvailable (void)
 {
@@ -1063,7 +1062,9 @@ LoadLibraryTexture (image_s& image)
              (type.mime_type == L"image/heif"                ) ? ImageDecoder_WIC  :
              (type.mime_type == L"image/heic"                ) ? ImageDecoder_WIC  :
              (type.mime_type == L"image/avif"                ) ? ImageDecoder_AVIF :
+#if _WIN64
              (type.mime_type == L"image/jxl"                 ) ? ImageDecoder_JXL  :
+#endif
              (type.mime_type == L"image/vnd-ms.dds"          ) ? ImageDecoder_DDS  :
 #ifdef _M_X64
              (type.mime_type == L"image/x-exr"               ) ? ImageDecoder_EXR  :
@@ -1888,6 +1889,7 @@ LoadLibraryTexture (image_s& image)
     }
   }
 
+#if _WIN64
   if (decoder == ImageDecoder_JXL)
   {
     static HMODULE hModJXL;
@@ -2185,6 +2187,7 @@ LoadLibraryTexture (image_s& image)
     if ( jxl_runner != nullptr)
       jxlResizableParallelRunnerDestroy (nullptr);
   }
+#endif
 
   // Push the existing texture to a stack to be released after the frame
   //   Do this regardless of whether we could actually load the new cover or not
@@ -2728,6 +2731,9 @@ SKIF_UI_Tab_DrawViewer (void)
 {
   extern bool imageFadeActive;
 
+  // Used to monitor the current image folder
+  static skiv_image_directory_s _current_folder;
+
   // ** Move this code somewhere more sensible
   //
   // User is requesting to copy the loaded image to clipboard,
@@ -2769,11 +2775,12 @@ SKIF_UI_Tab_DrawViewer (void)
                   SUCCEEDED (DirectX::CopyRectangle (*captured_img.GetImages   (), src_rect,
                                                                                    *subrect.GetImages (), DirectX::TEX_FILTER_DEFAULT, 0, 0)))
               {
-                if (SKIV_Image_CopyToClipboard (subrect.GetImages (), cover.is_hdr, true, L"cp_rect"))
+
+                if (SKIV_Image_CopyToClipboard (subrect.GetImages (), cover.is_hdr, { ImRect(), L"cp_rect", CaptureMode_None } ))
                 {
                   ImGui::InsertNotification (
                     {
-                      ImGuiToastType::Info,
+                      ImGuiToastType::Success,
                       3000,
                       "Copied area to clipboard", "%.fx%.f -> %.fx%.f",
                       copyRect.Min.x,
@@ -2804,11 +2811,11 @@ SKIF_UI_Tab_DrawViewer (void)
 
             else
             {
-              if (SKIV_Image_CopyToClipboard (captured_img.GetImages (), cover.is_hdr, true, L"cp_full"))
+              if (SKIV_Image_CopyToClipboard (captured_img.GetImages (), cover.is_hdr, { ImRect(), L"cp_full", CaptureMode_None } ))
               {
                 ImGui::InsertNotification (
                   {
-                    ImGuiToastType::Info,
+                    ImGuiToastType::Success,
                     3000,
                     "Copied image to clipboard", ""
                   }
@@ -2830,7 +2837,6 @@ SKIF_UI_Tab_DrawViewer (void)
       }
     }
   }
-
 
   auto _SwapOutCover = [&](void) -> void
   {
@@ -2869,6 +2875,25 @@ SKIF_UI_Tab_DrawViewer (void)
       // Reset the title of the main app window
       if (SKIF_ImGui_hWnd != NULL)
         ::SetWindowText (SKIF_ImGui_hWnd, SKIV_WINDOW_TITLE_SHORT_W);
+    }
+  };
+
+  auto _DeleteImage = [&](void) -> void
+  {
+    if (_current_folder.fileList.getActiveFile() == nullptr)
+      return;
+
+    //DeleteFile (_current_folder.activeFile->path.c_str());
+
+    // TODO: Fix focus loss bug when a warning is shown...
+    if (SKIF_Util_FileExplorer_DeleteFile (_current_folder.fileList.getActiveFile()->path.c_str(), true))
+    {
+      ImGui::InsertNotification ({ ImGuiToastType::Success, 2000, "Deleted image:", "%s", SK_WideCharToUTF8 (_current_folder.fileList.getActiveFile()->path).c_str() });
+
+      dragDroppedFilePath = _current_folder.fileList.deleteImage ( );
+
+      if (dragDroppedFilePath.empty())
+        _SwapOutCover ();
     }
   };
 
@@ -2945,115 +2970,6 @@ SKIF_UI_Tab_DrawViewer (void)
       ::SetWindowText (SKIF_ImGui_hWnd, (cover.file_info.filename + L" - " + SKIV_WINDOW_TITLE_SHORT_W).c_str());
   }
 
-  // Monitor the current image folder
-  struct {
-    std::wstring              orig_path; // Holds a cached copy of cover.path
-    std::wstring              filename;  // Image filename
-    std::wstring              path;      // Parent folder path
-    std:: string              path_utf8;
-    SKIF_DirectoryWatch       watch;
-    std::vector<std::wstring> fileList;
-    unsigned int              fileListIndex = 0;
-
-    void reset (void)
-    {
-      PLOG_VERBOSE << "reset _current_folder!";
-
-      orig_path.clear();
-      filename.clear();
-      path.clear();
-      path_utf8.clear();
-      fileList.clear();
-      fileListIndex = 0;
-      watch.reset();
-    }
-
-    std::wstring nextImage (void)
-    {
-      if (fileList.size() == 0 || fileListIndex == fileList.size() - 1)
-        return L"";
-
-      fileListIndex++;
-      fileListIndex %= fileList.size();
-      return (path + LR"(\)" + fileList[fileListIndex]);
-    }
-
-    std::wstring prevImage (void)
-    {
-      if (fileList.size() == 0 || fileListIndex == 0)
-        return L"";
-
-      fileListIndex--;
-      fileListIndex %= fileList.size();
-      return (path + LR"(\)" + fileList[fileListIndex]);
-    }
-
-    // Find the position of the image in the current folder
-    void findFileIndex (void)
-    {
-      // Set the index to the proper position
-      fileListIndex = 0;
-      for (auto& file : fileList)
-      {
-        if (filename != file)
-          fileListIndex++;
-        else
-          break;
-      }
-    }
-
-    // Retrieve all files in the folder, and identify our current place among them...
-    void updateFolderData (void)
-    {
-      HANDLE hFind        = INVALID_HANDLE_VALUE;
-      WIN32_FIND_DATA ffd = { };
-      fileList.clear();
-
-      PLOG_DEBUG << "Discovering ... " << (path + LR"(\*.*)");
-
-      hFind = 
-        FindFirstFileExW ((path + LR"(\*.*)").c_str(), FindExInfoBasic, &ffd, FindExSearchNameMatch, NULL, FIND_FIRST_EX_LARGE_FETCH);
-
-      if (INVALID_HANDLE_VALUE != hFind)
-      {
-        fileList.push_back (ffd.cFileName);
-
-        while (FindNextFile (hFind, &ffd))
-          fileList.push_back (ffd.cFileName);
-
-        FindClose (hFind);
-      }
-
-      if (! fileList.empty())
-      {
-        std::vector<std::wstring> filtered;
-
-        // Filter out unsupported file formats using their file extension
-        for (auto& file : fileList)
-          if (isExtensionSupported (std::filesystem::path(file).extension().wstring()))
-            filtered.push_back (file);
-
-        fileList = filtered;
-
-        if (! fileList.empty())
-        {
-          std::sort (fileList.begin(),
-                     fileList.end  (), 
-            []( const std::wstring& a,
-                const std::wstring& b ) -> int
-            {
-              return StrCmpLogicalW (a.c_str(), b.c_str()) < 0;
-            }
-          );
-
-          findFileIndex ( );
-        }
-      }
-
-      PLOG_DEBUG << "Found " << fileList.size() << " supported images in the folder.";
-    }
-  } static _current_folder;
-
   // Do not clear when we are loading an image (so as to not process the same folder constantly)
   if (! loadImage && ! tryingToLoadImage)
   {
@@ -3062,53 +2978,82 @@ SKIF_UI_Tab_DrawViewer (void)
     // Identify when an image has been closed
     if (cover.file_info.path.empty())
     {
-      if (! _current_folder.path.empty())
+      if (! _current_folder.folder_path.empty())
+      {
+        PLOG_VERBOSE << "cover.file_info.folder_path: " << cover.file_info.folder_path;
+        PLOG_VERBOSE << "_current_folder.folder_path: " << _current_folder.folder_path;
         _current_folder.reset();
+      }
+
+      //PLOG_VERBOSE << "cover.file_info.path: " << cover.file_info.path;
     }
 
     // Identify when we're dealing with a whole new folder
-    if (cover.file_info.folder_path != _current_folder.path)
+    if (cover.file_info.folder_path != _current_folder.folder_path)
     {
+      PLOG_VERBOSE << "cover.file_info.folder_path: " << cover.file_info.folder_path;
+      PLOG_VERBOSE << "_current_folder.folder_path: " << _current_folder.folder_path;
       _current_folder.reset();
       
-      _current_folder.orig_path  = cover.file_info.path;
-      std::filesystem::path path = SKIF_Util_NormalizeFullPath (cover.file_info.path);
-      _current_folder.filename   = path.filename().wstring();
-      _current_folder.path       = path.parent_path().wstring();
-      _current_folder.path_utf8  = SK_WideCharToUTF8 (_current_folder.path);
+      std::filesystem::path path  = SKIF_Util_NormalizeFullPath (cover.file_info.path);
+      _current_folder.folder_path = path.parent_path().wstring();
 
-      PLOG_VERBOSE << "Watching the folder... " << _current_folder.path;
+      PLOG_VERBOSE << "Watching the folder... " << _current_folder.folder_path;
 
       // This triggers a new updateFolderData() run below
       dwLastSignaled = 1;
     }
 
     // Identify when a new file from the same folder has been dropped
-    if (cover.file_info.path != _current_folder.orig_path)
+    if (! _current_folder.fileList.empty() && _current_folder.fileList.getActiveFile() != nullptr &&
+      cover.file_info.filename != _current_folder.fileList.getActiveFile()->filename)
     {
-      _current_folder.orig_path  = cover.file_info.path;
-      std::filesystem::path path = SKIF_Util_NormalizeFullPath (cover.file_info.path);
-      _current_folder.filename   = path.filename().wstring();
-      _current_folder.findFileIndex ( );
+      //PLOG_DEBUG << "            cover.file_info.filename: " << cover.file_info.filename;
+      //PLOG_DEBUG << "_current_folder.activeFile->filename: " << _current_folder.activeFile->filename;
+
+      _current_folder.workerThread (true);
     }
 
     // Identify when the folder was changed outside of the app
-    if (_current_folder.watch.isSignaled (_current_folder.path))
-    {
+    //PLOG_VERBOSE << "_current_folder.watch was signaled! Delay checking the folder for another 500 ms...";
+    if (_current_folder.watch.isSignaled (_current_folder.folder_path))
       dwLastSignaled = SKIF_Util_timeGetTime();
-      PLOG_VERBOSE << "_current_folder.watch was signaled! Delay checking the folder for another 500ms...";
-    }
 
     if (dwLastSignaled != 0 && dwLastSignaled + 500 < SKIF_Util_timeGetTime())
     {
-      _current_folder.updateFolderData();
+      if (! _current_folder.fileList.fileDeleted)
+        _current_folder.workerThread (true);
+      else
+        _current_folder.fileList.fileDeleted = false;
+
       dwLastSignaled = 0;
+    }
+
+    int results = _current_folder.workerThread (false);
+    if (results > 0)
+    {
+      _current_folder.fileList.updateFileIterator (cover.file_info.path);
+
+      PLOG_VERBOSE << "cover.file_info.path: " << cover.file_info.path;
+      PLOG_VERBOSE << "_current_folder.fileList.getActiveFile(): " << _current_folder.fileList.getActiveFile()->path;
+
+      // If the selected file was changed from within _current_folder, also update dragDroppedFilePath
+      if (! _current_folder.fileList.getActiveFile()->path.empty() &&
+          cover.file_info.filename != _current_folder.fileList.getActiveFile()->filename)
+               dragDroppedFilePath  = _current_folder.fileList.getActiveFile()->path;
+
+      if (results == 2)
+        ImGui::InsertNotification ({ ImGuiToastType::Info, 5000, "Refreshed nearby images.", "" });
     }
   }
 
   // Only apply changes to the scaling method if we actually have an image loaded
   if (cover.pRawTexSRV.p != nullptr)
   {
+    if (! _current_folder.fileList.getActiveFile()->path.empty() &&
+        ImGui::GetKeyData (ImGuiKey_Delete)->DownDuration == 0.0f) // Delete - Delete the opened image
+      _DeleteImage ();
+
     // These keybindings requires Ctrl to be held down
     if (ImGui::GetIO().KeyCtrl)
     {
@@ -4116,15 +4061,16 @@ SKIF_UI_Tab_DrawViewer (void)
       if (cover.is_hdr &&
           SKIF_ImGui_MenuItemEx2 ("Export to SDR", ICON_FA_FILE_EXPORT, ImGui::GetStyleColorVec4(ImGuiCol_Text),      "Ctrl+X"))
         ExportSDRDialog = PopupState_Open;
-      if (SKIF_ImGui_MenuItemEx2 ("Encoder Setup", ICON_FA_GEARS,       ImGui::GetStyleColorVec4(ImGuiCol_Text),      "Ctrl+B"))
-        ConfigEncoders = PopupState_Open;
-      if (//cover.is_hdr &&
-          SKIF_ImGui_MenuItemEx2 ("Copy",          ICON_FA_CLIPBOARD,   ImGui::GetStyleColorVec4(ImGuiCol_Text),      "Ctrl+C"))
-      {
+
+      ImGui::Separator ( );
+
+      if (SKIF_ImGui_MenuItemEx2 ("Copy",         ICON_FA_CLIPBOARD,    ImGui::GetStyleColorVec4(ImGuiCol_Text),      "Ctrl+C"))
         wantCopyToClipboard = true;
-      }
-      //if (SKIF_ImGui_MenuItemEx2 ("Close", 0,                           ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info), "Ctrl+W"))
-      //  _SwapOutCover ();
+      if (SKIF_ImGui_MenuItemEx2 ("Close", 0,                           ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info), "Ctrl+W"))
+        _SwapOutCover ();
+      if (_current_folder.fileList.getActiveFile() != nullptr && ! _current_folder.fileList.getActiveFile()->path.empty() &&
+          SKIF_ImGui_MenuItemEx2 ("Delete", ICON_FA_TRASH_CAN,          ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Failure), "Delete"))
+        _DeleteImage ();
 
       // Image scaling
 
@@ -4132,7 +4078,7 @@ SKIF_UI_Tab_DrawViewer (void)
 
       ImGui::PushID ("#ImageScaling");
 
-      if (SKIF_ImGui_BeginMenuEx2 ("Scaling", ICON_FA_PANORAMA))
+      if (SKIF_ImGui_BeginMenuEx2 ("Scaling", 0)) // ICON_FA_PANORAMA
       {
         auto _CreateMenuItem = [&](ImageScaling image_scaling, const char* label, const char* shortcut) {
           bool bEnabled = (cover.scaling == image_scaling);
@@ -4213,18 +4159,27 @@ SKIF_UI_Tab_DrawViewer (void)
         ImGui::PopID ( ); // #HDRVisualization
       }
       
-      if (SKIF_ImGui_MenuItemEx2 ("Details", ICON_FA_BARCODE, ImGui::GetStyleColorVec4 (ImGuiCol_Text), "Ctrl+D", &_registry.bImageDetails))
+      if (SKIF_ImGui_MenuItemEx2 ("Details", 0, ImGui::GetStyleColorVec4 (ImGuiCol_Text), "Ctrl+D", &_registry.bImageDetails)) // ICON_FA_BARCODE
         _registry.regKVImageDetails.putData (_registry.bImageDetails);
+
+      if (SKIF_ImGui_MenuItemEx2 ("Encoder Setup", 0,                   ImGui::GetStyleColorVec4(ImGuiCol_Text),      "Ctrl+B")) // ICON_FA_GEARS
+        ConfigEncoders = PopupState_Open;
 
       ImGui::Separator       ( );
 
-      if (! cover.file_info.path.empty() && SKIF_ImGui_MenuItemEx2 ("Browse Folder", ICON_FA_FOLDER_OPEN, ImColor(255, 207, 72), "Ctrl+E"))
-        SKIF_Util_FileExplorer_SelectFile (cover.file_info.path.c_str());
+      if (! cover.file_info.path.empty())
+      {
+        if (SKIF_ImGui_MenuItemEx2 ("Browse Folder", ICON_FA_FOLDER_OPEN, ImColor(255, 207, 72), "Ctrl+E"))
+          SKIF_Util_FileExplorer_SelectFile (cover.file_info.path.c_str());
+
+        if (SKIF_ImGui_MenuItemEx2 ("Context Menu", ICON_FA_WINDOWS,      ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info)))
+          SKIF_Util_FileExplorer_ContextMenuFile (cover.file_info.path.c_str(), SKIF_Notify_hWnd);
+      }
     }
 
     ImGui::Separator       ( );
 
-    if (SKIF_ImGui_MenuItemEx2 ("Settings", ICON_FA_LIST_CHECK))
+    if (SKIF_ImGui_MenuItemEx2 ("Settings", 0)) // ICON_FA_LIST_CHECK
       SKIF_Tab_ChangeTo = UITab_Settings;
 
     ImGui::Separator ( );
@@ -4603,13 +4558,13 @@ SKIF_UI_Tab_DrawViewer (void)
     if (ImGui::IsKeyPressed (ImGuiKey_RightArrow) ||
         ImGui::IsKeyPressed (ImGuiKey_GamepadR1))
     {
-      dragDroppedFilePath = _current_folder.nextImage ( );
+      dragDroppedFilePath = _current_folder.fileList.nextImage ( );
     }
 
     else if (ImGui::IsKeyPressed (ImGuiKey_LeftArrow) ||
              ImGui::IsKeyPressed (ImGuiKey_GamepadL1))
     {
-      dragDroppedFilePath = _current_folder.prevImage ( );
+      dragDroppedFilePath = _current_folder.fileList.prevImage ( );
     }
   }
 

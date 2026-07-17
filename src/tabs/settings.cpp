@@ -16,16 +16,47 @@
 #include <utility/gamepad.h>
 #include "../../version.h"
 #include <tabs/common_ui.h>
+#include <ImGuiNotify.hpp>
 #include <set>
 
 extern bool allowShortcutCtrlA;
+
+struct kb_kv_s
+{
+  SK_KeybindMultiState*                           _key;
+  SKIF_RegistrySettings::KeyValue <std::wstring>* _reg;
+  std::function <void (SK_KeybindMultiState*)>    _callback;
+  std::function <bool (void)>                     _show;
+};
+
+struct m_s
+{
+  CaptureMode                  _type;
+  char*                        _label;
+  char*                        _main_id;
+  char*                        _disk_id;
+  bool                         _main_value;
+  bool                         _disk_value;
+  kb_kv_s*                     _keybind;
+};
+
+PopupState ContextMenuSettings = PopupState_Closed;
 
 void
 SKIF_UI_Tab_DrawSettings (void)
 {
   static SKIF_CommonPathsCache& _path_cache = SKIF_CommonPathsCache::GetInstance ( );
   static SKIF_RegistrySettings& _registry   = SKIF_RegistrySettings::GetInstance ( );
-  
+
+  static kb_kv_s kbToggleHDRDisplay =
+    { &_registry.kbToggleHDRDisplay, &_registry.regKVHotkeyToggleHDRDisplay, { [](SK_KeybindMultiState* ptr) { SKIF_Util_RegisterHotKeyHDRToggle (ptr->getKeybind()                    ); } }, { []() { return (SKIF_Util_IsWindows10v1709OrGreater ( ) && SKIF_Util_IsHDRSupported (NULL)); } } };
+  static kb_kv_s kbCaptureWindow    =
+    { &_registry.kbCaptureWindow,    &_registry.regKVHotkeyCaptureWindow,    { [](SK_KeybindMultiState* ptr) { SKIF_Util_RegisterHotKeyCapture   (CaptureMode_Window, ptr->getKeybind()); } }, { []() { return true; } } };
+  static kb_kv_s kbCaptureRegion    =
+    { &_registry.kbCaptureRegion,    &_registry.regKVHotkeyCaptureRegion,    { [](SK_KeybindMultiState* ptr) { SKIF_Util_RegisterHotKeyCapture   (CaptureMode_Region, ptr->getKeybind()); } }, { []() { return true; } } };
+  static kb_kv_s kbCaptureScreen    =
+    { &_registry.kbCaptureScreen,    &_registry.regKVHotkeyCaptureScreen,    { [](SK_KeybindMultiState* ptr) { SKIF_Util_RegisterHotKeyCapture   (CaptureMode_Screen, ptr->getKeybind()); } }, { []() { return true; } } };
+
   if (ImGui::Button (ICON_FA_LEFT_LONG " Go back###GoBackBtn1", ImVec2 (150.0f * SKIF_ImGui_GlobalDPIScale, 30.0f * SKIF_ImGui_GlobalDPIScale)))
     SKIF_Tab_ChangeTo = UITab_Viewer;
 
@@ -69,21 +100,100 @@ SKIF_UI_Tab_DrawSettings (void)
     ImGui::PushStyleColor   (
       ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextBase)
                               );
-
     SKIF_ImGui_Spacing      ( );
+
+    static float folderPosX = 0.0f;
+
+    ImGui::TextColored (
+      ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextCaption),
+        "Name Pattern: "
+    );
+
+    constexpr int       maxChars  = 50;
+    static char pattern[maxChars] = {};
+    static bool warnNonUnique = false;
+           bool savePattern   = false;
+
+    SK_RunOnce (strncpy_s (pattern, maxChars, SK_WideCharToUTF8 (_registry.wsScreenshotsPattern).data(), _TRUNCATE));
     
+    ImGui::SameLine ( );
+    ImGui::SetCursorPosX(folderPosX);
 
-    if ( ImGui::Checkbox ( "Save screenshots", &_registry.bSaveScreenshots ) )
-      _registry.regKVSaveScreenshots.putData (  _registry.bSaveScreenshots);
+    if (ImGui::InputTextEx ("###PatternInput", "<app>_<date>_<time>", pattern, maxChars, ImVec2(250.0f * SKIF_ImGui_GlobalDPIScale, 0.0f), ImGuiInputTextFlags_EnterReturnsTrue))
+      savePattern = true;
 
-    ImGui::TreePush ("ScreenshotsFolder");
-
-    if (! _registry.bSaveScreenshots)
-      SKIF_ImGui_PushDisableState ( );
-
-    if (ImGui::Button ("Browse"))
+    if (ImGui::IsItemHovered ())
     {
-      std::wstring newPath = SKIF_Util_FileExplorer_BrowseFolder (_path_cache.skiv_screenshots);
+      ImGui::BeginTooltip    ();
+      ImGui::TextUnformatted ("How to use:");
+      ImGui::Separator       ();
+      ImGui::BulletText      ("<app> = Uses Special K profile name, executable product name, or filename, in that order.");
+      ImGui::BulletText      ("<pro> = Uses product name.");
+      ImGui::BulletText      ("<exe> = Uses executable name.");
+      ImGui::BulletText      ("<wnd> = Uses window title.");
+      ImGui::BulletText      ("<date> = Uses local-aware date format.");
+      ImGui::BulletText      ("<time> = Uses local-aware time format.");
+      ImGui::TextUnformatted ("Hint: Folder separators (\\) are also supported! ;)");
+      ImGui::EndTooltip      ();
+    }
+
+    if (! ImGui::IsItemActive ())
+    {
+      if (pattern[0] == '\0')
+        strncpy (pattern, "<app>_<date>_<time>", maxChars);
+    }
+    else if (ImGui::GetIO().KeyCtrl && ImGui::GetKeyData(ImGuiKey_S)->DownDuration == 0.0f)
+    {
+      savePattern = true;
+
+      if (pattern[0] == '\0')
+        ImGui::SetWindowFocus (NULL);
+    }
+
+    ImGui::SameLine ( );
+
+    ImGui::PushStyleColor (ImGuiCol_Text, ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Success));
+    if (ImGui::Button (ICON_FA_FLOPPY_DISK))
+      savePattern = true;
+    ImGui::PopStyleColor ();
+
+    if (savePattern)
+    {
+      savePattern = false;
+
+      if (pattern[0] == '\0')
+        strncpy (pattern, "<app>_<date>_<time>", maxChars);
+
+      StrTrimA (pattern, " \t\r\n");
+      _registry.wsScreenshotsPattern = SK_UTF8ToWideChar (pattern);
+      _registry.regKVScreenshotsPattern.putData (_registry.wsScreenshotsPattern);
+      
+      ImGui::InsertNotification ({ ImGuiToastType::Success, 1000, "Saved", ""});
+    }
+
+    if (StrStrA (pattern, "<app>")  == NULL &&
+        StrStrA (pattern, "<pro>")  == NULL &&
+        StrStrA (pattern, "<exe>")  == NULL &&
+        StrStrA (pattern, "<wnd>")  == NULL &&
+        StrStrA (pattern, "<date>") == NULL &&
+        StrStrA (pattern, "<time>") == NULL)
+    {
+      ImGui::TextColored (ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Yellow), ICON_FA_TRIANGLE_EXCLAMATION);
+      ImGui::SameLine    ( );
+      ImGui::Text        ("Missing variables. Any captured shot will overwrite the existing file!");
+    }
+
+    ImGui::Spacing ();
+
+    ImGui::TextColored (
+      ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextCaption),
+        "Screenshots Folder: "
+    );
+    ImGui::SameLine ( );
+    folderPosX = ImGui::GetCursorPosX();
+    if (ImGui::Selectable(_path_cache.skiv_screenshotsA))
+    {
+      std::wstring newPath = SKIF_Util_FileExplorer_BrowseForFolder (_path_cache.skiv_screenshots);
 
       if (PathFileExistsW (newPath.c_str()))
       {
@@ -101,75 +211,98 @@ SKIF_UI_Tab_DrawSettings (void)
       }
     }
 
-    ImGui::SameLine ( );
-    ImGui::Spacing  ( );
-    ImGui::SameLine ( );
+    ImGui::Spacing ();
 
-    ImGui::Text ("%s", _path_cache.skiv_screenshotsA);
-
-    if (! _registry.bSaveScreenshots)
-      SKIF_ImGui_PopDisableState ( );
-
-    ImGui::TreePop  ( );
-  }
-
-  ImGui::Spacing ();
-  ImGui::Spacing ();
-
-#pragma endregion
-
-#pragma region Section: Keybindings
-
-  if (ImGui::CollapsingHeader ("Keybindings###SKIF_SettingsHeader-1", ImGuiTreeNodeFlags_DefaultOpen))
-  {
-    SKIF_ImGui_Spacing      ( );
-
-    struct kb_kv_s
-    {
-      SK_KeybindMultiState*                           _key;
-      SKIF_RegistrySettings::KeyValue <std::wstring>* _reg;
-      std::function <void (SK_KeybindMultiState*)>    _callback;
-      std::function <bool (void)>                     _show;
+    static std::vector <m_s>
+      modes = {
+        { CaptureMode_Window, "Window", "###ModeToggle-Window", "###DiskToggle-Window", ((_registry.eScreenshotsHotkeys & CaptureMode_Window) == CaptureMode_Window), ((_registry.eScreenshotsAutosave & CaptureMode_Window) == CaptureMode_Window), &kbCaptureWindow },
+        { CaptureMode_Region, "Region", "###ModeToggle-Region", "###DiskToggle-Region", ((_registry.eScreenshotsHotkeys & CaptureMode_Region) == CaptureMode_Region), ((_registry.eScreenshotsAutosave & CaptureMode_Region) == CaptureMode_Region), &kbCaptureRegion },
+        { CaptureMode_Screen, "Screen", "###ModeToggle-Screen", "###DiskToggle-Screen", ((_registry.eScreenshotsHotkeys & CaptureMode_Screen) == CaptureMode_Screen), ((_registry.eScreenshotsAutosave & CaptureMode_Screen) == CaptureMode_Screen), &kbCaptureScreen }
     };
+    
+    ImGui::TextColored (
+      ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextCaption),
+        "Capture Mode:"
+    );
+    ImGui::SameLine ( );
+    ImGui::ItemSize (ImVec2 (ImGui::GetFrameHeight (), ImGui::GetFrameHeight ()), ImGui::GetStyle().FramePadding.y);
+    ImGui::SameLine ( );
 
-    static std::vector <kb_kv_s>
-      keybinds = {
-      { &_registry.kbCaptureWindow,    &_registry.regKVHotkeyCaptureWindow,    { [](SK_KeybindMultiState* ptr) { SKIF_Util_RegisterHotKeyCapture   (CaptureMode_Window, ptr->getKeybind()); } }, { []() { return true; } } },
-      { &_registry.kbCaptureRegion,    &_registry.regKVHotkeyCaptureRegion,    { [](SK_KeybindMultiState* ptr) { SKIF_Util_RegisterHotKeyCapture   (CaptureMode_Region, ptr->getKeybind()); } }, { []() { return true; } } },
-      { &_registry.kbCaptureScreen,    &_registry.regKVHotkeyCaptureScreen,    { [](SK_KeybindMultiState* ptr) { SKIF_Util_RegisterHotKeyCapture   (CaptureMode_Screen, ptr->getKeybind()); } }, { []() { return true; } } },
-      { &_registry.kbToggleHDRDisplay, &_registry.regKVHotkeyToggleHDRDisplay, { [](SK_KeybindMultiState* ptr) { SKIF_Util_RegisterHotKeyHDRToggle (ptr->getKeybind()                    ); } }, { []() { return (SKIF_Util_IsWindows10v1709OrGreater ( ) && SKIF_Util_IsHDRSupported (NULL)); } } }
-    };
+    float col2 = ImGui::GetCursorPosX ();
+    ImGui::TextColored (ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info), " " ICON_FA_FLOPPY_DISK);
+    SKIF_ImGui_SetHoverTip ("Save screenshot on disk");
+    ImGui::SameLine ( );
+    ImGui::ItemSize (ImVec2 (ImGui::GetFrameHeight (), ImGui::GetFrameHeight ()), ImGui::GetStyle().FramePadding.y);
+    ImGui::SameLine ( );
 
+    float col3 = ImGui::GetCursorPosX ();
+
+    ImGui::TextColored (
+      ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextCaption),
+       "Keybinding: " ICON_FA_KEYBOARD
+    );
+
+    ImGui::TreePush ("CaptureModes");
+    
     ImGui::BeginGroup ();
-    for (auto& keybind : keybinds)
+    for (auto& mode : modes)
     {
-      if (! keybind._show())
-        continue;
-
-      ImGui::Text          ( "%s:  ",
-                            keybind._key->bind_name );
-      ImGui::Spacing ();
-    }
-    ImGui::EndGroup   ();
-    ImGui::SameLine   ();
-    ImGui::BeginGroup ();
-    for (auto& keybind : keybinds)
-    {
-      if (! keybind._show())
-        continue;
-
-      if (SK_ImGui_Keybinding (keybind._key))
+      //ImGui::ItemSize (ImVec2 (0.0f, ImGui::GetFrameHeight ()), ImGui::GetStyle().FramePadding.y);
+      if (ImGui::Checkbox (mode._main_id, &mode._main_value))
       {
-        // Only update the registry if we are done assigning
-        if (! keybind._key->assigning)
-          keybind._reg->putData (keybind._key->saved.human_readable);
+        if (mode._main_value)
+        {
+          _registry.eScreenshotsHotkeys |=  mode._type;
+          mode._keybind->_callback (mode._keybind->_key);
+        }
+        else {
+          _registry.eScreenshotsHotkeys &= ~mode._type;
+          SKIF_Util_UnregisterHotKeyCapture(mode._type);
+        }
 
-        keybind._callback (keybind._key);
+        _registry.regKVScreenshotsHotkeys.putData (_registry.eScreenshotsHotkeys);
       }
 
-      ImGui::Spacing ();
+      if (! mode._main_value)
+        SKIF_ImGui_PushDisableState();
+
+      ImGui::SameLine      ();
+      ImGui::Text          ( "%s",
+                            mode._label);
+
+      ImGui::SameLine      ();
+      ImGui::SetCursorPosX (col2);
+
+      if (ImGui::Checkbox (mode._disk_id, &mode._disk_value))
+      {
+        if (mode._disk_value)
+          _registry.eScreenshotsAutosave |=  mode._type;
+        else
+          _registry.eScreenshotsAutosave &= ~mode._type;
+
+        _registry.regKVScreenshotsAutosave.putData (_registry.eScreenshotsAutosave);
+      }
+
+      ImGui::SameLine      ();
+      ImGui::SetCursorPosX (col3);
+
+      if (SK_ImGui_Keybinding (mode._keybind->_key))
+      {
+        // Only update the registry if we are done assigning
+        if (! mode._keybind->_key->assigning)
+          mode._keybind->_reg->putData (mode._keybind->_key->saved.human_readable);
+
+        mode._keybind->_callback (mode._keybind->_key);
+      }
+
+      if (! mode._main_value)
+        SKIF_ImGui_PopDisableState();
     }
     ImGui::EndGroup   ();
+
+    ImGui::TreePop  ( );
+    
+    ImGui::PopStyleColor ();
   }
 
   ImGui::Spacing ();
@@ -179,12 +312,11 @@ SKIF_UI_Tab_DrawSettings (void)
 
 #pragma region Section: Image
 
-  if (ImGui::CollapsingHeader ("Images###SKIF_SettingsHeader-2", ImGuiTreeNodeFlags_DefaultOpen))
+  if (ImGui::CollapsingHeader ("Images###SKIF_SettingsHeader-1", ImGuiTreeNodeFlags_DefaultOpen))
   {
     ImGui::PushStyleColor   (
       ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextBase)
                               );
-
     SKIF_ImGui_Spacing      ( );
 
 #if 0
@@ -226,6 +358,11 @@ SKIF_UI_Tab_DrawSettings (void)
 
 #endif
 
+    if ( ImGui::Checkbox ( "Loop images", &_registry.bLoopImages ) )
+      _registry.regKVLoopImages.putData   (_registry.bLoopImages);
+
+    ImGui::Spacing         ( );
+
     ImGui::TextColored     (ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info), ICON_FA_LIGHTBULB);
     SKIF_ImGui_SetHoverTip ("Useful if you find bright images an annoyance.");
     ImGui::SameLine        ( );
@@ -243,8 +380,6 @@ SKIF_UI_Tab_DrawSettings (void)
     if (ImGui::RadioButton ("Based on mouse cursor", &_registry.iDarkenImages, 2))
       _registry.regKVDarkenImages.putData (                        _registry.iDarkenImages);
     ImGui::TreePop         ( );
-
-    ImGui::PopStyleColor();
 
     // nb:  Prefernece needs implementation
     // 
@@ -292,6 +427,8 @@ SKIF_UI_Tab_DrawSettings (void)
     }
     ImGui::TreePop     ( );
 #endif
+
+    ImGui::PopStyleColor ();
   }
 
   ImGui::Spacing ();
@@ -300,7 +437,7 @@ SKIF_UI_Tab_DrawSettings (void)
 
 
 #pragma region Section: Appearances
-  if (ImGui::CollapsingHeader ("Appearance###SKIF_SettingsHeader-3", ImGuiTreeNodeFlags_DefaultOpen))
+  if (ImGui::CollapsingHeader ("Appearance###SKIF_SettingsHeader-2"))
   {
     ImGui::PushStyleColor   (
       ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextBase)
@@ -684,6 +821,62 @@ SKIF_UI_Tab_DrawSettings (void)
   ImGui::Spacing ();
 #pragma endregion
 
+#pragma region Section: Keybindings
+
+  if (ImGui::CollapsingHeader ("Keybindings###SKIF_SettingsHeader-3", ImGuiTreeNodeFlags_DefaultOpen))
+  {
+    ImGui::PushStyleColor   (
+      ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextBase)
+                              );
+    SKIF_ImGui_Spacing      ( );
+
+    static std::vector <kb_kv_s*>
+      keybinds = {
+        &kbToggleHDRDisplay,
+        &kbCaptureWindow,
+        &kbCaptureRegion,
+        &kbCaptureScreen
+    };
+
+    ImGui::BeginGroup ();
+    for (auto& keybind : keybinds)
+    {
+      if (! keybind->_show())
+        continue;
+
+      ImGui::Text          ( "%s:  ",
+                            keybind->_key->bind_name );
+      ImGui::Spacing ();
+    }
+    ImGui::EndGroup   ();
+    ImGui::SameLine   ();
+    ImGui::BeginGroup ();
+    for (auto& keybind : keybinds)
+    {
+      if (! keybind->_show())
+        continue;
+
+      // TODO: Fix bug that causes the hotkey to remain unregistered if SKIV loses focus while the keybind dialog is visible
+      if (SK_ImGui_Keybinding (keybind->_key))
+      {
+        // Only update the registry if we are done assigning
+        if (! keybind->_key->assigning)
+          keybind->_reg->putData (keybind->_key->saved.human_readable);
+
+        keybind->_callback (keybind->_key);
+      }
+
+      ImGui::Spacing ();
+    }
+    ImGui::EndGroup   ();
+    ImGui::PopStyleColor ();
+  }
+
+  ImGui::Spacing ();
+  ImGui::Spacing ();
+
+#pragma endregion
+
 #pragma region Section: Advanced
   if (ImGui::CollapsingHeader ("Advanced###SKIF_SettingsHeader-4", ImGuiTreeNodeFlags_DefaultOpen))
   {
@@ -746,7 +939,7 @@ SKIF_UI_Tab_DrawSettings (void)
     if ( ImGui::Checkbox ( "Close to the notification area", &_registry.bCloseToTray ) )
       _registry.regKVCloseToTray.putData (                    _registry.bCloseToTray );
 
-    if ( ImGui::Checkbox ( "Always open this app on the same monitor as the mouse", &_registry.bOpenAtCursorPosition ) )
+    if ( ImGui::Checkbox ( "Open this app on the same monitor as the  " ICON_FA_ARROW_POINTER, &_registry.bOpenAtCursorPosition ) )
       _registry.regKVOpenAtCursorPosition.putData (                                  _registry.bOpenAtCursorPosition );
 
 #ifdef HAS_AUTO_UPDATE
@@ -1125,6 +1318,96 @@ SKIF_UI_Tab_DrawSettings (void)
 
   ImGui::Spacing ();
   ImGui::Spacing ();
+
+#pragma endregion
+
+#pragma region ContextMenuSettings
+
+  auto _IsRightClicked = [&](void) -> bool
+  {
+    if (ImGui::IsMouseClicked (ImGuiMouseButton_Right))
+    {
+      return true;
+    }
+
+    // Activate button held for >= .4 seconds -> right-click
+    if (ImGui::GetKeyData (ImGuiKey_GamepadFaceDown)->DownDuration > 0.4f &&
+        ImGui::GetKeyData (ImGuiKey_GamepadFaceDown)->DownDuration < 5.0f)
+    {
+      ImGui::GetKeyData (ImGuiKey_GamepadFaceDown)->DownDuration     = 5.0f;
+      ImGui::GetKeyData (ImGuiKey_GamepadFaceDown)->DownDurationPrev = 0.0f;
+
+      ImGui::ClearActiveID ( );
+
+      return true;
+    }
+
+    // Start button = Menu
+    if (ImGui::IsKeyPressed (ImGuiKey_GamepadStart))
+    {
+      ImGui::GetKeyData (ImGuiKey_GamepadStart)->DownDuration     =  0.01f;
+      ImGui::GetKeyData (ImGuiKey_GamepadStart)->DownDurationPrev =  0.00f;
+
+      ImGui::ClearActiveID ( );
+
+      return true;
+    }
+
+    return false;
+  };
+
+  // Act on all right clicks, because why not? :D
+  if (! SKIF_ImGui_IsAnyPopupOpen ( ) && _IsRightClicked ())
+    ContextMenuSettings = PopupState_Open;
+
+  // Open the Empty Space Menu
+  if (ContextMenuSettings == PopupState_Open)
+    ImGui::OpenPopup    ("ContextMenuSettings");
+
+
+  if (ImGui::BeginPopup   ("ContextMenuSettings", ImGuiWindowFlags_NoMove))
+  {
+    ContextMenuSettings = PopupState_Opened;
+
+    ImGui::PushStyleColor (ImGuiCol_NavHighlight, ImVec4(0,0,0,0));
+
+    if (SKIF_ImGui_MenuItemEx2 ("Go back###GoBackCM", ICON_FA_LEFT_LONG)) // ICON_FA_LIST_CHECK
+      SKIF_Tab_ChangeTo = UITab_Viewer;
+
+    ImGui::Separator ( );
+
+    if (SKIF_ImGui_MenuItemEx2 ("Fullscreen", SKIF_ImGui_IsFullscreen (SKIF_ImGui_hWnd) ? ICON_FA_DOWN_LEFT_AND_UP_RIGHT_TO_CENTER : ICON_FA_UP_RIGHT_AND_DOWN_LEFT_FROM_CENTER, ImGui::GetStyleColorVec4 (ImGuiCol_Text), "Ctrl+F"))
+    {
+      SKIF_ImGui_SetFullscreen (SKIF_ImGui_hWnd, ! SKIF_ImGui_IsFullscreen (SKIF_ImGui_hWnd));
+    }
+
+    ImGui::Separator ( );
+
+    if (_registry.bCloseToTray)
+    {
+      if (SKIF_ImGui_MenuItemEx2 ("Close app", 0, ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info), "Esc"))
+        PostMessage (SKIF_Notify_hWnd, WM_SKIF_MINIMIZE, 0x0, 0x0);
+    }
+
+    else
+    {
+      if (SKIF_ImGui_MenuItemEx2 ("Minimize", 0, ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info), "Ctrl+N"))
+        PostMessage (SKIF_Notify_hWnd, WM_SKIF_MINIMIZE, 0x0, 0x0);
+    }
+
+    if (SKIF_ImGui_MenuItemEx2 ("Exit", 0, ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Info), "Ctrl+Q"))
+    {
+      extern bool bKeepWindowAlive;
+      bKeepWindowAlive = false;
+    }
+
+
+    ImGui::PopStyleColor  ( );
+    ImGui::EndPopup       ( );
+  }
+
+  else
+    ContextMenuSettings = PopupState_Closed;
 
 #pragma endregion
 

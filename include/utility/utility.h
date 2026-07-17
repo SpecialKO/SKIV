@@ -57,11 +57,20 @@ enum UITab {
   UITab_ALL      // Total number of elements in enum (technically against Microsoft's enum design guidelines, but whatever)
 };
 
-enum CaptureMode {
-  CaptureMode_Window,
-  CaptureMode_Region,
-  CaptureMode_Screen
+typedef unsigned int CaptureMode;  // -> enum CaptureMode_
+enum CaptureMode_ {
+  CaptureMode_None   = 0,
+
+  CaptureMode_Window = 1 << 0,
+  CaptureMode_Region = 1 << 1,
+  CaptureMode_Screen = 1 << 2,
+
+  CaptureMode_ALL    =
+    CaptureMode_Window | CaptureMode_Region | CaptureMode_Screen
 };
+
+// Workaround for SKIF_ImGui_IsAnyPopupOpen() not detecting keybind popups
+extern bool g_activeKeybindPopup;
 
 struct FileSignature {
   std::wstring               mime_type       = L"";
@@ -140,6 +149,7 @@ bool            SKIF_Util_HasFileSignature            (const std::vector<char>& 
 bool            SKIF_Util_HasFileExtension            (const std::wstring extension,    const FileSignature& signature);
 
 // Usernames
+
 std:: string    SKIF_Util_StripPersonalData           (std:: string input);
 std::wstring    SKIF_Util_StripPersonalData           (std::wstring input);
 void            SKIF_Util_Debug_LogUserNames          (void);
@@ -168,6 +178,15 @@ bool            SKIF_Util_CreateProcess               (const std::wstring_view& 
 typedef struct _SKIF_MEMORY_PRIORITY_INFORMATION {
   ULONG MemoryPriority;
 } SKIF_MEMORY_PRIORITY_INFORMATION, *SKIF_PMEMORY_PRIORITY_INFORMATION;
+
+enum class AppColorMode // PreferredAppMode
+{
+  Default,
+  AllowDark,
+  ForceDark,
+  ForceLight,
+  Max
+};
 
 HANDLE          SKIF_Util_GetCurrentProcess           (void);
 HANDLE          SKIF_Util_GetCurrentProcessToken      (void);
@@ -216,7 +235,13 @@ std::wstring    SKIF_Util_GetClipboardHDROP           (void);
 DirectX::Image  SKIF_Util_GetClipboardBitmapData      (void);
 std::wstring    SKIF_Util_AddEnvironmentBlock         (const void* pEnvBlock, const std::wstring& varName, const std::wstring& varValue);
 void            SKIF_Util_FileExplorer_SelectFile     (PCWSTR filePath);
-std::wstring    SKIF_Util_FileExplorer_BrowseFolder   (PCWSTR defaultPath);
+bool            SKIF_Util_FileExplorer_DeleteFile     (PCWSTR filePath, bool hideWarning);
+void            SKIF_Util_FileExplorer_ContextMenuFile(PCWSTR filePath, HWND hWndOwner);
+std::wstring    SKIF_Util_FileExplorer_BrowseForFolderXP(PCWSTR defaultPath);
+std::wstring    SKIF_Util_FileExplorer_BrowseForFolder(PCWSTR defaultPath);
+bool            SKIF_Util_Files_PruneOlderThan        (std::wstring path, ULONGLONG secondsSince);
+bool            SKIF_Util_Files_PruneToLatestN        (std::wstring path, size_t filesToRetain);
+AppColorMode    SKIF_Util_SetAppColorMode             (AppColorMode mode);
 std::string     SKIF_Util_GetWindowMessageAsStr       (UINT msg);
 
 
@@ -253,12 +278,13 @@ struct skif_get_web_uri_t {
   wchar_t wszLocalPath[MAX_PATH + 2]                  = { };
   LPCWSTR method                                      = L"GET";
   bool         https                                  = false;
-  std::string  body;
-  std::wstring header;
+  std::string  body                                   = { };
+  std::wstring header                                 = { };
+  std::wstring user_agent                             = L"Special K - Asset Crawler";
 };
 
-DWORD WINAPI SKIF_Util_GetWebUri              (skif_get_web_uri_t* get);
-DWORD        SKIF_Util_GetWebResource         (std::wstring url, std::wstring_view destination, std::wstring method = L"GET", std::wstring header = L"", std::string body = "");
+DWORD WINAPI SKIF_Util_GetWebUri              (skif_get_web_uri_t* get, std::string* response_body = nullptr);
+DWORD        SKIF_Util_GetWebResource         (std::wstring url, std::wstring_view file_path, std::wstring method = L"GET", std::wstring header = L"", std::string body = "", std::wstring user_agent = L"", std::string* response_body = nullptr);
 skif_get_web_uri_t SKIF_Util_CrackWebUrl      (const std::wstring url);
 
 

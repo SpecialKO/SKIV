@@ -55,6 +55,7 @@
 #include <unordered_set>
 #include <oleidl.h>
 #include <utility/droptarget.hpp>
+#include <pathcch.h>
 
 #include <d3d11.h>
 #define DIRECTINPUT_VERSION 0x0800
@@ -129,6 +130,7 @@ ImVec2 SKIF_vecRegularMode          = ImVec2 (0.0f, 0.0f);
 ImVec2 SKIF_vecRegularModeDefault   = ImVec2 (1000.0f, 944.0f);   // Does not include the status bar
 ImVec2 SKIF_vecRegularModeAdjusted  = SKIF_vecRegularModeDefault; // Adjusted for status bar and tooltips (NO DPI scaling!)
 // --- Variables
+ImVec2 SKIF_vecCurrentPosition      = ImVec2 (0.0f, 0.0f); // Gets updated after ImGui::EndFrame()
 ImVec2 SKIF_vecCurrentMode          = ImVec2 (0.0f, 0.0f); // Gets updated after ImGui::EndFrame()
 ImVec2 SKIF_vecCurrentModeNext      = ImVec2 (0.0f, 0.0f); // Holds the new expected size
 ImVec2 SKIF_vecAlteredSize          = ImVec2 (0.0f, 0.0f);
@@ -942,52 +944,7 @@ void SKIF_Initialize (LPWSTR lpCmdLine)
     std::filesystem::create_directories (_path_cache.skiv_temp, ec);
 
   // Clear out any temp files older than a day
-  auto _isDayOld = [&](FILETIME ftLastWriteTime) -> bool
-  {
-    FILETIME ftSystemTime{}, ftAdjustedFileTime{};
-    SYSTEMTIME systemTime{};
-    GetSystemTime (&systemTime);
-
-    if (SystemTimeToFileTime(&systemTime, &ftSystemTime))
-    {
-      ULARGE_INTEGER uintLastWriteTime{};
-
-      // Copy to ULARGE_INTEGER union to perform 64-bit arithmetic
-      uintLastWriteTime.HighPart        = ftLastWriteTime.dwHighDateTime;
-      uintLastWriteTime.LowPart         = ftLastWriteTime.dwLowDateTime;
-
-      // Perform 64-bit arithmetic to add 1 day to last modified timestamp
-      uintLastWriteTime.QuadPart        = uintLastWriteTime.QuadPart + ULONGLONG(1 * 24 * 60 * 60 * 1.0e+7);
-
-      // Copy the results to an FILETIME struct
-      ftAdjustedFileTime.dwHighDateTime = uintLastWriteTime.HighPart;
-      ftAdjustedFileTime.dwLowDateTime  = uintLastWriteTime.LowPart;
-
-      // Compare with system time, and if system time is later (1), then return true
-      if (CompareFileTime (&ftSystemTime, &ftAdjustedFileTime) == 1)
-        return true;
-    }
-
-    return false;
-  };
-
-  HANDLE hFind        = INVALID_HANDLE_VALUE;
-  WIN32_FIND_DATA ffd = { };
-
-  hFind = 
-    FindFirstFileExW ((tempDir + L"*").c_str(), FindExInfoBasic, &ffd, FindExSearchNameMatch, NULL, NULL);
-
-  if (INVALID_HANDLE_VALUE != hFind)
-  {
-    if (_isDayOld  (ffd.ftLastWriteTime))
-      DeleteFile  ((tempDir + ffd.cFileName).c_str());
-
-    while (FindNextFile (hFind, &ffd))
-      if (_isDayOld  (ffd.ftLastWriteTime))
-        DeleteFile  ((tempDir + ffd.cFileName).c_str());
-
-    FindClose (hFind);
-  }
+  SKIF_Util_Files_PruneOlderThan (tempDir, 24 * 60 * 60);
 
   // Populate SKIV's default screenshot folder
   const std::wstring screenshotsDir =
@@ -1000,42 +957,77 @@ void SKIF_Initialize (LPWSTR lpCmdLine)
 }
 
 static
-std::wstring
-SKIV_GetBaseFilename (HWND hWnd)
+SKIV_CaptureData::Application
+SKIV_GetApplicationNames (HWND hWnd)
 {
   // Limit window title / process name to 60 characters
   const size_t len = MAX_PATH + 2;
-  wchar_t wszFilename [len] = { };
+  wchar_t buffer [len] = { };
+  SKIV_CaptureData::Application names = { };
 
-  // Window title, if retrievable, else process name
-  if (GetWindowTextW (hWnd, wszFilename, len) == 0)
+  // Window title
+  if (GetWindowTextW (hWnd, buffer, len))
+    names.window = std::wstring(buffer);
+
+  // Process name
+  DWORD dwProcessId = 0;
+  if (GetWindowThreadProcessId (hWnd, &dwProcessId))
   {
-    // Process name
-    DWORD dwProcessId = 0;
-    if (GetWindowThreadProcessId (hWnd, &dwProcessId))
-    {
-      HANDLE hProcess = OpenProcess (PROCESS_QUERY_LIMITED_INFORMATION, FALSE, dwProcessId);
+    HANDLE hProcess = OpenProcess (PROCESS_QUERY_LIMITED_INFORMATION, FALSE, dwProcessId);
 
-      if (hProcess != NULL)
+    if (hProcess != NULL)
+    {
+      DWORD lenPath = len;
+
+      if (QueryFullProcessImageNameW (hProcess, NULL, buffer, &lenPath))
       {
-        GetProcessImageFileNameW (hProcess, wszFilename, MAX_PATH);
-        PathStripPathW                     (wszFilename);
-        PathRemoveExtensionW               (wszFilename);
+        std::filesystem::path path = std::wstring (buffer);
+
+        // Product name
+        PLOG_DEBUG << "Parent path: " << path.parent_path();
+        names.product = SKIF_Util_GetProductName (path.c_str());
+
+        // Executable
+        PathStripPathW         (buffer);
+        PathCchRemoveExtension (buffer, lenPath);
+        names.executable = std::wstring(buffer);
+
+        // Custom name
+        HKEY     hKey;
+        if (ERROR_SUCCESS == RegCreateKeyExW (HKEY_CURRENT_USER, LR"(SOFTWARE\Kaldaien\Special K\Profiles)", NULL, NULL, REG_OPTION_NON_VOLATILE, KEY_QUERY_VALUE, NULL, &hKey, NULL))
+        {
+          DWORD size = len * sizeof(wchar_t);
+          if (ERROR_SUCCESS == RegGetValueW (hKey, NULL, path.parent_path().c_str(), RRF_RT_REG_SZ, NULL, buffer, &size))
+            names.custom = std::wstring(buffer);
+
+          RegCloseKey (hKey);
+        }
       }
     }
   }
 
-  std::wstring wsFilename = std::wstring (wszFilename);
+  // Strip all null terminator \0 characters from the strings
+  names.executable.erase (std::find(names.executable.begin(), names.executable.end(), '\0'), names.executable.end());
+  names.product.erase    (std::find(names.product.begin(),    names.product.end(),    '\0'), names.product.end());
+  names.window.erase     (std::find(names.window.begin(),     names.window.end(),     '\0'), names.window.end());
+  names.custom.erase     (std::find(names.custom.begin(),     names.custom.end(),     '\0'), names.custom.end());
 
-  // Strip all null terminator \0 characters from the string
-  wsFilename.erase (std::find(wsFilename.begin(), wsFilename.end(), '\0'), wsFilename.end());
+  if (names.executable.size() > 30)
+    names.executable = names.executable.substr(0, 30);
 
-  if (wsFilename.size() > 60)
-    wsFilename = wsFilename.substr(0, 60);
-  else if (wsFilename.empty())
-    wsFilename = L"explorer";
+  if (names.product.size() > 30)
+    names.product = names.product.substr(0, 30);
 
-  return wsFilename;
+  if (names.window.size() > 30)
+    names.window = names.window.substr(0, 30);
+
+  PLOG_DEBUG << "Application names:";
+  PLOG_DEBUG << "Executable: " << names.executable;
+  PLOG_DEBUG << "   Product: " << names.product;
+  PLOG_DEBUG << "    Window: " << names.window;
+  PLOG_DEBUG << "    Custom: " << names.custom;
+
+  return names;
 }
 
 bool bKeepWindowAlive  = true,
@@ -1292,6 +1284,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
     return 0;
   }
 
+  SKIF_Util_SetAppColorMode (AppColorMode::AllowDark);
+
   SKIF_Notify_hWnd      =
     CreateWindowExW (                                                  WS_EX_NOACTIVATE,
       wcNotify.lpszClassName, _T("Special K Image Notification Icon"), WS_ICONIC,
@@ -1438,9 +1432,12 @@ wWinMain ( _In_     HINSTANCE hInstance,
   SKIF_Util_RegisterHotKeyHDRToggle (_registry.kbToggleHDRDisplay.getKeybind());
 
   // Register snipping hotkey
-  SKIF_Util_RegisterHotKeyCapture (CaptureMode_Window, _registry.kbCaptureWindow.getKeybind());
-  SKIF_Util_RegisterHotKeyCapture (CaptureMode_Region, _registry.kbCaptureRegion.getKeybind());
-  SKIF_Util_RegisterHotKeyCapture (CaptureMode_Screen, _registry.kbCaptureScreen.getKeybind());
+  if ((_registry.eScreenshotsHotkeys & CaptureMode_Window) == CaptureMode_Window)
+      SKIF_Util_RegisterHotKeyCapture (CaptureMode_Window, _registry.kbCaptureWindow.getKeybind());
+  if ((_registry.eScreenshotsHotkeys & CaptureMode_Region) == CaptureMode_Region)
+      SKIF_Util_RegisterHotKeyCapture (CaptureMode_Region, _registry.kbCaptureRegion.getKeybind());
+  if ((_registry.eScreenshotsHotkeys & CaptureMode_Screen) == CaptureMode_Screen)
+      SKIF_Util_RegisterHotKeyCapture (CaptureMode_Screen, _registry.kbCaptureScreen.getKeybind());
 
   // Register the HTML Format for the clipboard
   CF_HTML = RegisterClipboardFormatW (L"HTML Format");
@@ -1501,9 +1498,10 @@ wWinMain ( _In_     HINSTANCE hInstance,
                 hotkeyCtrlF = false, // Toggle Fullscreen Mode
                 hotkeyCtrlV = false, // Paste data through the clipboard
                 hotkeyCtrlN = false, // Minimize app
-                hotkeyCtrlS = false,
-                hotkeyCtrlX = false,
-                hotkeyCtrlB = false; // Encoder Config
+                hotkeyCtrlS = false, // Viewer: Save Current Image (in same Dynamic Range), Snipping Mode: Toggle save to Disk, Settings: Save Screenshots Pattern
+                hotkeyCtrlX = false, // Export Current Image (HDR -> SDR)
+                hotkeyCtrlB = false, // Encoder Config
+                hotkeyCtrlE = false; // Snipping Mode: Toggle browse to folder
 
     // Handled in viewer.cpp
        //hotkeyCtrl1 = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_1     )->DownDuration == 0.0f), // Viewer -> Image Scaling: View actual size (1:1 / None)
@@ -1565,6 +1563,41 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
       return ! SKIF_Shutdown.load(); // return false on exit or system shutdown
     };
+
+    // Window stuff
+
+    ImRect rectCursorMonitor; // RepositionSKIF
+
+    // RepositionSKIF -- Step 1: Retrieve monitor of cursor
+    if (RepositionSKIF)
+    {
+      ImRect t;
+      for (int monitor_n = 0; monitor_n < ImGui::GetPlatformIO().Monitors.Size; monitor_n++)
+      {
+        const ImGuiPlatformMonitor& tmpMonitor = ImGui::GetPlatformIO().Monitors[monitor_n];
+        t = ImRect(tmpMonitor.MainPos, (tmpMonitor.MainPos + tmpMonitor.MainSize));
+
+        POINT               mouse_screen_pos = { };
+        if (::GetCursorPos (&mouse_screen_pos))
+        {
+          ImVec2 os_pos = ImVec2( (float)mouse_screen_pos.x,
+                                  (float)mouse_screen_pos.y );
+          if (t.Contains (os_pos))
+          {
+            rectCursorMonitor = t;
+          //SKIF_ImGui_GlobalDPIScale = (_registry.bDPIScaling) ? tmpMonitor.DpiScale : 1.0f;
+          }
+        }
+      }
+    }
+      
+    SKIF_vecRegularMode     = SKIF_vecRegularModeAdjusted * SKIF_ImGui_GlobalDPIScale;
+      
+  //SKIF_vecRegularMode.y  -= SKIF_vecAlteredSize.y; // Replaced with SKIF_vecCurrentModeNext
+
+    SKIF_vecRegularMode     = ImFloor (SKIF_vecRegularMode);
+
+  //SKIF_vecCurrentMode     = SKIF_vecRegularMode ;
 
     // Apply any changes to the ImGui style
     // Do it at the beginning of frames to prevent ImGui::Push... from affecting the styling
@@ -1638,6 +1671,50 @@ wWinMain ( _In_     HINSTANCE hInstance,
         repositionToCenter   = true;
       else
         RespectMonBoundaries = true;
+    }
+
+    // Restore the last remembered window size on launch,
+    //   but only if we are not running in service mode!
+    static bool
+        applySizeOnLaunch = true;
+    if (applySizeOnLaunch)
+    {   applySizeOnLaunch = false;
+
+      if (_registry.iUIWidth > 0 && _registry.iUIHeight > 0)
+        SKIF_vecCurrentModeNext =
+                        ImVec2 (static_cast<float> (_registry.iUIWidth),
+                                static_cast<float> (_registry.iUIHeight));
+      else
+      {
+        SKIF_vecCurrentModeNext = SKIF_vecRegularMode;
+      }
+    }
+
+    // SKIF_vecCurrentModeNext 1/2
+    if (SKIF_vecCurrentModeNext.x != 0.0f)
+    {
+      // Shrink the window on low-res displays (will be applied on the next frame)
+      // Emulates auto-horizon mode
+      if (ImGui::GetFrameCount() > 2 &&
+         (SKIF_vecCurrentModeNext.x > monitor_extent.GetWidth () ||
+          SKIF_vecCurrentModeNext.y > monitor_extent.GetHeight()))
+      {
+        float arWindow = SKIF_vecCurrentModeNext.x / SKIF_vecCurrentModeNext.y;
+
+        if (monitor_extent.GetWidth() < SKIF_vecCurrentModeNext.x)
+        {
+          SKIF_vecCurrentModeNext.x = monitor_extent.GetWidth();
+          SKIF_vecCurrentModeNext.y = SKIF_vecCurrentModeNext.x / arWindow;
+        }
+
+        if (monitor_extent.GetHeight() < SKIF_vecCurrentModeNext.y)
+        {
+          SKIF_vecCurrentModeNext.y = monitor_extent.GetHeight();
+          SKIF_vecCurrentModeNext.x = SKIF_vecCurrentModeNext.y * arWindow;
+        }
+      }
+
+      SKIF_vecCurrentMode = SKIF_vecCurrentModeNext;
     }
 
     // F8 to toggle UI borders
@@ -1731,6 +1808,9 @@ wWinMain ( _In_     HINSTANCE hInstance,
     {
       SKIF_FrameCount.store(ImGui::GetFrameCount());
 
+      // Reset every frame
+      g_activeKeybindPopup = false;
+
       // Update hotkey variables
       hotkeyF1    = (              ImGui::GetKeyData (ImGuiKey_F1    )->DownDuration == 0.0f); // Switch to Viewer
       hotkeyF2    = (              ImGui::GetKeyData (ImGuiKey_F2    )->DownDuration == 0.0f); // Switch to Settings
@@ -1750,9 +1830,10 @@ wWinMain ( _In_     HINSTANCE hInstance,
       hotkeyCtrlF = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_F     )->DownDuration == 0.0f); // Toggle Fullscreen Mode
       hotkeyCtrlV = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_V     )->DownDuration == 0.0f); // Paste data through the clipboard
       hotkeyCtrlN = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_N     )->DownDuration == 0.0f); // Minimize app
-      hotkeyCtrlS = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_S     )->DownDuration == 0.0f); // Save Current Image (in same Dynamic Range)
+      hotkeyCtrlS = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_S     )->DownDuration == 0.0f); // Viewer: Save Current Image (in same Dynamic Range), Snipping Mode: Toggle save to Disk
       hotkeyCtrlX = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_X     )->DownDuration == 0.0f); // Export Current Image (HDR -> SDR)
-      hotkeyCtrlB = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_E     )->DownDuration == 0.0f); // Configure Image Encoders
+      hotkeyCtrlB = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_B     )->DownDuration == 0.0f); // Configure Image Encoders
+      hotkeyCtrlE = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_E     )->DownDuration == 0.0f); // Snipping Toolbar: Toggle browse to folder
 
       const bool hotkeyCycleScaling       = ImGui::IsKeyPressed (ImGuiKey_GamepadL3);
       const bool hotkeyCycleVisualization = ImGui::IsKeyPressed (ImGuiKey_GamepadR3);
@@ -1771,44 +1852,67 @@ wWinMain ( _In_     HINSTANCE hInstance,
         addAdditionalFrames += 3; // Force a re-paint to change visualization
       }
 
-
-      ImRect rectCursorMonitor; // RepositionSKIF
-
-      // RepositionSKIF -- Step 1: Retrieve monitor of cursor
-      if (RepositionSKIF)
+      if (SKIF_vecCurrentModeNext.x != 0.0f &&
+          SKIF_vecCurrentModeNext   != SKIF_vecCurrentMode)
       {
-        ImRect t;
-        for (int monitor_n = 0; monitor_n < ImGui::GetPlatformIO().Monitors.Size; monitor_n++)
-        {
-          const ImGuiPlatformMonitor& tmpMonitor = ImGui::GetPlatformIO().Monitors[monitor_n];
-          t = ImRect(tmpMonitor.MainPos, (tmpMonitor.MainPos + tmpMonitor.MainSize));
+        SKIF_vecCurrentModeNext.x = 0.0f;
 
-          POINT               mouse_screen_pos = { };
-          if (::GetCursorPos (&mouse_screen_pos))
-          {
-            ImVec2 os_pos = ImVec2( (float)mouse_screen_pos.x,
-                                    (float)mouse_screen_pos.y );
-            if (t.Contains (os_pos))
-            {
-              rectCursorMonitor = t;
-              SKIF_ImGui_GlobalDPIScale = (_registry.bDPIScaling) ? tmpMonitor.DpiScale : 1.0f;
-            }
-          }
-        }
+        SKIF_vecCurrentMode = SKIF_vecCurrentModeNext;
       }
-      
-      SKIF_vecRegularMode     = SKIF_vecRegularModeAdjusted * SKIF_ImGui_GlobalDPIScale;
-      
-      SKIF_vecRegularMode.y  -= SKIF_vecAlteredSize.y;
 
-      SKIF_vecCurrentMode     = SKIF_vecRegularMode ;
+      static const ImVec2 wnd_minimum_size = ImVec2 (200.0f, 200.0f) * SKIF_ImGui_GlobalDPIScale;
+
+      // SKIF_vecCurrentModeNext 2/2
+      if (SKIF_vecCurrentModeNext.x != 0.0f)
+      {   SKIF_vecCurrentModeNext.x  = 0.0f;
+        ImGui::SetNextWindowSizeConstraints (SKIF_vecCurrentMode, SKIF_vecCurrentMode);
+      }
+
+      // The first time SKIF is being launched, or repositioned on launch, use a higher minimum size
+      else if (ImGui::GetFrameCount() == 1 || RepositionSKIF)
+        ImGui::SetNextWindowSizeConstraints (wnd_minimum_size * 2.0f, ImVec2 (FLT_MAX, FLT_MAX));
+
+      // On the second frame, limit the initial window size to only 80% of the monitor size
+      /*
+      else if (resizeAppWindow || ImGui::GetFrameCount() == 2)
+      {
+        ImVec2 size_current = windowRect.GetSize();
+        ImVec2 size_maximum = monitor_extent.GetSize() * 0.8f;
+
+        ImGui::SetNextWindowSizeConstraints (wnd_minimum_size, size_maximum);
+
+        // If the window size was too large, we need to reposition the window to the center as well
+        // This is handled on the next frame by the code above us
+        if (size_current.x > size_maximum.x || size_current.y > size_maximum.y)
+          repositionToCenter = true;
+      }
+      */
+
+      // The rest of the frames are uncapped
+      else
+        ImGui::SetNextWindowSizeConstraints (wnd_minimum_size, ImVec2 (FLT_MAX, FLT_MAX));
 
       ImGui::SetNextWindowClass (&SKIF_AppWindow);
+
+      // Restore the last remembered window position on launch
+      static bool
+          applyPositionOnLaunch = true;
+      if (applyPositionOnLaunch)
+      {   applyPositionOnLaunch = false;
+
+        if (_registry.iUIPositionX != -1 &&
+            _registry.iUIPositionY != -1)
+          ImGui::SetNextWindowPos (ImVec2 (static_cast<float> (_registry.iUIPositionX),
+                                           static_cast<float> (_registry.iUIPositionY)));
+        else
+          RepositionSKIF = true;
+      }
 
       // RepositionSKIF -- Step 2: Repositon the window
       // Repositions the window in the center of the monitor the cursor is currently on
       if (RepositionSKIF)
-        ImGui::SetNextWindowPos (ImVec2(rectCursorMonitor.GetCenter().x - (SKIF_vecCurrentMode.x / 2.0f), rectCursorMonitor.GetCenter().y - (SKIF_vecCurrentMode.y / 2.0f)));
+        ImGui::SetNextWindowPos (ImVec2 (rectCursorMonitor.GetCenter().x - (SKIF_vecCurrentMode.x / 2.0f),
+                                         rectCursorMonitor.GetCenter().y - (SKIF_vecCurrentMode.y / 2.0f)));
 
       // Calculate new window boundaries and changes to fit within the workspace if it doesn't fit
       //   Delay running the code to on the third frame to allow other required parts to have already executed...
@@ -1903,32 +2007,6 @@ wWinMain ( _In_     HINSTANCE hInstance,
         SKIV_ResizeApp = ImVec2 (0.0f, 0.0f);
       }
 
-      static const ImVec2 wnd_minimum_size = ImVec2 (200.0f, 200.0f) * SKIF_ImGui_GlobalDPIScale;
-
-      // The first time SKIF is being launched, or repositioned on launch, use a higher minimum size
-      if (ImGui::GetFrameCount() == 1 && RepositionSKIF)
-        ImGui::SetNextWindowSizeConstraints (wnd_minimum_size * 2.0f, ImVec2 (FLT_MAX, FLT_MAX));
-
-      // On the second frame, limit the initial window size to only 80% of the monitor size
-      /*
-      else if (resizeAppWindow || ImGui::GetFrameCount() == 2)
-      {
-        ImVec2 size_current = windowRect.GetSize();
-        ImVec2 size_maximum = monitor_extent.GetSize() * 0.8f;
-
-        ImGui::SetNextWindowSizeConstraints (wnd_minimum_size, size_maximum);
-
-        // If the window size was too large, we need to reposition the window to the center as well
-        // This is handled on the next frame by the code above us
-        if (size_current.x > size_maximum.x || size_current.y > size_maximum.y)
-          repositionToCenter = true;
-      }
-      */
-
-      // The rest of the frames are uncapped
-      else
-        ImGui::SetNextWindowSizeConstraints (wnd_minimum_size, ImVec2 (FLT_MAX, FLT_MAX));
-
       const bool bNoMove =
         (io.KeyCtrl || ! SKIF_MouseDragMoveAllowed);
 
@@ -1941,11 +2019,11 @@ wWinMain ( _In_     HINSTANCE hInstance,
                          ImGuiWindowFlags_NoTitleBar        |
                          ImGuiWindowFlags_NoScrollbar       | // Hide the scrollbar for the main window
                          ImGuiWindowFlags_NoScrollWithMouse | // Prevent scrolling with the mouse as well
+                         ImGuiWindowFlags_NoSavedSettings   | // We handle size/position persistently on our own
               (bNoMove ? ImGuiWindowFlags_NoMove       |
                          ImGuiWindowFlags_NoResize     |
                          ImGuiWindowFlags_NoDecoration :
                          ImGuiWindowFlags_None)
-                      // The only comment is that it was DPI related? This prevents Ctrl+Tab from moving the window so must not be used
       );
       ImGui::PopStyleVar (2);
 
@@ -1989,11 +2067,11 @@ wWinMain ( _In_     HINSTANCE hInstance,
       }
 
       // RepositionSKIF -- Step 3: The Final Step -- Prevent the global DPI scale from potentially being set to outdated values
-      if (RepositionSKIF)
+      if (RepositionSKIF && ImGui::GetFrameCount() > 2)
         RepositionSKIF = false;
 
       // Only allow navigational hotkeys when in Large Mode and as long as no popups are opened
-      if (! SKIF_ImGui_IsAnyPopupOpen ( ))
+      if (! SKIF_ImGui_IsAnyPopupOpen ( ) && ! _registry._SnippingMode)
       {
         if (hotkeyF1)
         {
@@ -2013,31 +2091,16 @@ wWinMain ( _In_     HINSTANCE hInstance,
               SKIF_Tab_ChangeTo  = UITab_About;
         }
 
-        if (allowShortcutCtrlA && (hotkeyCtrlA || hotkeyCtrlO))
+        if (SKIF_Tab_Selected == UITab_Viewer && allowShortcutCtrlA)
         {
-          if (SKIF_Tab_Selected != UITab_Viewer)
-              SKIF_Tab_ChangeTo  = UITab_Viewer;
-
-          OpenFileDialog = PopupState_Open;
-        }
-
-        if (allowShortcutCtrlA && (hotkeyCtrlX || hotkeyCtrlS))
-        {
-          if (SKIF_Tab_Selected != UITab_Viewer)
-              SKIF_Tab_ChangeTo  = UITab_Viewer;
-
+          if (hotkeyCtrlA || hotkeyCtrlO)
+            OpenFileDialog = PopupState_Open;
           if (hotkeyCtrlX)
             ExportSDRDialog = PopupState_Open;
           if (hotkeyCtrlS)
             SaveFileDialog = PopupState_Open;
-        }
-
-        if (allowShortcutCtrlA && hotkeyCtrlB)
-        {
-          if (SKIF_Tab_Selected != UITab_Viewer)
-              SKIF_Tab_ChangeTo  = UITab_Viewer;
-
-          ConfigEncoders = PopupState_Open;
+          if (hotkeyCtrlB)
+            ConfigEncoders = PopupState_Open;
         }
       }
 
@@ -2063,6 +2126,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
       {
         _registry._SnippingMode       = false;
         _registry._SnippingModeExit   = false;
+        _registry._SnippingModeInit   =  true;
 
         extern HWND hwndBeforeSnip;
         extern HWND hwndTopBeforeSnip;
@@ -2167,7 +2231,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
         ImRect allowable (SKIV_DesktopImage._desktop_pos,
                           SKIV_DesktopImage._desktop_pos + resolution);
-        SKIV_Region capture_area;
+        SKIV_CaptureData capture_data = SKIV_CaptureData (ImRect(), L"", CaptureMode_None);
 
         bool HDR_Image = SKIV_DesktopImage._hdr_image;
         bool SKIV_HDR  = (HDR_Image ? SKIF_ImGui_IsViewportHDR (SKIF_ImGui_hWnd) : false);
@@ -2200,8 +2264,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
           draw_list->AddRectFilled (allowable.Min, allowable.Max, ImGui::GetColorU32 (IM_COL32 (0, 0, 0, 20)));
         }
 
-        static SKIV_Region selection      = SKIV_Region (ImRect(), L"Desktop_Region");
-        static SKIV_Region selection_auto = SKIV_Region (ImRect(), L"Desktop_Auto");
+        static SKIV_CaptureData selection      = SKIV_CaptureData (ImRect(), L"Desktop_Region", CaptureMode_Region);
+        static SKIV_CaptureData selection_auto = SKIV_CaptureData (ImRect(), L"Desktop_Auto",   CaptureMode_Region);
 
         if (GetForegroundWindow () != SKIF_ImGui_hWnd)
             SetForegroundWindow (     SKIF_ImGui_hWnd);
@@ -2242,7 +2306,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
           return false;
         };
 
-        auto _GetRectBelowCursor = [&](SKIV_Region* _region, bool isAutoSelection) -> void
+        auto _GetRectBelowCursor = [&](SKIV_CaptureData* _data, bool isAutoSelection) -> void
         {
           // This feature is unsupported on rotated displays
           //
@@ -2251,8 +2315,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
           {
             if (isAutoSelection)
             {
-              _region->_rect.Min = ImVec2 (0.0f, 0.0f);
-              _region->_rect.Max = ImVec2 (0.0f, 0.0f);
+              _data->_rect.Min = ImVec2 (0.0f, 0.0f);
+              _data->_rect.Max = ImVec2 (0.0f, 0.0f);
             }
             return;
           }
@@ -2318,13 +2382,13 @@ wWinMain ( _In_     HINSTANCE hInstance,
                     
                     if (isAutoSelection)
                     {
-                      _region->_rect.Min.x = static_cast<float> (rect.left);
-                      _region->_rect.Min.y = static_cast<float> (rect.top);
-                      _region->_rect.Max.x = static_cast<float> (rect.right);
-                      _region->_rect.Max.y = static_cast<float> (rect.bottom);
+                      _data->_rect.Min.x = static_cast<float> (rect.left);
+                      _data->_rect.Min.y = static_cast<float> (rect.top);
+                      _data->_rect.Max.x = static_cast<float> (rect.right);
+                      _data->_rect.Max.y = static_cast<float> (rect.bottom);
                     }
 
-                    _region->_title = SKIV_GetBaseFilename (hWnd);
+                    _data->_hwnd = hWnd;
 
                     /*
                     PLOG_VERBOSE << "----------------------";
@@ -2333,8 +2397,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
                     if (RealGetWindowClassW (top_most,  wszRealWindowClass, 64))
                     PLOG_VERBOSE << "Class: " << wszRealWindowClass;
                     PLOG_VERBOSE << "Pos:   " << point.x << "," << point.y;
-                    PLOG_VERBOSE << "Min:   " << _region.Min.x << "," << _region.Min.y;
-                    PLOG_VERBOSE << "Max:   " << _region.Max.x << "," << _region.Max.y;
+                    PLOG_VERBOSE << "Min:   " << _data.Min.x << "," << _data.Min.y;
+                    PLOG_VERBOSE << "Max:   " << _data.Max.x << "," << _data.Max.y;
                     */
 
                     breakLoop = true;
@@ -2348,9 +2412,18 @@ wWinMain ( _In_     HINSTANCE hInstance,
           }
         };
 
-        static bool clicked = false;
+        static bool clicked      = false;
+        static bool _saveToDisk  = false;
+        static bool _selectFile  = false;
+        if (_registry._SnippingModeInit)
+        {
+          _registry._SnippingModeInit = false;
+          _saveToDisk = (_registry.eScreenshotsAutosave & CaptureMode_Region);
+          _selectFile = false; // Reset on each capture (for now)
+        }
 
-        if (HDR_Image && SKIV_HDR)
+        static bool toolbar = true; // HDR_Image && SKIV_HDR
+        if (toolbar)
         {
           static ImVec2 vSnippingToolbarSize = ImVec2 (128.0f, 32.0f);
 
@@ -2379,38 +2452,125 @@ wWinMain ( _In_     HINSTANCE hInstance,
           ImGui::TextUnformatted   (ICON_FA_SCISSORS " Snipping Tool");
           ImGui::Separator         ();
           ImGui::PopStyleColor     ();
-          ImGui::TreePush          ("");
-          ImGui::RadioButton       ("Keep HDR",       &_registry._SnippingTonemapsHDR, 0);
-          if (ImGui::IsItemHovered ())
-          {
-            ImGui::BeginTooltip    ();
-            ImGui::TextUnformatted ("HDR PNG may have Compatibility Issues");
-            ImGui::Separator       ();
-            ImGui::BulletText      ("Generally the clipboard contents can only be pasted into browser-derived software (i.e. built using Chromium, Electron) and SKIV.");
-            ImGui::BulletText      ("Some browsers cannot interpret HDR10 PNG correctly and the image will not render in HDR when pasted.");
-            ImGui::EndTooltip      ();
-          }
+
+          ImGui::Spacing           ();
           ImGui::SameLine          ();
-          ImGui::RadioButton       ("Tone-map to SDR", &_registry._SnippingTonemapsHDR, 1);
+
+          // Save To Disk
+          if (hotkeyCtrlS)
+            _saveToDisk = ! _saveToDisk;
+
+          ImGui::PushStyleColor    (ImGuiCol_Text, ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Info));
+          ImGui::Checkbox          (" " ICON_FA_FLOPPY_DISK "###ToolbarSaveToDisk", &_saveToDisk);
+          ImGui::PopStyleColor     ();
           if (ImGui::IsItemHovered ())
           {
             ImGui::BeginTooltip    ();
-            ImGui::TextUnformatted ("High Quality HDR to SDR Tone Map");
+            ImGui::TextUnformatted ("Save captured screenshot?");
+            ImGui::SameLine        ();
+            ImGui::TextColored     (ImGui::GetStyleColorVec4 (ImGuiCol_TextDisabled), "Ctrl+S");
             ImGui::Separator       ();
-            ImGui::BulletText      ("Stored in the clipboard as a Bitmap for maximum compatibility with SDR software.");
+            ImGui::TextUnformatted ("Folder:");
+            ImGui::SameLine        ();
+            ImGui::TextUnformatted (_path_cache.skiv_screenshotsA);
             ImGui::EndTooltip      ();
           }
+
           ImGui::SameLine          ();
-          ImGui::RadioButton       ("Auto",           &_registry._SnippingTonemapsHDR, 2);
+
+          // Show File In Explorer
+          if (! _saveToDisk)
+            SKIF_ImGui_PushDisableState ();
+          else if (hotkeyCtrlE)
+            _selectFile = ! _selectFile;
+
+          static bool _tOpenFolderDisabled = false;
+          ImGui::PushStyleColor    (ImGuiCol_Text, ImColor(255, 207, 72).Value);
+          ImGui::Checkbox          (" " ICON_FA_FOLDER_OPEN "###ToolbarOpenFolder", &_selectFile);
+          ImGui::PopStyleColor     ();
           if (ImGui::IsItemHovered ())
           {
             ImGui::BeginTooltip    ();
-            ImGui::TextUnformatted ("Use SDR for Snips at or Below Windows SDR Desktop Luminance");
-            ImGui::Separator       ();
-            ImGui::BulletText      ("For HDR range content, captures an unaltered HDR image");
+            ImGui::TextUnformatted ("Open folder after capture?");
+            ImGui::SameLine        ();
+            ImGui::TextColored     (ImGui::GetStyleColorVec4 (ImGuiCol_TextDisabled), "Ctrl+E");
             ImGui::EndTooltip      ();
           }
-          ImGui::TreePop           ();
+
+          if (! _saveToDisk)
+            SKIF_ImGui_PopDisableState ();
+
+          // HDR Tonemapping
+          if (HDR_Image && SKIV_HDR)
+          {
+            ImGui::SameLine          ();
+            ImGui::SeparatorEx       (ImGuiSeparatorFlags_Vertical);
+            ImGui::SameLine          ();
+            ImGui::BeginGroup        ();
+            ImGui::TextColored       (ImGui::GetStyleColorVec4 (ImGuiCol_TextDisabled), "HDR:");
+            ImGui::SameLine          ();
+            ImGui::RadioButton       ("Keep HDR",       &_registry._SnippingTonemapsHDR, 0);
+            if (ImGui::IsItemHovered ())
+            {
+              ImGui::BeginTooltip    ();
+              ImGui::TextUnformatted ("HDR PNG may have Compatibility Issues");
+              ImGui::Separator       ();
+              ImGui::BulletText      ("Generally the clipboard contents can only be pasted into browser-derived software (i.e. built using Chromium, Electron) and SKIV.");
+              ImGui::BulletText      ("Some browsers cannot interpret HDR10 PNG correctly and the image will not render in HDR when pasted.");
+              ImGui::EndTooltip      ();
+            }
+            ImGui::SameLine          ();
+            ImGui::RadioButton       ("Tone-map to SDR", &_registry._SnippingTonemapsHDR, 1);
+            if (ImGui::IsItemHovered ())
+            {
+              ImGui::BeginTooltip    ();
+              ImGui::TextUnformatted ("High Quality HDR to SDR Tone Map");
+              ImGui::Separator       ();
+              ImGui::BulletText      ("Stored in the clipboard as a Bitmap for maximum compatibility with SDR software.");
+              ImGui::EndTooltip      ();
+            }
+            ImGui::SameLine          ();
+            ImGui::RadioButton       ("Auto",           &_registry._SnippingTonemapsHDR, 2);
+            if (ImGui::IsItemHovered ())
+            {
+              ImGui::BeginTooltip    ();
+              ImGui::TextUnformatted ("Use SDR for Snips at or Below Windows SDR Desktop Luminance");
+              ImGui::Separator       ();
+              ImGui::BulletText      ("For HDR range content, captures an unaltered HDR image");
+              ImGui::EndTooltip      ();
+            }
+            ImGui::EndGroup          ();
+          }
+
+          ImGui::SameLine          ();
+          ImGui::SeparatorEx       (ImGuiSeparatorFlags_Vertical);
+          ImGui::SameLine          ();
+
+          // X (Close) Button
+          ImGui::BeginGroup        ();
+          ImGui::PushStyleColor   (ImGuiCol_ButtonHovered, ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Failure));
+          ImGui::PushStyleColor   (ImGuiCol_ButtonActive,  ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Failure) * ImVec4(1.2f, 1.2f, 1.2f, 1.0f));
+
+          static bool closeButtonHoverActive = false;
+
+          if (_registry._StyleLightMode && closeButtonHoverActive)
+            ImGui::PushStyleColor (ImGuiCol_Text, ImGui::GetStyleColorVec4 (ImGuiCol_WindowBg)); //ImVec4 (0.9F, 0.9F, 0.9F, 1.0f));
+
+          if (ImGui::Button (ICON_FA_XMARK, ImVec2 ( 30.0f * SKIF_ImGui_GlobalDPIScale, 0.0f ) )) // HotkeyEsc is situational
+            _registry._SnippingModeExit = true;
+      
+          if (_registry._StyleLightMode)
+          {
+            if (closeButtonHoverActive)
+              ImGui::PopStyleColor ( );
+          
+            closeButtonHoverActive = (ImGui::IsItemHovered () || ImGui::IsItemActivated ());
+          }
+
+          ImGui::PopStyleColor     (2);
+          ImGui::EndGroup          ();
+          // End of X (Close) Button
+
           ImGui::EndGroup          ();
           if ( ImGui::IsWindowHovered () ||
                ImGui::IsItemActive    () )
@@ -2428,8 +2588,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
           if (! clicked && SKIF_ImGui_SelectionRect (&selection._rect, allowable, 0, SelectionFlag_Filled))
           {
             _registry._SnippingModeExit = true;
-            _GetRectBelowCursor (&selection, false);
-            capture_area = selection;
+            _GetRectBelowCursor  (&selection, false);
+            capture_data         = selection;
           }
 
           else if (! ImGui::IsMouseDragging (ImGuiMouseButton_Left))
@@ -2446,7 +2606,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
             {
               clicked = false;
               _registry._SnippingModeExit = true;
-              capture_area = selection_auto;
+              capture_data = selection_auto;
             }
 
             else if (selection_auto._rect.Min != selection_auto._rect.Max)
@@ -2462,13 +2622,16 @@ wWinMain ( _In_     HINSTANCE hInstance,
           else
             clicked = false;
 
-          if (capture_area._rect.GetArea() != 0)
+          if (capture_data._rect.GetArea() != 0)
           {
+            capture_data._mode   = _saveToDisk;
+            capture_data._select = _selectFile;
+            capture_data._names = SKIV_GetApplicationNames (capture_data._hwnd);
             ignoredWindows.clear();
 
             PLOG_VERBOSE << "Attempting to capture region...";
 
-            SKIV_Image_CaptureRegion (capture_area);
+            SKIV_Image_CaptureRegion (capture_data);
           }
         }
 #pragma endregion
@@ -2753,7 +2916,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
               bKeepProcessAlive = false;
             break;
           case UITab_Settings:
-            SKIF_Tab_ChangeTo = UITab_Viewer;
+            if (! g_activeKeybindPopup)
+              SKIF_Tab_ChangeTo = UITab_Viewer;
             break;
           case UITab_About:
             break;
@@ -3374,7 +3538,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
             SKIF_Util_GetClipboardBitmapData ( );
 
-            ImGui::InsertNotification({ ImGuiToastType::Info, 3000, "Received a bitmap paste" });
+            ImGui::InsertNotification({ ImGuiToastType::Info, 3000, "Received a bitmap paste", "" });
           }
 
           else if ((cbd & ClipboardData_HDROP))
@@ -3399,6 +3563,9 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
       // Main rendering function
       ImGui::RenderNotifications ( );
+
+      SKIF_vecCurrentMode     = ImGui::GetWindowSize ( );
+      SKIF_vecCurrentPosition = ImGui::GetWindowPos  ( );
 
       // End the main ImGui window
       ImGui::End ( );
@@ -3452,58 +3619,71 @@ wWinMain ( _In_     HINSTANCE hInstance,
       SK_RunOnce (SKIF_Shell_CreateJumpList ( ));
     }
 
-    // Conditional rendering, but only if SKIF_ImGui_hWnd has actually been created
-    bool bRefresh = (SKIF_ImGui_hWnd != NULL && (SKIF_isTrayed || IsIconic (SKIF_ImGui_hWnd))) ? false : true;
-
-    if (invalidatedDevice > 0 && SKIF_Tab_Selected == UITab_Viewer)
-      bRefresh = false;
-
     // Disable navigation highlight on first frames
     SK_RunOnce(
       ImGuiContext& g = *ImGui::GetCurrentContext();
       g.NavDisableHighlight = true;
     );
 
-    // From ImHex: https://github.com/WerWolv/ImHex/blob/09bffb674505fa2b09f0135a519d213f6fb6077e/main/gui/source/window/window.cpp#L631-L672
-    // GPL-2.0 license: https://github.com/WerWolv/ImHex/blob/master/LICENSE
+    // Conditional rendering, but only if SKIF_ImGui_hWnd has actually been created
+    bool bRefresh = (SKIF_ImGui_hWnd != NULL && (SKIF_isTrayed || IsIconic (SKIF_ImGui_hWnd))) ? false : true;
+
+    if (invalidatedDevice > 0 && SKIF_Tab_Selected == UITab_Viewer)
+      bRefresh = false;
+
     if (bRefresh)
     {
       bRefresh = false;
-      static std::vector<uint8_t> previousVtxData;
-      static size_t previousVtxDataSize = 0;
-      size_t offset = 0;
-      size_t vtxDataSize = 0;
+      static std::vector<uint8_t>
+                    snapVtxBufferData;
+      static size_t snapVtxBufferSize = 0;
+             size_t  newVtxBufferSize = 0;
 
-      for (const auto viewPort : ImGui::GetPlatformIO().Viewports) {
-        auto drawData = viewPort->DrawData;
-        for (int n = 0; n < drawData->CmdListsCount; n++) {
-          vtxDataSize += drawData->CmdLists[n]->VtxBuffer.size() * sizeof(ImDrawVert);
-        }
-      }
-      for (const auto viewPort : ImGui::GetPlatformIO().Viewports) {
-        auto drawData = viewPort->DrawData;
-        for (int n = 0; n < drawData->CmdListsCount; n++) {
-          const ImDrawList *cmdList = drawData->CmdLists[n];
+      // Pass 1: Calculate total size
+      for (ImGuiViewport* viewport : ImGui::GetPlatformIO().Viewports)
+      {
+        if (! viewport || ! viewport->DrawData)
+          continue;
 
-          if (vtxDataSize == previousVtxDataSize) {
-            bRefresh = bRefresh || std::memcmp(previousVtxData.data() + offset, cmdList->VtxBuffer.Data, cmdList->VtxBuffer.size() * sizeof(ImDrawVert)) != 0;
-          } else {
-            bRefresh = true;
-          }
-
-          if (processAdditionalFrames > 0)
-            bRefresh = true;
-
-          if (previousVtxData.size() < offset + cmdList->VtxBuffer.size() * sizeof(ImDrawVert)) {
-            previousVtxData.resize(offset + cmdList->VtxBuffer.size() * sizeof(ImDrawVert));
-          }
-
-          std::memcpy(previousVtxData.data() + offset, cmdList->VtxBuffer.Data, cmdList->VtxBuffer.size() * sizeof(ImDrawVert));
-          offset += cmdList->VtxBuffer.size() * sizeof(ImDrawVert);
-        }
+        for (int i = 0; i < viewport->DrawData->CmdListsCount; ++i)
+          newVtxBufferSize += viewport->DrawData->CmdLists[i]->VtxBuffer.Size * sizeof (ImDrawVert);
       }
 
-      previousVtxDataSize = vtxDataSize;
+      // Immediate refresh conditions
+      if (newVtxBufferSize != snapVtxBufferSize)
+        bRefresh = true;
+
+      std::vector<uint8_t>     newVtxBufferData;
+      newVtxBufferData.resize (newVtxBufferSize);
+
+      if (! bRefresh && newVtxBufferSize > 0)
+      {
+        size_t offset = 0;
+
+        // Pass 2: Pack vertex buffers
+        for (ImGuiViewport* viewport : ImGui::GetPlatformIO().Viewports)
+        {
+          if (! viewport || ! viewport->DrawData)
+            continue;
+
+          for (int i = 0; i < viewport->DrawData->CmdListsCount; ++i)
+          {
+            if (viewport->DrawData->CmdLists[i]->VtxBuffer.Size <= 0)
+              continue;
+
+            const size_t bytes = static_cast<size_t> (viewport->DrawData->CmdLists[i]->VtxBuffer.Size) * sizeof (ImDrawVert);
+            std::memcpy (newVtxBufferData.data() + offset, viewport->DrawData->CmdLists[i]->VtxBuffer.Data, bytes);
+            offset += bytes;
+          }
+        }
+
+        // Compare snapshot with new buffer
+        bRefresh = std::memcmp (snapVtxBufferData.data(), newVtxBufferData.data(), newVtxBufferSize) != 0;
+      }
+
+      // Store snapshot
+      snapVtxBufferData.swap (newVtxBufferData);
+      snapVtxBufferSize = newVtxBufferSize;
     }
 
     // Update, Render and Present the main and any additional Platform Windows
@@ -3801,6 +3981,50 @@ wWinMain ( _In_     HINSTANCE hInstance,
   SKIF_Util_UnregisterHotKeyCapture     (CaptureMode_Window);
   //SKIF_Util_UnregisterHotKeySVCTemp   ( );
   //SKIF_Util_UnregisterHotKeyHDRToggle ( );
+
+  // TODO: Make an exception for scenarios where remembering the size and pos makes sense,
+  //         e.g. when size / DPI <= regular size * 1.5x or something like that!!!
+  // 
+  // Only store window size and position to the registry if we are not in a maximized state
+  ImVec2 vecCurrentModeDPIUnaware = ImFloor (SKIF_vecCurrentMode / SKIF_ImGui_GlobalDPIScale);
+
+  if ((! IsZoomed (SKIF_ImGui_hWnd) && ! SKIF_ImGui_IsFullscreen (SKIF_ImGui_hWnd)) ||
+     (vecCurrentModeDPIUnaware.x <= SKIF_vecRegularModeDefault.x * 1.5f &&
+      vecCurrentModeDPIUnaware.y <= SKIF_vecRegularModeDefault.y * 1.5f))
+  {
+    // Only store the window size if we are not in service mode
+    if (! _registry._SnippingMode  &&
+        vecCurrentModeDPIUnaware.x > 0 &&
+        vecCurrentModeDPIUnaware.y > 0)
+    {
+      // Store a DPI-unaware size, so SKIF can automatically adjust it to the proper DPI on launch
+      _registry.iUIWidth  = static_cast<int> (vecCurrentModeDPIUnaware.x);
+      _registry.iUIHeight = static_cast<int> (vecCurrentModeDPIUnaware.y);
+    
+      _registry.regKVUIWidth .putData (_registry.iUIWidth);
+      _registry.regKVUIHeight.putData (_registry.iUIHeight);
+
+      PLOG_INFO << "Wrote the window size to the registry: " << _registry.iUIWidth << "x" << _registry.iUIHeight;
+    }
+
+    // Note that negative window positions are valid!
+    if (SKIF_vecCurrentPosition.x != -1.0f &&
+        SKIF_vecCurrentPosition.y != -1.0f)
+    {
+      // Doesn't seem to be needed
+      //RECT dwmBorder = { };
+      //if (S_OK == DwmGetWindowAttribute (SKIF_ImGui_hWnd, DWMWA_EXTENDED_FRAME_BOUNDS, &dwmBorder, sizeof(dwmBorder)))
+      //{ }
+
+      _registry.iUIPositionX = static_cast<int> (SKIF_vecCurrentPosition.x);
+      _registry.iUIPositionY = static_cast<int> (SKIF_vecCurrentPosition.y);
+    
+      _registry.regKVUIPositionX.putData (_registry.iUIPositionX);
+      _registry.regKVUIPositionY.putData (_registry.iUIPositionY);
+
+      PLOG_INFO << "Wrote the window position to the registry: " << _registry.iUIPositionX << ", " << _registry.iUIPositionY;
+    }
+  }
 
   PLOG_INFO << "Killing timers...";
   KillTimer (SKIF_Notify_hWnd, IDT_REFRESH_TOOLTIP);
@@ -4125,7 +4349,7 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
       POINT capture_point        = { };
       RECT  capture_rect         = { };
-      std::wstring filename = L"Display";
+      SKIV_CaptureData::Application app_names = { L"Display"};
 
       if (mode == CaptureMode_Window)
       {
@@ -4151,7 +4375,7 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
           capture_rect.right  = std::min (capture_rect.right,  minfo.rcMonitor.right);
           capture_rect.bottom = std::min (capture_rect.bottom, minfo.rcMonitor.bottom);
 
-          filename = SKIV_GetBaseFilename (hwndBeforeSnip);
+          app_names = SKIV_GetApplicationNames (hwndBeforeSnip);
         }
       }
 
@@ -4159,7 +4383,7 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
       {
         GetCursorPos (&capture_point);
         HWND hWndBelowCursor = WindowFromPoint (capture_point);
-        filename = SKIV_GetBaseFilename (hWndBelowCursor);
+        app_names = SKIV_GetApplicationNames (hWndBelowCursor);
       }
 
       DirectX::ScratchImage captured_img;
@@ -4178,13 +4402,14 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
         if (mode == CaptureMode_Window)
         {
-          const SKIV_Region region =
-                SKIV_Region (
+          const SKIV_CaptureData region =
+                SKIV_CaptureData (
                   ImRect (static_cast<float> (capture_rect.left  ),
                           static_cast<float> (capture_rect.top   ),
                           static_cast<float> (capture_rect.right ),
                           static_cast<float> (capture_rect.bottom)),
-                  filename
+                  app_names,
+                  ((_registry.eScreenshotsAutosave & mode) == CaptureMode_Window) ? CaptureMode_Window : CaptureMode_None
           );
 
           //PLOG_VERBOSE << "capture_rect.left  : " << capture_rect.left;
@@ -4199,11 +4424,12 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         else if (mode == CaptureMode_Screen)
         {
           extern skiv_image_desktop_s SKIV_DesktopImage;
-          const SKIV_Region region =
-                SKIV_Region (
+          const SKIV_CaptureData region =
+                SKIV_CaptureData (
                   ImRect (ImVec2 (0, 0),
                           SKIV_DesktopImage._resolution),
-                  filename
+                  app_names,
+                  ((_registry.eScreenshotsAutosave & mode) == CaptureMode_Screen) ? CaptureMode_Screen : CaptureMode_None
           );
 
           SKIV_Image_CaptureRegion (region);

@@ -23,12 +23,17 @@
 #pragma comment(lib, "Userenv.lib")
 #pragma comment(lib, "Gdiplus.lib")
 
+#pragma comment(lib, "RuntimeObject.lib")
+#pragma comment(lib, "mincore.lib")
+
 #include <SKIV.h>
 #include <utility/fsutil.h>
 #include <utility/registry.h>
 #include <HybridDetect.h>
 
 UINT CF_HTML = NULL;
+
+bool g_activeKeybindPopup = false;
 
 std::vector<HANDLE> vWatchHandles[UITab_ALL];
 INT64               SKIF_TimeInMilliseconds = 0;
@@ -2497,6 +2502,8 @@ SKIF_Util_GetClipboardHDROP (void)
 DirectX::Image
 SKIF_Util_GetClipboardBitmapData (void)
 {
+  static SKIF_CommonPathsCache& _path_cache = SKIF_CommonPathsCache::GetInstance ( );
+
   DirectX::Image img = { };
 
   if (true) // OpenClipboard (SKIF_ImGui_hWnd)
@@ -2560,10 +2567,12 @@ SKIF_Util_GetClipboardBitmapData (void)
             {
               GlobalUnlock (hGlobal);
 
-              if (SUCCEEDED (DirectX::SaveToWICFile (*flipped.GetImage (0,0,0), DirectX::WIC_FLAGS_FORCE_SRGB, GUID_ContainerFormatTiff, L"clipboard.tiff")))
+              std::wstring path = std::wstring(_path_cache.skiv_temp) + L"paste.tiff";
+
+              if (SUCCEEDED (DirectX::SaveToWICFile (*flipped.GetImage (0,0,0), DirectX::WIC_FLAGS_FORCE_SRGB, GUID_ContainerFormatTiff, path.c_str())))
               {
                 extern std::wstring dragDroppedFilePath;
-                dragDroppedFilePath = L"clipboard.tiff";
+                dragDroppedFilePath = path;
                 PLOG_VERBOSE << "Successfully received and saved image data from the clipboard!";
               }
             }
@@ -2678,7 +2687,7 @@ SKIF_Util_FileExplorer_SelectFile (PCWSTR filePath)
         { } // Success
 
         // Use the task allocator to free to returned pidl
-        ILFree (iidlPtr);
+        CoTaskMemFree (iidlPtr);
       }
     }
 
@@ -2700,9 +2709,93 @@ SKIF_Util_FileExplorer_SelectFile (PCWSTR filePath)
     delete data;
 }
 
+bool
+SKIF_Util_FileExplorer_DeleteFile (PCWSTR filePath, bool hideWarning)
+{
+  bool ret = false;
+
+  IShellItem* psi = nullptr;
+  if (SUCCEEDED (SHCreateItemFromParsingName (filePath, nullptr, IID_PPV_ARGS(&psi))))
+  {
+    IFileOperation* pfo = nullptr;
+    if (SUCCEEDED (CoCreateInstance (CLSID_FileOperation, nullptr, CLSCTX_ALL, IID_PPV_ARGS(&pfo))))
+    {
+      // This primarily adheres to Explorer's "Display delete confirmation dialog" setting
+      //   i.e. if that setting is disabled, the confirmation won't appear regardless
+      DWORD flags  =
+        FOF_FILESONLY | FOFX_RECYCLEONDELETE | FOFX_ADDUNDORECORD | ((hideWarning) ? FOF_NOCONFIRMATION : FOF_WANTNUKEWARNING); // FOF_WANTNUKEWARNING only seems to trigger on network shares
+
+      if (SUCCEEDED (pfo->SetOperationFlags (flags)))
+      {
+        if (SUCCEEDED (pfo->DeleteItem (psi, nullptr)))
+        {
+          ret = SUCCEEDED (pfo->PerformOperations());
+        }
+      }
+
+      pfo->Release();
+    }
+
+    psi->Release();
+  }
+
+  return ret;
+}
+
+void
+SKIF_Util_FileExplorer_ContextMenuFile (PCWSTR filePath, HWND hWndOwner)
+{
+  // You should call this function from a background thread.
+  // Failure to do so could cause the UI to stop responding.
+  PIDLIST_ABSOLUTE iidlPtr = nullptr;
+  HRESULT hr = SHParseDisplayName (filePath, NULL, &iidlPtr, 0, nullptr);
+  // Let us take the risk since TrackPopupMenuEx() needs to be called from the UI thread
+
+  if (SUCCEEDED (hr))
+  {
+    CComPtr<IShellFolder> parentFolder;
+    LPCITEMIDLIST child        = nullptr;
+
+    hr = SHBindToParent (iidlPtr, IID_PPV_ARGS(&parentFolder), &child);
+
+    if (SUCCEEDED (hr))
+    {
+      CComPtr<IContextMenu> ctxMenu;
+      hr = parentFolder->GetUIObjectOf (hWndOwner, 1, &child, IID_IContextMenu, nullptr, (void**)&ctxMenu);
+
+      if (SUCCEEDED (hr))
+      {
+        HMENU hMenu = CreatePopupMenu();
+        ctxMenu->QueryContextMenu (hMenu, 0, 1, 0x7FFF, CMF_NORMAL);
+
+        POINT cur = { };
+        GetCursorPos (&cur);
+
+        int cmd = TrackPopupMenuEx (hMenu, TPM_RETURNCMD, cur.x, cur.y, hWndOwner, nullptr);
+
+        if (cmd > 0)
+        {
+          CMINVOKECOMMANDINFOEX
+            info        = { sizeof(info) };
+            info.fMask  = CMIC_MASK_UNICODE;
+            info.hwnd   = hWndOwner;
+            info.lpVerb = MAKEINTRESOURCEA(cmd - 1);
+            info.nShow  = SW_SHOWNORMAL;
+
+          ctxMenu->InvokeCommand ((LPCMINVOKECOMMANDINFO)&info);
+        }
+
+        DestroyMenu (hMenu);
+      }
+    }
+
+    CoTaskMemFree (iidlPtr);
+  }
+}
+
 static int
 CALLBACK
-SKIF_Util_FileExplorer_BrowseFolder_CallbackProc (HWND hWnd,UINT uMsg, LPARAM lParam, LPARAM lpData)
+SKIF_Util_FileExplorer_BrowseForFolder_CallbackProc (HWND hWnd,UINT uMsg, LPARAM lParam, LPARAM lpData)
 {
   UNREFERENCED_PARAMETER (lParam);
 
@@ -2713,37 +2806,197 @@ SKIF_Util_FileExplorer_BrowseFolder_CallbackProc (HWND hWnd,UINT uMsg, LPARAM lP
 }
 
 std::wstring
-SKIF_Util_FileExplorer_BrowseFolder (PCWSTR defaultPath)
+SKIF_Util_FileExplorer_BrowseForFolderXP (PCWSTR defaultPath)
 {
-  TCHAR path[MAX_PATH];
+  TCHAR path[MAX_PATH] = { };
 
   BROWSEINFO
     bi = { };
     bi.lpszTitle  = L"Select a new screenshot folder for SKIV to use:";
     bi.ulFlags    = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
-    bi.lpfn       = SKIF_Util_FileExplorer_BrowseFolder_CallbackProc;
+    bi.lpfn       = SKIF_Util_FileExplorer_BrowseForFolder_CallbackProc;
     bi.lParam     = (LPARAM) defaultPath;
 
   LPITEMIDLIST pidl = SHBrowseForFolder ( &bi );
 
   if ( pidl != 0 )
   {
-    // Get the name of the folder and put it in path
     SHGetPathFromIDList ( pidl, path );
-
-    // Free memory used
-    IMalloc * imalloc = 0;
-    if ( SUCCEEDED( SHGetMalloc ( &imalloc )) )
-    {
-      imalloc->Free ( pidl );
-      imalloc->Release ( );
-    }
-
-    return path;
+    CoTaskMemFree (pidl);
   }
 
-  return L"";
+  return path;
 }
+
+std::wstring
+SKIF_Util_FileExplorer_BrowseForFolder (PCWSTR defaultPath)
+{
+  std::wstring path;
+
+  IFileDialog* pfd = nullptr;
+  if (SUCCEEDED (CoCreateInstance (CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&pfd))))
+  {
+    DWORD dwFlags;
+    pfd->GetOptions(&dwFlags);
+    pfd->SetOptions (dwFlags | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
+
+    // Force the dialogue to open a specific folder
+    IShellItem* psiFolder = nullptr;
+    if (SUCCEEDED (SHCreateItemFromParsingName (defaultPath, nullptr, IID_PPV_ARGS(&psiFolder))))
+      pfd->SetFolder (psiFolder);
+
+    if (SUCCEEDED (pfd->Show (SKIF_ImGui_hWnd)))
+    {
+      IShellItem* psiResult = nullptr;
+      if (SUCCEEDED (pfd->GetResult (&psiResult)))
+      {
+        PWSTR pszFolderPath = nullptr;
+        if (SUCCEEDED (psiResult->GetDisplayName (SIGDN_FILESYSPATH, &pszFolderPath)))
+        {
+          path = pszFolderPath;
+          CoTaskMemFree (pszFolderPath);
+        }
+        psiResult->Release();
+      }
+    }
+
+    if (psiFolder != nullptr)
+      psiFolder->Release();
+
+    pfd->Release();
+  }
+
+  return path;
+}
+
+bool
+SKIF_Util_Files_PruneOlderThan (std::wstring path, ULONGLONG secondsSince)
+{
+  if (path.empty())
+    return false;
+
+  if (! path.ends_with (LR"(\)"))
+    path += LR"(\)";
+
+  // Clear out any temp files older than the threshold
+  auto _isLastModified = [&](FILETIME ftLastWriteTime) -> bool
+  {
+    FILETIME ftSystemTime{}, ftAdjustedFileTime{};
+    SYSTEMTIME systemTime{};
+    GetSystemTime (&systemTime);
+
+    if (SystemTimeToFileTime (&systemTime, &ftSystemTime))
+    {
+      ULARGE_INTEGER uintLastWriteTime{};
+
+      // Copy to ULARGE_INTEGER union to perform 64-bit arithmetic
+      uintLastWriteTime.HighPart        = ftLastWriteTime.dwHighDateTime;
+      uintLastWriteTime.LowPart         = ftLastWriteTime.dwLowDateTime;
+
+      // Perform 64-bit arithmetic to add the required amount of seconds to last modified timestamp
+      uintLastWriteTime.QuadPart        = uintLastWriteTime.QuadPart + ULONGLONG(1 * (secondsSince) * 1.0e+7);
+
+      // Copy the results to an FILETIME struct
+      ftAdjustedFileTime.dwHighDateTime = uintLastWriteTime.HighPart;
+      ftAdjustedFileTime.dwLowDateTime  = uintLastWriteTime.LowPart;
+
+      // Compare with system time, and if system time is later (1), then return true
+      if (CompareFileTime (&ftSystemTime, &ftAdjustedFileTime) == 1)
+        return true;
+    }
+
+    return false;
+  };
+
+  HANDLE hFind        = INVALID_HANDLE_VALUE;
+  WIN32_FIND_DATA ffd = { };
+
+  hFind = 
+    FindFirstFileExW ((path + L"*").c_str(), FindExInfoBasic, &ffd, FindExSearchNameMatch, NULL, NULL);
+
+  if (INVALID_HANDLE_VALUE != hFind)
+  {
+    if (_isLastModified   (ffd.ftLastWriteTime))
+      DeleteFile  ((path + ffd.cFileName).c_str());
+
+    while (FindNextFile (hFind, &ffd))
+      if (_isLastModified   (ffd.ftLastWriteTime))
+        DeleteFile  ((path + ffd.cFileName).c_str());
+
+    FindClose (hFind);
+  } else return false;
+
+  return true;
+}
+
+bool
+SKIF_Util_Files_PruneToLatestN (std::wstring path, size_t filesToRetain)
+{
+  if (path.empty())
+    return false;
+
+  if (! path.ends_with (LR"(\)"))
+    path += LR"(\)";
+
+  HANDLE hFind        = INVALID_HANDLE_VALUE;
+  WIN32_FIND_DATA ffd = { };
+  std::vector<WIN32_FIND_DATA> files;
+
+  // This excludes the . and .. items
+  auto _isValid = [](const wchar_t* str) -> bool
+  { return (! ((str[0] == '.') && ((str[1] == '\0') || (str[1] == '.' && str[2] == '\0')))); };
+
+  hFind = 
+    FindFirstFileExW ((path + L"*").c_str(), FindExInfoBasic, &ffd, FindExSearchNameMatch, NULL, NULL);
+
+  if (INVALID_HANDLE_VALUE != hFind)
+  {
+    if (_isValid (ffd.cFileName))
+      files.push_back (ffd);
+
+    while (FindNextFile (hFind, &ffd))
+      if (_isValid (ffd.cFileName))
+        files.push_back (ffd);
+
+    FindClose (hFind);
+  } else return false;
+
+  if (files.size() > filesToRetain)
+  {
+    std::sort (files.begin(), files.end(), [](const WIN32_FIND_DATA& a, const WIN32_FIND_DATA& b)
+      { return (CompareFileTime (&a.ftLastWriteTime, &b.ftLastWriteTime) == -1); } // First file time is earlier than second file time.
+    );
+
+    for (size_t i = 0; i < (files.size() - filesToRetain); i++)
+      DeleteFile ((path + files[i].cFileName).c_str());
+
+    return true;
+  }
+
+  return false;
+}
+
+// Sets a new app color mode and returns the previous one
+AppColorMode
+SKIF_Util_SetAppColorMode (AppColorMode mode)
+{
+  if (! SKIF_Util_IsWindows11orGreater ( ))
+    return AppColorMode::Default;
+
+  using SetAppColorMode_pfn =
+           AppColorMode (WINAPI *)(AppColorMode);
+
+  static SetAppColorMode_pfn
+         SetAppColorMode =
+        (SetAppColorMode_pfn)GetProcAddress (LoadLibraryEx (L"uxtheme.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32),
+        MAKEINTRESOURCEA (135)); // Ordinal 135
+
+  if (SetAppColorMode == nullptr)
+    return AppColorMode::Default;
+
+  return SetAppColorMode (mode);
+}
+
 
 #if NTDDI_VERSION < NTDDI_WIN10_RS5
 // Effective Power Mode (Windows 10 1809+)
@@ -3425,7 +3678,7 @@ SKIF_Util_GetHotKeyStateSVCTemp (void)
 
 DWORD
 WINAPI
-SKIF_Util_GetWebUri (skif_get_web_uri_t* get)
+SKIF_Util_GetWebUri (skif_get_web_uri_t* get, std::string* response_body)
 {
   static SKIF_RegistrySettings& _registry = SKIF_RegistrySettings::GetInstance ( );
 
@@ -3462,15 +3715,16 @@ SKIF_Util_GetWebUri (skif_get_web_uri_t* get)
     return 0;
   };
   
-  PLOG_VERBOSE                                   << "Method  : " << std::wstring(get->method);
-  PLOG_VERBOSE                                   << "Target  : " << ((get->https) ? "https://" : "http://") << get->wszHostName << get->wszHostPath;
-  PLOG_VERBOSE_IF(get->wszExtraInfo[0] != L'\0') << "Fragment: " << get->wszExtraInfo;
-  PLOG_VERBOSE_IF(! get->header.empty())         << "Header  : " << get->header;
-  PLOG_VERBOSE_IF(! get->body.empty())           << "  Body  : " << get->body;
+  PLOG_VERBOSE                                     << "Method: " << std::wstring(get->method);
+  PLOG_VERBOSE                                     << "Target: " << ((get->https) ? "https://" : "http://") << get->wszHostName << get->wszHostPath;
+  PLOG_VERBOSE_IF(  get->wszExtraInfo[0] != L'\0') << " Query: " << get->wszExtraInfo;
+  PLOG_VERBOSE                                     << "   U-A: " << get->user_agent;
+  PLOG_VERBOSE_IF(! get->header.empty())           << "Header: " << get->header;
+  PLOG_VERBOSE_IF(! get->body.empty())             << "  Body: " << get->body;
 
   hInetRoot =
     InternetOpen (
-      L"Special K - Asset Crawler",
+      get->user_agent.c_str(),
         INTERNET_OPEN_TYPE_DIRECT,
           nullptr, nullptr,
             0x00 );
@@ -3589,18 +3843,34 @@ SKIF_Util_GetWebUri (skif_get_web_uri_t* get)
           break;
       }
 
-      FILE *fOut = nullptr;
-
-      _wfopen_s (&fOut, get->wszLocalPath, L"wb+" );
-
-      if (fOut != nullptr)
+      if (response_body != nullptr)
       {
-        fwrite (concat_buffer.data (), concat_buffer.size (), 1, fOut);
-        fflush (fOut);
-        fclose (fOut);
+        response_body->clear();
+        response_body->append (concat_buffer.data(), concat_buffer.size());
+      }
 
+      if (get->wszLocalPath[0] == '\0')
+      {
         CLEANUP (true);
         return 1;
+      }
+
+      // Write to file...
+      else
+      {
+        FILE *fOut = nullptr;
+
+        _wfopen_s (&fOut, get->wszLocalPath, L"wb+" );
+
+        if (fOut != nullptr)
+        {
+          fwrite (concat_buffer.data (), concat_buffer.size (), 1, fOut);
+          fflush (fOut);
+          fclose (fOut);
+
+          CLEANUP (true);
+          return 1;
+        }
       }
     }
 
@@ -3613,20 +3883,20 @@ SKIF_Util_GetWebUri (skif_get_web_uri_t* get)
 }
 
 DWORD
-SKIF_Util_GetWebResource (std::wstring url, std::wstring_view destination, std::wstring method, std::wstring header, std::string body)
+SKIF_Util_GetWebResource (std::wstring url, std::wstring_view file_path, std::wstring method, std::wstring header, std::string body, std::wstring user_agent, std::string* response_body)
 {
   auto* get =
     new skif_get_web_uri_t { };
 
   URL_COMPONENTSW urlcomps = { };
 
-  urlcomps.dwStructSize      = sizeof (URL_COMPONENTSW);
+  urlcomps.dwStructSize     = sizeof (URL_COMPONENTSW);
 
-  urlcomps.lpszHostName      = get->wszHostName;
-  urlcomps.dwHostNameLength  = INTERNET_MAX_HOST_NAME_LENGTH;
+  urlcomps.lpszHostName     = get->wszHostName;
+  urlcomps.dwHostNameLength = INTERNET_MAX_HOST_NAME_LENGTH;
 
-  urlcomps.lpszUrlPath       = get->wszHostPath;
-  urlcomps.dwUrlPathLength   = INTERNET_MAX_PATH_LENGTH;
+  urlcomps.lpszUrlPath      = get->wszHostPath;
+  urlcomps.dwUrlPathLength  = INTERNET_MAX_PATH_LENGTH;
 
   urlcomps.lpszExtraInfo     = get->wszExtraInfo;
   urlcomps.dwExtraInfoLength = INTERNET_MAX_PATH_LENGTH;
@@ -3640,15 +3910,15 @@ SKIF_Util_GetWebResource (std::wstring url, std::wstring_view destination, std::
   if (! body.empty())
     get->body = body;
 
+  if (! user_agent.empty())
+    get->user_agent = user_agent;
+
   if (InternetCrackUrl (url.c_str(), static_cast <DWORD> (url.length ()), 0x00, &urlcomps))
   {
-    wcsncpy ( get->wszLocalPath,
-                           destination.data (),
-                       MAX_PATH );
-
+    wcsncpy (get->wszLocalPath, file_path.data (), MAX_PATH);
     get->https = (urlcomps.nScheme == INTERNET_SCHEME_HTTPS);
 
-    return SKIF_Util_GetWebUri (get);
+    return SKIF_Util_GetWebUri (get, response_body);
   }
 
   else {

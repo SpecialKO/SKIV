@@ -806,15 +806,16 @@ struct SK_KeybindMultiState
   const char*  bind_name = nullptr;
   bool         assigning = false,
                state     = false;
-  SK_Keybind   saved, pending;
+  SK_Keybind   default, pending, saved;
 
   // This empty object is used during assignment to disable hotkeys temporarily
   static constexpr SK_Keybind disabled = { };
 
   SK_KeybindMultiState (const char* _n, std::wstring _h) {
     bind_name                   = _n;
-    pending.human_readable      = _h;
-    pending.human_readable_utf8 = SK_WideCharToUTF8 (pending.human_readable);
+    default.human_readable      = _h;
+    default.human_readable_utf8 = SK_WideCharToUTF8 (default.human_readable);
+    pending = default;
   };
 
               bool  applyChanges (void); // This applies the pending changes

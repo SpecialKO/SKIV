@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <string_view>
 #include <filesystem>
+#include <pathcch.h>
+#include <unordered_set>
 #include <plog/Log.h>
 #include <strsafe.h>
 #include <wincodec.h>
@@ -1078,7 +1080,7 @@ SKIV_PNG_CopyToClipboard (const DirectX::Image& image, const void *pData, size_t
   return false;
 }
 
-bool SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool isHDR, bool isTemp, const wchar_t* wszFileName)
+bool SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool isHDR, SKIV_CaptureData capture_data)
 {
 using namespace DirectX;
 
@@ -1086,38 +1088,103 @@ using namespace DirectX;
     return false;
 
   static SKIF_CommonPathsCache& _path_cache = SKIF_CommonPathsCache::GetInstance ( );
+  static SKIF_RegistrySettings& _registry   = SKIF_RegistrySettings::GetInstance ( );
 
-  std::wstring wsPNGPath  = (isTemp) ? _path_cache.skiv_temp : _path_cache.skiv_screenshots;
-  std::wstring wsFilename = std::wstring (wszFileName);
-
-  wsFilename += L"_";
-
-  // DateTime
+  // Retrieve local time first
   SYSTEMTIME st;
-  GetLocalTime(&st);
+  GetLocalTime (&st);
 
-  // Buffers for formatted output
-  wchar_t dateBuffer[100];
-  wchar_t timeBuffer[100];
+  bool isPersistent = (capture_data._mode != CaptureMode_None);
+  std::wstring wsPNGPath  = (isPersistent) ? _path_cache.skiv_screenshots : _path_cache.skiv_temp;
+  std::wstring wsFilename = _registry.wsScreenshotsPattern;
+  size_t pos = std::wstring::npos;
+  static const std::wstring
+    pApp  = L"<app>",
+    pExe  = L"<exe>",
+    pPro  = L"<pro>",
+    pWnd  = L"<win>",
+    pDate = L"<date>",
+    pTime = L"<time>";
 
-  // Get locale-aware date
-  if (GetDateFormatEx (LOCALE_NAME_USER_DEFAULT, DATE_SHORTDATE, &st, NULL, dateBuffer, 100, NULL))
-    wsFilename += std::wstring(dateBuffer);
+  if (! isPersistent)
+    SKIF_Util_Files_PruneToLatestN (_path_cache.skiv_temp, 10);
 
-  wsFilename += L"_";
+  // Process path
 
-  // Get locale-aware time
-  if (GetTimeFormatEx (LOCALE_NAME_USER_DEFAULT, 0, &st, NULL, timeBuffer, 100))
-    wsFilename += std::wstring(timeBuffer);
+  // Automatic app name population...
+  pos = wsFilename.find (pApp);
+  if (pos != std::wstring::npos)
+  {
+    if (! capture_data._names.custom.empty())
+      wsFilename.replace (pos, pApp.length(), capture_data._names.custom);
+    else if (! capture_data._names.product.empty())
+      wsFilename.replace (pos, pApp.length(), capture_data._names.product);
+    else if (! capture_data._names.executable.empty())
+      wsFilename.replace (pos, pApp.length(), capture_data._names.executable);
+    else
+      wsFilename.replace (pos, pApp.length(), L"unknown");
+  }
 
-  wsFilename = SKIF_Util_StripInvalidFilenameChars (wsFilename);
+  // Product name
+  pos = wsFilename.find (pPro);
+  if (pos != std::wstring::npos)
+    wsFilename.replace (pos, pPro.length(), (capture_data._names.product.empty()) ? L"unknown" : capture_data._names.product);
+
+  // Executable name
+  pos = wsFilename.find (pExe);
+  if (pos != std::wstring::npos)
+    wsFilename.replace (pos, pExe.length(), (capture_data._names.executable.empty()) ? L"unknown" : capture_data._names.executable);
+
+  // Window title
+  pos = wsFilename.find (pWnd);
+  if (pos != std::wstring::npos)
+    wsFilename.replace (pos, pWnd.length(), (capture_data._names.window.empty()) ? L"unknown" : capture_data._names.window);
+
+  // Locale-aware date
+  pos = wsFilename.find (pDate);
+  if (pos != std::wstring::npos)
+  {
+    wchar_t dateBuffer[100];
+    if (GetDateFormatEx (LOCALE_NAME_USER_DEFAULT, DATE_SHORTDATE, &st, NULL, dateBuffer, 100, NULL))
+      wsFilename.replace (pos, pDate.length(), dateBuffer);
+  }
+
+  // Locale-aware time
+  pos = wsFilename.find (pTime);
+  if (pos != std::wstring::npos)
+  {
+    wchar_t timeBuffer[100];
+    if (GetTimeFormatEx (LOCALE_NAME_USER_DEFAULT, 0, &st, NULL, timeBuffer, 100))
+      wsFilename.replace (pos, pTime.length(), timeBuffer);
+  }
+
+  // Replace : with .
+  std::replace (wsFilename.begin(), wsFilename.end(), ':', '.');
+
+  // Windows-style folder separators
+  std::replace (wsFilename.begin(), wsFilename.end(), '/', '\\');
+
+  auto _stripInvalidCharacters = [](wchar_t tval) {
+    static const std::unordered_set <wchar_t> invalid_file_char =
+    { L':', L'*',  L'?', L'\"', L'<',  L'>', L'|', };
+
+    return (invalid_file_char.find(tval) != invalid_file_char.end());
+  };
+  
+  wsFilename.erase (std::remove_if (wsFilename.begin(), wsFilename.end(), _stripInvalidCharacters), wsFilename.end());
+
+  // Strip trailing spaces from name, these are usually the result of
+  //   deleting one of the non-useable characters above.
+  for (auto it = wsFilename.rbegin (); it != wsFilename.rend (); ++it)
+    if (*it == L' ') *it = L'\0'; else break;
 
   wsPNGPath += wsFilename + L".png";
 
-  PLOG_VERBOSE << wsPNGPath;
-
-  static SKIF_RegistrySettings& _registry =
-    SKIF_RegistrySettings::GetInstance ( );
+  // Create any missing folders...
+  std::error_code       ec;
+  std::filesystem::path p = wsPNGPath;
+  if (! std::filesystem::exists         (p.parent_path(), ec))
+    std::filesystem::create_directories (p.parent_path(), ec);
 
   int snipping_tonemap_mode = _registry._SnippingTonemapsHDR;
 
@@ -1161,6 +1228,9 @@ using namespace DirectX;
     {
       PLOG_VERBOSE << "SKIF_Image_SaveToDisk_HDR ( ): SUCCEEDED";
 
+      if (capture_data._select)
+        SKIF_Util_FileExplorer_SelectFile (wsPNGPath.c_str());
+
       if (SKIV_PNG_CopyToClipboard (*pImage, wsPNGPath.c_str(), 0))
       {
         PLOG_VERBOSE << "SKIV_PNG_CopyToClipboard ( ): TRUE";
@@ -1183,11 +1253,15 @@ using namespace DirectX;
         PLOG_INFO << "SKIV_Image_TonemapToSDR ( ): FAILED!";
     }
 
-    if (_registry.bSaveScreenshots)
+    if (isPersistent)
     {
       if (SUCCEEDED (SKIV_Image_SaveToDisk_SDR (*pImage, wsPNGPath.c_str(), false)))
+      {
         PLOG_VERBOSE << "SKIV_Image_SaveToDisk_SDR ( ): SUCCEEDED!";
-      else
+
+        if (capture_data._select)
+          SKIF_Util_FileExplorer_SelectFile (wsPNGPath.c_str());
+      } else
         PLOG_VERBOSE << "SKIF_Image_SaveToDisk_HDR ( ): FAILED";
     }
 
@@ -1620,7 +1694,7 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
   // For silly users who don't give us filenames...
   if (! wszExtension)
   {
-    PathAddExtension (wszImplicitFileName, defaultSDRFileExt.c_str ());
+    PathCchAddExtension (wszImplicitFileName, MAX_PATH, defaultSDRFileExt.c_str ());
     wszExtension =
       PathFindExtensionW (wszImplicitFileName);
   }
@@ -2592,7 +2666,7 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
   // For doofus users who don't give us filenames...
   if (! wszExtension)
   {
-    PathAddExtension (wszImplicitFileName, defaultHDRFileExt.c_str ());
+    PathCchAddExtension (wszImplicitFileName, MAX_PATH, defaultHDRFileExt.c_str ());
     wszExtension =
       PathFindExtensionW (wszImplicitFileName);
   }
@@ -3500,11 +3574,11 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
 }
 
 void
-SKIV_Image_CaptureRegion (SKIV_Region capture_area)
+SKIV_Image_CaptureRegion (SKIV_CaptureData capture_data)
 {
   HMONITOR hMonCaptured =
-    MonitorFromPoint ({ static_cast <long> (capture_area._rect.Min.x),
-                        static_cast <long> (capture_area._rect.Min.y) }, MONITOR_DEFAULTTONEAREST);
+    MonitorFromPoint ({ static_cast <long> (capture_data._rect.Min.x),
+                        static_cast <long> (capture_data._rect.Min.y) }, MONITOR_DEFAULTTONEAREST);
 
   MONITORINFO                    minfo = { .cbSize = sizeof (MONITORINFO) };
   GetMonitorInfo (hMonCaptured, &minfo);
@@ -3512,11 +3586,11 @@ SKIV_Image_CaptureRegion (SKIV_Region capture_area)
   // Fixes snipping rectangles on non-primary (origin != 0,0) displays
   auto _AdjustCaptureAreaRelativeToDisplayOrigin = [&](void)
   {
-    capture_area._rect.Min.x -= minfo.rcMonitor.left;
-    capture_area._rect.Max.x -= minfo.rcMonitor.left;
+    capture_data._rect.Min.x -= minfo.rcMonitor.left;
+    capture_data._rect.Max.x -= minfo.rcMonitor.left;
 
-    capture_area._rect.Min.y -= minfo.rcMonitor.top;
-    capture_area._rect.Max.y -= minfo.rcMonitor.top;
+    capture_data._rect.Min.y -= minfo.rcMonitor.top;
+    capture_data._rect.Max.y -= minfo.rcMonitor.top;
   };
 
   _AdjustCaptureAreaRelativeToDisplayOrigin ();
@@ -3529,34 +3603,34 @@ SKIV_Image_CaptureRegion (SKIV_Region capture_area)
                 width  =
       static_cast <float> (minfo.rcMonitor.bottom - minfo.rcMonitor.top);
 
-    std::swap (capture_area._rect.Min.x, capture_area._rect.Min.y);
-    std::swap (capture_area._rect.Max.x, capture_area._rect.Max.y);
+    std::swap (capture_data._rect.Min.x, capture_data._rect.Min.y);
+    std::swap (capture_data._rect.Max.x, capture_data._rect.Max.y);
 
     const float capture_height =
-      static_cast <float> (capture_area._rect.Max.y - capture_area._rect.Min.y),
+      static_cast <float> (capture_data._rect.Max.y - capture_data._rect.Min.y),
                 capture_width  =
-      static_cast <float> (capture_area._rect.Max.x - capture_area._rect.Min.x);
+      static_cast <float> (capture_data._rect.Max.x - capture_data._rect.Min.x);
 
     if (SKIV_DesktopImage._rotation == DXGI_MODE_ROTATION_ROTATE90)
     {
-      capture_area._rect.Min.y = height - capture_area._rect.Max.y;
-      capture_area._rect.Max.y = height - capture_area._rect.Max.y + capture_height;
+      capture_data._rect.Min.y = height - capture_data._rect.Max.y;
+      capture_data._rect.Max.y = height - capture_data._rect.Max.y + capture_height;
     }
 
     else
     {
       std::ignore = capture_width;
       std::ignore = width;
-      //capture_area.Min.x = width - capture_width;
-      //capture_area.Max.x = width;
+      //capture_data.Min.x = width - capture_width;
+      //capture_data.Max.x = width;
     }
   }
 
   const size_t
-    x      = static_cast <size_t> (std::max (0.0f, capture_area._rect.Min.x)),
-    y      = static_cast <size_t> (std::max (0.0f, capture_area._rect.Min.y)),
-    width  = static_cast <size_t> (std::max (0.0f, capture_area._rect.GetWidth  ())),
-    height = static_cast <size_t> (std::max (0.0f, capture_area._rect.GetHeight ()));
+    x      = static_cast <size_t> (std::max (0.0f, capture_data._rect.Min.x)),
+    y      = static_cast <size_t> (std::max (0.0f, capture_data._rect.Min.y)),
+    width  = static_cast <size_t> (std::max (0.0f, capture_data._rect.GetWidth  ())),
+    height = static_cast <size_t> (std::max (0.0f, capture_data._rect.GetHeight ()));
 
   const DirectX::Rect
     src_rect (x,y, width,height);
@@ -3615,13 +3689,13 @@ SKIV_Image_CaptureRegion (SKIV_Region capture_area)
             PLOG_VERBOSE << "DirectX::FlipRotate        ( ): FAILED";
         }
 
-        if (SKIV_Image_CopyToClipboard (final, SKIV_DesktopImage._hdr_image, false, capture_area._title.c_str()))
+        if (SKIV_Image_CopyToClipboard (final, SKIV_DesktopImage._hdr_image, capture_data))
         {
           PLOG_VERBOSE << "SKIV_Image_CopyToClipboard ( ): SUCCEEDED";
 
           ImGui::InsertNotification (
             {
-              ImGuiToastType::Info,
+              ImGuiToastType::Success,
               3000,
               "Copied image to clipboard", ""
             }
@@ -4056,4 +4130,598 @@ void sk_avif_add_icc_to_image (avifImage* img)
   SK_avifImageSetProfileICC ( img,
             RGB_D65_202_Rel_PeQ,
     sizeof (RGB_D65_202_Rel_PeQ) );
+}
+
+
+// Image Directory
+void
+skiv_image_directory_s::reset (void)
+{
+  PLOG_VERBOSE << "reset _current_folder!";
+
+  folder_path.clear();
+  fileList.clear();
+  watch.reset();
+}
+
+void
+skiv_image_directory_s::fl_s::setImage (const std::wstring& path)
+{
+  _it = _list.begin();
+
+  if (_list.empty())
+    return;
+
+  _it = std::find_if (_list.begin(), _list.end(), [&](const fd_s& file) { return file.path == path; });
+}
+
+std::wstring
+skiv_image_directory_s::fl_s::nextImage (void)
+{
+  if (_list.empty())
+    return L"";
+
+  static SKIF_RegistrySettings& _registry =
+         SKIF_RegistrySettings::GetInstance ();
+
+  if (_it == std::prev (_list.end()) || _it == _list.end())
+  {
+    if (_registry.bLoopImages)
+      _it = _list.begin();
+    else
+      return L"";
+  }
+  else
+    std::advance (_it,  1);
+
+  return _it->path;
+}
+
+std::wstring
+skiv_image_directory_s::fl_s::prevImage (void)
+{
+  if (_list.empty())
+    return L"";
+
+  static SKIF_RegistrySettings& _registry =
+         SKIF_RegistrySettings::GetInstance ();
+
+  if (_it == _list.begin())
+  {
+    if (_registry.bLoopImages)
+      _it = std::prev (_list.end());
+    else
+      return L"";
+  }
+  else
+    std::advance (_it, -1);
+
+  return _it->path;
+}
+
+std::wstring
+skiv_image_directory_s::fl_s::deleteImage (void)
+{
+  if (_list.empty())
+    return L"";
+
+  static SKIF_RegistrySettings& _registry =
+         SKIF_RegistrySettings::GetInstance ();
+
+  fileDeleted = true;
+
+  // .erase() returns the iterator following the last removed element.
+  // 1) If pos refers to the last element, then the end() iterator is returned.
+  _it = _list.erase (_it);
+
+  if (_it == _list.end())
+  {
+    if (_registry.bLoopImages)
+      _it = _list.begin();
+    else
+      _it = std::prev (_list.end());
+  }
+
+  PLOG_DEBUG << "Deleted file. New path: " << _it->path;
+
+  return _it->path;
+}
+
+// Find the position of the image in the current folder
+void
+skiv_image_directory_s::fl_s::updateFileIterator (const std::wstring& path)
+{
+  // If the file was removed from File Explorer, reset to first item
+  // TODO: Fix proper file tracking so we can detect removed files and just go to one of the nearby ones
+  _it = std::find_if (_list.begin(), _list.end(), [&](const fd_s& file) { return file.path == path; });
+
+  if (_it == _list.end())
+    _it = _list.begin();
+}
+
+int
+skiv_image_directory_s::workerThread (bool runThread)
+{
+  struct worker_thread_s {
+    bool                    _changed = false;
+    std::wstring            _path;
+    std::vector<fd_s>       _fileList;
+    std::vector<SORTCOLUMN> _sortColumns;
+    HANDLE        hWorker    = NULL;
+    unsigned int  sWorker    = 0;
+  };
+
+  static worker_thread_s* pthread_data = nullptr;
+  static std::wstring pending;
+
+  // Only run one worker at once
+  if (runThread || ! pending.empty())
+  {
+    // Add new stuff to the pending cache.
+    pending = folder_path;
+
+    if (pthread_data == nullptr)
+    {
+      pthread_data = new worker_thread_s;
+
+      // Swap over the pending path, with copies of our existing data...
+      pthread_data->_path        = pending;
+      pthread_data->_fileList    = fileList.getList();
+      pthread_data->_sortColumns = sortColumns;
+
+      HANDLE hWorkerThread = (HANDLE)
+      _beginthreadex (nullptr, 0x0, [](void* _input) -> unsigned
+      {
+        SKIF_Util_SetThreadDescription (GetCurrentThread (), L"SKIV_FolderWorker");
+
+        // Is this combo really appropriate for this thread?
+        //SKIF_Util_SetThreadPowerThrottling (GetCurrentThread (), 1); // Enable EcoQoS for this thread
+        //SetThreadPriority (GetCurrentThread (), THREAD_MODE_BACKGROUND_BEGIN);
+
+        PLOG_VERBOSE << "SKIV_FolderWorker thread started!";
+      
+        DWORD start = SKIF_Util_timeGetTime1();
+
+        worker_thread_s* _data = static_cast<worker_thread_s*>(_input);
+
+        _data->_changed = updateFolderData (_data->_fileList, _data->_sortColumns, _data->_path);
+
+        PLOG_VERBOSE << "Thread [SKIF_LibraryWorker] took " << (SKIF_Util_timeGetTime1() - start) << " ms to complete!";
+
+        PLOG_VERBOSE << "SKIF_LibraryWorker thread stopped!";
+
+        //SetThreadPriority (GetCurrentThread (), THREAD_MODE_BACKGROUND_END);
+
+        return 0;
+      }, pthread_data, 0x0, nullptr);
+
+      bool threadCreated = (hWorkerThread != NULL);
+
+      if (threadCreated)
+      {
+        pthread_data->hWorker = hWorkerThread;
+        pthread_data->sWorker = 1;
+      }
+      else // Someting went wrong during thread creation, so free up the memory we allocated earlier
+      {
+        delete pthread_data;
+        pthread_data = nullptr;
+      }
+    }
+  }
+
+  // Only check our work if processNewWork is unset
+  if (! runThread && pthread_data != nullptr && pthread_data->sWorker == 1 && WaitForSingleObject (pthread_data->hWorker, 0) == WAIT_OBJECT_0)
+  {
+    int state = 1;
+
+    // Only swap in the data if it is fresh
+    if (pending == pthread_data->_path)
+    {
+      if (pthread_data->_changed)
+      {
+        state       = 2;
+        fileList.setList(pthread_data->_fileList);
+        sortColumns = pthread_data->_sortColumns;
+
+        PLOG_VERBOSE << "Swapped in the new folder data!";
+      }
+
+      pending.clear();
+    }
+
+    CloseHandle (pthread_data->hWorker);
+    pthread_data->hWorker = NULL;
+    pthread_data->sWorker = 2;
+    pthread_data->_path.clear();
+    pthread_data->_fileList.clear();
+
+    delete pthread_data;
+    pthread_data = nullptr;
+
+    return state;
+  }
+
+  return 0;
+}
+
+// Retrieve all files in the folder, and identify our current place among them...
+bool
+skiv_image_directory_s::updateFolderData (std::vector<fd_s>& list, std::vector<SORTCOLUMN>& sortColumns, const std::wstring& path)
+{
+  HANDLE        hFind = INVALID_HANDLE_VALUE;
+  WIN32_FIND_DATA ffd = { };
+  
+  std::vector<fd_s> newList;
+  std::vector<fd_s> oldList = list;
+  list.clear();
+
+  PLOG_DEBUG << "Discovering ... " << (path + LR"(\*.*)");
+
+  DWORD temp_time = SKIF_Util_timeGetTime1();
+
+  // This excludes the . and .. items
+  auto _isValid = [](const wchar_t* str) -> bool
+  { return (! ((str[0] == '.') && ((str[1] == '\0') || (str[1] == '.' && str[2] == '\0')))); };
+
+  hFind =
+    FindFirstFileExW ((path + LR"(\*.*)").c_str(), FindExInfoBasic, &ffd, FindExSearchNameMatch, NULL, FIND_FIRST_EX_LARGE_FETCH);
+
+  if (INVALID_HANDLE_VALUE != hFind)
+  {
+    if (_isValid (ffd.cFileName))
+      newList.push_back ({ ffd.cFileName, path + LR"(\)" + ffd.cFileName, ffd });
+
+    while (FindNextFile (hFind, &ffd))
+      if (_isValid (ffd.cFileName))
+        newList.push_back ({ ffd.cFileName, path + LR"(\)" + ffd.cFileName, ffd });
+
+    FindClose (hFind);
+  }
+
+  PLOG_VERBOSE << "Operation [FindFirstFileExW/FindNextFile] took " << (SKIF_Util_timeGetTime1() - temp_time) << " ms.";
+
+  if (! newList.empty())
+  {
+    extern bool isExtensionSupported (const std::wstring extension);
+
+    // Filter out unsupported file formats using their file extension
+    for (auto& file : newList)
+      if (isExtensionSupported (std::filesystem::path(file.filename).extension().wstring()))
+        list.push_back (file);
+  }
+
+  bool  changed = (list.size() != oldList.size());
+  if (! changed)
+  {
+    // Normalize sort order (A-Z)
+    sortByFilename (oldList);
+    sortByFilename (list);
+
+    // Have an item changed?
+    for (size_t i = 0; i < list.size(); i++)
+    {
+      if (list[i].path != oldList[i].path)
+      {
+        changed = true;
+        break;
+      }
+    }
+  }
+
+  // Update sort order (SortColumns)
+  if (changed)
+  {
+    PLOG_DEBUG << "Found " << list.size() << " supported images in the folder.";
+    updateSortOrder (list, sortColumns, path);
+  }
+
+  return changed;
+}
+
+
+#pragma comment(lib, "Propsys.lib")
+
+#include <propsys.h>
+#include <propkey.h>
+#include <propvarutil.h>
+
+static std::wstring
+PropertyKeyToString (const PROPERTYKEY& key)
+{
+  PWSTR pszName = nullptr;
+
+  if (SUCCEEDED(PSGetNameFromPropertyKey(key, &pszName)))
+  {
+    std::wstring result(pszName);
+    CoTaskMemFree(pszName);
+    return result;
+  }
+
+  return L"(unknown)";
+}
+
+static bool
+GetPropertyValue (const std::wstring&  path,
+                  const PROPERTYKEY&   key,
+                        PROPVARIANT*  pVar)
+{
+  CComPtr<IPropertyStore> spStore;
+
+  HRESULT hr = SHGetPropertyStoreFromParsingName(
+      path.c_str(),
+      NULL,
+      GPS_FASTPROPERTIESONLY, // GPS_FASTPROPERTIESONLY / GPS_DEFAULT
+      IID_PPV_ARGS (&spStore));
+
+  if (FAILED(hr))
+  {
+    _com_error err(hr);
+    PLOG_ERROR << "Failed with path: " << path << ", error: " << SK_WideCharToUTF8(err.ErrorMessage());
+    return false;
+  }
+
+  return SUCCEEDED(spStore->GetValue(key, pVar));
+}
+
+static int
+ComparePropVariants (const PROPVARIANT& a, const PROPVARIANT& b)
+{
+  return PropVariantCompare(a, b);
+}
+
+static bool
+GetFolderSortColumns (std::vector<SORTCOLUMN>& sortColumns, const std::wstring& path)
+{
+  sortColumns.clear();
+
+  CComPtr<IShellWindows> spWindows;
+  if (FAILED (spWindows.CoCreateInstance (CLSID_ShellWindows)))
+    return false;
+
+  long count = 0;
+  spWindows->get_Count (&count);
+
+  struct c_s {
+    HWND                    hWnd = NULL;
+    std::vector<SORTCOLUMN> sortColumns;
+  };
+
+  std::vector<c_s> candidates;
+
+  for (long i = 0; i < count; ++i)
+  {
+    CComVariant vtIndex(i);
+    CComPtr<IDispatch> spDisp;
+
+    if (FAILED (spWindows->Item (vtIndex, &spDisp)) || !spDisp)
+      continue;
+
+    CComPtr<IWebBrowserApp> spBrowser;
+    if (FAILED (spDisp->QueryInterface (IID_PPV_ARGS(&spBrowser))))
+      continue;
+
+    // Get location URL (file:///C:/...)
+    BSTR bstrURL;
+    if (FAILED (spBrowser->get_LocationURL (&bstrURL)))
+      continue;
+
+    std::wstring url(bstrURL, SysStringLen (bstrURL));
+    SysFreeString   (bstrURL);
+
+    // Convert URL → path
+    wchar_t wszPath[MAX_PATH];
+    DWORD size = MAX_PATH;
+    if (FAILED (PathCreateFromUrlW (url.c_str(), wszPath, &size, 0)))
+      continue;
+
+    // Compare with target path
+    if (_wcsicmp (wszPath, path.c_str()) != 0)
+      continue;
+
+    // Found matching Explorer window
+    CComPtr<IServiceProvider> spSP;
+    if (FAILED (spBrowser->QueryInterface (IID_PPV_ARGS(&spSP))))
+      continue;
+
+    CComPtr<IShellBrowser> spShellBrowser;
+    if (FAILED (spSP->QueryService (SID_STopLevelBrowser, IID_PPV_ARGS(&spShellBrowser))))
+      continue;
+
+    CComPtr<IShellView> spView;
+    if (FAILED (spShellBrowser->QueryActiveShellView (&spView)))
+      continue;
+
+    CComPtr<IFolderView2> spFV2;
+    if (FAILED (spView->QueryInterface (IID_PPV_ARGS(&spFV2))))
+      continue;
+
+    // We have a candidate
+    c_s item;
+
+    // Retrieve the window HWND
+    spBrowser->get_HWND ((SHANDLE_PTR*)& item.hWnd);
+
+    // Get sort columns
+    int sortColumnCount = 0;
+    if (SUCCEEDED (spFV2->GetSortColumnCount (&sortColumnCount)))
+    {
+      item.sortColumns = std::vector<SORTCOLUMN> (sortColumnCount);
+
+      if (SUCCEEDED (spFV2->GetSortColumns (item.sortColumns.data(), sortColumnCount)))
+      {
+        for (int col = 0; col < sortColumnCount; ++col)
+        {
+          PROPERTYKEY key         = item.sortColumns[col].propkey;
+          SORTDIRECTION direction = item.sortColumns[col].direction;
+
+          PLOG_VERBOSE << "Column " << col << " [" << PropertyKeyToString(key) << "], direction: " << (direction == SORT_ASCENDING ? "ASC" : "DESC");
+        }
+
+        candidates.push_back (std::move (item));
+      }
+    }
+  }
+
+  if (! candidates.empty())
+  {
+    // Walk downard through the Z-order
+    for (HWND wnd = GetWindow (candidates[0].hWnd, GW_HWNDFIRST); wnd != NULL; wnd = GetNextWindow (wnd, GW_HWNDNEXT))
+    {
+      auto it = std::find_if (candidates.begin(), candidates.end(), [&](const c_s& c) { return c.hWnd == wnd; } );
+
+      if (it == candidates.end())
+        continue;
+
+      sortColumns = it->sortColumns;
+
+      //PLOG_VERBOSE << "Found sort columns!";
+
+      /*
+      for (int col = 0; col < sortColumns.size(); ++col)
+      {
+        PROPERTYKEY key         = sortColumns[col].propkey;
+        SORTDIRECTION direction = sortColumns[col].direction;
+
+        PLOG_VERBOSE << "Column " << col << " [" << PropertyKeyToString(key) << "], direction: " << (direction == SORT_ASCENDING ? "ASC" : "DESC");
+      }
+      */
+
+      return true;
+    }
+  }
+
+  return false;
+}
+
+void
+skiv_image_directory_s::updateSortOrder (std::vector<fd_s>& list, std::vector<SORTCOLUMN>& sortColumns, const std::wstring& path)
+{
+  if (GetFolderSortColumns  (sortColumns, path))
+       sortByColumns  (list, sortColumns);
+  else sortByFilename (list);
+}
+
+void
+skiv_image_directory_s::sortByFilename (std::vector<fd_s>& list)
+{
+  std::sort (list.begin(),
+             list.end  (), 
+    []( const fd_s& a,
+        const fd_s& b ) -> int
+    {
+      return StrCmpLogicalW (a.filename.c_str(), b.filename.c_str()) < 0;
+    }
+  );
+}
+
+void
+skiv_image_directory_s::sortByColumns (std::vector<fd_s>& list, const std::vector<SORTCOLUMN>& sortColumns)
+{
+  if (sortColumns.empty())
+    return sortByFilename (list);
+
+  struct cf_s
+  {
+    fd_s                     file;
+    std::vector<PROPVARIANT> values;
+  };
+  std::vector<cf_s> cache;
+
+  DWORD temp_time         = SKIF_Util_timeGetTime1();
+  DWORD sum_time_parsing  = 0;
+  DWORD sum_time_getvalue = 0;
+
+  // Cache the properties of all files
+  CComPtr<IBindCtx>            bindCtx;
+  CComPtr<IPropertyStore>      spStore;
+  CComPtr<IFileSystemBindData> spFSBD = new FileSystemBindData();
+
+  HRESULT hr = CreateBindCtx (0, &bindCtx);
+
+  if (FAILED (hr))
+  {
+    _com_error err(hr);
+    PLOG_ERROR << "Operation [CreateBindCtx] failed with error: " << SK_WideCharToUTF8 (err.ErrorMessage());
+    return sortByFilename (list);
+  }
+
+  for (const auto& file : list)
+  {
+    cf_s item;
+    item.file = file;
+    item.values.resize (sortColumns.size());
+
+    DWORD tmp = SKIF_Util_timeGetTime1();
+
+    spFSBD->SetFindData(&file.ffd); // Always returns S_OK claims the docs
+    hr = bindCtx->RegisterObjectParam (STR_FILE_SYS_BIND_DATA, spFSBD);
+
+    if (FAILED (hr))
+    {
+      _com_error err(hr);
+      PLOG_ERROR << "Operation [RegisterObjectParam] failed with error: " << SK_WideCharToUTF8 (err.ErrorMessage());
+    }
+
+    // Using GPS_FASTPROPERTIESONLY speeds up the performance here a lot... but it also means that all sort methods will not be supported.
+    // For example, "System.ItemDate" (sort by Date) will not work and will instead mirror "System.ItemModified" (Date Modified)
+    hr = SHGetPropertyStoreFromParsingName (file.path.c_str(), bindCtx, GPS_FASTPROPERTIESONLY | GPS_BESTEFFORT | GPS_NO_OPLOCK, IID_PPV_ARGS(&spStore));
+    sum_time_parsing += (SKIF_Util_timeGetTime1() - tmp);
+
+    if (FAILED (hr))
+    {
+      _com_error err(hr);
+      PLOG_ERROR << "Failed to retrieve properties for path: " << file.path;
+      PLOG_ERROR << "Error: " << SK_WideCharToUTF8 (err.ErrorMessage());
+      continue;
+    }
+
+    for (size_t i = 0; i < sortColumns.size(); ++i)
+    {
+      PropVariantInit (&item.values[i]);
+      DWORD tmp2 = SKIF_Util_timeGetTime1();
+      spStore->GetValue (sortColumns[i].propkey, &item.values[i]);
+      sum_time_getvalue += (SKIF_Util_timeGetTime1() - tmp2);
+    }
+
+    cache.push_back (std::move(item));
+  }
+
+  PLOG_VERBOSE << "Operation [SHGetPropertyStoreFromParsingName] took " << sum_time_parsing << " ms.";
+  PLOG_VERBOSE << "Operation [IPropertyStore::GetValue] took " << sum_time_getvalue << " ms.";
+
+  temp_time = SKIF_Util_timeGetTime1();
+
+  std::sort (cache.begin(), cache.end(),
+    [&](const cf_s& a, const cf_s& b)
+    {
+      for (size_t i = 0; i < sortColumns.size(); ++i)
+      {
+        int cmp = PropVariantCompare(a.values[i], b.values[i]);
+
+        if (cmp != 0)
+        {
+          if (sortColumns[i].direction == SORT_DESCENDING)
+            cmp = -cmp;
+
+          return cmp < 0;
+        }
+      }
+      return false;
+    }
+  );
+
+  PLOG_VERBOSE << "Operation [SortItems] took " << (SKIF_Util_timeGetTime1() - temp_time) << " ms.";
+
+  list.clear();
+
+  for (auto& item : cache)
+  {
+    list.push_back (item.file);
+
+    for (auto& v : item.values)
+      PropVariantClear (&v);
+  }
+
+  PLOG_VERBOSE << "Operation took ~" << (sum_time_parsing + sum_time_getvalue) << " ms.";
 }
