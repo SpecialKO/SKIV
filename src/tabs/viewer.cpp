@@ -1606,10 +1606,10 @@ LoadLibraryTexture (image_s& image)
 
 #if _WIN64
       avif_decoder->maxThreads =
-        std::min(64U, std::min((UINT)si.dwNumberOfProcessors, (UINT)__popcnt64(si.dwActiveProcessorMask)));
+        std::min (64U, std::min ((UINT)si.dwNumberOfProcessors, (UINT)__popcnt64 (si.dwActiveProcessorMask)));
 #else
       avif_decoder->maxThreads =
-        std::min(32U, std::min((UINT)si.dwNumberOfProcessors, (UINT)__popcnt(si.dwActiveProcessorMask)));
+        std::min (32U, std::min ((UINT)si.dwNumberOfProcessors, (UINT)__popcnt   (si.dwActiveProcessorMask)));
 #endif
 
       fseek  (pImageFile,                                 0, SEEK_SET  );
@@ -1640,9 +1640,9 @@ LoadLibraryTexture (image_s& image)
         rgb.depth       = is_hdr_image ? 16 : 8;
         rgb.format      = is_hdr_image ? AVIF_RGB_FORMAT_RGBA : AVIF_RGB_FORMAT_BGRA;
 #if _WIN64
-        rgb.maxThreads = std::min(64U, std::min((UINT)si.dwNumberOfProcessors, (UINT)__popcnt64(si.dwActiveProcessorMask)));
+        rgb.maxThreads  = std::min (64U, std::min ((UINT)si.dwNumberOfProcessors, (UINT)__popcnt64 (si.dwActiveProcessorMask)));
 #else
-        rgb.maxThreads = std::min(32U, std::min((UINT)si.dwNumberOfProcessors, (UINT)__popcnt(si.dwActiveProcessorMask)));
+        rgb.maxThreads  = std::min (32U, std::min ((UINT)si.dwNumberOfProcessors, (UINT)__popcnt   (si.dwActiveProcessorMask)));
 #endif
         rgb.ignoreAlpha = true;
         rgb.isFloat     = is_hdr_image ? true : false;
