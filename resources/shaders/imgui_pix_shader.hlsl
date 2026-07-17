@@ -138,7 +138,7 @@ float4 main (PS_INPUT input) : SV_Target
   // Other way around for everything else, we do not want a texture's alpha
   else
   {
-    out_col.a = 1.0f;
+    //out_col.a = 1.0f;
   }
 
   float4 orig_col = out_col;
