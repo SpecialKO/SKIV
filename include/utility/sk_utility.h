@@ -806,15 +806,16 @@ private:
 // Wrapper to handle various states of the keybinding
 struct SK_KeybindMultiState
 {
-  const char*  bind_name = nullptr;
+//const char*  bind_name = nullptr;
+  std::string  bind_name = ""; // Needed as otherwise this is limited to solely static objects
   bool         assigning = false,
                state     = false;
   SK_Keybind   default, pending, saved;
 
   // This empty object is used during assignment to disable hotkeys temporarily
   static constexpr SK_Keybind disabled = { };
-
-  SK_KeybindMultiState (const char* _n, std::wstring _h) {
+  
+  SK_KeybindMultiState (std::string _n, std::wstring _h) {
     bind_name                   = _n;
     default.human_readable      = _h;
     default.human_readable_utf8 = SK_WideCharToUTF8 (default.human_readable);

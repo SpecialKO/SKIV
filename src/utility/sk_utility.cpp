@@ -779,7 +779,7 @@ SK_ImGui_KeybindDialog (SK_KeybindMultiState* keybind)
 
   const  float font_size = ImGui::GetFont ()->FontSize * io.FontGlobalScale;
 
-  if (ImGui::IsPopupOpen (keybind->bind_name))
+  if (ImGui::IsPopupOpen (keybind->bind_name.c_str()))
   {
     ImGui::SetNextWindowSizeConstraints ( ImVec2 (font_size *  9.0f, font_size * 3.0f),
                                           ImVec2 (font_size * 30.0f, font_size * 6.0f) );
@@ -793,7 +793,7 @@ SK_ImGui_KeybindDialog (SK_KeybindMultiState* keybind)
     g_activeKeybindPopup = true;
   }
 
-  if (ImGui::BeginPopupModal (keybind->bind_name, nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove     | ImGuiWindowFlags_Tooltip | // ImGuiWindowFlags_Tooltip is required to work around a pesky z-order issue on first appearance
+  if (ImGui::BeginPopupModal (keybind->bind_name.c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove     | ImGuiWindowFlags_Tooltip | // ImGuiWindowFlags_Tooltip is required to work around a pesky z-order issue on first appearance
                                                            ImGuiWindowFlags_NoCollapse       | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings))
   {
 		// Render over all other windows
@@ -911,10 +911,10 @@ SK_ImGui_Keybinding (SK_KeybindMultiState* binding)
   if (! binding)
     return false;
 
-  ImGui::PushID              (binding->bind_name);
+  ImGui::PushID              (binding->bind_name.c_str());
 
   if (SK_ImGui_KeybindSelect (&binding->saved))
-    ImGui::OpenPopup         (binding->bind_name);
+    ImGui::OpenPopup         (binding->bind_name.c_str());
 
   bool results =
     SK_ImGui_KeybindDialog   (binding);

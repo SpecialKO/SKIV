@@ -845,7 +845,7 @@ SKIF_UI_Tab_DrawSettings (void)
         continue;
 
       ImGui::Text          ( "%s:  ",
-                            keybind->_key->bind_name );
+                            keybind->_key->bind_name.c_str() );
       ImGui::Spacing ();
     }
     ImGui::EndGroup   ();
