@@ -922,13 +922,13 @@ SKIV_PNG_MakeHDR ( const wchar_t*        wszFilePath,
         static_cast <uint32_t> (round (active_display.gamut.Yw / 0.00002)));
 #endif
 
-      SK_PNG_Chunk clli_chunk = { sizeof (clli_data),               { 'c','L','L','i' }, &clli_data };
+      SK_PNG_Chunk clli_chunk = { sizeof (clli_data),               { 'c','L','L','I' }, &clli_data };
       SK_PNG_Chunk iccp_chunk = { sizeof (SK_PNG_HDR_iCCP_Payload), { 'i','C','C','P' }, &iccp_data };
       SK_PNG_Chunk cicp_chunk = { sizeof (cicp_data),               { 'c','I','C','P' }, &cicp_data };
       SK_PNG_Chunk sbit_chunk = { sizeof (sbit_data),               { 's','B','I','T' }, &sbit_data };
       SK_PNG_Chunk chrm_chunk = { sizeof (chrm_data),               { 'c','H','R','M' }, &chrm_data };
 #if 0
-      SK_PNG_Chunk mdcv_chunk = { sizeof (mdcv_data),               { 'm','D','C','v' }, &mdcv_data };
+      SK_PNG_Chunk mdcv_chunk = { sizeof (mdcv_data),               { 'm','D','C','V' }, &mdcv_data };
 #endif
 
       iccp_chunk.write (fPNG);
