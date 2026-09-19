@@ -69,9 +69,6 @@ enum CaptureMode_ {
     CaptureMode_Window | CaptureMode_Region | CaptureMode_Screen
 };
 
-// Workaround for SKIF_ImGui_IsAnyPopupOpen() not detecting keybind popups
-extern bool g_activeKeybindPopup;
-
 struct FileSignature {
   std::wstring               mime_type       = L"";
   std::vector <std::wstring> file_extensions = { };

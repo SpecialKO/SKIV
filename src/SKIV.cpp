@@ -119,8 +119,6 @@ HANDLE SteamProcessHandle       = NULL;
 extern "C" __declspec (dllexport)
 DWORD RTSSHooksCompatibility = 0x0;
 
-extern bool SK_Keybind_g_isAssigning;
-
 // Shell messages (registered window messages)
 UINT SHELL_TASKBAR_RESTART        = 0; // TaskbarCreated
 UINT SHELL_TASKBAR_BUTTON_CREATED = 0; // TaskbarButtonCreated
@@ -2105,7 +2103,6 @@ wWinMain ( _In_     HINSTANCE hInstance,
       }
 
       allowShortcutCtrlA = true;
-      SK_Keybind_g_isAssigning = false;
 
 
 

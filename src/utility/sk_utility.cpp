@@ -361,7 +361,7 @@ SK_RemoveTrailingDecimalZeros (char* szNum, size_t bufLen)
 
 using wstring_hash = size_t;
 
-bool SK_Keybind_g_isAssigning = false;
+bool g_activeKeybindPopup = false;
 std::unordered_map <wstring_hash, BYTE> humanKeyNameToVirtKeyCode;
 std::unordered_map <BYTE, wchar_t [32]> virtKeyCodeToHumanKeyName;
 std::unordered_map <BYTE, wchar_t [32]> virtKeyCodeToFullyLocalizedKeyName;
@@ -801,7 +801,6 @@ SK_ImGui_KeybindDialog (SK_KeybindMultiState* keybind)
 
     // Indicate that we are assigning (this disables the keybinding while the popup is opened)
     keybind->assigning = true;
-    SK_Keybind_g_isAssigning = true;
 
     int  vKey = 256;
 

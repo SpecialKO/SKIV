@@ -781,6 +781,9 @@ SK_make_unique_nothrow (Args && ... args) noexcept
 
 // Keybindings
 
+// Workaround for SKIF_ImGui_IsAnyPopupOpen() not detecting keybind popups
+extern bool g_activeKeybindPopup;
+
 // Core keybind structure for a single instance of a keybind
 struct SK_Keybind {
   std::wstring human_readable      =   L"";
