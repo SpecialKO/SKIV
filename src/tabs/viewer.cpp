@@ -1448,6 +1448,45 @@ LoadLibraryTexture (image_s& image)
       image.channels =
         DirectX::HasAlpha          (meta.format) ? 4 : 3; // 2 and 1 channel images are unsupported for now
 
+      if (image.bpc >= 16 &&
+          meta.format == DXGI_FORMAT_R16G16B16A16_UNORM)
+      {
+        image.is_hdr = true;
+        image.light_info.isHDR = true;
+
+        DirectX::ScratchImage temp_img2 = { };
+
+        PLOG_INFO << "HDR image detected";
+        // PNG will be loaded as UNORM, we need to convert to float...
+        if (SUCCEEDED(DirectX::Convert(*img.GetImages(), DXGI_FORMAT_R16G16B16A16_FLOAT, DirectX::TEX_FILTER_DEFAULT, 0.0f, temp_img2)))
+          if (SUCCEEDED(img.InitializeFromImage(*temp_img2.GetImage(0, 0, 0))))
+          {
+            using namespace DirectX;
+            TransformImage(temp_img2.GetImages(),
+              temp_img2.GetImageCount(),
+              temp_img2.GetMetadata(),
+              [&](XMVECTOR* outPixels, const XMVECTOR* inPixels, size_t width, size_t y)
+              {
+                UNREFERENCED_PARAMETER(y);
+
+                for (size_t j = 0; j < width; ++j)
+                {
+                  XMVECTOR v = inPixels[j];
+
+                  v =
+                    XMVector3Transform(SKIV_Image_PQToLinear(v), c_Bt2100toscRGB);
+
+                  outPixels[j] = v;
+                }
+
+              }, img);
+
+            meta.format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+            converted = true;
+            succeeded = true;
+            need_srgb = false;
+          }
+      }
 
       if (image.is_hdr && (image_sig->mime_type == L"image/vnd.ms-photo" ||
                            image_sig->mime_type == L"image/avif"))
