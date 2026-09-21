@@ -361,6 +361,20 @@ SKIF_UI_Tab_DrawSettings (void)
     if ( ImGui::Checkbox ( "Loop images", &_registry.bLoopImages ) )
       _registry.regKVLoopImages.putData   (_registry.bLoopImages);
 
+    ImGui::SameLine ();
+
+    ImGui::Checkbox ("Transparency", &_registry.bAlpha);
+    {
+      _registry.regKVAlpha.putData   (_registry.bAlpha);
+    }
+
+    ImGui::SameLine ();
+
+    ImGui::Checkbox ("Checkerboard pattern", &_registry.bCheckerboard);
+    {
+      _registry.regKVCheckerboard.putData    (_registry.bCheckerboard);
+    }
+
     ImGui::Spacing         ( );
 
     ImGui::TextColored     (ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info), ICON_FA_LIGHTBULB);

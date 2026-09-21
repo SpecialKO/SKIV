@@ -734,6 +734,8 @@ SKIV_HDR_ConvertImageToPNG (const DirectX::Image& raw_hdr_img, DirectX::ScratchI
         XMVECTOR v =
           *pixels++;
 
+        float originalAlpha = std::clamp(DirectX::XMVectorGetW(v), 0.0f, 1.0f);
+
         // Assume scRGB for any FP32 input, though uncommon
         if (typeless_fmt == DXGI_FORMAT_R16G16B16A16_TYPELESS ||
             typeless_fmt == DXGI_FORMAT_R32G32B32A32_TYPELESS)
@@ -753,7 +755,8 @@ SKIV_HDR_ConvertImageToPNG (const DirectX::Image& raw_hdr_img, DirectX::ScratchI
           static_cast <uint16_t> (DirectX::XMVectorGetY (v)) << (intermediate_bits - output_bits);
         *(rgb16_pixels++) =
           static_cast <uint16_t> (DirectX::XMVectorGetZ (v)) << (intermediate_bits - output_bits);
-          rgb16_pixels++; // We have an unused alpha channel that needs skipping
+        *(rgb16_pixels++) =
+          static_cast <uint16_t> (std::round            (originalAlpha * 65535.0f));
       }
     });
   }
@@ -987,7 +990,7 @@ SK_WIC_SetMaximumQuality (IPropertyBag2 *props)
 static bool
 SKIV_HDR_SavePNGToDisk (const wchar_t* wszPNGPath, const DirectX::Image* png_image,
                                                    const DirectX::Image* raw_image,
-                           const char* szUtf8MetadataTitle, bool isHDR)
+                           const char* szUtf8MetadataTitle, bool isHDR, bool hasAlpha)
 {
   if ( wszPNGPath == nullptr ||
         png_image == nullptr ||
@@ -1007,7 +1010,8 @@ SKIV_HDR_SavePNGToDisk (const wchar_t* wszPNGPath, const DirectX::Image* png_ima
   if (SUCCEEDED (
     DirectX::SaveToWICFile (*png_image, DirectX::WIC_FLAGS_NONE,
                            GetWICCodec (DirectX::WIC_CODEC_PNG),
-                               wszPNGPath, &GUID_WICPixelFormat48bppRGB,
+                               wszPNGPath, hasAlpha ? &GUID_WICPixelFormat64bppRGBA :
+                                                      &GUID_WICPixelFormat48bppRGB,
                                               SK_WIC_SetMaximumQuality/*,
                                             [&](IWICMetadataQueryWriter *pMQW)
                                             {
@@ -1727,6 +1731,7 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
 
   bool bPrefer10bpcAs48bpp = false;
   bool bPrefer10bpcAs32bpp = false;
+  bool bPrefer32bppAlpha   = false;
 
   GUID      wic_codec;
   WIC_FLAGS wic_flags = WIC_FLAGS_DITHER_DIFFUSION | (force_sRGB ? WIC_FLAGS_FORCE_SRGB : WIC_FLAGS_NONE);
@@ -1771,6 +1776,9 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
   {
     wic_codec           = GetWICCodec (WIC_CODEC_PNG);
     //bPrefer10bpcAs48bpp = is_hdr;
+
+    //placing IsAlphaAllOpaque here to not slow down image load
+    bPrefer32bppAlpha = !scratch_image.IsAlphaAllOpaque();
 
     wic_flags |= WIC_FLAGS_FORCE_SRGB;
     wic_flags |= WIC_FLAGS_DEFAULT_SRGB;
@@ -1830,6 +1838,7 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
     wic_codec           = GetWICCodec (WIC_CODEC_TIFF);
     bPrefer10bpcAs48bpp = false; // ?
     bPrefer10bpcAs32bpp = false; // ?
+    bPrefer32bppAlpha = !scratch_image.IsAlphaAllOpaque();
 
     if (DirectX::BitsPerColor (image.format) == 10 ||
         DirectX::BitsPerColor (image.format) == 16)
@@ -1864,8 +1873,19 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
   else if (StrStrIW (wszExtension, L"hdp") ||
            StrStrIW (wszExtension, L"jxr"))
   {
-    wic_codec           = GetWICCodec (WIC_CODEC_WMP);
-    bPrefer10bpcAs32bpp = is_hdr;
+    wic_codec         = GetWICCodec (WIC_CODEC_WMP);
+    bPrefer32bppAlpha = !scratch_image.IsAlphaAllOpaque();
+    //jxr as format support alpha
+    //we will try to handle that
+    if (bPrefer32bppAlpha) {
+      bPrefer10bpcAs32bpp = false; //10 bit formats are bad for alpha
+
+      //dither flag causing jxr alpha to dissappear
+      //this doesn't happen to other wic codecs, only to jxr
+      wic_flags &= ~WIC_FLAGS_DITHER_DIFFUSION;
+    }
+    else
+      bPrefer10bpcAs32bpp = is_hdr;
   }
 
   else if (StrStrIW(wszExtension, L"avif")) {
@@ -2012,6 +2032,8 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
         {
           XMVECTOR value = inPixels [j];
 
+          float originalW = XMVectorGetW(value);
+
           if (needs_tonemapping)
           {
           XMVECTOR ICtCp =
@@ -2053,6 +2075,8 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
           maxTonemappedRGB =
             XMVectorMax (maxTonemappedRGB, XMVectorMax (value, g_XMZero));
           }
+
+          value = XMVectorSetW(value, originalW);
 
           if (bPrefer10bpcAs48bpp || bPrefer10bpcAs32bpp)
                outPixels [j] = XMVectorSaturate (value);
@@ -2114,6 +2138,7 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
 
     if (FAILED (DirectX::Convert (*tonemapped_hdr.GetImages (), bPrefer10bpcAs48bpp ? DXGI_FORMAT_R16G16B16A16_UNORM :
                                                                 bPrefer10bpcAs32bpp ? DXGI_FORMAT_R10G10B10A2_UNORM  :
+                                                                bPrefer32bppAlpha   ? DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
                                                                                       DXGI_FORMAT_B8G8R8X8_UNORM_SRGB,
                                   (TEX_FILTER_FLAGS)0x200000FF, 1.0f, final_sdr)))
     {
@@ -2158,9 +2183,9 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
       avif_image->yuvRange = AVIF_RANGE_FULL;
 
       SK_avifRGBImageSetDefaults(&rgb, avif_image);
-      rgb.rowBytes = pOutputImage->rowPitch;
+      rgb.rowBytes = static_cast<uint32_t>(pOutputImage->rowPitch);
       rgb.depth = 8;
-      rgb.ignoreAlpha = false;
+      rgb.ignoreAlpha = scratch_image.IsAlphaAllOpaque();
 
       //maybe there's a better way to handle format
       if (image.format == DXGI_FORMAT_R8G8B8A8_UNORM ||
@@ -2231,6 +2256,7 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
     DirectX::SaveToWICFile (*pOutputImage, wic_flags, wic_codec,
                       wszImplicitFileName, bPrefer10bpcAs48bpp ? &GUID_WICPixelFormat48bppRGB       :
                                            bPrefer10bpcAs32bpp ? &GUID_WICPixelFormat32bppBGR101010 :
+                                           bPrefer32bppAlpha   ? &GUID_WICPixelFormat32bppBGRA      :
                                                                  &GUID_WICPixelFormat24bppBGR, SK_WIC_SetMaximumQuality);
 }
 
@@ -2615,15 +2641,16 @@ SKIV_Image_LoadUltraHDR (DirectX::ScratchImage& image, void* data, int size)
     [&](DirectX::XMVECTOR* outPixels, const DirectX::XMVECTOR* inPixels, size_t width, size_t y)
     {
       using namespace DirectX;
+      XMVECTOR scale = XMVectorSet(metadata->hdr_capacity_max, 
+                                   metadata->hdr_capacity_max, 
+                                   metadata->hdr_capacity_max, 
+                                   1.0f);//UHDR is still a jpeg so no alpha
 
       for (size_t j = 0; j < width; ++j)
       {
         XMVECTOR value = inPixels [j];
 
-        value =
-          XMVectorMultiply (value, XMVectorReplicate (metadata->hdr_capacity_max));
-
-        outPixels [j] = value;
+        outPixels[j] = XMVectorMultiply(value, scale);
       }
 
       UNREFERENCED_PARAMETER(y);
@@ -2643,6 +2670,12 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
     SKIF_RegistrySettings::GetInstance ();
 
   using namespace DirectX;
+
+  ScratchImage
+    scratch_image;
+  scratch_image.InitializeFromImage(image);
+
+  bool hasAlpha = !scratch_image.IsAlphaAllOpaque();
 
   const Image* pOutputImage = &image;
 
@@ -2705,7 +2738,7 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
     DirectX::ScratchImage                  png_img;
     if (SKIV_HDR_ConvertImageToPNG (image, png_img))
     {
-      if (SKIV_HDR_SavePNGToDisk (wszImplicitFileName, png_img.GetImages (), &image, nullptr, true))
+      if (SKIV_HDR_SavePNGToDisk (wszImplicitFileName, png_img.GetImages (), &image, nullptr, true, hasAlpha))
       {
         return S_OK;
       }
@@ -2799,8 +2832,10 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
 
       JxlDataType type = JXL_TYPE_FLOAT;
       size_t      size = sizeof (float);
+      
+      const uint32_t channels = hasAlpha ? 4 : 3;
 
-      std::vector <float> fp_pixels (image.width * image.height * 3);
+      std::vector <float> fp_pixels (image.width * image.height * channels);
 
       auto fp_pixel_comp =
         fp_pixels.begin ();
@@ -2818,12 +2853,15 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
             *fp_pixel_comp++ = XMVectorGetX (v);
             *fp_pixel_comp++ = XMVectorGetY (v);
             *fp_pixel_comp++ = XMVectorGetZ (v);
+
+            if (hasAlpha)
+              *fp_pixel_comp++ = XMVectorGetW(v);
           }
         }
       );
 
       JxlPixelFormat pixel_format =
-        { 3, type, JXL_NATIVE_ENDIAN, 0 };
+        { channels, type, JXL_NATIVE_ENDIAN, 0 };
 
       JxlBasicInfo              basic_info = { };
       jxlEncoderInitBasicInfo (&basic_info);
@@ -2835,6 +2873,9 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
       basic_info.bits_per_sample          = static_cast <uint32_t> (DirectX::BitsPerColor (image.format));
       basic_info.exponent_bits_per_sample =                         DirectX::BitsPerColor (image.format) == 32 ? 8 : 5;
       basic_info.uses_original_profile    = bLossless ? JXL_TRUE : JXL_FALSE;
+
+      basic_info.num_color_channels       = 3;
+      basic_info.num_extra_channels       = hasAlpha ? 1 : 0;
 
       if ( JXL_ENC_SUCCESS !=
              jxlEncoderSetBasicInfo ( jxl_encoder, &basic_info) )
@@ -3009,11 +3050,13 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
       SK_avifRGBImageSetDefaults (&rgb, avif_image);
     
       rgb.depth       = bit_depth;
-      rgb.ignoreAlpha = true;
+      rgb.ignoreAlpha = hasAlpha ? false : true;
       rgb.isFloat     = false;
-      rgb.format      = AVIF_RGB_FORMAT_RGB;
+      rgb.format      = hasAlpha ? AVIF_RGB_FORMAT_RGBA : AVIF_RGB_FORMAT_RGB;
     
       SK_avifRGBImageAllocatePixels (&rgb);
+
+      const uint32_t channels = hasAlpha ? 4 : 3;
     
       switch (image.format)
       {
@@ -3029,10 +3072,15 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
             for (size_t j = 0; j < width; ++j)
             {
               DirectX::XMVECTOR v = *pixels++;
+
+              float alpha = hasAlpha ? std::clamp(DirectX::XMVectorGetW(v), 0.0f, 1.0f) : 1.0f;
     
               *(rgb_pixels++) = static_cast <uint16_t> (std::min (1023, static_cast <int> (XMVectorGetX (v) * 1024.0f)));
               *(rgb_pixels++) = static_cast <uint16_t> (std::min (1023, static_cast <int> (XMVectorGetY (v) * 1024.0f)));
               *(rgb_pixels++) = static_cast <uint16_t> (std::min (1023, static_cast <int> (XMVectorGetZ (v) * 1024.0f)));
+
+              if (hasAlpha)
+                *(rgb_pixels++) = static_cast <uint16_t>(std::round(alpha * 1023.0f));
             }
           } );
         } break;
@@ -3198,6 +3246,8 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
             for (size_t j = 0; j < width; ++j)
             {
               XMVECTOR value = pixels [j];
+
+              float alpha = hasAlpha ? std::clamp(DirectX::XMVectorGetW(value), 0.0f, 1.0f) : 1.0f;
     
               value =
                 XMVectorSaturate (
@@ -3214,6 +3264,8 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
                 *(rgb16_pixels++) = static_cast <uint16_t> (DirectX::XMVectorGetX (value));
                 *(rgb16_pixels++) = static_cast <uint16_t> (DirectX::XMVectorGetY (value));
                 *(rgb16_pixels++) = static_cast <uint16_t> (DirectX::XMVectorGetZ (value));
+                if (hasAlpha)
+                  *(rgb16_pixels++) = static_cast <uint16_t> (std::round(alpha * fClampVal));
               }
 
               else
@@ -3221,6 +3273,8 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
                 *(rgb8_pixels++) = static_cast <uint8_t> (DirectX::XMVectorGetX (value));
                 *(rgb8_pixels++) = static_cast <uint8_t> (DirectX::XMVectorGetY (value));
                 *(rgb8_pixels++) = static_cast <uint8_t> (DirectX::XMVectorGetZ (value));
+                if (hasAlpha)
+                  *(rgb16_pixels++) = static_cast <uint16_t> (std::round(alpha * fClampVal));
               }
             }
           } );
@@ -4662,6 +4716,9 @@ skiv_image_directory_s::sortByColumns (std::vector<fd_s>& list, const std::vecto
       _com_error err(hr);
       PLOG_ERROR << "Operation [RegisterObjectParam] failed with error: " << SK_WideCharToUTF8 (err.ErrorMessage());
     }
+
+    // Reset spStore before reuse to satisfy ATLASSERT(p == NULL) inside operator&.
+    spStore.Release();
 
     // Using GPS_FASTPROPERTIESONLY speeds up the performance here a lot... but it also means that all sort methods will not be supported.
     // For example, "System.ItemDate" (sort by Date) will not work and will instead mirror "System.ItemModified" (Date Modified)
