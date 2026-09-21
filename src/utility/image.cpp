@@ -3055,9 +3055,7 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
       rgb.format      = hasAlpha ? AVIF_RGB_FORMAT_RGBA : AVIF_RGB_FORMAT_RGB;
     
       SK_avifRGBImageAllocatePixels (&rgb);
-
-      const uint32_t channels = hasAlpha ? 4 : 3;
-    
+          
       switch (image.format)
       {
         case DXGI_FORMAT_R10G10B10A2_UNORM:
