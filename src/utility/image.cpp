@@ -4686,7 +4686,6 @@ skiv_image_directory_s::sortByColumns (std::vector<fd_s>& list, const std::vecto
 
   // Cache the properties of all files
   CComPtr<IBindCtx>            bindCtx;
-  CComPtr<IPropertyStore>      spStore;
   CComPtr<IFileSystemBindData> spFSBD = new FileSystemBindData();
 
   HRESULT hr = CreateBindCtx (0, &bindCtx);
@@ -4704,6 +4703,9 @@ skiv_image_directory_s::sortByColumns (std::vector<fd_s>& list, const std::vecto
     item.file = file;
     item.values.resize (sortColumns.size());
 
+    // This file property needs to be declared in the loop
+    CComPtr<IPropertyStore> spStore;
+
     DWORD tmp = SKIF_Util_timeGetTime1();
 
     spFSBD->SetFindData(&file.ffd); // Always returns S_OK claims the docs
@@ -4714,9 +4716,6 @@ skiv_image_directory_s::sortByColumns (std::vector<fd_s>& list, const std::vecto
       _com_error err(hr);
       PLOG_ERROR << "Operation [RegisterObjectParam] failed with error: " << SK_WideCharToUTF8 (err.ErrorMessage());
     }
-
-    // Reset spStore before reuse to satisfy ATLASSERT(p == NULL) inside operator&.
-    spStore.Release();
 
     // Using GPS_FASTPROPERTIESONLY speeds up the performance here a lot... but it also means that all sort methods will not be supported.
     // For example, "System.ItemDate" (sort by Date) will not work and will instead mirror "System.ItemModified" (Date Modified)
