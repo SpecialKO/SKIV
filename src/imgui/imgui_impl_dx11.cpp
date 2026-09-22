@@ -95,6 +95,7 @@ struct ImGui_ImplDX11_Data
     ID3D11Buffer*               pVertexConstantBuffer;
 #ifdef SKIF_D3D11
     ID3D11Buffer*               pPixelConstantBuffer;
+    ID3D11Buffer*               pGamutConstantBuffer;
     ID3D11Buffer*               pFontConstantBuffer;
 #endif
     ID3D11PixelShader*          pPixelShader;
@@ -139,6 +140,10 @@ struct PIXEL_CONSTANT_BUFFER_DX11 {
   float    ap1_gamut_hue       [4];
   float    ap0_gamut_hue       [4];
   float    undefined_gamut_hue [4];
+
+  float    alpha_toggle; // 4 byte
+  float    checkerboard_toggle; //4 byte
+  float    padding[2];   // 8 byte (make it divisible by 16)
 };
 #endif
 
@@ -672,6 +677,10 @@ void ImGui_ImplDX11_RenderDrawData (ImDrawData *draw_data)
     memcpy (pix_constant_buffer->ap0_gamut_hue,       SKIV_HDR_GamutHue_Ap0,       sizeof (float) * 4);
     memcpy (pix_constant_buffer->undefined_gamut_hue, SKIV_HDR_GamutHue_Undefined, sizeof (float) * 4);
 
+    //alpha handling
+    pix_constant_buffer->alpha_toggle        = _registry.bAlpha        ? 1.0f : 0.0f;
+    pix_constant_buffer->checkerboard_toggle = _registry.bCheckerboard ? 1.0f : 0.0f;
+
     // TODO: Move over to using HMONITOR for the current viewport
     if (! (_registry.iHDRMode > 0 && SKIF_Util_IsHDRActive (NULL)))
     {
@@ -679,6 +688,51 @@ void ImGui_ImplDX11_RenderDrawData (ImDrawData *draw_data)
     }
 
     ctx->Unmap ( bd->pPixelConstantBuffer, 0 );
+
+    if (FAILED(ctx->Map(bd->pGamutConstantBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_resource)))
+      return;
+
+    pix_constant_buffer =
+      static_cast <PIXEL_CONSTANT_BUFFER_DX11*> (
+        mapped_resource.pData
+        );
+
+    // Assert that the constant buffer remains 16-byte aligned.
+    static_assert((sizeof(PIXEL_CONSTANT_BUFFER_DX11) % 16) == 0, "Constant Buffer size must be 16-byte aligned");
+
+    *pix_constant_buffer = PIXEL_CONSTANT_BUFFER_DX11();
+    pix_constant_buffer->font_dims[0] = 0.0f;
+    pix_constant_buffer->font_dims[1] = 0.0f;
+    pix_constant_buffer->hdr_max_luminance = MaxContentLuminance / 80.0f;
+    pix_constant_buffer->display_max_luminance = display_max_luminance / 80.0f;
+    pix_constant_buffer->brightness = SKIV_HDR_BrightnessScale / 100.0f;
+    if ((SKIV_HDR_BrightnessScale / 100.0f) * MaxContentLuminance > display_max_luminance)
+      pix_constant_buffer->tonemap_type = _registry.iHDRToneMapType;
+    else
+      pix_constant_buffer->tonemap_type = SKIV_HDR_TonemapType::SKIV_TONEMAP_TYPE_NONE;
+    //pix_constant_buffer->hdr_max_cll                 = SKIV_HDR_MaxCLL;
+    pix_constant_buffer->hdr_visualization = SKIV_HDR_VisualizationId;
+    pix_constant_buffer->sdr_reference_white = SKIV_HDR_SDRWhite;
+    pix_constant_buffer->hdr_visualization_flags[3] = SKIV_HDR_VisualizationFlagsSDR;
+
+    memcpy(pix_constant_buffer->rec709_gamut_hue, SKIV_HDR_GamutHue_Rec709, sizeof(float) * 4);
+    memcpy(pix_constant_buffer->dcip3_gamut_hue, SKIV_HDR_GamutHue_DciP3, sizeof(float) * 4);
+    memcpy(pix_constant_buffer->rec2020_gamut_hue, SKIV_HDR_GamutHue_Rec2020, sizeof(float) * 4);
+    memcpy(pix_constant_buffer->ap1_gamut_hue, SKIV_HDR_GamutHue_Ap1, sizeof(float) * 4);
+    memcpy(pix_constant_buffer->ap0_gamut_hue, SKIV_HDR_GamutHue_Ap0, sizeof(float) * 4);
+    memcpy(pix_constant_buffer->undefined_gamut_hue, SKIV_HDR_GamutHue_Undefined, sizeof(float) * 4);
+
+    //alpha handling
+    pix_constant_buffer->alpha_toggle = 0.0f;
+    pix_constant_buffer->checkerboard_toggle = 0.0f;
+
+    // TODO: Move over to using HMONITOR for the current viewport
+    if (!(_registry.iHDRMode > 0 && SKIF_Util_IsHDRActive(NULL)))
+    {
+      pix_constant_buffer->tonemap_type = SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY;
+    }
+
+    ctx->Unmap(bd->pGamutConstantBuffer, 0);
   }
 
   // Setup desired DX state
@@ -743,7 +797,12 @@ void ImGui_ImplDX11_RenderDrawData (ImDrawData *draw_data)
           );
 
         if (pcmd->TextureId == ImGui::GetIO ().Fonts->TexID)
-        ctx->PSSetConstantBuffers ( 0, 1, &bd->pFontConstantBuffer );
+          ctx->PSSetConstantBuffers ( 0, 1, &bd->pFontConstantBuffer );
+        else if (texture_srv == SKIV_HDR_GamutCoverageSRV.p)
+        {
+          // for gamut graph give special no alpha shader
+          ctx->PSSetConstantBuffers ( 0, 1, &bd->pGamutConstantBuffer );
+        }
 
         //
         // If GamutCoverageUAV is non-null, then the image we are
@@ -1212,6 +1271,9 @@ bool ImGui_ImplDX11_CreateDeviceObjects (void)
   buffer_desc.MiscFlags      = 0;
   
   if (FAILED (bd->pd3dDevice->CreateBuffer (&buffer_desc, nullptr, &bd->pPixelConstantBuffer)))
+    return false;
+
+  if (FAILED (bd->pd3dDevice->CreateBuffer (&buffer_desc, nullptr, &bd->pGamutConstantBuffer)))
     return false;
     
   if (FAILED (bd->pd3dDevice->CreateBuffer (&buffer_desc, nullptr, &bd->pFontConstantBuffer)))

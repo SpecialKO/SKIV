@@ -73,6 +73,10 @@ cbuffer imgui_cbuffer : register (b0)
   float4 ap1_gamut_hue;
   float4 ap0_gamut_hue;
   float4 invalid_gamut_hue;
+
+  float  alpha_toggle; // 4 byte
+  float  checkerboard_toggle; //4 byte
+  float2 padding;      // 8 byte (make it divisible by 16)
 };
 
 sampler   sampler0 : register (s0);
@@ -136,9 +140,9 @@ float4 main (PS_INPUT input) : SV_Target
   }
 
   // Other way around for everything else, we do not want a texture's alpha
-  else
+  else if (!alpha_toggle)
   {
-    //out_col.a = 1.0f;
+   out_col.a = 1.0f;
   }
 
   float4 orig_col = out_col;
@@ -180,7 +184,7 @@ float4 main (PS_INPUT input) : SV_Target
 
     if (! input.hdr_img)
       out_col.rgb = saturate (out_col.rgb) * hdr_scale;
-    else
+    else if (!alpha_toggle)
       out_col.a = 1.0f; // Opaque
 
     // Manipulate the alpha channel a bit...
@@ -226,8 +230,9 @@ float4 main (PS_INPUT input) : SV_Target
                                     saturate (  out_col.a)  *
                                     saturate (input_col.a)
                 );
-
-      out_col.a = 1.0f; // Opaque
+               
+      if (!alpha_toggle)
+        out_col.a = 1.0f; // Opaque
     }
 
     // Manipulate the alpha channel a bit...
@@ -286,7 +291,8 @@ float4 main (PS_INPUT input) : SV_Target
                                     saturate (input_col.a)
                 );
 
-      out_col.a = 1.0f; // Opaque
+      if (!alpha_toggle)
+        out_col.a = 1.0f; // Opaque
     }
 #endif
   }
@@ -391,6 +397,44 @@ float4 main (PS_INPUT input) : SV_Target
 
   out_col.rgb *=
     out_col.a;
+
+     // checkerboard start
+  if (out_col.a < 1.0f && checkerboard_toggle && (font_dims.x + font_dims.y == 0.0f))
+  {
+    float grid_size = 8.0f;
+    
+    float2 pixel_pos = input.pos.xy;
+    
+    // calc grid pattern
+    float2 grid = floor(pixel_pos / grid_size);
+    float checker = fmod(grid.x + grid.y, 2.0f);
+    
+    // grid colors for SDR (0.75 - light-gray, 0.5 - dark-gray)
+    float3 color_white = (1.0f).xxx;
+    float3 color_gray = (0.744f).xxx;
+    float3 bg_color = (checker == 0.0f) ? color_white : color_gray;
+
+    if (is16bpc && input.hdr_img)
+    {
+      //scale grid before multiply with hdr
+      //TODO make math correct
+      bg_color = pow(max(0.0f, bg_color), 2.2f);
+      
+      float hdr_alpha_mask = saturate(1.0f - out_col.a);
+      hdr_alpha_mask = pow(hdr_alpha_mask, 2.0f);
+      
+      out_col.rgb = out_col.rgb + bg_color * hdr_alpha_mask;
+    }
+    else
+    {    
+    // mix image with grid
+      out_col.rgb = out_col.rgb + bg_color * (1.0f - out_col.a);
+    }
+    
+    //just in case, might be excessive
+    out_col.a = 1.0f;
+  }
+  //checkerboard end
 
   return
     SanitizeFP (out_col);

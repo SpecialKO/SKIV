@@ -1330,8 +1330,10 @@ LoadLibraryTexture (image_s& image)
                 {
                   XMVECTOR v = inPixels [j];
 
-                  outPixels [j] =
+                  XMVECTOR r =                  
                     XMVector3Transform (SKIV_Image_PQToLinear (v), c_Bt2100toscRGB);
+
+                  outPixels[j] = XMVectorSetW(r, XMVectorGetW(v));
                 }
               }, img );
 
@@ -1473,10 +1475,10 @@ LoadLibraryTexture (image_s& image)
                 {
                   XMVECTOR v = inPixels[j];
 
-                  v =
+                  XMVECTOR r =
                     XMVector3Transform(SKIV_Image_PQToLinear(v), c_Bt2100toscRGB);
 
-                  outPixels[j] = v;
+                  outPixels[j] = XMVectorSetW(r, XMVectorGetW(v));
                 }
 
               }, img);
@@ -1669,13 +1671,16 @@ LoadLibraryTexture (image_s& image)
         bool is_hdr_image = (avif_decoder->image->depth > 8) ||
           (avif_decoder->image->transferCharacteristics == AVIF_TRANSFER_CHARACTERISTICS_SMPTE2084);
 
-        DXGI_FORMAT dxgi_format = is_hdr_image ? DXGI_FORMAT_R16G16B16A16_FLOAT :
-          DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
-
         if (avif_decoder->image->colorPrimaries == AVIF_COLOR_PRIMARIES_UNSPECIFIED)
         {
           //ideally try to retrieve primaries from icc here
         }
+
+        bool bHasAlpha = avif_decoder->image->alphaPlane ? true : false;
+
+        DXGI_FORMAT dxgi_format = is_hdr_image  ? DXGI_FORMAT_R16G16B16A16_FLOAT  :
+                                     bHasAlpha  ? DXGI_FORMAT_B8G8R8A8_UNORM_SRGB :
+                                                  DXGI_FORMAT_B8G8R8X8_UNORM_SRGB ;
 
         rgb.depth       = is_hdr_image ? 16 : 8;
         rgb.format      = is_hdr_image ? AVIF_RGB_FORMAT_RGBA : AVIF_RGB_FORMAT_BGRA;
@@ -1684,7 +1689,7 @@ LoadLibraryTexture (image_s& image)
 #else
         rgb.maxThreads  = std::min (32U, std::min ((UINT)si.dwNumberOfProcessors, (UINT)__popcnt   (si.dwActiveProcessorMask)));
 #endif
-        rgb.ignoreAlpha = true;
+        rgb.ignoreAlpha = false;
         rgb.isFloat     = is_hdr_image ? true : false;
 
         SK_avifRGBImageAllocatePixels (                     &rgb);
@@ -1700,7 +1705,7 @@ LoadLibraryTexture (image_s& image)
         {
           using namespace DirectX;
 
-          image.channels = 3;
+          image.channels = bHasAlpha ? 4 : 3;
           image.bpc      = bpc;
 
           // XXX
@@ -1752,12 +1757,12 @@ LoadLibraryTexture (image_s& image)
                     {
                       XMVECTOR v = inPixels [j];
 
-                      v =
+                      XMVECTOR r =
                         XMVectorScale (
                           XMVector3Transform (SKIV_Image_PQToLinear (v), c_fromXYZto709), 125.0f
                         );
 
-                      outPixels [j] = v;
+                      outPixels [j] = XMVectorSetW (r, XMVectorGetW (v));
                     }
                   }, img )
                 )
@@ -1781,12 +1786,12 @@ LoadLibraryTexture (image_s& image)
                     {
                       XMVECTOR v = inPixels [j];
 
-                      v =
+                      XMVECTOR r =
                         XMVectorScale (
                           XMVector3Transform (SKIV_Image_PQToLinear (v), c_from601to709), 125.0f
                         );
 
-                      outPixels [j] = v;
+                      outPixels [j] = XMVectorSetW (r, XMVectorGetW (v));
                     }
                   }, img )
                 )
@@ -1810,12 +1815,12 @@ LoadLibraryTexture (image_s& image)
                     {
                       XMVECTOR v = inPixels [j];
 
-                      v =
+                      XMVECTOR r =
                         XMVectorScale (
                           XMVector3Transform (SKIV_Image_PQToLinear (v), c_fromDCIP3to709), 125.0f
                         );
 
-                      outPixels [j] = v;
+                      outPixels [j] = XMVectorSetW (r, XMVectorGetW (v));
                     }
                   }, img )
                 )
@@ -1843,12 +1848,12 @@ LoadLibraryTexture (image_s& image)
                   {
                     XMVECTOR v = inPixels[j];
 
-                    v =
+                    XMVECTOR r =
                       XMVectorScale(
                         SKIV_Image_PQToLinear(v), 125.0f
                       );
 
-                    outPixels[j] = v;
+                    outPixels[j] = XMVectorSetW (r, XMVectorGetW (v));
                   }
                 }, img)
               )
@@ -1907,10 +1912,10 @@ LoadLibraryTexture (image_s& image)
                     {
                       XMVECTOR v = inPixels [j];
 
-                      v =
+                      XMVECTOR r =
                         XMVector3Transform (SKIV_Image_PQToLinear (v), c_Bt2100toscRGB);
 
-                      outPixels [j] = v;
+                      outPixels [j] = XMVectorSetW (r, XMVectorGetW (v));
                     }
                   }, img )
                 )
@@ -2169,6 +2174,7 @@ LoadLibraryTexture (image_s& image)
                   for (size_t j = 0; j < width; ++j)
                   {
                     XMVECTOR v = inPixels [j];
+                    float vW = XMVectorGetW(v);
 
                     if (bIsRec709Linear)
                     {
@@ -2197,7 +2203,7 @@ LoadLibraryTexture (image_s& image)
                       hdr = true;
                     }
 
-                    outPixels [j] = v;
+                    outPixels [j] = XMVectorSetW (v, vW);
                   }
                 }, converted_img )
               )

@@ -432,6 +432,8 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
   bLoggingDeveloper        =   regKVLoggingDeveloper       .getData (&hKey);
   bLoopImages              =   regKVLoopImages             .getData (&hKey);
   bImageDetails            =   regKVImageDetails           .getData (&hKey);
+  bAlpha                   =   regKVAlpha                  .getData (&hKey);
+  bCheckerboard            =   regKVAlpha                  .getData (&hKey);
 
   // Keybindings
   // All keybindings must first read the data from the registry,

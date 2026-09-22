@@ -269,6 +269,14 @@ struct SKIF_RegistrySettings {
     SKIF_MakeRegKeyB ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(99th Percentile MaxCLL)" );
 
+  KeyValue <bool> regKVAlpha =
+    SKIF_MakeRegKeyB( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(Image Alpha)");
+
+  KeyValue <bool> regKVCheckerboard =
+    SKIF_MakeRegKeyB(LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(Alpha Checkerboard)");
+
   // Integers (DWORDs)
 
   KeyValue <int> regKVImageScaling =
@@ -480,6 +488,8 @@ struct SKIF_RegistrySettings {
   bool bLoopImages              = false;
   bool bImageDetails            = false;
   bool b99thPercentileMaxCLL    =  true;
+  bool bAlpha                   = false;
+  bool bCheckerboard            = false;
 
   bool bFirstLaunch             = false;
   bool bCloseToTray             = false;
