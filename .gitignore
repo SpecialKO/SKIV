@@ -21,3 +21,6 @@
 /post_build.bat
 /post_build.bat
 /post_build.bat
+/packages_misc/DirectXTex/Shaders/Compiled/*
+/packages_misc/DirectXTex/Bin/*
+/packages_misc/pugixml/scripts/vs*
