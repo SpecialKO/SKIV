@@ -70,7 +70,6 @@ extern bool    SKIF_Util_IsWindowsVersionOrGreater   (DWORD dwMajorVersion, DWOR
 extern bool    SKIF_Util_IsHDRSupported              (HMONITOR hMonitor);
 extern bool    SKIF_Util_IsHDRActive                 (HMONITOR hMonitor);
 extern float   SKIF_Util_GetSDRWhiteLevel            (HMONITOR hMonitor);
-extern std::vector<HANDLE> vSwapchainWaitHandles;
 extern bool  RecreateSwapChains;
 extern bool  RecreateSwapChainsPending;
 
@@ -170,6 +169,7 @@ static DXGI_FORMAT SKIF_ImplDX11_ViewPort_GetDXGIFormat    (ImGuiViewport* viewp
        bool        SKIF_ImplDX11_ViewPort_IsHDR            (ImGuiViewport* viewport);
 static int         SKIF_ImplDX11_ViewPort_GetHDRMode       (ImGuiViewport* viewport);
 static FLOAT       SKIF_ImplDX11_ViewPort_GetSDRWhiteLevel (ImGuiViewport* viewport);
+static FLOAT       SKIF_ImplDX11_ViewPort_GetHDRLuma       (ImGuiViewport* viewport);
 #endif
 
 // Functions
@@ -571,10 +571,7 @@ void ImGui_ImplDX11_RenderDrawData (ImDrawData *draw_data)
         constant_buffer->luminance_scale [2] = 1.0f;
       }
 
-      ImGui_ImplDX11_ViewportData* vd =
-        (ImGui_ImplDX11_ViewportData*)vp->RendererUserData;
-
-      display_max_luminance = vd->HDRLuma;
+      display_max_luminance = SKIF_ImplDX11_ViewPort_GetHDRLuma (vp);
     }
 
     ctx->Unmap ( bd->pVertexConstantBuffer, 0 );
@@ -1534,8 +1531,6 @@ struct ImGui_ImplDX11_ViewportData
     ~ImGui_ImplDX11_ViewportData()  { IM_ASSERT(SwapChain == nullptr && RTView == nullptr); }
 };
 #else
-#ifndef SKIF_CUSTOM_IMGUI_DX11_VIEWPORT_STRUCT
-#define SKIF_CUSTOM_IMGUI_DX11_VIEWPORT_STRUCT
 struct ImGui_ImplDX11_ViewportData
 {
     IDXGISwapChain1*        SwapChain;
@@ -1544,17 +1539,17 @@ struct ImGui_ImplDX11_ViewportData
     HANDLE                  WaitHandle;
     int                     SDRMode;       // 0 = 8 bpc,   1 = 10 bpc,      2 = 16 bpc scRGB
     FLOAT                   SDRWhiteLevel; // SDR white level in nits for the display
-    int                     HDRMode;       // 0 = No HDR,  1 = 10 bpc HDR,  2 = 16 bpc scRGB HDR
     bool                    HDR;
+    bool                    HDRCapable;
+    int                     HDRMode;       // 0 = No HDR,  1 = 10 bpc HDR,  2 = 16 bpc scRGB HDR
     FLOAT                   HDRLuma;
     FLOAT                   HDRMinLuma;
     DXGI_OUTPUT_DESC1       DXGIDesc;
     DXGI_FORMAT             DXGIFormat;
 
-     ImGui_ImplDX11_ViewportData (void) {            SwapChain  = nullptr;   RTView  = nullptr;   WaitHandle  = 0;  PresentCount = 0; SDRMode = 0; SDRWhiteLevel = 80.0f; HDRMode = 0; HDR = false; HDRLuma = 0.0f; HDRMinLuma = 0.0f; DXGIDesc = {   }; DXGIFormat = DXGI_FORMAT_UNKNOWN; }
+     ImGui_ImplDX11_ViewportData (void) {            SwapChain  = nullptr;   RTView  = nullptr;   WaitHandle  = 0;  PresentCount = 0; SDRMode = 0; SDRWhiteLevel = 80.0f; HDRMode = 0; HDR = false; HDRCapable = false; HDRLuma = 0.0f; HDRMinLuma = 0.0f; DXGIDesc = {   }; DXGIFormat = DXGI_FORMAT_UNKNOWN; }
     ~ImGui_ImplDX11_ViewportData (void) { IM_ASSERT (SwapChain == nullptr && RTView == nullptr && WaitHandle == 0); }
 };
-#endif
 #endif
 
 #ifndef SKIF_D3D11
@@ -2173,8 +2168,6 @@ ImGui_ImplDX11_CreateWindow (ImGuiViewport *viewport)
 
           if (vd->WaitHandle)
           {
-            vSwapchainWaitHandles.push_back (vd->WaitHandle);
-
             // One-time wait to align the thread for minimum latency (reduces latency by half in testing)
             WaitForSingleObjectEx (vd->WaitHandle, 1000, true);
             //WaitForSingleObject (vd->WaitHandle, 1000);
@@ -2197,9 +2190,6 @@ static void ImGui_ImplDX11_DestroyWindow(ImGuiViewport* viewport)
     if (ImGui_ImplDX11_ViewportData* vd = (ImGui_ImplDX11_ViewportData*)viewport->RendererUserData)
     {
         if (vd->WaitHandle) {
-          if (! vSwapchainWaitHandles.empty())
-            vSwapchainWaitHandles.erase(std::remove(vSwapchainWaitHandles.begin(), vSwapchainWaitHandles.end(), vd->WaitHandle), vSwapchainWaitHandles.end());
-
           CloseHandle (
             vd->WaitHandle
           );
@@ -2280,4 +2270,58 @@ UINT SKIF_ImplDX11_ViewPort_GetPresentCount(ImGuiViewport* viewport)
         return vd->PresentCount;
 
     return 0;
+}
+
+HANDLE SKIF_ImplDX11_ViewPort_GetWaitHandle(ImGuiViewport* viewport)
+{
+    if (ImGui_ImplDX11_ViewportData* vd = (ImGui_ImplDX11_ViewportData*)viewport->RendererUserData)
+        return vd->WaitHandle;
+
+    return NULL;
+}
+
+static FLOAT SKIF_ImplDX11_ViewPort_GetHDRLuma(ImGuiViewport* viewport)
+{
+    if (ImGui_ImplDX11_ViewportData* vd = (ImGui_ImplDX11_ViewportData*)viewport->RendererUserData)
+        return vd->HDRLuma;
+
+    return 80.0f;
+}
+
+void SKIF_ImplDX11_ViewPort_ClearAndPresent (ImGuiViewport* viewport)
+{
+  if (ImGui_ImplDX11_ViewportData* vd = (ImGui_ImplDX11_ViewportData*)viewport->RendererUserData)
+  {
+    CComPtr <ID3D11Device> pDev;
+    if (SUCCEEDED (vd->SwapChain->GetDevice (IID_ID3D11Device, (void **)&pDev.p)))
+    {
+      CComPtr <ID3D11DeviceContext> pDevCtx;
+      pDev->GetImmediateContext   (&pDevCtx.p);
+
+      FLOAT fClearColor [4] =
+        { 0.0f, 0.0f, 0.0f, 0.0f };
+
+      pDevCtx->ClearRenderTargetView (vd->RTView, fClearColor);
+
+#if 1
+      vd->SwapChain->Present (0,0);
+
+      // We must wait for the Present to complete if SKIV is using a
+      //   latency waitable SwapChain, or this would be permanent!
+      CComQIPtr <IDXGISwapChain2>
+          pSwapChain2 (vd->SwapChain);
+      if (pSwapChain2 != nullptr)
+      {
+        HANDLE hWait =
+          pSwapChain2->GetFrameLatencyWaitableObject ();
+
+        if (hWait != 0)
+        {
+          WaitForSingleObject (hWait, 500UL);
+          CloseHandle         (hWait);
+        }
+      }
+#endif
+    }
+  }
 }

@@ -1216,6 +1216,7 @@ struct ImGui_ImplWin32_ViewportData
     bool    HwndOwned;
     DWORD   DwStyle;
     DWORD   DwExStyle;
+    DWORD   WmSize; // WM_SIZE
 
 #ifdef SKIF_Win32
     bool    RemovedDWMBorders;
@@ -2275,6 +2276,42 @@ bool
 SKIF_ImGui_ImplWin32_WantUpdateMonitors (void)
 {
   return ImGui_ImplWin32_GetBackendData()->WantUpdateMonitors;
+}
+
+bool
+SKIF_ImGui_ImplWin32_IsViewportVisible (ImGuiViewport* viewport)
+{
+  if (viewport->PlatformHandleRaw != NULL)
+  {
+    if (ImGui_ImplWin32_ViewportData* vd = (ImGui_ImplWin32_ViewportData*)viewport->PlatformUserData)
+      if (vd->WmSize == SIZE_RESTORED || vd->WmSize == SIZE_MAXIMIZED)
+        return true;
+  }
+
+  return false;
+}
+
+bool
+SKIF_ImGui_ImplWin32_IsAnyViewportVisible (void)
+{
+  ImGuiPlatformIO& platform_io =
+    ImGui::GetPlatformIO ();
+
+  //// Skip the main viewport (index 0), which is always fully handled by the application!
+  for (int i = 1; i < platform_io.Viewports.Size; i++)
+  {
+    ImGuiViewport* viewport =
+       platform_io.Viewports [i];
+
+    if (viewport->PlatformHandleRaw != NULL)
+    {
+      if (ImGui_ImplWin32_ViewportData* vd = (ImGui_ImplWin32_ViewportData*)viewport->PlatformUserData)
+        if (vd->WmSize == SIZE_RESTORED || vd->WmSize == SIZE_MAXIMIZED)
+          return true;
+    }
+  }
+
+  return false;
 }
 
 
