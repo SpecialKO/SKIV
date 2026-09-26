@@ -9,7 +9,7 @@
 
 #pragma once
 
-#include "DirectXTex.h"
+#include "DirectXTex/DirectXTex.h"
 
 
 namespace DirectX

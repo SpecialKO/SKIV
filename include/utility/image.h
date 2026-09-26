@@ -1,6 +1,6 @@
 #pragma once
 
-#include <DirectXTex.h>
+#include <DirectXTex/DirectXTex.h>
 #include <imgui/imgui_internal.h>
 #include <ImGuiNotify.hpp>
 #include <atlbase.h>

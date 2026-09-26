@@ -55,7 +55,6 @@
 #include <unordered_set>
 #include <oleidl.h>
 #include <utility/droptarget.hpp>
-#include <pathcch.h>
 
 #include <d3d11.h>
 #define DIRECTINPUT_VERSION 0x0800
@@ -986,8 +985,8 @@ SKIV_GetApplicationNames (HWND hWnd)
         names.product = SKIF_Util_GetProductName (path.c_str());
 
         // Executable
-        PathStripPathW         (buffer);
-        PathCchRemoveExtension (buffer, lenPath);
+        PathStripPathW       (buffer);
+        PathRemoveExtensionW (buffer);
         names.executable = std::wstring(buffer);
 
         // Custom name

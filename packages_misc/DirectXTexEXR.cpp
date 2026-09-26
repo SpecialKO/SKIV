@@ -11,7 +11,9 @@
 //#include "DirectXTexP.h"
 //#define NOMINMAX
 
-#include "utility/DirectXTexEXR.h"
+#ifdef OpenEXR
+
+#include "DirectXTexEXR.h"
 
 #include <DirectXPackedVector.h>
 
@@ -45,8 +47,8 @@
 
 #pragma warning(push)
 #pragma warning(disable : 4244 4996)
-#include <../packages/openexr-msvc-x64.2.3.0.8788/build/native/include/OpenEXR/ImfRgbaFile.h>
-#include <../packages/openexr-msvc-x64.2.3.0.8788/build/native/include/OpenEXR/ImfIO.h>
+#include <openexr-2.3.0/inc/ImfRgbaFile.h>
+#include <openexr-2.3.0/inc/ImfIO.h>
 #pragma warning(pop)
 
 #ifdef __clang__
@@ -651,3 +653,4 @@ HRESULT DirectX::SaveToEXRFile(const Image& image, const wchar_t* szFile)
 
     return S_OK;
 }
+#endif

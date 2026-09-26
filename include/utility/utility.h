@@ -12,7 +12,7 @@
 #include <vector>
 #include <shellapi.h>
 #include <stdexcept>
-#include <DirectXTex.h>
+#include <DirectXTex/DirectXTex.h>
 #include "sk_utility.h"
 
 #pragma comment(lib, "wininet.lib")

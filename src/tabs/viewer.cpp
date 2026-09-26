@@ -30,10 +30,13 @@
 #include <utility/skif_imgui.h>
 #include <ImGuiNotify.hpp>
 
-#include "DirectXTex.h"
+#include "DirectXTex/DirectXTex.h"
 #include <wincodec.h>
+
+#ifdef OpenEXR
 #ifdef _M_X64
-#include <utility/DirectXTexEXR.h>
+#include <package_misc/DirectXTexEXR.h>
+#endif
 #endif
 
 #include <fonts/fa_621.h>
@@ -1565,6 +1568,7 @@ LoadLibraryTexture (image_s& image)
     }
   }
 
+#ifdef OpenEXR
 #ifdef _M_X64
   if (decoder == ImageDecoder_EXR)
   {
@@ -1595,6 +1599,7 @@ LoadLibraryTexture (image_s& image)
       meta.dimension = DirectX::TEX_DIMENSION_TEXTURE2D;
     }
   }
+#endif
 #endif
 
   if (decoder == ImageDecoder_HDR)

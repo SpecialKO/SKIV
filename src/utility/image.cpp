@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <string_view>
 #include <filesystem>
-#include <pathcch.h>
 #include <unordered_set>
 #include <plog/Log.h>
 #include <strsafe.h>
@@ -17,8 +16,10 @@
 #include <ImGuiNotify.hpp>
 #include <utility/skif_imgui.h>
 #include <utility/utility.h>
-#include "DirectXTex.h"
-#include <utility/DirectXTexEXR.h>
+#include "DirectXTex/DirectXTex.h"
+#ifdef OpenEXR
+#include <package_misc/DirectXTexEXR.h>
+#endif
 
 #include <jxl/codestream_header.h>
 #include <jxl/encode.h>
@@ -1695,10 +1696,11 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
   wchar_t wszImplicitFileName [MAX_PATH] = { };
   wcscpy (wszImplicitFileName, wszFileName);
 
+
   // For silly users who don't give us filenames...
   if (! wszExtension)
   {
-    PathCchAddExtension (wszImplicitFileName, MAX_PATH, defaultSDRFileExt.c_str ());
+    PathAddExtensionW (wszImplicitFileName, defaultSDRFileExt.c_str () );
     wszExtension =
       PathFindExtensionW (wszImplicitFileName);
   }
@@ -2699,7 +2701,7 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
   // For doofus users who don't give us filenames...
   if (! wszExtension)
   {
-    PathCchAddExtension (wszImplicitFileName, MAX_PATH, defaultHDRFileExt.c_str ());
+    PathAddExtensionW (wszImplicitFileName, defaultHDRFileExt.c_str () );
     wszExtension =
       PathFindExtensionW (wszImplicitFileName);
   }
@@ -2711,6 +2713,7 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
     wic_codec = GetWICCodec (WIC_CODEC_WMP);
   }
 
+#ifdef OpenEXR
 #ifdef _M_X64
   else if (StrStrIW (wszExtension, L"exr"))
   {
@@ -2721,6 +2724,7 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
       return S_OK;
     }
   }
+#endif
 #endif
 
   else if (StrStrIW (wszExtension, L"hdr"))

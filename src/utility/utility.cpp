@@ -23,9 +23,6 @@
 #pragma comment(lib, "Userenv.lib")
 #pragma comment(lib, "Gdiplus.lib")
 
-#pragma comment(lib, "RuntimeObject.lib")
-#pragma comment(lib, "mincore.lib")
-
 #include <SKIV.h>
 #include <utility/fsutil.h>
 #include <utility/registry.h>
@@ -3119,11 +3116,15 @@ void SKIF_Util_SetEffectivePowerModeNotifications (bool enable)
 
 // High Dynamic Range (HDR)
 
-//#if (NTDDI_VERSION >= NTDDI_WIN10_NI)
+//#undef NTDDI_VERSION
+//#define NTDDI_VERSION NTDDI_WIN10_NI
+#if (NTDDI_VERSION >= NTDDI_WIN10_NI)
+#pragma comment(lib, "RuntimeObject.lib")
+//#pragma comment(lib, "mincore.lib")
 #include <winrt/Windows.Graphics.Display.h>
 #include <winrt/Windows.Devices.Display.Core.h>
 #include <Windows.Graphics.Display.Interop.h>
-//#endif
+#endif
 
 // This actually updates the underlying vector
 static void
@@ -3241,7 +3242,8 @@ SKIF_UtilInt_UpdateMonitors (void)
     monitor.path_targetInfo.adapterId = path.targetInfo.adapterId;
 
     // Windows 10 1803+ (Build 17134) or newer
-//#if (NTDDI_VERSION >= NTDDI_WIN10_NI)
+    // Breaks Windows 8 and 7 compatibility atm...
+#if (NTDDI_VERSION >= NTDDI_WIN10_NI)
     if (SKIF_Util_IsWindows10v1803OrGreater ( ))
     {
       using namespace winrt::Windows::Devices::Display::Core;
@@ -3270,7 +3272,7 @@ SKIF_UtilInt_UpdateMonitors (void)
         }
       }
     }
-//#endif
+#endif
 
     // Windows 10 1709+ (Build 16299) fallback
     if (! success || (! SKIF_Util_IsWindows10v1803OrGreater ( ) && SKIF_Util_IsWindows10v1709OrGreater ( )))
