@@ -3056,10 +3056,12 @@ SKIF_UI_Tab_DrawViewer (void)
 
     // Identify when a new file from the same folder has been dropped
     if (! _current_folder.fileList.empty() && _current_folder.fileList.getActiveFile() != nullptr &&
-      cover.file_info.filename != _current_folder.fileList.getActiveFile()->filename)
+        ! _current_folder.fileList.getActiveFile()->filename.empty() &&
+          _current_folder.fileList.getActiveFile()->filename != cover.file_info.filename)
     {
-      //PLOG_DEBUG << "            cover.file_info.filename: " << cover.file_info.filename;
-      //PLOG_DEBUG << "_current_folder.activeFile->filename: " << _current_folder.activeFile->filename;
+      //PLOG_VERBOSE << "new file from same folder has been dropped?";
+      //PLOG_DEBUG << "                          cover.file_info.filename: " << cover.file_info.filename;
+      //PLOG_DEBUG << "_current_folder.fileList.getActiveFile()->filename: " << _current_folder.fileList.getActiveFile()->filename;
 
       _current_folder.workerThread (true);
     }
