@@ -209,6 +209,7 @@ bool            SKIF_Util_SetProcessMemoryPriority    (HANDLE processHandle, ULO
 bool            SKIF_Util_IsWindows8Point1OrGreater   (void);
 bool            SKIF_Util_IsWindows10OrGreater        (void);
 bool            SKIF_Util_IsWindows10v1709OrGreater   (void);
+bool            SKIF_Util_IsWindows10v1803OrGreater   (void);
 bool            SKIF_Util_IsWindows10v1903OrGreater   (void);
 bool            SKIF_Util_IsWindows11orGreater        (void);
 bool            SKIF_Util_IsWindowsVersionOrGreater   (DWORD dwMajorVersion, DWORD dwMinorVersion, DWORD dwBuildNumber);
