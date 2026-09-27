@@ -2697,7 +2697,6 @@ wWinMain ( _In_     HINSTANCE hInstance,
             SKIF_Tab_Selected  = UITab_Settings;
             SKIF_Tab_ChangeTo  = UITab_None;
             RefreshSettingsTab = false;
-
           }
         }
 

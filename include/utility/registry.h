@@ -485,6 +485,7 @@ struct SKIF_RegistrySettings {
   bool bDPIScaling              =  true;
   bool bWin11Corners            =  true; // 2023-08-28: Enabled by default
   bool bTouchInput              =  true; // Automatically make the UI more optimized for touch input on capable devices
+
   bool bLoopImages              = false;
   bool bImageDetails            = false;
   bool b99thPercentileMaxCLL    =  true;
