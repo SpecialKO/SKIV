@@ -3116,6 +3116,88 @@ void SKIF_Util_SetEffectivePowerModeNotifications (bool enable)
 
 // High Dynamic Range (HDR)
 
+
+// WinRT stuff, used by SKIF_UtilInt_UpdateMonitors() to allow
+// using WinRT calls without linking to them and breaking Win7/8 compatibility
+
+struct WindowsFoundationPoint {
+  FLOAT X;
+  FLOAT Y;
+};
+
+// Windows.Graphics.Display.HdrMetadataFormat
+// Header: Windows.Graphics.Display.h
+enum class HdrMetadataFormat
+{
+    HdrMetadataFormat_Hdr10     = 0,
+    HdrMetadataFormat_Hdr10Plus = 1,
+};
+
+// Windows.Graphics.Display.AdvancedColorKind
+// Header: Windows.Graphics.Display.h
+enum AdvancedColorKind {
+    AdvancedColorKind_StandardDynamicRange = 0,
+    AdvancedColorKind_WideColorGamut       = 1,
+    AdvancedColorKind_HighDynamicRange     = 2,
+};
+
+// WinRT IInspectable
+enum TrustLevel { TrustLevel_Base = 0, TrustLevel_Low = 1, TrustLevel_Medium = 2, TrustLevel_High = 3 }; // Dunno if this enum is correct; some AI hallucinated crap possibly
+struct IInspectable : IUnknown
+{
+    virtual HRESULT STDMETHODCALLTYPE GetIids             (ULONG*, IID**, void**) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetRuntimeClassName (HSTRING*)              = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetTrustLevel       (TrustLevel*)           = 0;
+};
+
+// ClassID: Windows.Graphics.Display.AdvancedColorInfo
+// GUID: 8797dcfb-b229-4081-ae9a-2cc85e34ad6a
+// Header: Windows.Graphics.Display.h
+static const IID IID_IAdvancedColorInfo =
+{ 0x8797DCFB, 0xB229, 0x4081, { 0xAE, 0x9A, 0x2C, 0xC8, 0x5E, 0x34, 0xAD, 0x6A } };
+interface DECLSPEC_UUID ("8797dcfb-b229-4081-ae9a-2cc85e34ad6a") IAdvancedColorInfo;
+struct IAdvancedColorInfo : IInspectable
+{
+  virtual HRESULT STDMETHODCALLTYPE CurrentAdvancedColorKind              (AdvancedColorKind*) = 0;
+  virtual HRESULT STDMETHODCALLTYPE RedPrimary                            (WindowsFoundationPoint*) = 0;
+  virtual HRESULT STDMETHODCALLTYPE GreenPrimary                          (WindowsFoundationPoint*) = 0;
+  virtual HRESULT STDMETHODCALLTYPE BluePrimary                           (WindowsFoundationPoint*) = 0;
+  virtual HRESULT STDMETHODCALLTYPE WhitePrimary                          (WindowsFoundationPoint*) = 0;
+  virtual HRESULT STDMETHODCALLTYPE MaxLuminanceInNits                    (FLOAT*) = 0;
+  virtual HRESULT STDMETHODCALLTYPE MinLuminanceInNits                    (FLOAT*) = 0;
+  virtual HRESULT STDMETHODCALLTYPE MaxAverageFullFrameLuminanceInNits    (FLOAT*) = 0;
+  virtual HRESULT STDMETHODCALLTYPE SdrWhiteLevelInNits                   (FLOAT*) = 0;
+  virtual HRESULT STDMETHODCALLTYPE IsHdrMetadataFormatCurrentlySupported (HdrMetadataFormat, BOOLEAN*) = 0;
+  virtual HRESULT STDMETHODCALLTYPE IsAdvancedColorKindAvailable          (AdvancedColorKind, BOOLEAN*) = 0;
+};
+
+// IDisplayInformation5
+// ClassID: Windows.Graphics.Display.IDisplayInformation5
+// GUID: 3a5442dc-2cde-4a8d-80d1-21dc5adcc1aa
+// Header: Windows.Graphics.Display.h
+static const IID IID_IDisplayInformation5 =
+{ 0x3A5442DC, 0x2CDE, 0x4A8D, { 0x80, 0xD1, 0x21, 0xDC, 0x5A, 0xDC, 0xC1, 0xAA } };
+interface DECLSPEC_UUID ("3a5442dc-2cde-4a8d-80d1-21dc5adcc1aa") IDisplayInformation5;
+struct IDisplayInformation5 : IInspectable
+{
+    virtual HRESULT STDMETHODCALLTYPE GetAdvancedColorInfo         (IAdvancedColorInfo**) = 0;
+    virtual HRESULT STDMETHODCALLTYPE __incomplete__AddAdvancedColorInfoChanged    (void) = 0;
+    virtual HRESULT STDMETHODCALLTYPE __incomplete__RemoveAdvancedColorInfoChanged (void) = 0;
+};
+
+// The static interop interface used by GetForMonitor
+// Header: Windows.Graphics.Display.Interop.h
+static const IID IID_IDisplayInformationStaticsInterop =
+{ 0x7449121C, 0x382B, 0x4705, { 0x8D, 0xA7, 0xA7, 0x95, 0xBA, 0x48, 0x20, 0x13 } };
+interface DECLSPEC_UUID ("7449121C-382B-4705-8DA7-A795BA482013") IDisplayInformationStaticsInterop;
+struct IDisplayInformationStaticsInterop : IInspectable
+{
+  virtual HRESULT STDMETHODCALLTYPE GetForWindow  (    HWND window,  REFIID riid, void** ppvObject) = 0; // IDisplayInformation5
+  virtual HRESULT STDMETHODCALLTYPE GetForMonitor (HMONITOR monitor, REFIID riid, void** ppvObject) = 0; // IDisplayInformation5
+};
+
+// This is just some old stuff required for the native WinRT path.
+// No longer relevant after the WinRT stuff got dynamically handled.
 //#undef NTDDI_VERSION
 //#define NTDDI_VERSION NTDDI_WIN10_NI
 #if (NTDDI_VERSION >= NTDDI_WIN10_NI)
@@ -3242,10 +3324,72 @@ SKIF_UtilInt_UpdateMonitors (void)
     monitor.path_targetInfo.adapterId = path.targetInfo.adapterId;
 
     // Windows 10 1803+ (Build 17134) or newer
-    // Breaks Windows 8 and 7 compatibility atm...
-#if (NTDDI_VERSION >= NTDDI_WIN10_NI)
     if (SKIF_Util_IsWindows10v1803OrGreater ( ))
     {
+
+#if (NTDDI_VERSION < NTDDI_WIN10_NI)
+
+      // Dynamically interface with WinRT functions through combase.dll
+      // Compatible with Windows 7 and 8
+      HRESULT hr = CoInitializeEx (nullptr, COINIT_APARTMENTTHREADED);
+      bool needUninit = (SUCCEEDED (hr) && hr != S_FALSE);
+
+      HMODULE
+          hCombase = LoadLibraryEx (L"combase.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+      if (hCombase != NULL)
+      {
+        const wchar_t* name = L"Windows.Graphics.Display.DisplayInformation";
+        const UINT32   len  = (UINT32)wcslen (name);
+
+        HSTRING        hClassName = nullptr;
+        HSTRING_HEADER header;
+        if (SUCCEEDED (SK_WindowsCreateStringReference (name, len, &header, &hClassName)) && hClassName != nullptr)
+        {
+          IDisplayInformationStaticsInterop* pStatics = nullptr;
+          if (SUCCEEDED (SK_RoGetActivationFactory (hClassName, __uuidof (IDisplayInformationStaticsInterop), reinterpret_cast<void**>(&pStatics)) && pStatics != nullptr))
+          {
+            IDisplayInformation5* pDisp = nullptr;
+            if (SUCCEEDED (pStatics->GetForMonitor (monitor.handle, IID_IDisplayInformation5, reinterpret_cast<void**>(&pDisp))) && pDisp != nullptr)
+            {
+              IAdvancedColorInfo* pAc = nullptr;
+              if (SUCCEEDED (pDisp->GetAdvancedColorInfo(&pAc)) && pAc != nullptr)
+              {
+                BOOLEAN available = FALSE;
+
+                if (SUCCEEDED (pAc->IsAdvancedColorKindAvailable (AdvancedColorKind_HighDynamicRange, &available)))
+                  monitor.hdr.supported = (available != FALSE);
+
+                if (SUCCEEDED (pAc->IsAdvancedColorKindAvailable (AdvancedColorKind_WideColorGamut,   &available)))
+                  monitor.wcg.supported = (available != FALSE);
+
+                AdvancedColorKind cur = AdvancedColorKind_StandardDynamicRange;
+                if (SUCCEEDED (pAc->CurrentAdvancedColorKind (&cur)))
+                {
+                  monitor.hdr.active    = (monitor.hdr.supported && (cur & AdvancedColorKind_HighDynamicRange) != 0);
+                  monitor.wcg.active    = (monitor.wcg.supported && (cur & AdvancedColorKind_WideColorGamut)   != 0);
+                }
+
+                pAc->SdrWhiteLevelInNits (&monitor.sdr_whitelevel);
+
+                PLOG_DEBUG << "HDR and WCG metadata was read using WinRT calls.";
+                success = true;
+
+                pAc->Release();
+              }
+              pDisp->Release();
+            }
+            pStatics->Release();
+          }
+          SK_WindowsDeleteString (hClassName);
+        }
+        FreeLibrary (hCombase);
+      }
+      if (needUninit) CoUninitialize();
+
+#else // (NTDDI_VERSION >= NTDDI_WIN10_NI)
+
+      // Native WinRT calls
+      // Breaks Windows 8 and 7 compatibility
       using namespace winrt::Windows::Devices::Display::Core;
       using namespace winrt::Windows::Graphics::Display;
 
@@ -3267,16 +3411,20 @@ SKIF_UtilInt_UpdateMonitors (void)
             monitor.wcg.active  = (acinfo.CurrentAdvancedColorKind () == AdvancedColorKind::WideColorGamut   );
 
           monitor.sdr_whitelevel = acinfo.SdrWhiteLevelInNits ( );
-
+          
           success = true;
         }
       }
-    }
+
 #endif
+
+    }
 
     // Windows 10 1709+ (Build 16299) fallback
     if (! success || (! SKIF_Util_IsWindows10v1803OrGreater ( ) && SKIF_Util_IsWindows10v1709OrGreater ( )))
     {
+      PLOG_DEBUG << "Reading HDR support data using DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO...";
+
       DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO
         getDisplayHDR                   = { };
         getDisplayHDR.header.adapterId  = path.targetInfo.adapterId;
