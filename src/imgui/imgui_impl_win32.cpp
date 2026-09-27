@@ -1976,6 +1976,12 @@ static LRESULT CALLBACK ImGui_ImplWin32_WndProcHandler_PlatformWindow(HWND hWnd,
         case WM_SIZE:
           viewport->PlatformRequestResize = true;
 
+          // Used to determine whether the viewport (window) is visible or not
+          if (ImGui_ImplWin32_ViewportData* vd = (ImGui_ImplWin32_ViewportData*)viewport->PlatformUserData)
+            vd->WmSize = static_cast<DWORD>(wParam);
+
+          break;
+
         case WM_MOUSEACTIVATE:
           if (viewport->Flags & ImGuiViewportFlags_NoFocusOnClick)
             return MA_NOACTIVATE;
