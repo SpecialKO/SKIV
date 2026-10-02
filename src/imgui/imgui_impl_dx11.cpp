@@ -164,7 +164,7 @@ static void ImGui_ImplDX11_SwapBuffers   (ImGuiViewport* viewport, void*);
 static void ImGui_ImplDX11_CreateWindow  (ImGuiViewport* viewport       );
 static void ImGui_ImplDX11_DestroyWindow (ImGuiViewport* viewport       );
        void ImGui_ImplDX11_InvalidateDevice (void);
-       
+
 static DXGI_FORMAT SKIF_ImplDX11_ViewPort_GetDXGIFormat    (ImGuiViewport* viewport);
        bool        SKIF_ImplDX11_ViewPort_IsHDR            (ImGuiViewport* viewport);
 static int         SKIF_ImplDX11_ViewPort_GetHDRMode       (ImGuiViewport* viewport);
@@ -288,7 +288,7 @@ void ImGui_ImplDX11_RenderDrawData(ImDrawData* draw_data)
             { (R+L)/(L-R),  (T+B)/(B-T),    0.5f,       1.0f },
         };
         memcpy(&constant_buffer->mvp, mvp, sizeof(mvp));
-    
+
         // Defaults
         /*
         constant_buffer->luminance_scale [0] = 1.0f; // x - White Level
@@ -525,7 +525,7 @@ void ImGui_ImplDX11_RenderDrawData (ImDrawData *draw_data)
     memcpy ( &constant_buffer->mvp,
                                mvp,
                        sizeof (mvp) );
-    
+
     // Defaults
     constant_buffer->luminance_scale [0] = 1.0f; // x - White Level
     constant_buffer->luminance_scale [1] = 0.0f; // y - isHDR
@@ -1243,7 +1243,7 @@ bool ImGui_ImplDX11_CreateDeviceObjects (void)
 
 #endif // SKIF_ImDrawVert
     };
-  
+
   if (FAILED (bd->pd3dDevice->CreateInputLayout (local_layout, 3, imgui_vs_bytecode, sizeof (imgui_vs_bytecode) / sizeof (imgui_vs_bytecode[0]), &bd->pInputLayout)))
     return false;
 
@@ -1255,7 +1255,7 @@ bool ImGui_ImplDX11_CreateDeviceObjects (void)
   buffer_desc.BindFlags      = D3D11_BIND_CONSTANT_BUFFER;
   buffer_desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
   buffer_desc.MiscFlags      = 0;
-  
+
   if (FAILED (bd->pd3dDevice->CreateBuffer (&buffer_desc, nullptr, &bd->pVertexConstantBuffer)))
     return false;
 
@@ -1266,13 +1266,13 @@ bool ImGui_ImplDX11_CreateDeviceObjects (void)
   buffer_desc.BindFlags      = D3D11_BIND_CONSTANT_BUFFER;
   buffer_desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
   buffer_desc.MiscFlags      = 0;
-  
+
   if (FAILED (bd->pd3dDevice->CreateBuffer (&buffer_desc, nullptr, &bd->pPixelConstantBuffer)))
     return false;
 
   if (FAILED (bd->pd3dDevice->CreateBuffer (&buffer_desc, nullptr, &bd->pGamutConstantBuffer)))
     return false;
-    
+
   if (FAILED (bd->pd3dDevice->CreateBuffer (&buffer_desc, nullptr, &bd->pFontConstantBuffer)))
     return false;
 
@@ -1300,7 +1300,7 @@ bool ImGui_ImplDX11_CreateDeviceObjects (void)
   blend_desc.RenderTarget [0].DestBlendAlpha        = D3D11_BLEND_INV_SRC_ALPHA; //D3D11_BLEND_ZERO;
   blend_desc.RenderTarget [0].BlendOpAlpha          = D3D11_BLEND_OP_ADD;
   blend_desc.RenderTarget [0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
-  
+
   if (FAILED (bd->pd3dDevice->CreateBlendState (&blend_desc, &bd->pBlendState)))
     return false;
 
@@ -1311,7 +1311,7 @@ bool ImGui_ImplDX11_CreateDeviceObjects (void)
   raster_desc.CullMode        = D3D11_CULL_NONE;
   raster_desc.ScissorEnable   = true;
   raster_desc.DepthClipEnable = true;
-  
+
   if (FAILED (bd->pd3dDevice->CreateRasterizerState (&raster_desc, &bd->pRasterizerState)))
     return false;
 
@@ -1503,7 +1503,7 @@ void ImGui_ImplDX11_NewFrame()
       }
 
       _registry._RendererCanHDR = SKIF_Util_IsHDRActive (NULL); // true
-    
+
       PLOG_DEBUG << "Recreating any necessary swapchains and their wait objects...";
       for (int i = 0; i < g.Viewports.Size; i++)
         ImGui_ImplDX11_CreateWindow  (g.Viewports [i]);
@@ -1670,7 +1670,7 @@ ImGui_ImplDX11_SetWindowSize ( ImGuiViewport *viewport,
         PLOG_ERROR << "ImGui_ImplDX11_SetWindowSize() failed creating buffers";
         return;
       }
-    
+
     D3D11_RENDER_TARGET_VIEW_DESC rtvDesc = { };
     rtvDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
 
@@ -1907,7 +1907,7 @@ ImGui_ImplDX11_CreateWindow (ImGuiViewport *viewport)
   // DXGI ERROR: IDXGIFactory::CreateSwapChain: No target window specified in DXGI_SWAP_CHAIN_DESC, and no window associated with owning factory. [ MISCELLANEOUS ERROR #6: ]
   if (hWnd == nullptr)
     return;
-  
+
   // Occurs when using Ctrl+Tab and closing a standalone popup...
   // Apparently the viewport sticks around for another frame despite
   //   the window having been terminated already
@@ -1916,7 +1916,7 @@ ImGui_ImplDX11_CreateWindow (ImGuiViewport *viewport)
 
   IM_ASSERT ( vd->SwapChain == nullptr &&
               vd->RTView    == nullptr );
-  
+
   DXGI_FORMAT dxgi_format;
 
   // HDR formats
@@ -2031,7 +2031,7 @@ ImGui_ImplDX11_CreateWindow (ImGuiViewport *viewport)
 
           RECT m_windowBounds;
           GetWindowRect (hWnd, &m_windowBounds);
-    
+
           // Iterate through the DXGI outputs associated with the DXGI adapter,
           // and find the output whose bounds have the greatest overlap with the
           // app window (i.e. the output for which the intersection area is the
@@ -2067,7 +2067,7 @@ ImGui_ImplDX11_CreateWindow (ImGuiViewport *viewport)
           }
         }
 
-        // Having determined the output (display) upon which the app is primarily being 
+        // Having determined the output (display) upon which the app is primarily being
         // rendered, retrieve the HDR capabilities of that display by checking the color space.
         CComQIPtr <IDXGIOutput6>
             pOutput6 (pOutput);
@@ -2129,7 +2129,7 @@ ImGui_ImplDX11_CreateWindow (ImGuiViewport *viewport)
     vd->SwapChain->GetBuffer ( 0, IID_PPV_ARGS (
                   &pBackBuffer.p                 )
                                );
-    
+
     D3D11_RENDER_TARGET_VIEW_DESC rtvDesc = { };
     rtvDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
 

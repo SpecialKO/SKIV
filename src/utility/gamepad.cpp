@@ -58,7 +58,7 @@ SKIF_GamePadInputHelper::UpdateXInputState (void)
     { 0, XINPUT_GAMEPAD { 0 } };
   static constexpr auto         XUSER_INDEXES =
     std::array <DWORD, 4> { 0, 1, 2, 3 };
-  
+
   static HMODULE                         hModXInput                       = nullptr;
   static XInputGetState_pfn              SKIF_XInputGetState              = nullptr;
   static XInputGetCapabilities_pfn       SKIF_XInputGetCapabilities       = nullptr;
@@ -331,7 +331,7 @@ void
 SKIF_GamePadInputHelper::SpawnChildThread (void)
 {
   PLOG_VERBOSE << "Spawning SKIF_GamePadInputPump thread...";
-  
+
   // Start the child thread that is responsible for checking for gamepad input
   static HANDLE hWorkerThread = (HANDLE)
   _beginthreadex (nullptr, 0x0, [](void*) -> unsigned

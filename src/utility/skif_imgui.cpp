@@ -785,7 +785,7 @@ void SKIF_ImGui_OptImage (ImTextureID user_texture_id, const ImVec2& size, const
   {
     SKIF_ImGui_RotatedImage (user_texture_id, size, rotation, uv0, uv1, tint_col, border_col);
   }
-  
+
   // If a nullptr, run slightly tweaked code that omitts the image rendering
   else {
     ImGuiWindow* window = ImGui::GetCurrentWindow();
@@ -973,7 +973,7 @@ SKIF_ImGui_MissingGlyphCallback (wchar_t c)
   if (unprintable_chars.emplace (c).second)
   {
     using range_def_s =
-      std::pair <const ImWchar*, std::vector<ImWchar> * >; // bool *, 
+      std::pair <const ImWchar*, std::vector<ImWchar> * >; // bool *,
 
     static       auto pFonts = ImGui::GetIO ().Fonts;
 
@@ -1110,7 +1110,7 @@ SKIF_ImGui_InitFonts (float fontSize, bool extendedCharsets)
 
   ImFontConfig
   font_cfg           = {  };
-  
+
   std::filesystem::path fontDir
           (_path_cache.skiv_userdata);
 
@@ -1147,7 +1147,7 @@ SKIF_ImGui_InitFonts (float fontSize, bool extendedCharsets)
     if (! vFontCyrillic.empty())
       SKIF_ImGui_LoadFont   (standardFont,   fontSize, vFontCyrillic.data(), &font_cfg);
       //SKIF_ImGui_LoadFont   ((fontDir / L"NotoSans-Regular.ttf"), fontSize, io.Fonts->GetGlyphRangesCyrillic        (), &font_cfg);
-  
+
     // Japanese character set
     // Load before Chinese for ACP 932 so that the Japanese font is not overwritten
     if (! vFontJapanese.empty() && acp == 932)
@@ -1179,7 +1179,7 @@ SKIF_ImGui_InitFonts (float fontSize, bool extendedCharsets)
         SKIF_ImGui_LoadFont (L"yugothic.ttf", fontSize, vFontJapanese.data(), &font_cfg);
       //*/
     }
-    
+
     // All Chinese character sets
     if (! vFontChineseAll.empty())
       SKIF_ImGui_LoadFont   (L"msjh.ttc",     fontSize, vFontChineseAll.data(), &font_cfg);
@@ -1253,7 +1253,7 @@ void
 SKIF_ImGui_SetStyle (ImGuiStyle* dst)
 {
   static SKIF_RegistrySettings& _registry = SKIF_RegistrySettings::GetInstance ( );
-  
+
   if (dst == nullptr)
     dst = &ImGui::GetStyle ( );
 
@@ -1305,7 +1305,7 @@ SKIF_ImGui_SetStyle (ImGuiStyle* dst)
 
   else
     _registry._TouchDevice = false;
-  
+
   if (! _registry.bUIBorders)
   {
     dst->TabBorderSize   = 0.0F;
@@ -1323,7 +1323,7 @@ SKIF_ImGui_SetStyle (ImGuiStyle* dst)
 
   // Scale the style based on the current DPI factor
   dst->ScaleAllSizes (SKIF_ImGui_GlobalDPIScale);
-  
+
   if (_registry._sRGBColors)
     for (int i=0; i < ImGuiCol_COUNT; i++)
         dst->Colors[i] = SKIF_ImGui_sRGBtoLinear (dst->Colors[i]);

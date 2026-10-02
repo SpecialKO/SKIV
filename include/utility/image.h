@@ -420,7 +420,7 @@ struct skiv_image_directory_s {
 //std::wstring                filename;    // Image filename
   std::wstring                folder_path; // Parent folder path
   SKIF_DirectoryWatch         watch;
-  
+
 
   std::vector<SORTCOLUMN>     sortColumns; // File Explorer
 

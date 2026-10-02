@@ -254,19 +254,19 @@ SKIF_Startup_ProcessCmdLineArgs (LPWSTR lpCmdLine)
 {
   // Use specific shorthands for our internal tasks instead of
   //   a case insensitive search which would produce false positives
-  _Signal.Quit            = 
+  _Signal.Quit            =
     _wcsicmp (lpCmdLine, L"/Exit") == NULL;
-  _Signal.Minimize        = 
+  _Signal.Minimize        =
     wcscmp (lpCmdLine, L"1") == NULL;
-//_Signal.CheckForUpdates = 
+//_Signal.CheckForUpdates =
 //  wcscmp (lpCmdLine, L"2") == NULL;
-  _Signal.OpenFileDialog = 
+  _Signal.OpenFileDialog =
     _wcsicmp (lpCmdLine, L"/OpenFileDialog") == NULL;
-  _Signal.CaptureWindow = 
+  _Signal.CaptureWindow =
     _wcsicmp (lpCmdLine, L"/CaptureWindow") == NULL;
-  _Signal.CaptureRegion = 
+  _Signal.CaptureRegion =
     _wcsicmp (lpCmdLine, L"/CaptureRegion") == NULL;
-  _Signal.CaptureScreen = 
+  _Signal.CaptureScreen =
     _wcsicmp (lpCmdLine, L"/CaptureScreen") == NULL;
 
   if (! _Signal.Quit           &&
@@ -355,7 +355,7 @@ SKIF_Startup_CloseRunningInstances (void)
   {
     DWORD res =
       WaitForMultipleObjectsEx (static_cast<DWORD>(shared.handles.size()), shared.handles.data(), true, 2500, false);
-    
+
     if (res == WAIT_FAILED)
       PLOG_DEBUG << "Failed when trying to wait on the running instances!";
     else if (res == WAIT_TIMEOUT)
@@ -531,7 +531,7 @@ SKIF_Startup_RaiseRunningInstance (void)
 
   PLOG_INFO << "Attempting to restore the running instance: " << pidAlreadyExists;
   SendMessage (_Signal._RunningInstance, WM_SKIF_RESTORE, 0x0, 0x0);
-  
+
   PLOG_INFO << "Terminating due to this instance having done its job.";
   ExitProcess (0x0);
 }
@@ -601,10 +601,10 @@ void SKIF_Shell_CreateNotifyToast (UINT type, std::wstring message, std::wstring
 
   if (type == SKIF_NTOAST_UPDATE || _registry.bNotifications)
   {
-    niData.uFlags       = 
+    niData.uFlags       =
         NIF_INFO  | NIF_REALTIME;  // NIF_REALTIME to indicate the notifications should be discarded if not displayed immediately
 
-    niData.dwInfoFlags  = 
+    niData.dwInfoFlags  =
       (type == SKIF_NTOAST_SERVICE)
       ? NIIF_NONE | NIIF_RESPECT_QUIET_TIME | NIIF_NOSOUND // Mute the sound for service notifications
       : NIIF_NONE | NIIF_RESPECT_QUIET_TIME;
@@ -629,7 +629,7 @@ void SKIF_Shell_CreateJumpList (void)
   CComPtr <IObjectArray>             pRemovedItems;                             // Not actually used since we don't carry custom destinations
   PROPVARIANT                        pv;                                        // Used to give the custom tasks a title
   UINT                               cMaxSlots;                                 // Not actually used since we don't carry custom destinations
-       
+
   // Create a jump list COM object.
   if     (SUCCEEDED (pDestList.CoCreateInstance (CLSID_DestinationList)))
   {
@@ -872,7 +872,7 @@ void SKIF_Initialize (LPWSTR lpCmdLine)
 
     wcsncpy_s ( _path_cache.skiv_userdata, MAX_PATH,
                 fallbackDir.c_str(), _TRUNCATE);
-        
+
     // Create any missing directories
     if (! std::filesystem::exists             (fallbackDir, ec))
           std::filesystem::create_directories (fallbackDir, ec);
@@ -904,7 +904,7 @@ void SKIF_Initialize (LPWSTR lpCmdLine)
 
     SKIF_debuggerPresent = true;
   }
-  
+
   GetCurrentDirectoryW    (MAX_PATH, _path_cache.skiv_workdir);
 
 
@@ -1126,7 +1126,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
   MH_ApplyQueued     ();
 
   SetErrorMode (SEM_FAILCRITICALERRORS | SEM_NOALIGNMENTFAULTEXCEPT);
-  
+
   SKIF_Util_SetThreadDescription (GetCurrentThread (), L"SKIV_MainThread");
 
   //CoInitializeEx (nullptr, 0x0);
@@ -1138,14 +1138,14 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
   // Get the current time to use as a basis of how long the initialization took
   SKIF_startupTime = SKIF_Util_timeGetTime1();
-  
+
   // Process cmd line arguments (1/4) -- this sets up the necessary variables
   SKIF_Startup_ProcessCmdLineArgs (lpCmdLine);
 
   // This constructs these singleton objects
   static SKIF_CommonPathsCache& _path_cache = SKIF_CommonPathsCache::GetInstance ( ); // Does not rely on anything
   static SKIF_RegistrySettings& _registry   = SKIF_RegistrySettings::GetInstance ( ); // Does not rely on anything
-  
+
   // Process cmd line arguments (2/4)
   hWndOrigForeground = // Remember what third-party window is currently in the foreground
     GetForegroundWindow ( );
@@ -1166,7 +1166,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
       // Try to send data over using WM_COPYDATA,
       //   and terminate the instance if it succeeds
       SKIF_Startup_CopyDataRunningInstance   ( );
-      
+
       // The below calls only occurs if WM_COPYDATA failed
       SKIF_Startup_CloseRunningInstances   ( );
     }
@@ -1314,7 +1314,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
     _Signal._RunningInstance = SKIF_Notify_hWnd;
     SKIF_Startup_ProxyCommandLineArguments ( );
   }
-  
+
   PLOG_INFO << "Initializing Direct3D...";
 
   DWORD temp_time = SKIF_Util_timeGetTime1();
@@ -1334,7 +1334,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
   // The DropTarget object used for drag-and-drop support for new covers
   static SKIF_DropTargetObject& _drag_drop  = SKIF_DropTargetObject::GetInstance ( );
   extern std::wstring dragDroppedFilePath;
-  
+
   PLOG_INFO << "Initializing ImGui...";
 
   // Setup Dear ImGui context
@@ -1350,7 +1350,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
   io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;       // Enable Keyboard Controls
   io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;        // Enable Gamepad Controls
 //io.ConfigFlags |= ImGuiConfigFlags_NavEnableSetMousePos;
-//io.ConfigFlags |= ImGuiConfigFlags_DpiEnableScaleFonts;     // FIXME-DPI: THIS CURRENTLY DOESN'T WORK AS EXPECTED. DON'T USE IN USER APP! 
+//io.ConfigFlags |= ImGuiConfigFlags_DpiEnableScaleFonts;     // FIXME-DPI: THIS CURRENTLY DOESN'T WORK AS EXPECTED. DON'T USE IN USER APP!
 //io.ConfigFlags |= ImGuiConfigFlags_DpiEnableScaleViewports; // FIXME-DPI
 
   // Viewports
@@ -1439,7 +1439,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
   PLOG_INFO << "Initializing updater...";
   // Initialize the updater
-  static SKIF_Updater& _updater = 
+  static SKIF_Updater& _updater =
          SKIF_Updater::GetInstance ( );
 
   // Main loop
@@ -1519,16 +1519,16 @@ wWinMain ( _In_     HINSTANCE hInstance,
         }
 
         // There are four different window procedures that a message can be dispatched to based on the HWND of the message
-        // 
+        //
         //                           SKIF_Notify_WndProc ( )  <=  SKIF_Notify_hWnd                         :: Handles messages meant for the notification icon.
         //                                  SKIF_WndProc ( )  <=  SKIF_Notify_hWnd                         :: Handles all custom SKIF window messages and actions.
         //                                                                                                    - Gets called by SKIF_Notify_WndProc ( ).
-        // 
+        //
         // ImGui_ImplWin32_WndProcHandler_PlatformWindow ( )  <=  SKIF_ImGui_hWnd, Other HWNDs             :: Handles messages meant for the overarching ImGui Platform window of SKIF, as well as any
         //                                                                                                      additional swapchain windows (menus/tooltips that stretches beyond SKIF_ImGui_hWnd).
         // ImGui_ImplWin32_WndProcHandler                ( )  <=  SKIF_ImGui_hWnd, Other HWNDs             :: Handles mouse/key input and focus events for ImGui platform windows.
         //                                                                                                    - Gets called by ImGui_ImplWin32_WndProcHandler_PlatformWindow ( ).
-        // 
+        //
         TranslateMessage (&msg);
         DispatchMessage  (&msg);
 
@@ -1584,9 +1584,9 @@ wWinMain ( _In_     HINSTANCE hInstance,
         }
       }
     }
-      
+
     SKIF_vecRegularMode     = SKIF_vecRegularModeAdjusted * SKIF_ImGui_GlobalDPIScale;
-      
+
   //SKIF_vecRegularMode.y  -= SKIF_vecAlteredSize.y; // Replaced with SKIF_vecCurrentModeNext
 
     SKIF_vecRegularMode     = ImFloor (SKIF_vecRegularMode);
@@ -1596,7 +1596,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
     // Apply any changes to the ImGui style
     // Do it at the beginning of frames to prevent ImGui::Push... from affecting the styling
     // Note that Win11 rounded border color won't be applied until after a restart
-      
+
     // F7 to cycle between color themes
     if ( (_registry.iStyleTemp != _registry.iStyle) || hotkeyF7)
     {
@@ -1652,7 +1652,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
       // Take the current display into account
       HMONITOR monitor =
         ::MonitorFromWindow (SKIF_ImGui_hWnd, MONITOR_DEFAULTTONEAREST);
-        
+
       SKIF_ImGui_GlobalDPIScale = (_registry.bDPIScaling) ? ImGui_ImplWin32_GetDpiScaleForMonitor (monitor) : 1.0f;
 
       ImGuiStyle              newStyle;
@@ -1726,7 +1726,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
     {
       if (_registry.iHDRMode > 0 && SKIF_Util_IsHDRActive (NULL))
         _registry.iHDRMode = 1 + (_registry.iHDRMode % 2); // Cycle between 1 (10 bpc) and 2 (16 bpc)
-      else 
+      else
         _registry.iSDRMode = (_registry.iSDRMode + 1) % 3; // Cycle between 0 (8 bpc), 1 (10 bpc), and 2 (16 bpc)
 
       RecreateSwapChains = true;
@@ -1765,7 +1765,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
       invalidateFonts = false;
       SKIF_ImGui_InvalidateFonts ( );
     }
-    
+
     // This occurs on the next frame, as failedLoadFonts gets evaluated and set as part of ImGui_ImplDX11_NewFrame
     else if (failedLoadFonts)
     {
@@ -1781,7 +1781,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
     //PLOG_INFO << "Operation took " << (temp_time - SKIF_Util_timeGetTime1()) << " ms.";
 
 #pragma region New UI Frame
-    
+
     extern bool
       SKIF_ImGui_ImplWin32_WantUpdateMonitors (void);
     bool _WantUpdateMonitors =
@@ -2340,7 +2340,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
                         break;
                     }
                     */
-                    
+
                     if (isAutoSelection)
                     {
                       _data->_rect.Min.x = static_cast<float> (rect.left);
@@ -2519,12 +2519,12 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
           if (ImGui::Button (ICON_FA_XMARK, ImVec2 ( 30.0f * SKIF_ImGui_GlobalDPIScale, 0.0f ) )) // HotkeyEsc is situational
             _registry._SnippingModeExit = true;
-      
+
           if (_registry._StyleLightMode)
           {
             if (closeButtonHoverActive)
               ImGui::PopStyleColor ( );
-          
+
             closeButtonHoverActive = (ImGui::IsItemHovered () || ImGui::IsItemActivated ());
           }
 
@@ -2644,7 +2644,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
           if (show)
           {
             SKIF_UI_Tab_DrawViewer ( );
-          
+
             SKIF_ImGui_AutoScroll  (true, SKIF_ImGuiAxis_Both);
             SKIF_ImGui_UpdateScrollbarState ( );
 
@@ -2745,7 +2745,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
             (ImGui::GetWindowContentRegionMax().x - shelly_movable_area.x) / 2.0f,
              10.0f * SKIF_ImGui_GlobalDPIScale
         ));
-        
+
         ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2());
         ImGui::PushStyleVar (ImGuiStyleVar_FramePadding,  ImVec2());
         bool shelly_show = ImGui::BeginChild ("###SKIV_SHELLY", shelly_movable_area, ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar);
@@ -2804,12 +2804,12 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
           if (ImGui::Button (ICON_FA_XMARK, ImVec2 ( 30.0f * SKIF_ImGui_GlobalDPIScale, 0.0f ) )) // HotkeyEsc is situational
             hotkeyEsc = true;
-      
+
           if (_registry._StyleLightMode)
           {
             if (closeButtonHoverActive)
               ImGui::PopStyleColor ( );
-          
+
             closeButtonHoverActive = (ImGui::IsItemHovered () || ImGui::IsItemActivated ());
           }
 
@@ -3040,7 +3040,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
         fX = (ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(compareLabel.c_str()).x + (((compareNewer) ? 2 : 1) * ImGui::GetStyle().ItemSpacing.x)) / 2;
 
         ImGui::SetCursorPosX(fX);
-          
+
         ImGui::TextColored (compareColor, compareLabel.c_str());
 
         SKIF_ImGui_Spacing ();
@@ -3116,7 +3116,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
         ImGui::EndPopup ();
       }
-      
+
       static float  HistoryPopupWidth          = 0.0f;
       static std::string HistoryPopupTitle;
 
@@ -3141,7 +3141,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
         HistoryPopupTitle += "###History";
 
         ImGui::OpenPopup ("###History");
-      
+
       }
 
       if (HistoryPopup == PopupState_Open ||
@@ -3150,7 +3150,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
         ImGui::SetNextWindowSize (ImVec2 (HistoryPopupWidth * SKIF_ImGui_GlobalDPIScale, 0.0f));
         ImGui::SetNextWindowPos  (ImGui::GetCurrentWindowRead()->Viewport->GetMainRect().GetCenter(), ImGuiCond_Always, ImVec2 (0.5f, 0.5f));
       }
-      
+
       if (ImGui::BeginPopupModal (HistoryPopupTitle.c_str(), nullptr,
                                   ImGuiWindowFlags_NoResize |
                                   ImGuiWindowFlags_NoMove |
@@ -3221,7 +3221,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
         ImGui::EndPopup ();
       }
-      
+
       static float       AutoUpdatePopupWidth          = 0.0f;
       static std::string AutoUpdatePopupTitle;
       static bool        AutoUpdateChanges = (_updater.GetAutoUpdateNotes().max_length > 0 && false); //! _inject.SKVer32.empty() && _inject.SKVer32 == _registry.wsAutoUpdateVersion);
@@ -3231,7 +3231,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
         AutoUpdateChanges = false;
         AutoUpdatePopup = PopupState_Open;
       }
-      
+
       // Only open the popup prompt after the library has appeared (fixes the popup weirdly closing for some unknown reason)
       if (AutoUpdatePopup == PopupState_Open && ! HiddenFramesContinueProcessing && ! SKIF_ImGui_IsAnyPopupOpen ( ))
       {
@@ -3257,7 +3257,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
         ImGui::SetNextWindowSize (ImVec2 (AutoUpdatePopupWidth* SKIF_ImGui_GlobalDPIScale, 0.0f));
         ImGui::SetNextWindowPos  (ImGui::GetCurrentWindowRead()->Viewport->GetMainRect().GetCenter(), ImGuiCond_Always, ImVec2 (0.5f, 0.5f));
       }
-      
+
       if (ImGui::BeginPopupModal (AutoUpdatePopupTitle.c_str(), nullptr,
                                   ImGuiWindowFlags_NoResize |
                                   ImGuiWindowFlags_NoMove |
@@ -3329,7 +3329,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
         ImGui::EndPopup ();
       }
-      
+
       monitor_extent =
         ImGui::GetPopupAllowedExtentRect ( // ImGui::GetWindowAllowedExtentRect
           ImGui::GetCurrentWindowRead   ()
@@ -3377,7 +3377,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
           {
             Sleep (1 << (attempts - 1));
           }
-          
+
           if (OpenClipboard (SKIF_ImGui_hWnd))
           {
             clipboard_open = true;
@@ -3727,7 +3727,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
         PLOG_VERBOSE << "SKIF_ResourcesToFree: Releasing " << ptr.p;
         ptr.p->Release();
       }
-      
+
       if (invalidatedDevice == 2)
         invalidatedDevice = 0;
     }
@@ -3740,7 +3740,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
     bool input = SKIF_ImGui_IsAnyInputDown ( ) || uiLastMsg == WM_SKIF_GAMEPAD ||
                    (uiLastMsg >= WM_MOUSEFIRST && uiLastMsg <= WM_MOUSELAST)   ||
                    (uiLastMsg >= WM_KEYFIRST   && uiLastMsg <= WM_KEYLAST  );
-    
+
     // We want SKIF to continue rendering in some specific scenarios
     ImGuiWindow* wnd = ImGui::FindWindowByName ("###KeyboardHint");
     if (wnd != nullptr && wnd->Active)
@@ -3784,7 +3784,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
     //  OutputDebugString(L"[doWhile] Message spotted: WM_SKIF_COVER\n");
     //else if (uiLastMsg != 0x0)
     //  OutputDebugString((L"[doWhile] Message spotted: " + std::to_wstring(uiLastMsg) + L"\n").c_str());
-    
+
     // Pause if we don't need to render any additional frames
     if (processAdditionalFrames == 0)
       pause = true;
@@ -3871,7 +3871,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
         else
         {
           //auto timePre = SKIF_Util_timeGetTime1 ( );
-          
+
           extern bool SKIF_ImGui_ImplWin32_IsViewportVisible (ImGuiViewport* viewport);
           extern HANDLE SKIF_ImplDX11_ViewPort_GetWaitHandle (ImGuiViewport* viewport);
           std::vector<HANDLE> vActiveSwapchainWaitHandles;
@@ -3886,7 +3886,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
                 vActiveSwapchainWaitHandles.push_back(h);
             }
           }
-          
+
 
           // Waitable Swapchains (used for Flip)
           if (! vActiveSwapchainWaitHandles.empty())
@@ -3955,7 +3955,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
 #endif
         }
       }
-      
+
       // Reset stuff that's set as part of pumping the message queue
       msgDontRedraw = false;
       uiLastMsg     = 0x0;
@@ -3963,7 +3963,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
       // Pump the message queue, and break if we receive a false (WM_QUIT or WM_QUERYENDSESSION)
       if (! _TranslateAndDispatch ( ))
         break;
-      
+
       // If we added more frames, ensure we exit the loop
       if (addAdditionalFrames > 0)
         msgDontRedraw = false;
@@ -3988,7 +3988,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
   }
 
   PLOG_INFO << "Exited main loop...";
-  
+
   SKIF_Util_UnregisterHotKeyCapture     (CaptureMode_Screen);
   SKIF_Util_UnregisterHotKeyCapture     (CaptureMode_Region);
   SKIF_Util_UnregisterHotKeyCapture     (CaptureMode_Window);
@@ -3997,7 +3997,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
   // TODO: Make an exception for scenarios where remembering the size and pos makes sense,
   //         e.g. when size / DPI <= regular size * 1.5x or something like that!!!
-  // 
+  //
   // Only store window size and position to the registry if we are not in a maximized state
   ImVec2 vecCurrentModeDPIUnaware = ImFloor (SKIF_vecCurrentMode / SKIF_ImGui_GlobalDPIScale);
 
@@ -4013,7 +4013,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
       // Store a DPI-unaware size, so SKIF can automatically adjust it to the proper DPI on launch
       _registry.iUIWidth  = static_cast<int> (vecCurrentModeDPIUnaware.x);
       _registry.iUIHeight = static_cast<int> (vecCurrentModeDPIUnaware.y);
-    
+
       _registry.regKVUIWidth .putData (_registry.iUIWidth);
       _registry.regKVUIHeight.putData (_registry.iUIHeight);
 
@@ -4031,7 +4031,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
       _registry.iUIPositionX = static_cast<int> (SKIF_vecCurrentPosition.x);
       _registry.iUIPositionY = static_cast<int> (SKIF_vecCurrentPosition.y);
-    
+
       _registry.regKVUIPositionX.putData (_registry.iUIPositionX);
       _registry.regKVUIPositionY.putData (_registry.iUIPositionY);
 
@@ -4122,7 +4122,7 @@ bool CreateDeviceD3D (HWND hWnd)
     OutputDebugString(L"Direct3DCreate9() failed!\n");
   }
 #endif
-  
+
   CComPtr <IDXGIFactory2> pFactory2;
 
   if (FAILED (CreateDXGIFactory1 (__uuidof (IDXGIFactory2), (void **)&pFactory2.p)))
@@ -4342,9 +4342,9 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
   UNREFERENCED_PARAMETER (lParam);
 
   // This is the message procedure that handles all custom SKIF window messages and actions
-  
+
   UpdateFlags uFlags = UpdateFlags_Unknown;
-  
+
   static SKIF_CommonPathsCache&   _path_cache = SKIF_CommonPathsCache  ::GetInstance ( );
   static SKIF_RegistrySettings&   _registry   = SKIF_RegistrySettings  ::GetInstance ( );
   static SKIF_GamePadInputHelper& _gamepad    = SKIF_GamePadInputHelper::GetInstance ( );
@@ -4619,7 +4619,7 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
       return true;
       break;
 
-    case WM_ENDSESSION: 
+    case WM_ENDSESSION:
       // Session is shutting down -- perform any last minute changes!
       if (wParam == 1)
       {
@@ -4815,7 +4815,7 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             PLOG_INFO << "The app is performing an automatic update...";
 
             _registry.regKVAutoUpdateVersion.putData (SK_UTF8ToWideChar (SKIF_Updater::GetInstance ( ).GetResults ( ).version));
-            
+
             std::wstring update = SK_FormatStringW (LR"(%ws\Version\%ws)", _path_cache.skiv_userdata, SKIF_Updater::GetInstance ( ).GetResults ( ).filename.c_str());
             std::wstring args   = SK_FormatStringW (LR"(/VerySilent /NoRestart /Shortcuts=false /DIR="%ws")", _path_cache.skiv_install);
 
@@ -4885,7 +4885,7 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             msgDontRedraw = true;
             addAdditionalFrames -= 3; // Undo the 3 frames we added just above
           }
-          
+
           KillTimer (SKIF_Notify_hWnd, IDT_REFRESH_TOOLTIP);
           break;
         case IDT_REFRESH_GAMES: // TODO: Contemplate this design, and its position in the new design with situational pausing. Concerns WM_SKIF_REFRESHGAMES / IDT_REFRESH_GAMES.
@@ -4935,7 +4935,7 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
       ::PostQuitMessage (0);
       break;
   }
-  
+
   // Tell the main thread to render at least three more frames after we have processed the message
   if (SKIF_ImGui_hWnd != NULL && ! msgDontRedraw)
   {
@@ -5042,7 +5042,7 @@ SKIF_Notify_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         SHELL_TASKBAR_BUTTON_CREATED = RegisterWindowMessage (TEXT ("TaskbarButtonCreated"));
       );
       break;
-        
+
     default:
       // Taskbar was recreated (explorer.exe restarted),
       //   so we need to recreate the notification icon

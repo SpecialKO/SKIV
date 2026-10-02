@@ -100,7 +100,7 @@ struct SKIF_CommonPathsCache {
   wchar_t skiv_screenshots  [MAX_PATH + 2] = { }; // Holds the screenshot folder for SKIV
    char   skiv_screenshotsA [MAX_PATH + 2] = { }; // UTF-8
 
-  
+
   // Functions
   static SKIF_CommonPathsCache& GetInstance (void)
   {

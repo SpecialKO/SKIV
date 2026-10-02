@@ -814,7 +814,7 @@ struct SK_KeybindMultiState
 
   // This empty object is used during assignment to disable hotkeys temporarily
   static constexpr SK_Keybind disabled = { };
-  
+
   SK_KeybindMultiState (std::string _n, std::wstring _h) {
     bind_name                   = _n;
     default.human_readable      = _h;

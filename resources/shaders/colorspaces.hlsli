@@ -350,11 +350,11 @@ static const ParamsPQ PQ =
 float3 LinearToPQ (float3 x, float maxPQValue)
 {
   float3 sign_bits = sign (x);
-  
+
   x =
     pow ( abs (x) / maxPQValue,
                        PQ.N );
- 
+
   float3 nd =
     (PQ.C1 + PQ.C2 * x) /
       (1.0 + PQ.C3 * x);
@@ -366,7 +366,7 @@ float3 LinearToPQ (float3 x, float maxPQValue)
 float3 PQToLinear (float3 x, float maxPQValue)
 {
   float3 sign_bits = sign (x);
-  
+
   x =
     pow (abs (x), PQ.rcpM);
 
@@ -382,7 +382,7 @@ float3 Rec709toICtCp (float3 c)
 {
   c = Rec709_to_XYZ (c);
   c = XYZ_to_LMS    (c);
-  
+
   c =
     LinearToPQ (max (c, 0.0f), 125.0f);
 
@@ -405,13 +405,13 @@ float3 ICtCptoRec709 (float3 c)
     1.0, -0.00860514569398152, -0.11103560447547328,
     1.0,  0.56004885956263900, -0.32063747023212210
   };
-  
+
   c =
     mul (ConvMat, c);
-  
+
   c = PQToLinear (c, 125.0f);
   c = LMS_to_XYZ (c);
-  
+
   return
     XYZ_to_Rec709 (c);
 }
@@ -420,11 +420,11 @@ float LinearToPQY (float x, float maxPQValue)
 {
   float sign_bit =
     sign (x);
-  
+
   x =
     pow ( abs (x) / maxPQValue,
                        PQ.N );
-  
+
   float nd =
     (PQ.C1 + PQ.C2 * x) /
       (1.0 + PQ.C3 * x);
@@ -444,7 +444,7 @@ float4 LinearToPQ4 (float4 x, float maxPQValue)
   x =
     PositivePow ( x / maxPQValue,
                          PQ.N );
- 
+
   float4 nd =
     (PQ.C1 + PQ.C2 * x) /
       (1.0 + PQ.C3 * x);

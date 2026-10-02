@@ -155,7 +155,7 @@ float4 main (PS_INPUT input) : SV_Target
   // 16 bpc scRGB (SDR/HDR)
   // ColSpace:  DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709
   // Gamma:     1.0
-  // Primaries: BT.709 
+  // Primaries: BT.709
   if (is16bpc)
   {
     out_col =
@@ -197,7 +197,7 @@ float4 main (PS_INPUT input) : SV_Target
   // 10 bpc SDR
   // ColSpace:  DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709
   // Gamma:     2.2
-  // Primaries: BT.709 
+  // Primaries: BT.709
   else if (is10bpc)
   {
     // sRGB (SDR) Content
@@ -211,7 +211,7 @@ float4 main (PS_INPUT input) : SV_Target
 
       out_col.rgb = RemoveSRGBCurve (out_col.rgb);
     }
-    
+
     else if (! input.hdr_img)
     {
       out_col =
@@ -230,7 +230,7 @@ float4 main (PS_INPUT input) : SV_Target
                                     saturate (  out_col.a)  *
                                     saturate (input_col.a)
                 );
-               
+
       if (!alpha_toggle)
         out_col.a = 1.0f; // Opaque
     }
@@ -271,7 +271,7 @@ float4 main (PS_INPUT input) : SV_Target
 
       out_col.rgb = RemoveSRGBCurve (out_col.rgb);
     }
-    
+
     else if (! input.hdr_img)
     {
       out_col =
@@ -296,7 +296,7 @@ float4 main (PS_INPUT input) : SV_Target
     }
 #endif
   }
-  
+
   if (input.hdr_img)
   {
     uint implied_tonemap_type =
@@ -402,13 +402,13 @@ float4 main (PS_INPUT input) : SV_Target
   if (out_col.a < 1.0f && checkerboard_toggle && (font_dims.x + font_dims.y == 0.0f))
   {
     float grid_size = 8.0f;
-    
+
     float2 pixel_pos = input.pos.xy;
-    
+
     // calc grid pattern
     float2 grid = floor(pixel_pos / grid_size);
     float checker = fmod(grid.x + grid.y, 2.0f);
-    
+
     // grid colors for SDR (0.75 - light-gray, 0.5 - dark-gray)
     float3 color_white = (1.0f).xxx;
     float3 color_gray = (0.744f).xxx;
@@ -419,18 +419,18 @@ float4 main (PS_INPUT input) : SV_Target
       //scale grid before multiply with hdr
       //TODO make math correct
       bg_color = pow(max(0.0f, bg_color), 2.2f);
-      
+
       float hdr_alpha_mask = saturate(1.0f - out_col.a);
       hdr_alpha_mask = pow(hdr_alpha_mask, 2.0f);
-      
+
       out_col.rgb = out_col.rgb + bg_color * hdr_alpha_mask;
     }
     else
-    {    
+    {
     // mix image with grid
       out_col.rgb = out_col.rgb + bg_color * (1.0f - out_col.a);
     }
-    
+
     //just in case, might be excessive
     out_col.a = 1.0f;
   }

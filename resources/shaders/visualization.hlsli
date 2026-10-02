@@ -61,7 +61,7 @@ float4 ApplyHDRVisualization (uint type, float4 hdr_color, bool post_tonemap)
     {
       if (post_tonemap)
           return hdr_color;
-      
+
       float luminance =
         max (Rec709toXYZ (hdr_color.rgb).y, 0.0);
 

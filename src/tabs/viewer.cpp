@@ -364,7 +364,7 @@ CreateFILTERSPEC (eFILTERSPEC format)
 
       if (mime == prev_mime)
         continue;
-          
+
       for (auto& file_extension : type.file_extensions)
         ext_filter += ((! ext_filter.empty()) ? L";*" : L"*") + file_extension;
 
@@ -646,7 +646,7 @@ SaveTempImage (std::wstring_view source, std::wstring_view filename)
     std::wstring destination = L"";
     std::wstring filename    = L"";
   };
-  
+
   thread_s* data = new thread_s;
 
   data->source      = source;
@@ -698,7 +698,7 @@ SaveTempImage (std::wstring_view source, std::wstring_view filename)
 
     if (success)
     {
-      // If the specified window was created by the calling thread, the window procedure is called immediately as a subroutine. 
+      // If the specified window was created by the calling thread, the window procedure is called immediately as a subroutine.
       wchar_t                    wszFilePath [MAX_PATH] = { };
       if (S_OK == StringCbCopyW (wszFilePath, MAX_PATH, _data->destination.data()))
       {
@@ -727,7 +727,7 @@ SaveTempImage (std::wstring_view source, std::wstring_view filename)
     }
 
     PLOG_INFO  << "Finished downloading web image asynchronously...";
-    
+
     // Free up the memory we allocated
     delete _data;
 
@@ -1048,7 +1048,7 @@ LoadLibraryTexture (image_s& image)
 
           PLOG_INFO << "Detected an " << type.mime_type << " image";
 
-          decoder = 
+          decoder =
              (type.mime_type == L"image/jpeg"                ) ?
                    (SKIV_Image_IsUltraHDR (imagePath.c_str ()) ? ImageDecoder_UHDR :
                                                                  SKIV_DEFAULT_GENERAL_PURPOSE_DECODER):
@@ -1262,7 +1262,7 @@ LoadLibraryTexture (image_s& image)
         assert (SKIV_STBI_CICP.matrix_coeffs ==  0); // Identity
         // RGB is currently the only supported color model in PNG,
         //   and as such Matrix Coefficients shall be set to 0.
-        // 
+        //
         // But presumably it may eventually also be:
         //    0 (RGB)
         //    9 (BT.2020 Non-Constant Luminance)
@@ -1328,12 +1328,12 @@ LoadLibraryTexture (image_s& image)
               [&](XMVECTOR* outPixels, const XMVECTOR* inPixels, size_t width, size_t y)
               {
                 UNREFERENCED_PARAMETER(y);
-              
+
                 for (size_t j = 0; j < width; ++j)
                 {
                   XMVECTOR v = inPixels [j];
 
-                  XMVECTOR r =                  
+                  XMVECTOR r =
                     XMVector3Transform (SKIV_Image_PQToLinear (v), c_Bt2100toscRGB);
 
                   outPixels[j] = XMVectorSetW(r, XMVectorGetW(v));
@@ -1898,7 +1898,7 @@ LoadLibraryTexture (image_s& image)
                 }
               );
             }
-            //HDR 8-bpc is not handled correctly  
+            //HDR 8-bpc is not handled correctly
             if (bpc == 8 && avif_decoder->image->colorPrimaries == AVIF_COLOR_PRIMARIES_UNSPECIFIED) {
               //for now treat it as SDR, but that's incorrect measure in long run
               std::swap(img, temp_img);
@@ -1962,7 +1962,7 @@ LoadLibraryTexture (image_s& image)
     using JxlDecoderSetParallelRunner_pfn        = JxlDecoderStatus (*)(      JxlDecoder* dec,
                                                                         JxlParallelRunner parallel_runner,
                                                                                     void* parallel_runner_opaque);
-                                                 
+
     using JxlResizableParallelRunnerCreate_pfn         = void*    (*)(const JxlMemoryManager* memory_manager);
     using JxlResizableParallelRunnerSuggestThreads_pfn = uint32_t (*)(uint64_t xsize, uint64_t ysize);
     using JxlResizableParallelRunnerSetThreads_pfn     = void     (*)(void*                  runner_opaque, size_t num_threads);
@@ -2175,7 +2175,7 @@ LoadLibraryTexture (image_s& image)
                           size_t    y)
                 {
                   UNREFERENCED_PARAMETER(y);
-                
+
                   for (size_t j = 0; j < width; ++j)
                   {
                     XMVECTOR v = inPixels [j];
@@ -3044,7 +3044,7 @@ SKIF_UI_Tab_DrawViewer (void)
       PLOG_VERBOSE << "cover.file_info.folder_path: " << cover.file_info.folder_path;
       PLOG_VERBOSE << "_current_folder.folder_path: " << _current_folder.folder_path;
       _current_folder.reset();
-      
+
       std::filesystem::path path  = SKIF_Util_NormalizeFullPath (cover.file_info.path);
       _current_folder.folder_path = path.parent_path().wstring();
 
@@ -3144,7 +3144,7 @@ SKIF_UI_Tab_DrawViewer (void)
   static const ImVec2 hdr_uv1  (-2048.0f, -2048.0f);
   static const ImVec2 srgb_uv0 (-4096.0f, -4096.0f);
   static const ImVec2 srgb_uv1 (-8192.0f, -8192.0f);
-  
+
   static int    queuePosGameCover  = 0;
   static char   cstrLabelDowning[] = "Downloading...";
   static char   cstrLabelLoading[] = "...";
@@ -3188,12 +3188,12 @@ SKIF_UI_Tab_DrawViewer (void)
 
   ImGui::SetCursorPos (originalPos);
 
-  float fGammaCorrectedTint = 
+  float fGammaCorrectedTint =
     ((! _registry._RendererHDREnabled && _registry.iSDRMode == 2) ||
       ( _registry._RendererHDREnabled && _registry.iHDRMode == 2))
         ? AdjustAlpha (fTint)
         : fTint;
- 
+
   bool bIsHDR =
     cover_old.is_hdr;
 
@@ -3214,7 +3214,7 @@ SKIF_UI_Tab_DrawViewer (void)
       ImGui::SetCursorPosY (ImFloor ((ImGui::GetContentRegionAvail().y - sizeCover_old.y) * 0.5f));
 
     sizeCover_old = ImFloor (sizeCover_old);
-  
+
     SKIF_ImGui_OptImage  (cover_old.pRawTexSRV.p,
                                                       ImVec2 (sizeCover_old.x,
                                                               sizeCover_old.y),
@@ -3222,7 +3222,7 @@ SKIF_UI_Tab_DrawViewer (void)
                                     cover_old.light_info.isHDR ? hdr_uv1 : cover_old.is_dds ? srgb_uv1 : cover_old.uv1, // Bottom Right coordinates
                                     (_registry._StyleLightMode) ? ImVec4 (1.0f, 1.0f, 1.0f, fGammaCorrectedTint * AdjustAlpha (fAlphaPrev))  : ImVec4 (fTint, fTint, fTint, fAlphaPrev) // Alpha transparency
     );
-  
+
     ImGui::SetCursorPos (originalPos);
 
     fading = true;
@@ -3352,7 +3352,7 @@ SKIF_UI_Tab_DrawViewer (void)
       // Flip an inverted rectangle
       if (selection_rect.Min.x > selection_rect.Max.x) std::swap (selection_rect.Min.x, selection_rect.Max.x);
       if (selection_rect.Min.y > selection_rect.Max.y) std::swap (selection_rect.Min.y, selection_rect.Max.y);
-      
+
       // Adjust for image position
       selection_rect.Min -= image_pos;
       selection_rect.Max -= image_pos;
@@ -3380,7 +3380,7 @@ SKIF_UI_Tab_DrawViewer (void)
         }
       );
       */
-      
+
       selection_rect = ImRect (); // Reset
       wantCopyToClipboard = true;
       copyRect            = translated;
@@ -3469,7 +3469,7 @@ SKIF_UI_Tab_DrawViewer (void)
       sprintf (szLabels,     "Viewport Size:\n"
                              "Frame Size:\n");
       sprintf (szLabelsData, "%.0fx%.0f\n"
-                             "%.0fx%.0f\n", 
+                             "%.0fx%.0f\n",
                               ImGui::GetMainViewport ( )->Size.x,
                               ImGui::GetMainViewport ( )->Size.y,
                               cover.avail_size.x,
@@ -3485,7 +3485,7 @@ SKIF_UI_Tab_DrawViewer (void)
       static const char szLabels [] = "Resolution:\n"
                                       "Zoom Level:\n"
                                       "Dynamic Range:\n";
-      
+
       char     szLabelsData  [512] = { };
 
       sprintf (szLabelsData, "%.0fx%.0f\n"
@@ -4010,15 +4010,15 @@ SKIF_UI_Tab_DrawViewer (void)
     if (ImGui::BeginPopup ("ConfigEncoders", ImGuiWindowFlags_AlwaysAutoResize))
     {
       ImGui::BeginTabBar ("EncoderTabs");
-      static int selection = 0;            
+      static int selection = 0;
 
       if (ImGui::BeginTabItem ("AVIF", nullptr, ImGuiTabItemFlags_NoTooltip))
       {
         selection = 0;
-        
+
         if (ImGui::SliderInt ("Compression Speed",    &_registry.avif.speed,  AVIF_SPEED_SLOWEST, AVIF_SPEED_FASTEST))
           _registry.regKVAVIFSpeed.putData (_registry.avif.speed);
-        
+
         if (ImGui::SliderInt ("Compression Quality", &_registry.avif.quality, 80, 100))
           _registry.regKVAVIFQuality.putData         (_registry.avif.quality);
 
@@ -4210,7 +4210,7 @@ SKIF_UI_Tab_DrawViewer (void)
 
         ImGui::PopID ( ); // #HDRVisualization
       }
-      
+
       if (SKIF_ImGui_MenuItemEx2 ("Details", 0, ImGui::GetStyleColorVec4 (ImGuiCol_Text), "Ctrl+D", &_registry.bImageDetails)) // ICON_FA_BARCODE
         _registry.regKVImageDetails.putData (_registry.bImageDetails);
 
@@ -4295,7 +4295,7 @@ SKIF_UI_Tab_DrawViewer (void)
     struct thread_s {
       image_s image = { };
     };
-  
+
     thread_s* data = new thread_s;
 
     data->image.file_info.path      = new_path;
@@ -4321,7 +4321,7 @@ SKIF_UI_Tab_DrawViewer (void)
 
       int queuePos = getTextureLoadQueuePos();
       //PLOG_VERBOSE << "queuePos = " << queuePos;
-    
+
       bool success = LoadLibraryTexture ( _data->image );
 
       PLOG_VERBOSE << "_pRawTexSRV = "        << _data->image.pRawTexSRV;
@@ -4430,7 +4430,7 @@ SKIF_UI_Tab_DrawViewer (void)
     LPWSTR pwszFilePath = NULL;
     HRESULT hr          = // COMDLG_FILTERSPEC{ L"Images", L"*.png;*.jpg;*.jpeg;*.webp;*.psd;*.bmp;*.jxr;*.hdr;*.avif" }
       SK_FileOpenDialog (&pwszFilePath, filters.filterSpec.data(), static_cast<UINT> (filters.filterSpec.size()), SKIF_ImGui_hWnd, FOS_FILEMUSTEXIST, FOLDERID_Pictures);
-          
+
     if (hr == HRESULT_FROM_WIN32(ERROR_CANCELLED))
     {
       // If cancelled, do nothing
@@ -4467,7 +4467,7 @@ SKIF_UI_Tab_DrawViewer (void)
     LPWSTR pwszFilePath = NULL;
     HRESULT hr          = // COMDLG_FILTERSPEC{ L"Images", L"*.png;*.jpg;*.jpeg;*.webp;*.psd;*.bmp;*.jxr;*.hdr;*.avif" }
       SK_FileSaveDialog (&pwszFilePath, wszCoverName, wszDefaultExtension, filters.filterSpec.data(), static_cast<UINT> (filters.filterSpec.size()), SKIF_ImGui_hWnd, FOS_STRICTFILETYPES|FOS_FILEMUSTEXIST|FOS_OVERWRITEPROMPT|FOS_DONTADDTORECENT, FOLDERID_Pictures, cover.file_info.folder_path.c_str());
-          
+
     if (hr == HRESULT_FROM_WIN32(ERROR_CANCELLED))
     {
       // If cancelled, do nothing
@@ -4545,7 +4545,7 @@ SKIF_UI_Tab_DrawViewer (void)
     LPWSTR pwszFilePath = NULL;
     HRESULT hr          = // COMDLG_FILTERSPEC{ L"Images", L"*.png;*.jpg;*.jpeg;*.webp;*.psd;*.bmp;*.jxr;*.hdr;*.avif" }
       SK_FileSaveDialog (&pwszFilePath, wszCoverName, wszDefaultExtension, filters.filterSpec.data(), static_cast<UINT> (filters.filterSpec.size()), SKIF_ImGui_hWnd, FOS_STRICTFILETYPES|FOS_FILEMUSTEXIST, FOLDERID_Pictures, cover.file_info.folder_path.c_str());
-          
+
     if (hr == HRESULT_FROM_WIN32(ERROR_CANCELLED))
     {
       // If cancelled, do nothing

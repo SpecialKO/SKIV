@@ -11,8 +11,8 @@
 #include <gdiplus.h>
 #include <regex>
 
-#ifndef SECURITY_WIN32 
-#define SECURITY_WIN32 
+#ifndef SECURITY_WIN32
+#define SECURITY_WIN32
 #endif
 
 #include <Security.h>
@@ -406,12 +406,12 @@ SKIF_Util_timeGetTimeAsWStr (const std::wstring& format)
 
 // Handles comparisons of a version string split between dots by
 // looping through the parts that makes up the string one by one.
-// 
+//
 // Outputs:
 //  1 = if string1 is more than string2
 //  0 = if both strings are equal
 // -1 = if string1 is less than string2
-//  
+//
 // Basically https://www.geeksforgeeks.org/compare-two-version-numbers/
 int
 SKIF_Util_CompareVersionStrings (std::string string1, std::string string2)
@@ -439,14 +439,14 @@ SKIF_Util_CompareVersionStrings (std::string string1, std::string string2)
     // If string2 is higher than string1, return -1
     if (sum2 > sum1) return -1;
 
-    // if equal, reset variables and go for next numeric part 
+    // if equal, reset variables and go for next numeric part
     sum1 = sum2 = 0;
     i++;
     j++;
   }
 
   // If both strings are equal, return 0
-  return 0; 
+  return 0;
 }
 
 int
@@ -475,14 +475,14 @@ SKIF_Util_CompareVersionStrings (std::wstring string1, std::wstring string2)
     // If string2 is higher than string1, return -1
     if (sum2 > sum1) return -1;
 
-    // if equal, reset variables and go for next numeric part 
+    // if equal, reset variables and go for next numeric part
     sum1 = sum2 = 0;
     i++;
     j++;
   }
 
   // If both strings are equal, return 0
-  return 0; 
+  return 0;
 }
 
 
@@ -780,7 +780,7 @@ SKIF_UtilInt_IniUserMachineStrip (void)
       replProfile     = std::wstring      (userProfile.length(), L'*');
       replProfileUTF8 = SK_WideCharToUTF8 (replProfile);
     }
-    
+
     dwLen             = MAX_PATH;
 
     if (GetUserNameExW (NameSamCompatible, wszUserSamName, &dwLen))
@@ -801,7 +801,7 @@ SKIF_UtilInt_IniUserMachineStrip (void)
       replMacName     = std::wstring        (machineName.length(), L'*');
       replMacNameUTF8 = SK_WideCharToUTF8   (replMacName);
     }
-    
+
     dwLen             = MAX_PATH;
 
     if (GetUserNameExW (NameDisplay,    wszUserDisName, &dwLen))
@@ -819,7 +819,7 @@ std::string
 SKIF_Util_StripPersonalData (std::string input)
 {
   SKIF_UtilInt_IniUserMachineStrip ( );
-  
+
   if (! userDisNameUTF8.empty())
     input = std::regex_replace (input, std::regex  (userDisNameUTF8.c_str()), replDisNameUTF8.c_str()); // Strip Display Name first as it is most likely to include the profile/SAM account name
 
@@ -831,7 +831,7 @@ SKIF_Util_StripPersonalData (std::string input)
 
   if (! machineNameUTF8.empty())
     input = std::regex_replace (input, std::regex  (machineNameUTF8.c_str()), replMacNameUTF8.c_str());
-  
+
   // Trim a single trailing newline
   if (! input.empty() && input.back() == '\n')
     input.pop_back();
@@ -843,7 +843,7 @@ std::wstring
 SKIF_Util_StripPersonalData (std::wstring input)
 {
   SKIF_UtilInt_IniUserMachineStrip ( );
-  
+
   if (! userDisName.empty())
     input = std::regex_replace (input, std::wregex (userDisName.c_str()),    replDisName.c_str()); // Strip Display Name first as it is most likely to include the profile/SAM account name
 
@@ -855,7 +855,7 @@ SKIF_Util_StripPersonalData (std::wstring input)
 
   if (! machineName.empty())
     input = std::regex_replace (input, std::wregex (machineName.c_str()),    replMacName.c_str());
-  
+
   // Trim a single trailing newline
   if (! input.empty() && input.back() == L'\n')
     input.pop_back();
@@ -981,7 +981,7 @@ SKIF_Util_ShellExecuteUnelevated (
 
     spView->QueryInterface(riid, ppv);
   };
-    
+
   auto _GetDesktopAutomationObject = [&](REFIID riid, void **ppv) -> void
   {
     CComPtr<IShellView> spsv;
@@ -1040,7 +1040,7 @@ SKIF_Util_CreateProcess (
     std::map<std::wstring, std::wstring> env;
     SKIF_Util_CreateProcess_s* proc;
   };
-  
+
   thread_s* data = new thread_s;
 
   data->proc = proc;
@@ -1074,7 +1074,7 @@ SKIF_Util_CreateProcess (
     PathRemoveFileSpecW (wszExecutableBase);
     data->directory    = wszExecutableBase;
   }
-  
+
   if (env != nullptr)
     data->env = *env;
 
@@ -1095,7 +1095,7 @@ SKIF_Util_CreateProcess (
     STARTUPINFO         supinfo  = { };
     SecureZeroMemory  (&supinfo,   sizeof (STARTUPINFO));
     supinfo.cb                   = sizeof (STARTUPINFO);
-      
+
     LPVOID       lpEnvBlock      = nullptr;
     std::wstring wsEnvBlock;
 
@@ -1115,7 +1115,7 @@ SKIF_Util_CreateProcess (
     else {
       PLOG_ERROR << "Failed to create an environment block for the current user: " << SKIF_Util_GetErrorAsWStr (GetLastError ( ));
     }
-      
+
     PLOG_INFO                                          << "Creating process...";
     PLOG_INFO_IF  (! _data->path             .empty()) << "Application         : " << _data->path;
     PLOG_INFO_IF  (! _data->parameters       .empty()) << "Parameters          : " << _data->parameters;
@@ -1167,7 +1167,7 @@ SKIF_Util_CreateProcess (
           SetEnvironmentVariable (env_var.first.c_str(), env_var.second.c_str());
 
         PLOG_INFO << "Performing a ShellExecuteEx call...";
-  
+
         SHELLEXECUTEINFOW
           sexi              = { };
           sexi.cbSize       = sizeof (SHELLEXECUTEINFOW);
@@ -1284,7 +1284,7 @@ SKIF_Util_TerminateProcess (HANDLE hProcess, UINT uExitCode)
 {
   if (hProcess == INVALID_HANDLE_VALUE)
     return FALSE;
-   
+
   return
     TerminateProcess (hProcess, uExitCode);
 }
@@ -1576,7 +1576,7 @@ HybridDetect::PROCESSOR_INFO*
 SKIF_Util_GetProcessInfoHybridDetect (void)
 {
   static HybridDetect::PROCESSOR_INFO procInfo;
-  
+
   static bool
       runOnce = true;
   if (runOnce)
@@ -1604,7 +1604,7 @@ SKIF_Util_GetSystemCpuSetInformation (PSYSTEM_CPU_SET_INFORMATION Information, U
 
   if (SKIF_GetSystemCpuSetInformation == nullptr)
     return FALSE;
-  
+
   return SKIF_GetSystemCpuSetInformation (Information, BufferLength, ReturnedLength, Process, Flags);
 }
 
@@ -1615,9 +1615,9 @@ SKIF_Util_SetThreadPrefersECores (void)
     return false;
 
   HybridDetect::PROCESSOR_INFO procInfo = *SKIF_Util_GetProcessInfoHybridDetect ( );
-  
+
   bool succeeded = false;
-  
+
   // From Intel's Game Dev Guide for 12th Gen Intel® Core™ Processor:
   //  - CPU Sets provide APIs to declare application thread affinity in a “soft” manner that is compatible with OS power management (unlike the ThreadAffinityMask APIs).
   //  - SetThreadAffinityMask() is in the “strong” affinity class of Windows API functions.
@@ -1657,7 +1657,7 @@ SKIF_Util_SetThreadInformation (HANDLE hThread, THREAD_INFORMATION_CLASS ThreadI
 
   if (SKIF_SetThreadInformation == nullptr)
     return FALSE;
-  
+
   return SKIF_SetThreadInformation (hThread, ThreadInformationClass, ThreadInformation, ThreadInformationSize);
 }
 
@@ -1675,7 +1675,7 @@ SKIF_Util_SetThreadDescription (HANDLE hThread, PCWSTR lpThreadDescription)
 
   if (SKIF_SetThreadDescription == nullptr)
     return 0;
-  
+
   return SKIF_SetThreadDescription (hThread, lpThreadDescription);
 }
 
@@ -1693,7 +1693,7 @@ SKIF_Util_SetThreadSelectedCpuSets (HANDLE hThread, const ULONG* CpuSetIds, ULON
 
   if (SKIF_SetThreadSelectedCpuSets == nullptr)
     return FALSE;
-  
+
   return SKIF_SetThreadSelectedCpuSets (hThread, CpuSetIds, CpuSetIdCount);
 }
 
@@ -1733,7 +1733,7 @@ SKIF_Util_SetProcessPrefersECores (void)
   HybridDetect::PROCESSOR_INFO procInfo = *SKIF_Util_GetProcessInfoHybridDetect ( );
 
   bool succeeded = false;
-  
+
   // From Intel's Game Dev Guide for 12th Gen Intel® Core™ Processor:
   //  - CPU Sets provide APIs to declare application thread affinity in a “soft” manner that is compatible with OS power management (unlike the ThreadAffinityMask APIs).
   //  - SetThreadAffinityMask() is in the “strong” affinity class of Windows API functions.
@@ -1772,7 +1772,7 @@ SKIF_Util_SetProcessDefaultCpuSets (HANDLE hProcess, const ULONG* CpuSetIds, ULO
 
   if (SKIF_SetProcessDefaultCpuSets == nullptr)
     return FALSE;
-  
+
   return SKIF_SetProcessDefaultCpuSets (hProcess, CpuSetIds, CpuSetIdCount);
 }
 
@@ -2067,7 +2067,7 @@ SKIF_Util_SaveExtractExeIcon (std::wstring sourcePath, std::wstring targetPath)
     // Create any missing directories
     if (! std::filesystem::exists (            target.parent_path(), ec))
           std::filesystem::create_directories (target.parent_path(), ec);
-    
+
     // GDI+ Image Encoder CLSIDs (haven't changed forever)
     //
     //              {distinct-same-same-same-samesamesame}
@@ -2149,7 +2149,7 @@ SKIF_Util_GetDragFromMaximized (bool refresh)
     if (state && // Only check WindowArrangementActive if DragFromMaximize is enabled
         ERROR_SUCCESS == RegGetValueW (hKey, NULL, L"WindowArrangementActive", RRF_RT_REG_SZ, NULL, &szData, &dwSize))
       state = (wcscmp (szData, L"1") == 0);
-    
+
     if (state)
       PLOG_DEBUG << "DragFromMaximize and WindowArrangementActive registry keys are enabled in Windows";
     else
@@ -2320,7 +2320,7 @@ SKIF_Util_IsMPOsDisabledInRegistry (bool refresh)
   else
     flagOverlayTestMode = DWMOverlayTestModeFlags_None;
 
-  
+
   if (iDisableOverlay || ((flagOverlayTestMode & DWMOverlayTestModeFlags_MPORelated1) == DWMOverlayTestModeFlags_MPORelated1 &&
                           (flagOverlayTestMode & DWMOverlayTestModeFlags_MPORelated2) == DWMOverlayTestModeFlags_MPORelated2))
     isDisabled = true;
@@ -2332,10 +2332,10 @@ SKIF_Util_IsMPOsDisabledInRegistry (bool refresh)
 void
 SKIF_Util_GetMonitorHzPeriod (HWND hwnd, DWORD dwFlags, DWORD& dwPeriod)
 {
-  DEVMODE 
+  DEVMODE
     dm        = { };
     dm.dmSize = sizeof (DEVMODE);
-    
+
   MONITORINFOEX
     minfoex        = { };
     minfoex.cbSize = sizeof (MONITORINFOEX);
@@ -2364,7 +2364,7 @@ SKIF_Util_SetClipboardData (const std::wstring_view& data)
     {
       Sleep (1 << (attempts - 1));
     }
-    
+
     if (OpenClipboard (SKIF_ImGui_hWnd))
     {
       clipboard_open = true;
@@ -2623,7 +2623,7 @@ SKIF_Util_AddEnvironmentBlock (const void* pEnvBlock, const std::wstring& varNam
       key       = keyValue.substr(0, pos); // Extract the environment variable name from the given "key=value" string
     else
       key       = keyValue; // Environment variable lacks a = sign ?!
-    
+
     // We store the whole "key=value" string as the value in the map
     // Environment variables must also end with a null terminator
     value       = keyValue + L'\0';
@@ -2651,7 +2651,7 @@ SKIF_Util_AddEnvironmentBlock (const void* pEnvBlock, const std::wstring& varNam
     OutputDebugString(L"\n");
   }
 #endif
-  
+
   // Serialize the map into a new buffer
   std::wstring result;
 
@@ -2670,7 +2670,7 @@ SKIF_Util_FileExplorer_SelectFile (PCWSTR filePath)
   struct thread_s {
     std::wstring path = L"";
   };
-  
+
   thread_s* data = new thread_s;
   data->path = filePath;
 
@@ -2926,7 +2926,7 @@ SKIF_Util_Files_PruneOlderThan (std::wstring path, ULONGLONG secondsSince)
   HANDLE hFind        = INVALID_HANDLE_VALUE;
   WIN32_FIND_DATA ffd = { };
 
-  hFind = 
+  hFind =
     FindFirstFileExW ((path + L"*").c_str(), FindExInfoBasic, &ffd, FindExSearchNameMatch, NULL, NULL);
 
   if (INVALID_HANDLE_VALUE != hFind)
@@ -2961,7 +2961,7 @@ SKIF_Util_Files_PruneToLatestN (std::wstring path, size_t filesToRetain)
   auto _isValid = [](const wchar_t* str) -> bool
   { return (! ((str[0] == '.') && ((str[1] == '\0') || (str[1] == '.' && str[2] == '\0')))); };
 
-  hFind = 
+  hFind =
     FindFirstFileExW ((path + L"*").c_str(), FindExInfoBasic, &ffd, FindExSearchNameMatch, NULL, NULL);
 
   if (INVALID_HANDLE_VALUE != hFind)
@@ -3431,7 +3431,7 @@ SKIF_UtilInt_UpdateMonitors (void)
             monitor.wcg.active  = (acinfo.CurrentAdvancedColorKind () == AdvancedColorKind::WideColorGamut   );
 
           monitor.sdr_whitelevel = acinfo.SdrWhiteLevelInNits ( );
-          
+
           success = true;
         }
       }
@@ -3471,7 +3471,7 @@ SKIF_UtilInt_UpdateMonitors (void)
           getSDRWhiteLevel.header.id        = path.targetInfo.id;
           getSDRWhiteLevel.header.type      = DISPLAYCONFIG_DEVICE_INFO_GET_SDR_WHITE_LEVEL;
           getSDRWhiteLevel.header.size      =         sizeof (DISPLAYCONFIG_SDR_WHITE_LEVEL);
-        
+
         if (ERROR_SUCCESS == DisplayConfigGetDeviceInfo (&getSDRWhiteLevel.header))
         {
           // SDRWhiteLevel represents a multiplier for standard SDR white
@@ -3873,7 +3873,7 @@ SKIF_Util_GetWebUri (skif_get_web_uri_t* get, std::string* response_body)
 
     return 0;
   };
-  
+
   PLOG_VERBOSE                                     << "Method: " << std::wstring(get->method);
   PLOG_VERBOSE                                     << "Target: " << ((get->https) ? "https://" : "http://") << get->wszHostName << get->wszHostPath;
   PLOG_VERBOSE_IF(  get->wszExtraInfo[0] != L'\0') << " Query: " << get->wszExtraInfo;
@@ -4468,9 +4468,9 @@ SKIF_Util_ResolveShortcut (HWND hwnd, LPCWSTR lpszLinkFile, LPWSTR lpszTarget, L
 
 //
 // https://docs.microsoft.com/en-au/windows/win32/shell/links?redirectedfrom=MSDN#creating-a-shortcut-and-a-folder-shortcut-to-a-file
-// 
-// CreateLink - Uses the Shell's IShellLink and IPersistFile interfaces 
-//              to create and store a shortcut to the specified object. 
+//
+// CreateLink - Uses the Shell's IShellLink and IPersistFile interfaces
+//              to create and store a shortcut to the specified object.
 //
 // Returns true if successful; false if an error occurred.
 //
@@ -4489,7 +4489,7 @@ SKIF_Util_ResolveShortcut (HWND hwnd, LPCWSTR lpszLinkFile, LPWSTR lpszTarget, L
 // lpszIconLocation - Address of a buffer that contains the full path of icon
 //                    used for the shortcut, if relevant.
 // iIcon            - Index for the icon at lpszIconLocation to use.
-// 
+//
 
 bool
 SKIF_Util_CreateShortcut (LPCWSTR lpszPathLink, LPCWSTR lpszTarget, LPCWSTR lpszArgs, LPCWSTR lpszWorkDir, LPCWSTR lpszDesc, LPCWSTR lpszIconLocation, int iIcon)
@@ -4513,7 +4513,7 @@ SKIF_Util_CreateShortcut (LPCWSTR lpszPathLink, LPCWSTR lpszTarget, LPCWSTR lpsz
   {
     IPersistFile* ppf = nullptr;
 
-    // Set the specifics of the shortcut. 
+    // Set the specifics of the shortcut.
     psl->SetPath               (lpszTarget);
 
     if (wcscmp (lpszWorkDir, L"\0") == 0) // lpszWorkDir == L"\0"
@@ -4530,18 +4530,18 @@ SKIF_Util_CreateShortcut (LPCWSTR lpszPathLink, LPCWSTR lpszTarget, LPCWSTR lpsz
     if (wcscmp (lpszIconLocation, L"\0") != 0) // (lpszIconLocation != L"\0")
       psl->SetIconLocation     (lpszIconLocation, iIcon);
 
-    // Query IShellLink for the IPersistFile interface, used for saving the 
-    // shortcut in persistent storage. 
+    // Query IShellLink for the IPersistFile interface, used for saving the
+    // shortcut in persistent storage.
     //hres = psl->QueryInterface(IID_IPersistFile, (LPVOID*)&ppf);
 
     if (SUCCEEDED (psl->QueryInterface (IID_IPersistFile, (void**)&ppf)))
     {
       //WCHAR wsz[MAX_PATH];
 
-      // Ensure that the string is Unicode. 
+      // Ensure that the string is Unicode.
       //MultiByteToWideChar (CP_ACP, 0, lpszPathLink, -1, wsz, MAX_PATH);
 
-      // Save the link by calling IPersistFile::Save. 
+      // Save the link by calling IPersistFile::Save.
       if (SUCCEEDED (ppf->Save (lpszPathLink, FALSE)))
         ret = true;
 
@@ -4927,7 +4927,7 @@ SKIF_Util_GetWindowMessageAsStr (UINT msg)
   //  WM_APP -  0xBFFF        Messages available for use by applications.
   //  0xC000 -  0xFFFF        String messages for use by applications.
   //          > 0xFFFF        Reserved by the system.
-  // 
+  //
   // https://learn.microsoft.com/en-us/windows/win32/winmsg/wm-app
     default:
     {

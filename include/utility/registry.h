@@ -23,14 +23,14 @@ struct SKIF_RegistrySettings {
   // TODO: Rework this whole thing to not only hold a registry path but
   //       also hold the actual current value as well, allowing us to
   //       move away from ugly stuff like
-  // 
+  //
   //  _registry.uiLastSelectedGame = newValue;
   //  _registry.regKVLastSelectedGame.putData  (_registry.uiLastSelectedGame);
-  // 
+  //
   //       and instead do things like
-  // 
+  //
   //  _registry.uiLastSelectedGame.putData (newValue);
-  // 
+  //
   //       and have it automatically get stored in the registry as well.
 
   template <class _Tp>
@@ -66,7 +66,7 @@ struct SKIF_RegistrySettings {
     protected:
     private:
       KeyDesc _desc;
-      
+
       LSTATUS _SetValue (_Tp * pVal)
       {
         LSTATUS lStat         = STATUS_INVALID_DISPOSITION;
@@ -99,7 +99,7 @@ struct SKIF_RegistrySettings {
                                 _desc.wszKeyValue,
                                 _desc.dwType,
                           (LPBYTE) _in.data(), dwDataSize);
-            
+
           RegCloseKey (hKeyToSet);
 
           return lStat;
@@ -135,7 +135,7 @@ struct SKIF_RegistrySettings {
 
         return lStat;
       };
-      
+
       LSTATUS _GetValue (_Tp* pVal, DWORD* pLen = nullptr, HKEY* hKey = nullptr)
       {
         LSTATUS lStat =
@@ -166,7 +166,7 @@ struct SKIF_RegistrySettings {
 #define SKIF_MakeRegKeyI   KeyValue <int>         ::MakeKeyValue
 #define SKIF_MakeRegKeyWS  KeyValue <std::wstring>::MakeKeyValue
 #define SKIF_MakeRegKeyVEC KeyValue <std::vector <std::wstring>>::MakeKeyValue
-  
+
   // Booleans
 
   KeyValue <bool> regKVUIBorders =

@@ -59,7 +59,7 @@ SKIF_RegistrySettings::KeyValue<std::vector <std::wstring>>::getData (HKEY* hKey
 
   std::wstring out(dwOutLen, '\0');
 
-  if ( ERROR_SUCCESS != 
+  if ( ERROR_SUCCESS !=
     RegGetValueW ( (hKey != nullptr) ? *hKey : _desc.hKey,
                    (hKey != nullptr) ?  NULL : _desc.wszSubKey,
                         _desc.wszKeyValue,
@@ -101,7 +101,7 @@ SKIF_RegistrySettings::KeyValue<std::wstring>::getData (HKEY* hKey)
 
   std::wstring out(dwOutLen, '\0');
 
-  if ( ERROR_SUCCESS != 
+  if ( ERROR_SUCCESS !=
     RegGetValueW ( (hKey != nullptr) ? *hKey : _desc.hKey,
                    (hKey != nullptr) ?  NULL : _desc.wszSubKey,
                         _desc.wszKeyValue,
@@ -152,7 +152,7 @@ SKIF_RegistrySettings::KeyValue<std::vector <std::wstring>>::putDataMultiSZ (std
                         _desc.wszKeyValue,
                         _desc.dwType,
                   (LPBYTE) wzData.data ( ), (DWORD) stDataSize * sizeof(wchar_t));
-            
+
   RegCloseKey (hKeyToSet);
 
   return (ERROR_SUCCESS == lStat);
@@ -221,7 +221,7 @@ SKIF_RegistrySettings::isDevLogging (void) const
 
 SKIF_RegistrySettings::SKIF_RegistrySettings (void)
 {
-  // iSDRMode defaults to 0, meaning 8 bpc (DXGI_FORMAT_R8G8B8A8_UNORM) 
+  // iSDRMode defaults to 0, meaning 8 bpc (DXGI_FORMAT_R8G8B8A8_UNORM)
   // but it seems that Windows 10 1709+ (Build 16299) also supports
   // 10 bpc (DXGI_FORMAT_R10G10B10A2_UNORM) for flip model.
   if (SKIF_Util_IsWindows10v1709OrGreater ( ))
@@ -281,7 +281,7 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
 #endif
 
 #endif
-  
+
   if (regKVSDRMode.hasData(&hKey))
     iSDRMode               =   regKVSDRMode                .getData (&hKey);
 
@@ -289,7 +289,7 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
     // CatGPT — 5 June 2024 19:49
     // I'd also suggest removing the 16-bpc SDR option (or hiding it for now).
     // This is because STB is loading FP textures for everything and if you display those in an FP16 buffer, SDR gamma doesn't work right.
-    // I can fix that later, but best to avoid letting users do that for now. 
+    // I can fix that later, but best to avoid letting users do that for now.
 #if 1
   if (iSDRMode == 2)
     iSDRMode = 1;
@@ -305,7 +305,7 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
   if (regKVHDRBrightness.hasData(&hKey))
   {
     iHDRBrightness         =   regKVHDRBrightness          .getData (&hKey);
-    
+
     // Reset to 203 nits (the default) if outside of the acceptable range of 80-400 nits
     if (iHDRBrightness < 80 || 400 < iHDRBrightness)
       iHDRBrightness       =   203;
@@ -313,10 +313,10 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
 
   if (regKVHDRToneMapType.hasData(&hKey))
     iHDRToneMapType        =   regKVHDRToneMapType         .getData (&hKey);
-  
+
   if (regKVUIMode.hasData(&hKey))
     iUIMode                =   regKVUIMode                 .getData (&hKey);
-  
+
   if (regKVDiagnostics.hasData(&hKey))
     iDiagnostics           =   regKVDiagnostics            .getData (&hKey);
 
@@ -411,7 +411,7 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
     bEfficiencyMode        =   regKVEfficiencyMode         .getData (&hKey);
   else
     bEfficiencyMode        =   SKIF_Util_IsWindows11orGreater ( ); // Win10 and below: false, Win11 and above: true
-  
+
   if (regKVFadeCovers.hasData(&hKey))
     bFadeCovers            =   regKVFadeCovers             .getData (&hKey);
 

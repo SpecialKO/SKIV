@@ -62,11 +62,11 @@ SKIF_UI_Tab_DrawSettings (void)
 
   SKIF_ImGui_Spacing ( );
   SKIF_ImGui_Spacing ( );
-  
+
   ImGui::PushStyleColor   (
     ImGuiCol_SKIF_TextCaption, ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextCaption) * ImVec4(0.5f, 0.5f, 0.5f, 1.0f)
                             );
-    
+
   ImGui::PushStyleColor   (
     ImGuiCol_CheckMark, ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextCaption)
                             );
@@ -75,17 +75,17 @@ SKIF_UI_Tab_DrawSettings (void)
     ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextCaption),
       "Components:"
   );
-    
+
   ImGui::PushStyleColor   (
     ImGuiCol_SKIF_TextBase, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled)
                             );
-    
+
   ImGui::PushStyleColor   (
     ImGuiCol_TextDisabled, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled) * ImVec4(0.5f, 0.5f, 0.5f, 1.0f)
                             );
 
   SKIF_ImGui_Spacing      ( );
-  
+
   SKIF_UI_DrawComponentVersion ( );
 
   ImGui::PopStyleColor    (4);
@@ -115,7 +115,7 @@ SKIF_UI_Tab_DrawSettings (void)
            bool savePattern   = false;
 
     SK_RunOnce (strncpy_s (pattern, maxChars, SK_WideCharToUTF8 (_registry.wsScreenshotsPattern).data(), _TRUNCATE));
-    
+
     ImGui::SameLine ( );
     ImGui::SetCursorPosX(folderPosX);
 
@@ -167,7 +167,7 @@ SKIF_UI_Tab_DrawSettings (void)
       StrTrimA (pattern, " \t\r\n");
       _registry.wsScreenshotsPattern = SK_UTF8ToWideChar (pattern);
       _registry.regKVScreenshotsPattern.putData (_registry.wsScreenshotsPattern);
-      
+
       ImGui::InsertNotification ({ ImGuiToastType::Success, 1000, "Saved", ""});
     }
 
@@ -219,7 +219,7 @@ SKIF_UI_Tab_DrawSettings (void)
         { CaptureMode_Region, "Region", "###ModeToggle-Region", "###DiskToggle-Region", ((_registry.eScreenshotsHotkeys & CaptureMode_Region) == CaptureMode_Region), ((_registry.eScreenshotsAutosave & CaptureMode_Region) == CaptureMode_Region), &kbCaptureRegion },
         { CaptureMode_Screen, "Screen", "###ModeToggle-Screen", "###DiskToggle-Screen", ((_registry.eScreenshotsHotkeys & CaptureMode_Screen) == CaptureMode_Screen), ((_registry.eScreenshotsAutosave & CaptureMode_Screen) == CaptureMode_Screen), &kbCaptureScreen }
     };
-    
+
     ImGui::TextColored (
       ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextCaption),
         "Capture Mode:"
@@ -243,7 +243,7 @@ SKIF_UI_Tab_DrawSettings (void)
     );
 
     ImGui::TreePush ("CaptureModes");
-    
+
     ImGui::BeginGroup ();
     for (auto& mode : modes)
     {
@@ -301,7 +301,7 @@ SKIF_UI_Tab_DrawSettings (void)
     ImGui::EndGroup   ();
 
     ImGui::TreePop  ( );
-    
+
     ImGui::PopStyleColor ();
   }
 
@@ -329,7 +329,7 @@ SKIF_UI_Tab_DrawSettings (void)
 
     //if (ImGui::RadioButton ("Never",           &_registry.iAutoStopBehavior, 0))
     //  regKVAutoStopBehavior.putData (           _registry.iAutoStopBehavior);
-    // 
+    //
     //ImGui::SameLine        ( );
 
     if (ImGui::RadioButton ("None",       &_registry.iImageScaling, 0))
@@ -396,7 +396,7 @@ SKIF_UI_Tab_DrawSettings (void)
     ImGui::TreePop         ( );
 
     // nb:  Prefernece needs implementation
-    // 
+    //
 #if 0
     ImGui::TextColored     (ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info), ICON_FA_LIGHTBULB);
     SKIF_ImGui_SetHoverTip ("Used for Export to SDR and Save As...");
@@ -472,7 +472,7 @@ SKIF_UI_Tab_DrawSettings (void)
     static const char*
       StyleItemsCurrent;
       StyleItemsCurrent = StyleItems[_registry.iStyle]; // Re-apply the value on every frame as it may have changed
-          
+
     ImGui::TextColored (
       ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextCaption),
         "Color theme:"
@@ -573,7 +573,7 @@ SKIF_UI_Tab_DrawSettings (void)
       if ( ImGui::Checkbox ( "Win11 corners", &_registry.bWin11Corners) )
       {
         _registry.regKVWin11Corners.putData (  _registry.bWin11Corners);
-        
+
         // Force recreating the window on changes
         RecreateWin32Windows = true;
       }
@@ -676,7 +676,7 @@ SKIF_UI_Tab_DrawSettings (void)
       ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextCaption),
         "Color depth:"
     );
-    
+
     static int placeholder = 0;
     static int* ptrSDR = nullptr;
 
@@ -688,7 +688,7 @@ SKIF_UI_Tab_DrawSettings (void)
     }
     else
       ptrSDR = &_registry.iSDRMode;
-    
+
     ImGui::TreePush        ("iSDRMode");
     if (ImGui::RadioButton   ("8 bpc",        ptrSDR, 0))
     {
@@ -711,7 +711,7 @@ SKIF_UI_Tab_DrawSettings (void)
     // CatGPT — 5 June 2024 19:49
     // I'd also suggest removing the 16-bpc SDR option (or hiding it for now).
     // This is because STB is loading FP textures for everything and if you display those in an FP16 buffer, SDR gamma doesn't work right.
-    // I can fix that later, but best to avoid letting users do that for now. 
+    // I can fix that later, but best to avoid letting users do that for now.
 #if 0
     ImGui::SameLine        ( );
     if (ImGui::RadioButton   ("16 bpc",       ptrSDR, 2))
@@ -722,14 +722,14 @@ SKIF_UI_Tab_DrawSettings (void)
 #endif
 
     ImGui::TreePop         ( );
-    
+
     if ((_registry.iHDRMode > 0 && SKIF_Util_IsHDRActive (NULL)))
     {
       SKIF_ImGui_PopDisableState  ( );
     }
 
     ImGui::Spacing         ( );
-    
+
     if (SKIF_Util_IsHDRSupported (NULL))
     {
       ImGui::TextColored     (ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info), ICON_FA_LIGHTBULB);
@@ -789,7 +789,7 @@ SKIF_UI_Tab_DrawSettings (void)
           _registry.iHDRBrightness = std::min (std::max (80, _registry.iHDRBrightness), 400);
           _registry.regKVHDRBrightness.putData (_registry.iHDRBrightness);
         }
-    
+
         if (ImGui::IsItemActive    ( ))
           allowShortcutCtrlA = false;
 
@@ -911,7 +911,7 @@ SKIF_UI_Tab_DrawSettings (void)
     if (ImGui::Checkbox  ("Maximize on double click",
                                                     &_registry.bMaximizeOnDoubleClick))
       _registry.regKVMaximizeOnDoubleClick.putData  (_registry.bMaximizeOnDoubleClick);
-    
+
     if (! SKIF_Util_GetDragFromMaximized ( ))
     {
       SKIF_ImGui_PopDisableState ( );
@@ -1291,7 +1291,7 @@ SKIF_UI_Tab_DrawSettings (void)
           sexi.lpParameters = wsDisableCall.c_str();
           sexi.nShow        = SW_SHOWNORMAL;
           sexi.fMask        = SEE_MASK_NOASYNC | SEE_MASK_NOZONECHECKS;
-        
+
         SetLastError (NO_ERROR);
 
         bool ret = ShellExecuteExW (&sexi);
@@ -1304,11 +1304,11 @@ SKIF_UI_Tab_DrawSettings (void)
         else
           PLOG_ERROR << "The operation was unsuccessful.";
       }
-    
+
       // Prevent this call from executing on the same frame as the button is pressed
       else if (runOnceGFE)
         SKIF_ImGui_PopDisableState ( );
-    
+
       ImGui::SameLine         ( );
       ImGui::TextColored      (ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Info), ICON_FA_LIGHTBULB);
       SKIF_ImGui_SetHoverTip  ("This only needs to be used if GeForce Experience notifications\n"
@@ -1326,7 +1326,7 @@ SKIF_UI_Tab_DrawSettings (void)
 
   SKIF_ImGui_Spacing ( );
   SKIF_ImGui_Spacing ( );
-  
+
   if (ImGui::Button (ICON_FA_LEFT_LONG " Go back###GoBackBtn2", ImVec2 (150.0f * SKIF_ImGui_GlobalDPIScale, 30.0f * SKIF_ImGui_GlobalDPIScale)))
     SKIF_Tab_ChangeTo = UITab_Viewer;
 

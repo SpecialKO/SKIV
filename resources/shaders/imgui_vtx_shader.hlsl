@@ -4,7 +4,7 @@
 
 #ifndef SKIF_Shaders
 
-cbuffer vertexBuffer : register(b0) 
+cbuffer vertexBuffer : register(b0)
 {
   float4x4 ProjectionMatrix;
 };
@@ -60,7 +60,7 @@ struct PS_INPUT
 PS_INPUT main (VS_INPUT input)
 {
   PS_INPUT output;
-  
+
   output.pos  = mul ( ProjectionMatrix,
                         float4 (input.pos.xy, 0.f, 1.f) );
   output.lum = Luminance.xyzw;
@@ -70,7 +70,7 @@ PS_INPUT main (VS_INPUT input)
   {
     output.uv.x = (input.uv.x == -4096.0f ? 0.0f : 1.0f);
     output.uv.y = (input.uv.y == -4096.0f ? 0.0f : 1.0f);
-    
+
     output.col      = input.col;
     output.srgb_img = 1.0f;
     output.hdr_img  = 0.0f;
@@ -81,7 +81,7 @@ PS_INPUT main (VS_INPUT input)
   {
     output.uv.x = (input.uv.x == -1024.0f ? 0.0f : 1.0f);
     output.uv.y = (input.uv.y == -1024.0f ? 0.0f : 1.0f);
-    
+
     output.col      = float4 (1.0f, 1.0f, 1.0f, 1.0f);
     output.srgb_img = 0.0f;
     output.hdr_img  = 1.0f;

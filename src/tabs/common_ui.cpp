@@ -24,7 +24,7 @@ void SKIF_UI_DrawComponentVersion (void)
   extern PopupState HistoryPopup;
 
   ImGui::BeginGroup       ( );
-    
+
   ImGui::Spacing          ( );
   ImGui::SameLine         ( );
   ImGui::TextColored      (ImGui::GetStyleColorVec4(ImGuiCol_CheckMark), (const char *)u8"\u2022 ");
@@ -34,7 +34,7 @@ void SKIF_UI_DrawComponentVersion (void)
   ImGui::EndGroup         ( );
   ImGui::SameLine         ( );
   ImGui::BeginGroup       ( );
-    
+
   ImGui::TextColored      (ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled), "v");
   ImGui::SameLine         ( );
   ImGui::ItemSize         (ImVec2 (0.0f, ImGui::GetTextLineHeight ()));
@@ -55,14 +55,14 @@ void SKIF_UI_DrawComponentVersion (void)
   ImGui::PopStyleColor    ( );
   SKIF_ImGui_SetMouseCursorHand ( );
   ImGui::EndGroup         ( );
-  
-  static SKIF_Updater& _updater = 
+
+  static SKIF_Updater& _updater =
          SKIF_Updater::GetInstance ( );
-  
+
   if ((_updater.GetState ( ) & UpdateFlags_Available) == UpdateFlags_Available)
   {
     SKIF_ImGui_Spacing      ( );
-    
+
     ImGui::ItemSize         (ImVec2 (65.0f, 0.0f));
 
     ImGui::SameLine         ( );
@@ -144,7 +144,7 @@ void SKIF_UI_DrawPlatformStatus (void)
       std::wstring    Value    = L"";
       DWORD           Data     =   0; // 0 = enabled; >0 = disabled
     };
-    
+
     std:: string      Name;
     std::wstring      Pattern   = L"";
     std::vector <reg> Matches   = { };
@@ -166,7 +166,7 @@ void SKIF_UI_DrawPlatformStatus (void)
   // Their sample Vulkan layer code, which virtually everyone used as a template to create own layers,
   //   had a bug with Vulkan instance handle leak. So it was and it is echoed in any layer based on that
   //     source code. I nailed it down myself in my layer when debugging compatibility issues with DXVK.
-  // 
+  //
   // Version 7.3.0 (published on 28.02.2021)
   // - Fixed Vulkan device and instance handle leak in Vulkan bootstrap layer
 
@@ -264,13 +264,13 @@ void SKIF_UI_DrawPlatformStatus (void)
             while (dwIndex > 0)
             {
               dwIndex--;
-          
+
               DWORD dwValueNameLen =
                     (dwMaxValueNameLen + 2);
 
               std::unique_ptr <wchar_t []> pValue =
                 std::make_unique <wchar_t []> (sizeof (wchar_t) * dwValueNameLen);
-          
+
               DWORD dwValueLen =
                     (dwMaxValueLen);
 
@@ -536,13 +536,13 @@ void SKIF_UI_DrawShellyTheGhost (void)
   float fActPos = (fMaxPos - fMinPos) * (fRelPos / 100.0f);
 
   ImGui::SameLine    (0.0f, fActPos);
-  
+
   ImGui::SetCursorPosY (
     ImGui::GetCursorPosY ( ) + fGhostYPos
                         );
 
   ImGui::TextColored (vGhostColor, ICON_FA_GHOST);
-    
+
   // Increase Shelly timestep for next frame
   fGhostTime += fGhostTimeStep;
 }
@@ -599,7 +599,7 @@ void SKIF_UI_TipsAndTricks (void)
     ImGui::Spacing          ( );
   }
 
-  
+
   ImGui::BeginGroup       ( );
   ImGui::Spacing          ( );
   ImGui::SameLine         ( );
