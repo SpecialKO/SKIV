@@ -2919,8 +2919,8 @@ SKIF_UI_Tab_DrawViewer (void)
       cover_old = cover;
       cover.reset();
 
-      fAlphaPrev          = (_registry.bFadeCovers) ? fAlpha   : 0.0f;
-      fAlpha              = (_registry.bFadeCovers) ?   0.0f   : 1.0f;
+      fAlphaPrev          = (_registry.bCrossFade) ? fAlpha   : 0.0f;
+      fAlpha              = (_registry.bCrossFade) ?   0.0f   : 1.0f;
 
       // Reset the title of the main app window
       if (SKIF_ImGui_hWnd != NULL)
@@ -2949,7 +2949,7 @@ SKIF_UI_Tab_DrawViewer (void)
 
 #pragma region Initialization
 
-  SK_RunOnce (fAlpha = (_registry.bFadeCovers) ? 0.0f : 1.0f);
+  SK_RunOnce (fAlpha = (_registry.bCrossFade) ? 0.0f : 1.0f);
 
   DWORD       current_time = SKIF_Util_timeGetTime ( );
 
@@ -4745,7 +4745,7 @@ SKIF_UI_Tab_DrawViewer (void)
   bool         incTick = false;
 
   // Fade in/out transition
-  if (_registry.bFadeCovers)
+  if (_registry.bCrossFade)
   {
     // Fade in the new cover
     if (fAlpha < 1.0f && cover.pRawTexSRV.p != nullptr

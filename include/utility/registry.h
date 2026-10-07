@@ -233,9 +233,9 @@ struct SKIF_RegistrySettings {
     SKIF_MakeRegKeyB ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(Efficiency Mode)" );
 
-  KeyValue <bool> regKVFadeCovers =
+  KeyValue <bool> regKVCrossFade =
     SKIF_MakeRegKeyB ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
-                         LR"(Fade Covers)" );
+                         LR"(Cross-Fade)" );
 
   KeyValue <bool> regKVControllers =
     SKIF_MakeRegKeyB ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
@@ -502,7 +502,7 @@ struct SKIF_RegistrySettings {
   bool bAutoUpdate              = false; // Automatically runs downloaded installers
   bool bDeveloperMode           = false;
   bool bEfficiencyMode          =  true; // Should the main thread try to engage EcoQoS / Efficiency Mode on Windows 11 ?
-  bool bFadeCovers              =  true;
+  bool bCrossFade              =  true;
   bool bControllers             =  true; // Should SKIF support controller input ?
   bool bLoggingDeveloper        = false; // This is a log level "above" verbose logging that also includes stuff like window messages. Only useable for SKIF developers
 

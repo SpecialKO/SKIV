@@ -558,15 +558,15 @@ SKIF_UI_Tab_DrawSettings (void)
 
     SKIF_ImGui_SetHoverTip ("Show the caption buttons of the window.");
 
-    if (ImGui::Checkbox ("Fade covers", &_registry.bFadeCovers))
+    if (ImGui::Checkbox ("Cross-fade effect", &_registry.bCrossFade))
     {
-      _registry.regKVFadeCovers.putData (_registry.bFadeCovers);
+      _registry.regKVCrossFade.putData (_registry.bCrossFade);
 
       extern float fAlpha;
-      fAlpha = (_registry.bFadeCovers) ?   0.0f   : 1.0f;
+      fAlpha = (_registry.bCrossFade) ?   0.0f   : 1.0f;
     }
 
-    SKIF_ImGui_SetHoverTip ("Fade between game covers when switching games.");
+    SKIF_ImGui_SetHoverTip ("Use a cross-fade transition when cycling between images.");
 
     if (SKIF_Util_IsWindows11orGreater ( ))
     {
