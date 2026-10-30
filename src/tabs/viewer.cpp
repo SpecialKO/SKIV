@@ -464,6 +464,7 @@ struct image_s {
   ImVec2       avail_size;        // Holds the frame size used (affected by the scaling method)
   ImVec2       avail_size_cache;  // Holds a cached value used to determine if avail_size needs recalculating
 
+  bool         not_hdr     = false; //just an excessive bool for checks
   bool         is_hdr      = false;
   bool         is_dds      = false;
 
@@ -517,6 +518,7 @@ struct image_s {
     pRawTexSRV.p        = other.pRawTexSRV.p;
     pGamutCoverageSRV.p = other.pGamutCoverageSRV.p;
     pGamutCoverageUAV.p = other.pGamutCoverageUAV.p;
+    not_hdr             = other.not_hdr;
     is_hdr              = other.is_hdr;
     is_dds              = other.is_dds;
     light_info          = other.light_info;
@@ -1446,7 +1448,22 @@ LoadLibraryTexture (image_s& image)
         DirectX::LoadFromWICMemory (
           _scratchMemory.get (), _.getInitialSize (),
             DirectX::WIC_FLAGS_FILTER_POINT | DirectX::WIC_FLAGS_DEFAULT_SRGB,
-              &meta, img)))
+              &meta, img,
+          [&](IWICMetadataQueryReader* metadataReader) noexcept
+          {
+            if (!metadataReader) return;
+
+            PROPVARIANT value;
+            PropVariantInit(&value);
+
+            if (SUCCEEDED(metadataReader->GetMetadataByName(L"/sRGB/RenderingIntent", &value)))
+            {
+              // Presence of this data indicates that the image cannot be HDR
+              image.not_hdr = true;
+              PropVariantClear(&value);
+            }
+
+          })))
     {
       image.bpc      =
         (int)DirectX::BitsPerColor (meta.format);
@@ -1454,7 +1471,8 @@ LoadLibraryTexture (image_s& image)
         DirectX::HasAlpha          (meta.format) ? 4 : 3; // 2 and 1 channel images are unsupported for now
 
       if (image.bpc >= 16 &&
-          meta.format == DXGI_FORMAT_R16G16B16A16_UNORM)
+          meta.format == DXGI_FORMAT_R16G16B16A16_UNORM &&
+         !image.not_hdr)
       {
         image.is_hdr = true;
         image.light_info.isHDR = true;
