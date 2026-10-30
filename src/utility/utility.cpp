@@ -3390,7 +3390,7 @@ SKIF_UtilInt_UpdateMonitors (void)
         if (SUCCEEDED (SK_WindowsCreateStringReference (name, len, &header, &hClassName)) && hClassName != nullptr)
         {
           IDisplayInformationStaticsInterop* pStatics = nullptr;
-          if (SUCCEEDED (SK_RoGetActivationFactory (hClassName, __uuidof (IDisplayInformationStaticsInterop), reinterpret_cast<void**>(&pStatics)) && pStatics != nullptr))
+          if (SUCCEEDED (SK_RoGetActivationFactory (hClassName, __uuidof (IDisplayInformationStaticsInterop), reinterpret_cast<void**>(&pStatics))) && pStatics != nullptr)
           {
             IDisplayInformation5* pDisp = nullptr;
             if (SUCCEEDED (pStatics->GetForMonitor (monitor.handle, IID_IDisplayInformation5, reinterpret_cast<void**>(&pDisp))) && pDisp != nullptr)
