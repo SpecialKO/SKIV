@@ -3374,8 +3374,10 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
     return res;
   }
 
+  extern HRESULT SKIF_CreateDXGIFactory1 (REFIID riid, void **ppFactory);
+
   CComPtr <IDXGIFactory> pFactory;
-  CreateDXGIFactory (IID_IDXGIFactory, (void **)&pFactory.p);
+  SKIF_CreateDXGIFactory1 (__uuidof (IDXGIFactory1), (void **)&pFactory.p);
 
   if (! pFactory)
   {
