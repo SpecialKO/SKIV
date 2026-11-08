@@ -3835,7 +3835,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
         // Sleep until a message is in the queue or a change notification occurs
         DWORD res =
-          MsgWaitForMultipleObjects (static_cast<DWORD>(vWatchHandles[SKIF_Tab_Selected].size()), vWatchHandles[SKIF_Tab_Selected].data(), false, bWaitTimeoutMsgInputFallback ? dwDwmPeriod : INFINITE, QS_ALLINPUT);
+          MsgWaitForMultipleObjects (static_cast<DWORD>(std::min (vWatchHandles[SKIF_Tab_Selected].size(), SKIF_MaxWatchHandles)), vWatchHandles[SKIF_Tab_Selected].data(), false, bWaitTimeoutMsgInputFallback ? dwDwmPeriod : INFINITE, QS_ALLINPUT); // Never more than the 63 handles it accepts
 
         // The below is required as a fallback if V-Sync OFF is forced on SKIF and e.g. analog stick drift is causing constant input.
         // Throttle to monitors refresh rate unless a new event is triggered, or user input is posted, but only if the frame rate is detected as being unlocked
@@ -3963,7 +3963,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
       if (! bRefresh && ! pause && ! msgDontRedraw && ! HiddenFramesContinueProcessing && SKIF_ImGui_hWnd != NULL)
       {
         timeBeginPeriod (1);
-        MsgWaitForMultipleObjects (static_cast<DWORD>(vWatchHandles[SKIF_Tab_Selected].size()), vWatchHandles[SKIF_Tab_Selected].data(), false, 4, QS_ALLINPUT);
+        MsgWaitForMultipleObjects (static_cast<DWORD>(std::min (vWatchHandles[SKIF_Tab_Selected].size(), SKIF_MaxWatchHandles)), vWatchHandles[SKIF_Tab_Selected].data(), false, 4, QS_ALLINPUT); // Never more than the 63 handles it accepts
         timeEndPeriod   (1);
       }
 
