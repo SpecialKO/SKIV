@@ -307,6 +307,10 @@ struct SKIF_RegistrySettings {
     SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(HDR)" );
 
+  KeyValue <bool> regKVLinearFontAlpha =
+    SKIF_MakeRegKeyB ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(Linear Font Alpha)" );
+
   KeyValue <int> regKVHDRBrightness =
     SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(HDR Brightness)" );
@@ -479,6 +483,7 @@ struct SKIF_RegistrySettings {
   bool bGhost                   = false; // Visibility of Shelly the Ghost
   bool bNotifications           =  true;
   bool bUIBorders               = false;
+  bool bLinearFontAlpha         = false; // Only applicable to 16 bpc; restores the original linear blending of text
   bool bUITooltips              =  true;
   bool bUIStatusBar             =  true;
   bool bUICaptionButtons        = false; // Minimize, Close

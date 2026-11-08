@@ -721,6 +721,15 @@ SKIF_UI_Tab_DrawSettings (void)
     }
 #endif
 
+    if (*ptrSDR == 2)
+    {
+      if (ImGui::Checkbox ("Linear font alpha blending", &_registry.bLinearFontAlpha))
+        _registry.regKVLinearFontAlpha.putData           (_registry.bLinearFontAlpha);
+
+      SKIF_ImGui_SetHoverTip ("Disables the correction that makes text blend\n"
+                              "like they do in 8 bpc and 10 bpc modes.");
+    }
+
     ImGui::TreePop         ( );
 
     if ((_registry.iHDRMode > 0 && SKIF_Util_IsHDRActive (NULL)))
@@ -852,23 +861,24 @@ SKIF_UI_Tab_DrawSettings (void)
         &kbCaptureScreen
     };
 
-    ImGui::BeginGroup ();
+    // The name of the keybinding, then the field, aligned across all of the rows
+    float fKeybindFieldX = 0.0f;
+
+    for (auto& keybind : keybinds)
+    {
+      if (keybind->_show())
+        fKeybindFieldX = std::max (fKeybindFieldX, ImGui::GetCursorPosX ( ) + ImGui::CalcTextSize ((keybind->_key->bind_name + ":  ").c_str ( )).x);
+    }
+
     for (auto& keybind : keybinds)
     {
       if (! keybind->_show())
         continue;
 
+      ImGui::AlignTextToFramePadding ( );
       ImGui::Text          ( "%s:  ",
                             keybind->_key->bind_name.c_str() );
-      ImGui::Spacing ();
-    }
-    ImGui::EndGroup   ();
-    ImGui::SameLine   ();
-    ImGui::BeginGroup ();
-    for (auto& keybind : keybinds)
-    {
-      if (! keybind->_show())
-        continue;
+      ImGui::SameLine      (fKeybindFieldX);
 
       // TODO: Fix bug that causes the hotkey to remain unregistered if SKIV loses focus while the keybind dialog is visible
       if (SK_ImGui_Keybinding (keybind->_key))
@@ -879,10 +889,8 @@ SKIF_UI_Tab_DrawSettings (void)
 
         keybind->_callback (keybind->_key);
       }
-
-      ImGui::Spacing ();
     }
-    ImGui::EndGroup   ();
+
     ImGui::PopStyleColor ();
   }
 
@@ -1383,7 +1391,7 @@ SKIF_UI_Tab_DrawSettings (void)
   {
     ContextMenuSettings = PopupState_Opened;
 
-    ImGui::PushStyleColor (ImGuiCol_NavHighlight, ImVec4(0,0,0,0));
+    ImGui::PushStyleColor (ImGuiCol_NavCursor, ImVec4(0,0,0,0));
 
     if (SKIF_ImGui_MenuItemEx2 ("Go back###GoBackCM", ICON_FA_LEFT_LONG)) // ICON_FA_LIST_CHECK
       SKIF_Tab_ChangeTo = UITab_Viewer;

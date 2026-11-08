@@ -341,6 +341,7 @@ SKIF_CommonPathsCache::SKIF_CommonPathsCache (void)
   SKIF_GetFolderPath ( &app_data_local     );
   SKIF_GetFolderPath ( &app_data_local_low );
   SKIF_GetFolderPath ( &app_data_roaming   );
+  SKIF_GetFolderPath ( &program_data       );
   SKIF_GetFolderPath ( &win_saved_games    );
   SKIF_GetFolderPath ( &desktop            );
 
@@ -411,7 +412,7 @@ SK_FileOpenDialog (LPWSTR *pszPath, const COMDLG_FILTERSPEC* fileTypes, UINT cFi
     IShellItem* psiDefaultFolder = nullptr;
     IShellItem* psiSetFolder     = nullptr;
 
-    if (S_OK == SHGetKnownFolderItem (defaultFolder, KF_FLAG_DEFAULT, NULL, IID_IShellItem, (void**)&psiDefaultFolder))
+    if (S_OK == SKIF_Util_SHGetKnownFolderItem (defaultFolder, KF_FLAG_DEFAULT, NULL, IID_IShellItem, (void**)&psiDefaultFolder))
     {
       pFileOpen->SetDefaultFolder (psiDefaultFolder);
       psiDefaultFolder->Release();

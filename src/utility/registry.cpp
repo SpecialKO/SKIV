@@ -254,6 +254,9 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
 
   if (regKVUIBorders.hasData(&hKey))
     bUIBorders             =   regKVUIBorders              .getData (&hKey);
+
+  if (regKVLinearFontAlpha.hasData(&hKey))
+    bLinearFontAlpha       =   regKVLinearFontAlpha        .getData (&hKey);
   if (regKVUITooltips.hasData(&hKey))
     bUITooltips            =   regKVUITooltips             .getData (&hKey);
   if (regKVUIStatusBar.hasData(&hKey))

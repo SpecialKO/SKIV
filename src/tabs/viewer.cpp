@@ -605,7 +605,6 @@ std::wstring dragDroppedFilePath = L"";
 extern bool            allowShortcutCtrlA;
 extern ImVec2          SKIF_vecAlteredSize;
 extern float           SKIF_ImGui_GlobalDPIScale;
-extern float           SKIF_ImGui_GlobalDPIScale_Last;
 extern std::string     SKIF_StatusBarHelp;
 extern std::string     SKIF_StatusBarText;
 extern DWORD           invalidatedDevice;
@@ -2548,6 +2547,7 @@ LoadLibraryTexture (image_s& image)
                                .Quality = 0 };
         texDesc.Usage      = D3D11_USAGE_DEFAULT;
         texDesc.ArraySize  = 1;
+        texDesc.MipLevels  = 1; // The shader only ever writes to the top level (0 would allocate a full mip chain)
         texDesc.Width      = 1024;
         texDesc.Height     = 1024;
 
@@ -3418,11 +3418,11 @@ SKIF_UI_Tab_DrawViewer (void)
     ImGui::SetCursorPos   (ImVec2 (ImGui::GetScrollX ( ), ImGui::GetScrollY ( )));
 
     ImGui::PushStyleColor (ImGuiCol_ChildBg, ImGui::GetStyleColorVec4 (ImGuiCol_WindowBg));
-    ImGui::BeginChild     ("###ImageDetails", ImVec2 (0, 0), ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_AutoResizeX | ImGuiChildFlags_AutoResizeY | ((_registry.bUIBorders) ? ImGuiChildFlags_Border : ImGuiChildFlags_None), ImGuiWindowFlags_NoScrollbar);
+    ImGui::BeginChild     ("###ImageDetails", ImVec2 (0, 0), ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_AutoResizeX | ImGuiChildFlags_AutoResizeY | ((_registry.bUIBorders) ? ImGuiChildFlags_Borders : ImGuiChildFlags_None), ImGuiWindowFlags_NoScrollbar);
     ImGui::PopStyleColor  ( );
 
     // Monospace font
-    ImGui::PushFont       (fontConsolas);
+    ImGui::PushFont       (fontConsolas, SKIF_ImGui_GetFontConsolasSize ( ));
 
     float posXvalues = 150.0f * SKIF_ImGui_GlobalDPIScale;
 
@@ -3534,7 +3534,7 @@ SKIF_UI_Tab_DrawViewer (void)
         ImGui::Spacing              ();
         if (ImGui::Button (ICON_FA_ROTATE_LEFT "###Zoom_Reset"))
           cover.zoom = 1.0f;
-        ImGui::PushFont (fontConsolas);
+        ImGui::PushFont (fontConsolas, SKIF_ImGui_GetFontConsolasSize ( ));
         ImGui::EndGroup             ();
       }
     }
@@ -3930,7 +3930,7 @@ SKIF_UI_Tab_DrawViewer (void)
         }
       }
 
-      ImGui::PushFont (fontConsolas);
+      ImGui::PushFont (fontConsolas, SKIF_ImGui_GetFontConsolasSize ( ));
 
       if (SKIV_HDR_VisualizationId == SKIV_HDR_VISUALIZTION_SDR)
       {
@@ -4105,7 +4105,7 @@ SKIF_UI_Tab_DrawViewer (void)
     ContextMenu = PopupState_Opened;
     constexpr char spaces[] = { "\u0020\u0020\u0020\u0020" };
 
-    ImGui::PushStyleColor (ImGuiCol_NavHighlight, ImVec4(0,0,0,0));
+    ImGui::PushStyleColor (ImGuiCol_NavCursor, ImVec4(0,0,0,0));
 
     if (SKIF_ImGui_MenuItemEx2 ("Open", ICON_FA_EYE, ImGui::GetStyleColorVec4(ImGuiCol_Text), "Ctrl+A"))
       OpenFileDialog = PopupState_Open;

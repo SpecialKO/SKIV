@@ -93,6 +93,9 @@
     <ClInclude Include="include\utility\fsutil.h">
       <Filter>Header Files\Utility</Filter>
     </ClInclude>
+    <ClInclude Include="include\utility\l10n.h">
+      <Filter>Header Files\Utility</Filter>
+    </ClInclude>
     <ClInclude Include="include\SKIV.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -342,6 +345,9 @@
       <Filter>Source Files\Utility</Filter>
     </ClCompile>
     <ClCompile Include="src\imgui\imgui_tables.cpp">
+      <Filter>Source Files\ImGui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\imgui\imgui_demo.cpp">
       <Filter>Source Files\ImGui</Filter>
     </ClCompile>
     <ClCompile Include="src\imgui\imgui_impl_dx11.cpp">
