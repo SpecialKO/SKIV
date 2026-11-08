@@ -12,6 +12,9 @@
 #include <vector>
 #include <shellapi.h>
 #include <stdexcept>
+#include <shobjidl_core.h>
+#include <shlobj_core.h>
+#include <KnownFolders.h>
 #include <DirectXTex/DirectXTex.h>
 #include "sk_utility.h"
 
@@ -187,6 +190,12 @@ enum class AppColorMode // PreferredAppMode
   Max
 };
 
+enum class SKIF_Elevation {
+  NotElevated,
+  Elevated,
+  Unknown /* no access: likely elevated or protected */
+};
+
 HANDLE          SKIF_Util_GetCurrentProcess           (void);
 HANDLE          SKIF_Util_GetCurrentProcessToken      (void);
 HANDLE          SKIF_Util_GetCurrentUserToken         (void);
@@ -209,14 +218,19 @@ BOOL    WINAPI  SKIF_Util_SetProcessDefaultCpuSets    (HANDLE hProcess, const UL
 BOOL    WINAPI  SKIF_Util_SetProcessInformation       (HANDLE hProcess, PROCESS_INFORMATION_CLASS ProcessInformationClass, LPVOID ProcessInformation, DWORD ProcessInformationSize);
 bool            SKIF_Util_SetProcessPowerThrottling   (HANDLE processHandle, INT state);
 bool            SKIF_Util_SetProcessMemoryPriority    (HANDLE processHandle, ULONG memoryPriority);
+bool            SKIF_Util_IsWindows8OrGreater         (void);
 bool            SKIF_Util_IsWindows8Point1OrGreater   (void);
 bool            SKIF_Util_IsWindows10OrGreater        (void);
+bool            SKIF_Util_IsWindows10v1607OrGreater   (void);
 bool            SKIF_Util_IsWindows10v1709OrGreater   (void);
 bool            SKIF_Util_IsWindows10v1803OrGreater   (void);
 bool            SKIF_Util_IsWindows10v1903OrGreater   (void);
 bool            SKIF_Util_IsWindows11orGreater        (void);
+bool            SKIF_Util_IsWindows11v24H2orGreater   (void);
 bool            SKIF_Util_IsWindowsVersionOrGreater   (DWORD dwMajorVersion, DWORD dwMinorVersion, DWORD dwBuildNumber);
+bool            SKIF_Util_IsWindowsVersionExactly     (DWORD dwMajorVersion, DWORD dwMinorVersion, DWORD dwBuildNumber);
 bool            SKIF_Util_IsTouchCapable              (void);
+SKIF_Elevation  SKIF_Util_GetProcessElevation         (DWORD PID);
 bool            SKIF_Util_IsProcessAdmin              (DWORD PID);
 bool            SKIF_Util_IsProcessX86                (HANDLE process);
 PROCESSENTRY32W SKIF_Util_FindProcessByName           (const wchar_t* wszName);
@@ -240,8 +254,21 @@ bool            SKIF_Util_FileExplorer_DeleteFile     (PCWSTR filePath, bool hid
 void            SKIF_Util_FileExplorer_ContextMenuFile(PCWSTR filePath, HWND hWndOwner);
 std::wstring    SKIF_Util_FileExplorer_BrowseForFolderXP(PCWSTR defaultPath);
 std::wstring    SKIF_Util_FileExplorer_BrowseForFolder(PCWSTR defaultPath);
+enum class PreferredAppMode //
+{
+  Default,
+  AllowDark,
+  ForceDark,
+  ForceLight,
+  Max
+};
+
 bool            SKIF_Util_Files_PruneOlderThan        (std::wstring path, ULONGLONG secondsSince);
 bool            SKIF_Util_Files_PruneToLatestN        (std::wstring path, size_t filesToRetain);
+bool            SKIF_Util_AllowDarkModeForApp         (bool allow);
+PreferredAppMode SKIF_Util_SetPreferredAppMode        (PreferredAppMode mode);
+void            SKIF_Util_UpdateAppColorMode          (void);
+HRESULT WINAPI  SKIF_Util_SHGetKnownFolderItem        (REFKNOWNFOLDERID rfid, KNOWN_FOLDER_FLAG flags, HANDLE hToken, REFIID riid, void** ppv);
 AppColorMode    SKIF_Util_SetAppColorMode             (AppColorMode mode);
 std::string     SKIF_Util_GetWindowMessageAsStr       (UINT msg);
 
@@ -358,7 +385,7 @@ struct SKIF_RegistryWatch {
     BOOL         wow64_64key; // Access a 64-bit key from either a 32-bit or 64-bit application.
   } _init;
 
-  HKEY    _hKeyBase    = { };
+  HKEY    _hKeyBase    = NULL;
   HANDLE  _hEvent      = NULL; // If the CreateEvent function fails, the return value is NULL.
   UITab   _waitTab     = UITab_None;
 };

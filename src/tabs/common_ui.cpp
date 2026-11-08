@@ -457,7 +457,7 @@ void SKIF_UI_DrawPlatformStatus (void)
   ImGui::Text             ("Connected XInput gamepads:");
   ImGui::SameLine         ( );
 
-  std::vector<bool> slots = _gamepad.GetGamePads ( );
+  auto slots = _gamepad.GetGamePads ( );
 
   ImGui::BeginGroup       ( );
   for (auto slot : slots)

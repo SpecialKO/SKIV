@@ -59,6 +59,7 @@ struct SKIF_Util_Monitor_s {
 
 std::vector <SKIF_Util_Monitor_s> g_Monitors           = {  };
 bool                              g_WantUpdateMonitors = true;
+HMONITOR                          g_MissingMonitor     = NULL; // Last monitor SKIF_Util_GetSDRWhiteLevel ( ) was asked about that is not in the list (see there)
 
 CRITICAL_SECTION CriticalSectionDbgHelp = { };
 
@@ -1111,7 +1112,7 @@ SKIF_Util_CreateProcess (
     SKIF_Util_SetThreadPowerThrottling (GetCurrentThread (), 1); // Enable EcoQoS for this thread
     SetThreadPriority (GetCurrentThread (), THREAD_MODE_BACKGROUND_BEGIN);
 
-    PLOG_DEBUG << "SKIF_CreateProcessWorker thread started!";
+    PLOG_VERBOSE << "SKIF_CreateProcessWorker thread started!";
 
     thread_s* _data = static_cast<thread_s*>(var);
 
@@ -1230,7 +1231,7 @@ SKIF_Util_CreateProcess (
     // Free up the memory we allocated
     delete _data;
 
-    PLOG_DEBUG << "SKIF_CreateProcessWorker thread stopped!";
+    PLOG_VERBOSE << "SKIF_CreateProcessWorker thread stopped!";
 
     SetThreadPriority (GetCurrentThread (), THREAD_MODE_BACKGROUND_END);
 
@@ -1692,9 +1693,11 @@ SKIF_Util_SetThreadDescription (HANDLE hThread, PCWSTR lpThreadDescription)
   using SetThreadDescription_pfn =
     HRESULT (WINAPI *)(HANDLE hThread, PCWSTR lpThreadDescription);
 
+  // SetThreadDescription is exported by KernelBase.dll from Win10v1607 and onward.
+  // Kernel32.dll just forwards to KernelBase.dll; only from Win10v1703 and onward.
   static SetThreadDescription_pfn
     SKIF_SetThreadDescription =
-        (SetThreadDescription_pfn)GetProcAddress (LoadLibraryEx (L"kernel32.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32),
+        (SetThreadDescription_pfn)GetProcAddress (LoadLibraryEx (L"KernelBase.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32),
         "SetThreadDescription");
 
   if (SKIF_SetThreadDescription == nullptr)
@@ -1846,36 +1849,64 @@ SKIF_Util_SetProcessMemoryPriority (HANDLE processHandle, ULONG memoryPriority)
   return SKIF_Util_SetProcessInformation (processHandle, ProcessMemoryPriority, &memoryPriorityInfo, sizeof(memoryPriorityInfo));
 }
 
+// Windows 8 or newer
 bool
-SKIF_Util_IsWindows8Point1OrGreater (void)
+SKIF_Util_IsWindows8OrGreater (void)
 {
-  SK_RunOnce (
-    SetLastError (NO_ERROR)
-  );
-
-  static bool bResult =
-      GetProcAddress (
-        GetModuleHandleW (L"kernel32.dll"),
-                           "GetSystemTimePreciseAsFileTime"
-                     ) != nullptr &&
-      GetLastError  () == NO_ERROR;
+  static const bool bResult =
+    GetProcAddress (
+      GetModuleHandleW (L"kernel32.dll"),
+                         "GetSystemTimePreciseAsFileTime"
+                   ) != nullptr;
 
   return bResult;
 }
 
+// Windows 8.1 or newer
+//   GetDpiForMonitor ( ) was introduced in shcore.dll on Windows 8.1 (shcore.dll exists on Windows 8.0 but lacks it,
+//     and does not exist on Windows 7), so its presence identifies 8.1+ without relying on reported version numbers
+bool
+SKIF_Util_IsWindows8Point1OrGreater (void)
+{
+  static const bool bResult = [](void) -> bool
+  {
+    // Kept loaded (reference counted), as SKIF uses shcore.dll for per-monitor DPI on 8.1+ anyway
+    HMODULE hShcore =
+      LoadLibraryExW (L"shcore.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+
+    return (hShcore != nullptr &&
+            GetProcAddress (hShcore, "GetDpiForMonitor") != nullptr);
+  } ( );
+
+  return bResult;
+}
+
+// Windows 10 or newer
+//   GetSystemCpuSetInformation ( ) was introduced in kernel32.dll with the first Windows 10 release (1507),
+//     so its presence identifies Windows 10+ without relying on reported version numbers
 bool
 SKIF_Util_IsWindows10OrGreater (void)
 {
-  SK_RunOnce (
-    SetLastError (NO_ERROR)
-  );
+  static const bool bResult =
+    GetProcAddress (
+      GetModuleHandleW (L"kernel32.dll"),
+                         "GetSystemCpuSetInformation"
+                   ) != nullptr;
 
-  static bool bResult =
+  return bResult;
+}
+
+// Windows 10 1607+ (Build 14393) or newer
+// SetThreadDescription is exported by KernelBase.dll from Win10v1607 and onward.
+// Kernel32.dll just forwards to KernelBase.dll; only from Win10v1703 and onward.
+bool
+SKIF_Util_IsWindows10v1607OrGreater (void)
+{
+  static const bool bResult =
       GetProcAddress (
-        GetModuleHandleW (L"kernel32.dll"),
+        GetModuleHandleW (L"KernelBase.dll"),
                            "SetThreadDescription"
-                     ) != nullptr &&
-      GetLastError  () == NO_ERROR;
+                     ) != nullptr;
 
   return bResult;
 }
@@ -1916,6 +1947,16 @@ SKIF_Util_IsWindows11orGreater (void)
 {
   static bool bResult =
     SKIF_Util_IsWindowsVersionOrGreater (10, 0, 22000);
+
+  return bResult;
+}
+
+// Windows 11 24H2 (Build 26100) or newer
+bool
+SKIF_Util_IsWindows11v24H2orGreater (void)
+{
+  static bool bResult =
+    SKIF_Util_IsWindowsVersionOrGreater (10, 0, 26100);
 
   return bResult;
 }
@@ -1965,42 +2006,40 @@ SKIF_Util_IsTouchCapable (void)
          (digitizer & NID_INTEGRATED_TOUCH));
 }
 
+SKIF_Elevation
+SKIF_Util_GetProcessElevation (DWORD PID)
+{
+  SK_AutoHandle hProcess (
+    OpenProcess (PROCESS_QUERY_LIMITED_INFORMATION, FALSE, PID)
+  );
+
+  if (hProcess.m_h == NULL)
+    return (GetLastError ( ) == ERROR_ACCESS_DENIED)
+           ? SKIF_Elevation::Unknown
+           : SKIF_Elevation::NotElevated;
+
+  SK_AutoHandle hToken (NULL);
+
+  if (! OpenProcessToken (hProcess, TOKEN_QUERY, &hToken.m_h))
+    return (GetLastError ( ) == ERROR_ACCESS_DENIED)
+           ? SKIF_Elevation::Unknown
+           : SKIF_Elevation::NotElevated;
+
+  TOKEN_ELEVATION elevation = { };
+  DWORD           cbSize    = sizeof (elevation);
+
+  if (! GetTokenInformation (hToken.m_h, TokenElevation, &elevation, sizeof (elevation), &cbSize))
+    return SKIF_Elevation::Unknown;
+
+  return (elevation.TokenIsElevated != 0)
+         ? SKIF_Elevation::Elevated
+         : SKIF_Elevation::NotElevated;
+}
+
 bool
 SKIF_Util_IsProcessAdmin (DWORD PID)
 {
-  bool          bRet = false;
-  SK_AutoHandle hToken (INVALID_HANDLE_VALUE);
-
-  SetLastError (NO_ERROR);
-
-  SK_AutoHandle hProcess = OpenProcess (PROCESS_QUERY_INFORMATION, FALSE, PID);
-
-  if (GetLastError() == ERROR_ACCESS_DENIED)
-    return true;
-
-  if ( OpenProcessToken ( hProcess,
-                            TOKEN_QUERY,
-                              &hToken.m_h )
-     )
-  {
-    TOKEN_ELEVATION Elevation = { };
-
-    DWORD cbSize =
-      sizeof (TOKEN_ELEVATION);
-
-    if ( GetTokenInformation ( hToken.m_h,
-                                 TokenElevation,
-                                   &Elevation,
-                                     sizeof (Elevation),
-                                       &cbSize )
-       )
-    {
-      bRet =
-        ( Elevation.TokenIsElevated != 0 );
-    }
-  }
-
-  return bRet;
+  return (SKIF_Util_GetProcessElevation (PID) != SKIF_Elevation::NotElevated);
 }
 
 bool
@@ -3160,6 +3199,77 @@ void SKIF_Util_SetEffectivePowerModeNotifications (bool enable)
 
 // High Dynamic Range (HDR)
 
+#if (NTDDI_VERSION < NTDDI_WIN11_GA)
+
+typedef enum _DISPLAYCONFIG_ADVANCED_COLOR_MODE
+{
+    DISPLAYCONFIG_ADVANCED_COLOR_MODE_SDR,          // RGB888 composition, display-referred color, display-referred luminance
+    DISPLAYCONFIG_ADVANCED_COLOR_MODE_WCG,          // Advanced color (FP16 scRGB composition), scene-referred color, display-referred luminance
+    DISPLAYCONFIG_ADVANCED_COLOR_MODE_HDR,          // Advanced color (FP16 scRGB composition), scene-referred color, scene-referred luminance
+} DISPLAYCONFIG_ADVANCED_COLOR_MODE;
+
+typedef struct _DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO_2
+{
+    DISPLAYCONFIG_DEVICE_INFO_HEADER header;
+    union
+    {
+        struct
+        {
+          UINT32 advancedColorSupported        :1;    // A type of advanced color is supported
+          UINT32 advancedColorActive           :1;    // A type of advanced color is active (see currentColorMode for the specific advanced color mode)
+          UINT32 reserved1                     :1;
+          UINT32 advancedColorLimitedByPolicy  :1;    // System/OS policy is limiting advanced color options (see currentColorMode for the current mode)
+
+          UINT32 highDynamicRangeSupported     :1;    // HDR is supported
+          UINT32 highDynamicRangeUserEnabled   :1;    // HDR is enabled by the user (but may not be active)
+
+          UINT32 wideColorSupported            :1;    // Wide color gamut is supported
+          UINT32 wideColorUserEnabled          :1;    // Wide color gamut is enabled by the user (but may not be active)
+
+          UINT32 reserved                      :24;
+        } DUMMYSTRUCTNAME;
+
+        UINT32 value;
+    } DUMMYUNIONNAME;
+
+    DISPLAYCONFIG_COLOR_ENCODING colorEncoding;
+    UINT32 bitsPerColorChannel;
+
+    DISPLAYCONFIG_ADVANCED_COLOR_MODE activeColorMode; // The active color mode for this monitor
+
+} DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO_2;
+
+typedef struct _DISPLAYCONFIG_SET_HDR_STATE
+{
+    DISPLAYCONFIG_DEVICE_INFO_HEADER header;
+    union
+    {
+        struct
+        {
+          UINT32 enableHdr  :1;
+          UINT32 reserved  :31;
+        } DUMMYSTRUCTNAME;
+
+        UINT32 value;
+    }DUMMYUNIONNAME;
+} DISPLAYCONFIG_SET_HDR_STATE;
+
+typedef struct _DISPLAYCONFIG_SET_WCG_STATE
+{
+    DISPLAYCONFIG_DEVICE_INFO_HEADER header;
+    union
+    {
+        struct
+        {
+          UINT32 enableWcg  :1;
+          UINT32 reserved  :31;
+        } DUMMYSTRUCTNAME;
+
+        UINT32 value;
+    }DUMMYUNIONNAME;
+} DISPLAYCONFIG_SET_WCG_STATE;
+
+#endif // (NTDDI_VERSION < NTDDI_WIN11_GA)
 
 // WinRT stuff, used by SKIF_UtilInt_UpdateMonitors() to allow
 // using WinRT calls without linking to them and breaking Win7/8 compatibility
@@ -3240,22 +3350,86 @@ struct IDisplayInformationStaticsInterop : IInspectable
   virtual HRESULT STDMETHODCALLTYPE GetForMonitor (HMONITOR monitor, REFIID riid, void** ppvObject) = 0; // IDisplayInformation5
 };
 
-// This is just some old stuff required for the native WinRT path.
-// No longer relevant after the WinRT stuff got dynamically handled.
-//#undef NTDDI_VERSION
-//#define NTDDI_VERSION NTDDI_WIN10_NI
-#if (NTDDI_VERSION >= NTDDI_WIN10_NI)
-#pragma comment(lib, "RuntimeObject.lib")
-//#pragma comment(lib, "mincore.lib")
-#include <winrt/Windows.Graphics.Display.h>
-#include <winrt/Windows.Devices.Display.Core.h>
-#include <Windows.Graphics.Display.Interop.h>
-#endif
+// End stupid declarations
+
+LONG
+WINAPI
+SKIF_Util_DisplayConfigSetDeviceInfo (DISPLAYCONFIG_DEVICE_INFO_HEADER * setPacket)
+{
+  using DisplayConfigSetDeviceInfo_pfn =
+    LONG (WINAPI *)(DISPLAYCONFIG_DEVICE_INFO_HEADER* setPacket);
+
+  static DisplayConfigSetDeviceInfo_pfn
+    SKIF_DisplayConfigSetDeviceInfo =
+        (DisplayConfigSetDeviceInfo_pfn)GetProcAddress (LoadLibraryEx (L"user32.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32),
+        "DisplayConfigSetDeviceInfo");
+
+  if (SKIF_DisplayConfigSetDeviceInfo == nullptr)
+    return ERROR_NOT_SUPPORTED;
+
+  return SKIF_DisplayConfigSetDeviceInfo (setPacket);
+}
+
+LONG
+WINAPI
+SKIF_Util_DisplayConfigGetDeviceInfo (DISPLAYCONFIG_DEVICE_INFO_HEADER *getPacket)
+{
+  using DisplayConfigGetDeviceInfo_pfn =
+    LONG (WINAPI *)(DISPLAYCONFIG_DEVICE_INFO_HEADER* getPacket);
+
+  static DisplayConfigGetDeviceInfo_pfn
+    SKIF_DisplayConfigGetDeviceInfo =
+        (DisplayConfigGetDeviceInfo_pfn)GetProcAddress (LoadLibraryEx (L"user32.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32),
+        "DisplayConfigGetDeviceInfo");
+
+  if (SKIF_DisplayConfigGetDeviceInfo == nullptr)
+    return ERROR_NOT_SUPPORTED;
+
+  return SKIF_DisplayConfigGetDeviceInfo (getPacket);
+}
+
+LONG
+WINAPI
+SKIF_Util_GetDisplayConfigBufferSizes (UINT32 flags, UINT32 *numPathArrayElements, UINT32 *numModeInfoArrayElements)
+{
+  using GetDisplayConfigBufferSizes_pfn =
+    LONG (WINAPI *)(UINT32 flags, UINT32 *numPathArrayElements, UINT32 *numModeInfoArrayElements);
+
+  static GetDisplayConfigBufferSizes_pfn
+    SKIF_GetDisplayConfigBufferSizes =
+        (GetDisplayConfigBufferSizes_pfn)GetProcAddress (LoadLibraryEx (L"user32.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32),
+        "GetDisplayConfigBufferSizes");
+
+  if (SKIF_GetDisplayConfigBufferSizes == nullptr)
+    return ERROR_NOT_SUPPORTED;
+
+  return SKIF_GetDisplayConfigBufferSizes (flags, numPathArrayElements, numModeInfoArrayElements);
+}
+
+LONG
+WINAPI
+SKIF_Util_QueryDisplayConfig (UINT32 flags, UINT32 *numPathArrayElements, DISPLAYCONFIG_PATH_INFO *pathArray, UINT32 *numModeInfoArrayElements, DISPLAYCONFIG_MODE_INFO *modeInfoArray, DISPLAYCONFIG_TOPOLOGY_ID *currentTopologyId)
+{
+  using QueryDisplayConfig_pfn =
+    LONG (WINAPI *)(UINT32 flags, UINT32* numPathArrayElements, DISPLAYCONFIG_PATH_INFO* pathArray, UINT32* numModeInfoArrayElements, DISPLAYCONFIG_MODE_INFO* modeInfoArray, DISPLAYCONFIG_TOPOLOGY_ID* currentTopologyId);
+
+  static QueryDisplayConfig_pfn
+    SKIF_QueryDisplayConfig =
+        (QueryDisplayConfig_pfn)GetProcAddress (LoadLibraryEx (L"user32.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32),
+        "QueryDisplayConfig");
+
+  if (SKIF_QueryDisplayConfig == nullptr)
+    return ERROR_NOT_SUPPORTED;
+
+  return SKIF_QueryDisplayConfig (flags, numPathArrayElements, pathArray, numModeInfoArrayElements, modeInfoArray, currentTopologyId);
+}
 
 // This actually updates the underlying vector
 static void
 SKIF_UtilInt_UpdateMonitors (void)
 {
+  SK_RunOnce (PLOG_INFO << "SKIF_UtilInt_UpdateMonitors (...), First Call");
+
   if (! g_WantUpdateMonitors)
     return;
 
@@ -3275,7 +3449,7 @@ SKIF_UtilInt_UpdateMonitors (void)
   {
     // Determine how many path and mode structures to allocate
     UINT32 pathCount, modeCount;
-    result = GetDisplayConfigBufferSizes (QDC_ONLY_ACTIVE_PATHS, &pathCount, &modeCount);
+    result = SKIF_Util_GetDisplayConfigBufferSizes (QDC_ONLY_ACTIVE_PATHS, &pathCount, &modeCount);
 
     if (result != ERROR_SUCCESS)
     {
@@ -3288,7 +3462,7 @@ SKIF_UtilInt_UpdateMonitors (void)
     modeArray.resize(modeCount);
 
     // Get all active paths and their modes
-    result = QueryDisplayConfig ( QDC_ONLY_ACTIVE_PATHS, &pathCount, pathArray.data(),
+    result = SKIF_Util_QueryDisplayConfig ( QDC_ONLY_ACTIVE_PATHS, &pathCount, pathArray.data(),
                                                          &modeCount, modeArray.data(), nullptr);
 
     // The function may have returned fewer paths/modes than estimated
@@ -3316,9 +3490,51 @@ SKIF_UtilInt_UpdateMonitors (void)
       mi.cbSize = sizeof(MONITORINFOEX);
       GetMonitorInfo(hmon, &mi);
       auto monitors = (std::vector<std::tuple<HMONITOR, std::wstring>>*)lp;
-      monitors->push_back({ hmon, mi.szDevice });
+      monitors->emplace_back( hmon, mi.szDevice );
       return TRUE;
   }, (LPARAM)&monitors);
+
+  enum ReaderVersion { RV_Unknown, RV_Win32v1, RV_WinRT, RV_Win32v2, };
+  ReaderVersion readerVersion = RV_Unknown;
+
+  // WinRT objects for the Windows 10 1803+ reader below. Set up on first use and shared by every monitor,
+  //   instead of loading combase.dll and activating the factory once per monitor
+  HMODULE                            hCombase           = NULL;
+  bool                               bComUninit         = false;
+  bool                               bTriedStatics      = false;
+  IDisplayInformationStaticsInterop* pDisplayStatics    = nullptr;
+
+  auto _GetDisplayInformationStatics = [&](void) -> IDisplayInformationStaticsInterop*
+  {
+    if (bTriedStatics)
+      return pDisplayStatics;
+
+    bTriedStatics = true;
+
+    // Dynamically interface with WinRT functions through combase.dll
+    // Does not inhibit backwards compatible with Windows 7 and 8
+    HRESULT hr = CoInitializeEx (nullptr, COINIT_APARTMENTTHREADED);
+    bComUninit = SUCCEEDED (hr); // S_FALSE (already initialized) must also be balanced by CoUninitialize ( )
+
+    hCombase = LoadLibraryEx (L"combase.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    if (hCombase != NULL)
+    {
+      const wchar_t* name = L"Windows.Graphics.Display.DisplayInformation";
+      const UINT32   len  = (UINT32)wcslen (name);
+
+      HSTRING        hClassName = nullptr;
+      HSTRING_HEADER header;
+      if (SUCCEEDED (SK_WindowsCreateStringReference (name, len, &header, &hClassName)) && hClassName != nullptr)
+      {
+        if (FAILED (SK_RoGetActivationFactory (hClassName, __uuidof (IDisplayInformationStaticsInterop), reinterpret_cast<void**>(&pDisplayStatics))))
+          pDisplayStatics = nullptr;
+
+        SK_WindowsDeleteString (hClassName);
+      }
+    }
+
+    return pDisplayStatics;
+  };
 
   // For each active path
   for (auto& path : pathArray)
@@ -3327,6 +3543,10 @@ SKIF_UtilInt_UpdateMonitors (void)
     UINT32 idx = (path.flags & DISPLAYCONFIG_PATH_SUPPORT_VIRTUAL_MODE)
                 ? path.sourceInfo.sourceModeInfoIdx
                 : path.sourceInfo.modeInfoIdx;
+
+    // The index can be invalid (DISPLAYCONFIG_PATH_MODE_IDX_INVALID) or not refer to a source mode
+    if (idx >= modeArray.size ( ) || modeArray [idx].infoType != DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE)
+      continue;
 
     DISPLAYCONFIG_SOURCE_MODE *pSourceMode =
                 &modeArray [idx].sourceMode;
@@ -3349,16 +3569,18 @@ SKIF_UtilInt_UpdateMonitors (void)
       sourceName.header.type      = DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME;
       sourceName.header.size      =  sizeof (DISPLAYCONFIG_SOURCE_DEVICE_NAME);
 
-    if (ERROR_SUCCESS != DisplayConfigGetDeviceInfo ((DISPLAYCONFIG_DEVICE_INFO_HEADER*)&sourceName))
+    if (ERROR_SUCCESS != SKIF_Util_DisplayConfigGetDeviceInfo ((DISPLAYCONFIG_DEVICE_INFO_HEADER*)&sourceName))
         continue;
-
-    bool success = false;
 
     // Find the monitor handle with the same device name
     auto tup_mon = std::find_if (monitors.begin(), monitors.end(), [&sourceName](std::tuple<HMONITOR, std::wstring> t)
     {
       return ! std::get<1>(t).compare (sourceName.viewGdiDeviceName);
     });
+
+    // No match (e.g. a display was connected or removed in between, or GetMonitorInfo ( ) failed)
+    if (tup_mon == monitors.end())
+      continue;
 
     SKIF_Util_Monitor_s
       monitor { .handle = std::get<0>(*tup_mon), .display_rect = displayRect, .gdi_devicename = std::get<1>(*tup_mon) };
@@ -3367,108 +3589,91 @@ SKIF_UtilInt_UpdateMonitors (void)
     monitor.path_targetInfo.id        = path.targetInfo.id;
     monitor.path_targetInfo.adapterId = path.targetInfo.adapterId;
 
-    // Windows 10 1803+ (Build 17134) or newer
-    if (SKIF_Util_IsWindows10v1803OrGreater ( ))
+    // Windows 11 24H2+ (Build 26100) or newer
+    if (SKIF_Util_IsWindows11v24H2orGreater ( ))
     {
+      DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO_2
+        getDisplayHDR                   = { };
+        getDisplayHDR.header.adapterId  = path.targetInfo.adapterId;
+        getDisplayHDR.header.id         = path.targetInfo.id;
+        getDisplayHDR.header.type       = DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO_2;
+        getDisplayHDR.header.size       = sizeof (getDisplayHDR);
 
-#if (NTDDI_VERSION < NTDDI_WIN10_NI)
-
-      // Dynamically interface with WinRT functions through combase.dll
-      // Compatible with Windows 7 and 8
-      HRESULT hr = CoInitializeEx (nullptr, COINIT_APARTMENTTHREADED);
-      bool needUninit = (SUCCEEDED (hr) && hr != S_FALSE);
-
-      HMODULE
-          hCombase = LoadLibraryEx (L"combase.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
-      if (hCombase != NULL)
+      if (ERROR_SUCCESS == SKIF_Util_DisplayConfigGetDeviceInfo (&getDisplayHDR.header))
       {
-        const wchar_t* name = L"Windows.Graphics.Display.DisplayInformation";
-        const UINT32   len  = (UINT32)wcslen (name);
+        readerVersion = RV_Win32v2;
 
-        HSTRING        hClassName = nullptr;
-        HSTRING_HEADER header;
-        if (SUCCEEDED (SK_WindowsCreateStringReference (name, len, &header, &hClassName)) && hClassName != nullptr)
+        monitor.hdr.supported = getDisplayHDR.highDynamicRangeSupported &&
+                             (! getDisplayHDR.advancedColorLimitedByPolicy);
+
+        monitor.hdr.active    = getDisplayHDR.advancedColorActive         &&
+                                getDisplayHDR.highDynamicRangeUserEnabled &&
+                                getDisplayHDR.activeColorMode == DISPLAYCONFIG_ADVANCED_COLOR_MODE_HDR;
+        monitor.wcg.supported = getDisplayHDR.wideColorSupported;
+        monitor.wcg.active    = getDisplayHDR.activeColorMode == DISPLAYCONFIG_ADVANCED_COLOR_MODE_WCG;
+      }
+
+      if (monitor.hdr.supported)
+      {
+        DISPLAYCONFIG_SDR_WHITE_LEVEL
+          getSDRWhiteLevel                  = { };
+          getSDRWhiteLevel.header.adapterId = path.targetInfo.adapterId;
+          getSDRWhiteLevel.header.id        = path.targetInfo.id;
+          getSDRWhiteLevel.header.type      = DISPLAYCONFIG_DEVICE_INFO_GET_SDR_WHITE_LEVEL;
+          getSDRWhiteLevel.header.size      =         sizeof (DISPLAYCONFIG_SDR_WHITE_LEVEL);
+
+        if (ERROR_SUCCESS == SKIF_Util_DisplayConfigGetDeviceInfo (&getSDRWhiteLevel.header))
         {
-          IDisplayInformationStaticsInterop* pStatics = nullptr;
-          if (SUCCEEDED (SK_RoGetActivationFactory (hClassName, __uuidof (IDisplayInformationStaticsInterop), reinterpret_cast<void**>(&pStatics))) && pStatics != nullptr)
+          // SDRWhiteLevel represents a multiplier for standard SDR white
+          // peak value i.e. 80 nits represented as fixed point.
+          // To get value in nits use the following conversion
+          // SDRWhiteLevel in nits = (SDRWhiteLevel / 1000) * 80
+          if (getSDRWhiteLevel.SDRWhiteLevel)
+            monitor.sdr_whitelevel = (static_cast<float> (getSDRWhiteLevel.SDRWhiteLevel) / 1000.0f) * 80.0f;
+        }
+      }
+    }
+
+    // Windows 10 1803+ (Build 17134) or newer
+    if (readerVersion == RV_Unknown && SKIF_Util_IsWindows10v1803OrGreater ( ))
+    {
+      if (IDisplayInformationStaticsInterop* pStatics = _GetDisplayInformationStatics ( ))
+      {
+        IDisplayInformation5* pDisp = nullptr;
+        if (SUCCEEDED (pStatics->GetForMonitor (monitor.handle, IID_IDisplayInformation5, reinterpret_cast<void**>(&pDisp))) && pDisp != nullptr)
+        {
+          IAdvancedColorInfo* pAc = nullptr;
+          if (SUCCEEDED (pDisp->GetAdvancedColorInfo(&pAc)) && pAc != nullptr)
           {
-            IDisplayInformation5* pDisp = nullptr;
-            if (SUCCEEDED (pStatics->GetForMonitor (monitor.handle, IID_IDisplayInformation5, reinterpret_cast<void**>(&pDisp))) && pDisp != nullptr)
+            readerVersion = RV_WinRT;
+
+            BOOLEAN available = FALSE;
+
+            if (SUCCEEDED (pAc->IsAdvancedColorKindAvailable (AdvancedColorKind_HighDynamicRange, &available)))
+              monitor.hdr.supported = (available != FALSE);
+
+            if (SUCCEEDED (pAc->IsAdvancedColorKindAvailable (AdvancedColorKind_WideColorGamut,   &available)))
+              monitor.wcg.supported = (available != FALSE);
+
+            AdvancedColorKind cur = AdvancedColorKind_StandardDynamicRange;
+            if (SUCCEEDED (pAc->CurrentAdvancedColorKind (&cur)))
             {
-              IAdvancedColorInfo* pAc = nullptr;
-              if (SUCCEEDED (pDisp->GetAdvancedColorInfo(&pAc)) && pAc != nullptr)
-              {
-                BOOLEAN available = FALSE;
-
-                if (SUCCEEDED (pAc->IsAdvancedColorKindAvailable (AdvancedColorKind_HighDynamicRange, &available)))
-                  monitor.hdr.supported = (available != FALSE);
-
-                if (SUCCEEDED (pAc->IsAdvancedColorKindAvailable (AdvancedColorKind_WideColorGamut,   &available)))
-                  monitor.wcg.supported = (available != FALSE);
-
-                AdvancedColorKind cur = AdvancedColorKind_StandardDynamicRange;
-                if (SUCCEEDED (pAc->CurrentAdvancedColorKind (&cur)))
-                {
-                  monitor.hdr.active    = (monitor.hdr.supported && (cur & AdvancedColorKind_HighDynamicRange) != 0);
-                  monitor.wcg.active    = (monitor.wcg.supported && (cur & AdvancedColorKind_WideColorGamut)   != 0);
-                }
-
-                pAc->SdrWhiteLevelInNits (&monitor.sdr_whitelevel);
-
-                PLOG_DEBUG << "HDR and WCG metadata was read using WinRT calls.";
-                success = true;
-
-                pAc->Release();
-              }
-              pDisp->Release();
+              monitor.hdr.active = (monitor.hdr.supported && cur == AdvancedColorKind_HighDynamicRange);
+              monitor.wcg.active = (monitor.wcg.supported && cur == AdvancedColorKind_WideColorGamut);
             }
-            pStatics->Release();
+
+            pAc->SdrWhiteLevelInNits (&monitor.sdr_whitelevel);
+
+            pAc->Release();
           }
-          SK_WindowsDeleteString (hClassName);
-        }
-        FreeLibrary (hCombase);
-      }
-      if (needUninit) CoUninitialize();
-
-#else // (NTDDI_VERSION >= NTDDI_WIN10_NI)
-
-      // Native WinRT calls
-      // Breaks Windows 8 and 7 compatibility
-      using namespace winrt::Windows::Devices::Display::Core;
-      using namespace winrt::Windows::Graphics::Display;
-
-      if (auto pDisplayInfoFactory { winrt::try_get_activation_factory <DisplayInformation, IDisplayInformationStaticsInterop> () })
-      {
-        IDisplayInformation5 display_info = nullptr;
-
-        if (SUCCEEDED (pDisplayInfoFactory->GetForMonitor (monitor.handle, winrt::guid_of <IDisplayInformation5>(), winrt::put_abi (display_info))))
-        {
-          auto acinfo = display_info.GetAdvancedColorInfo ();
-
-          monitor.hdr.supported = (acinfo.IsAdvancedColorKindAvailable  (AdvancedColorKind::HighDynamicRange));
-          monitor.wcg.supported = (acinfo.IsAdvancedColorKindAvailable  (AdvancedColorKind::WideColorGamut  ));
-
-          if (monitor.hdr.supported)
-            monitor.hdr.active  = (acinfo.CurrentAdvancedColorKind () == AdvancedColorKind::HighDynamicRange );
-
-          if (monitor.wcg.supported)
-            monitor.wcg.active  = (acinfo.CurrentAdvancedColorKind () == AdvancedColorKind::WideColorGamut   );
-
-          monitor.sdr_whitelevel = acinfo.SdrWhiteLevelInNits ( );
-
-          success = true;
+          pDisp->Release();
         }
       }
-
-#endif
-
     }
 
     // Windows 10 1709+ (Build 16299) fallback
-    if (! success || (! SKIF_Util_IsWindows10v1803OrGreater ( ) && SKIF_Util_IsWindows10v1709OrGreater ( )))
+    if (readerVersion == RV_Unknown && SKIF_Util_IsWindows10v1709OrGreater ( ))
     {
-      PLOG_DEBUG << "Reading HDR support data using DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO...";
-
       DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO
         getDisplayHDR                   = { };
         getDisplayHDR.header.adapterId  = path.targetInfo.adapterId;
@@ -3476,8 +3681,10 @@ SKIF_UtilInt_UpdateMonitors (void)
         getDisplayHDR.header.type       = DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO;
         getDisplayHDR.header.size       = sizeof (getDisplayHDR);
 
-      if (ERROR_SUCCESS == DisplayConfigGetDeviceInfo (&getDisplayHDR.header))
+      if (ERROR_SUCCESS == SKIF_Util_DisplayConfigGetDeviceInfo (&getDisplayHDR.header))
       {
+        readerVersion = RV_Win32v1;
+
         // Technically incomplete since this also returns true
         //   for WCG capable SDR displays!
         if (getDisplayHDR.advancedColorSupported)
@@ -3496,7 +3703,7 @@ SKIF_UtilInt_UpdateMonitors (void)
           getSDRWhiteLevel.header.type      = DISPLAYCONFIG_DEVICE_INFO_GET_SDR_WHITE_LEVEL;
           getSDRWhiteLevel.header.size      =         sizeof (DISPLAYCONFIG_SDR_WHITE_LEVEL);
 
-        if (ERROR_SUCCESS == DisplayConfigGetDeviceInfo (&getSDRWhiteLevel.header))
+        if (ERROR_SUCCESS == SKIF_Util_DisplayConfigGetDeviceInfo (&getSDRWhiteLevel.header))
         {
           // SDRWhiteLevel represents a multiplier for standard SDR white
           // peak value i.e. 80 nits represented as fixed point.
@@ -3511,14 +3718,34 @@ SKIF_UtilInt_UpdateMonitors (void)
     g_Monitors.push_back (monitor);
   }
 
-  for (auto& monitor : g_Monitors)
+  // Release the shared WinRT objects (if they were used)
+  if (pDisplayStatics != nullptr)
+    pDisplayStatics->Release ();
+
+  if (hCombase != NULL)
+    FreeLibrary (hCombase);
+
+  if (bComUninit)
+    CoUninitialize ( );
+
+  PLOG_DEBUG_IF(readerVersion == RV_Win32v2) << "HDR and WCG metadata was read using DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO_2.";
+  PLOG_DEBUG_IF(readerVersion == RV_Win32v1) << "HDR and WCG metadata was read using DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO.";
+  PLOG_DEBUG_IF(readerVersion == RV_WinRT)   << "HDR and WCG metadata was read using WinRT.";
+
+  if (! g_Monitors.empty())
   {
-    PLOG_VERBOSE << "Display        : " << monitor.gdi_devicename;
-    PLOG_VERBOSE << "HDR Support    : " << monitor.hdr.supported;
-    PLOG_VERBOSE << "HDR Active     : " << monitor.hdr.active;
-    PLOG_VERBOSE << "WCG Support    : " << monitor.wcg.supported;
-    PLOG_VERBOSE << "WCG Active     : " << monitor.wcg.active;
-    PLOG_VERBOSE << "SDR Whitepoint : " << monitor.sdr_whitelevel;
+    std::wstring
+      logEntry = L"Detected display capabilities:";
+    for (auto& monitor : g_Monitors)
+      logEntry += L"\n+------------------+-------------------------------------+"
+                  L"\n| Display          | " + std::   wstring (monitor.gdi_devicename) +
+                  L"\n| > HDR Support    | " + std::to_wstring (monitor.hdr.supported)  +
+                  L"\n| > HDR Active     | " + std::to_wstring (monitor.hdr.active)     +
+                  L"\n| > WCG Support    | " + std::to_wstring (monitor.wcg.supported)  +
+                  L"\n| > WCG Active     | " + std::to_wstring (monitor.wcg.active)     + 
+                  L"\n| > SDR Whitepoint | " + std::to_wstring (monitor.sdr_whitelevel);
+      logEntry += L"\n+------------------+-------------------------------------+";
+    PLOG_INFO << logEntry;
   }
 }
 
@@ -3577,7 +3804,13 @@ SKIF_Util_GetSDRWhiteLevel (HMONITOR hMonitor)
       return monitor.sdr_whitelevel;
   }
 
-  g_WantUpdateMonitors = true;
+  // Only request one refresh per unknown monitor (until the next WM_DISPLAYCHANGE), as the full query
+  //   would otherwise run again every time a monitor that is not in the list is asked about
+  if (hMonitor != g_MissingMonitor)
+  {
+    g_MissingMonitor     = hMonitor;
+    g_WantUpdateMonitors = true;
+  }
 
   return 80.0f;
 }
@@ -3611,6 +3844,7 @@ SKIF_Util_EnableHDROutput (void)
         return false;
       }
 
+      // 24H2+ could also technically use DISPLAYCONFIG_SET_HDR_STATE
       DISPLAYCONFIG_SET_ADVANCED_COLOR_STATE
         setHDRState                     = { };
         setHDRState.enableAdvancedColor = ! monitor.hdr.active;
@@ -3619,11 +3853,11 @@ SKIF_Util_EnableHDROutput (void)
         setHDRState.header.type         = DISPLAYCONFIG_DEVICE_INFO_SET_ADVANCED_COLOR_STATE;
         setHDRState.header.size         =     sizeof (DISPLAYCONFIG_SET_ADVANCED_COLOR_STATE);
 
-      result = DisplayConfigSetDeviceInfo ((DISPLAYCONFIG_DEVICE_INFO_HEADER*)&setHDRState);
+      result = SKIF_Util_DisplayConfigSetDeviceInfo ((DISPLAYCONFIG_DEVICE_INFO_HEADER*)&setHDRState);
 
       if (ERROR_SUCCESS != result)
       {
-        PLOG_ERROR << "DisplayConfigGetDeviceInfo failed: " << SKIF_Util_GetErrorAsWStr (result);
+        PLOG_ERROR << "DisplayConfigSetDeviceInfo failed: " << SKIF_Util_GetErrorAsWStr (result);
         break;
       }
 
@@ -3639,7 +3873,11 @@ void
 SKIF_Util_UpdateMonitors (void)
 {
   g_WantUpdateMonitors = true;
+  g_MissingMonitor     = NULL; // The display configuration changed, so allow a new lookup for any monitor
 }
+
+
+// Global hotkeys
 
 // Register a hotkey for toggling HDR on a per-display basis (WinKey + Ctrl + Shift + H)
 bool
@@ -4323,9 +4561,6 @@ SKIF_RegistryWatch::SKIF_RegistryWatch ( HKEY hRootKey, const wchar_t* wszSubKey
 
   reset ();
 
-  if (_waitTab != UITab_None && _hEvent != NULL)
-    vWatchHandles[_waitTab].push_back(_hEvent);
-
   if (_hEvent != NULL)
   {
     if (_waitTab == UITab_ALL)
@@ -4352,11 +4587,12 @@ SKIF_RegistryWatch::~SKIF_RegistryWatch (void)
     }
     else if (_waitTab != UITab_None && ! vWatchHandles[_waitTab].empty())
       vWatchHandles[_waitTab].erase(std::remove(vWatchHandles[_waitTab].begin(), vWatchHandles[_waitTab].end(), _hEvent), vWatchHandles[_waitTab].end());
-  }
 
-  RegCloseKey (_hKeyBase);
-  CloseHandle (_hEvent);
-  _hEvent = NULL;
+    RegCloseKey (_hKeyBase);
+    _hKeyBase = NULL;
+    CloseHandle (_hEvent);
+    _hEvent = NULL;
+  }
 }
 
 LSTATUS
@@ -4368,9 +4604,13 @@ SKIF_RegistryWatch::registerNotify (void) const
 void
 SKIF_RegistryWatch::reset (void)
 {
-  RegCloseKey (_hKeyBase);
+  if (_hKeyBase != NULL)
+  {
+    RegCloseKey (_hKeyBase);
+    _hKeyBase = NULL;
+  }
 
-  if ((intptr_t)_hEvent > 0)
+  if (_hEvent != NULL)
     ResetEvent (_hEvent);
 
   LSTATUS lStat =
@@ -4383,10 +4623,29 @@ SKIF_RegistryWatch::reset (void)
 
   if (lStat != ERROR_SUCCESS)
   {
-    PLOG_ERROR << "Failed to register for registry notifications: " << _init.sub_key << ", " << _init.watch_subtree;
-    RegCloseKey (_hKeyBase);
-    CloseHandle (_hEvent);
-    _hEvent = NULL;
+    PLOG_ERROR << "Failed to register for registry notifications: "
+               << ((_init.root == HKEY_LOCAL_MACHINE)  ? R"(HKLM\)" :
+                   (_init.root == HKEY_CURRENT_USER)   ? R"(HKCU\)" :
+                   (_init.root == HKEY_CLASSES_ROOT)   ? R"(HKCR\)" :
+                   (_init.root == HKEY_USERS)          ? R"(HKU\)" :
+                   (_init.root == HKEY_CURRENT_CONFIG) ? R"(HKEY_CURRENT_CONFIG\)" : "")
+               << _init.sub_key
+               << ", " << _init.watch_subtree
+               << ", " << _init.filter_mask
+               << ", " << _init.wow64_32key
+               << ", " << _init.wow64_32key;
+
+    if (_hKeyBase != NULL)
+    {
+      RegCloseKey (_hKeyBase);
+      _hKeyBase = NULL;
+    }
+
+    if (_hEvent != NULL)
+    {
+      CloseHandle (_hEvent);
+      _hEvent   = NULL;
+    }
   }
 }
 
@@ -5010,4 +5269,108 @@ SK_File_GetSize (const wchar_t* wszFile)
   }
 
   return 0ULL;
+}
+
+bool
+SKIF_Util_IsWindowsVersionExactly (DWORD dwMajorVersion, DWORD dwMinorVersion, DWORD dwBuildNumber)
+{
+  NTSTATUS(WINAPI *SKIF_RtlGetVersion)(LPOSVERSIONINFOEXW) = nullptr;
+
+  OSVERSIONINFOEXW
+    osInfo                     = { };
+    osInfo.dwOSVersionInfoSize = sizeof (OSVERSIONINFOEXW);
+
+  *reinterpret_cast<FARPROC *>(&SKIF_RtlGetVersion) =
+    GetProcAddress (GetModuleHandleW (L"ntdll"), "RtlGetVersion");
+
+  if (SKIF_RtlGetVersion != nullptr)
+  {
+    if (NT_SUCCESS (SKIF_RtlGetVersion (&osInfo)))
+    {
+      return
+          ( osInfo.dwMajorVersion == dwMajorVersion &&
+            osInfo.dwMinorVersion == dwMinorVersion &&
+            osInfo.dwBuildNumber  == dwBuildNumber  );
+    }
+  }
+
+  return false;
+}
+
+// Allow dark mode for the app
+// Only available on Windows 10 1809
+// Replaced with SetPreferredAppMode on Windows 10 1903 and later
+bool
+SKIF_Util_AllowDarkModeForApp (bool allow)
+{
+  if (! SKIF_Util_IsWindowsVersionExactly (10, 0, 17763))
+    return false;
+
+  using AllowDarkModeForApp_pfn =
+           bool (WINAPI *)(bool);
+
+  static AllowDarkModeForApp_pfn
+         AllowDarkModeForApp =
+        (AllowDarkModeForApp_pfn)GetProcAddress (LoadLibraryEx (L"uxtheme.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32),
+        MAKEINTRESOURCEA (135)); // Ordinal 135
+
+  if (AllowDarkModeForApp == nullptr)
+    return false;
+
+  return AllowDarkModeForApp (allow);
+}
+
+// Sets a new app color mode and returns the previous one
+// Available on Windows 10 1903 and later
+PreferredAppMode
+SKIF_Util_SetPreferredAppMode (PreferredAppMode mode)
+{
+  if (! SKIF_Util_IsWindowsVersionOrGreater (10, 0, 18362))
+    return PreferredAppMode::Default;
+
+  using SetPreferredAppMode_pfn =
+           PreferredAppMode (WINAPI *)(PreferredAppMode);
+
+  static SetPreferredAppMode_pfn
+         SetPreferredAppMode =
+        (SetPreferredAppMode_pfn)GetProcAddress (LoadLibraryEx (L"uxtheme.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32),
+        MAKEINTRESOURCEA (135)); // Ordinal 135
+
+  if (SetPreferredAppMode == nullptr)
+    return PreferredAppMode::Default;
+
+  return SetPreferredAppMode (mode);
+}
+
+// Enable Windows to use dark decorations where possible (e.g. title bar, context menus, etc)
+void
+SKIF_Util_UpdateAppColorMode (void)
+{
+  static SKIF_RegistrySettings& _registry = SKIF_RegistrySettings::GetInstance ( );
+
+  // Light mode
+  if (_registry._StyleLightMode)
+    SKIF_Util_SetPreferredAppMode (PreferredAppMode::ForceLight);
+
+  // Dark mode
+  else if (! SKIF_Util_AllowDarkModeForApp (true))
+    SKIF_Util_SetPreferredAppMode (PreferredAppMode::AllowDark);
+}
+
+HRESULT
+WINAPI
+SKIF_Util_SHGetKnownFolderItem (REFKNOWNFOLDERID rfid, KNOWN_FOLDER_FLAG flags, HANDLE hToken, REFIID riid, void** ppv)
+{
+  using SHGetKnownFolderItem_pfn =
+    HRESULT (WINAPI *)(REFKNOWNFOLDERID rfid, KNOWN_FOLDER_FLAG flags, HANDLE hToken, REFIID riid, void** ppv);
+
+  static SHGetKnownFolderItem_pfn
+    SKIF_SHGetKnownFolderItem =
+        (SHGetKnownFolderItem_pfn)GetProcAddress (LoadLibraryEx (L"shell32.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32),
+        "SHGetKnownFolderItem");
+
+  if (SKIF_SHGetKnownFolderItem == nullptr)
+    return E_NOTIMPL;
+
+  return SKIF_SHGetKnownFolderItem (rfid, flags, hToken, riid, ppv);
 }

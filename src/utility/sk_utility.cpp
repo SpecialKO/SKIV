@@ -34,6 +34,11 @@
 #include <imgui/imgui.h>
 #include <imgui/imgui_internal.h>
 
+#include <utility/skif_imgui.h>
+
+// Last, as it defines short macros such as _ ( )
+#include <utility/l10n.h>
+
 #pragma comment(lib, "Secur32.lib")
 #pragma comment(lib, "Userenv.lib")
 
@@ -433,8 +438,10 @@ SK_Keybind::parse (void)
     return;
   }
 
-  wchar_t   wszKeyBind [128] = { };
-  lstrcatW (wszKeyBind, human_readable.c_str ());
+  // The value comes from the registry or an INI file, so it may be longer than the buffer: it is cut off (and then
+  //   most likely not a valid keybinding) instead of overrunning it
+  wchar_t    wszKeyBind [128] = { };
+  wcsncpy_s (wszKeyBind, _countof (wszKeyBind), human_readable.c_str (), _TRUNCATE);
 
   wchar_t* wszBuf = nullptr;
   wchar_t* wszTok = std::wcstok (wszKeyBind, L"+", &wszBuf);
@@ -756,14 +763,16 @@ SK_ImGui_KeybindSelect (SK_Keybind* keybind)
   if (! keybind)
     return false;
 
-  //ImGui::PushStyleColor (ImGuiCol_Text, ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_TextBase)); //ImVec4 (0.667f, 0.667f, 0.667f, 1.0f));
+  ImGui::PushStyleColor (ImGuiCol_Text, ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_TextBase)); //ImVec4 (0.667f, 0.667f, 0.667f, 1.0f));
+  ImGui::PushStyleColor (ImGuiCol_Header, ImGui::GetStyleColorVec4 (ImGuiCol_FrameBg));
   ImGui::PushItemWidth  (ImGui::GetContentRegionAvail ().x);
 
   bool ret =
-    ImGui::Selectable (keybind->human_readable_utf8.c_str(), false);
+    SKIF_ImGui_FrameButton (keybind->human_readable_utf8.c_str());
 
   ImGui::PopItemWidth  ();
-  //ImGui::PopStyleColor ();
+  ImGui::PopStyleColor (); // ImGuiCol_Header
+  ImGui::PopStyleColor (); // ImGuiCol_Text
 
   return ret;
 }
@@ -777,34 +786,49 @@ SK_ImGui_KeybindDialog (SK_KeybindMultiState* keybind)
   auto& io =
     ImGui::GetIO ();
 
-  const  float font_size = ImGui::GetFont ()->FontSize * io.FontGlobalScale;
+  const  float font_size = ImGui::GetFontSize ();
 
-  if (ImGui::IsPopupOpen (keybind->bind_name.c_str()))
+  // The dialog is shown while assigning (set by SK_ImGui_Keybinding ( ) when the binding is clicked). It is not an ImGui modal
+  //   popup, which would dim and block every window (the main window and the INI editor alike), but a SKIF popup: it dims
+  //     and blocks only the window (viewport) it was opened from, and is centered on it.
+  if (! keybind->assigning)
   {
-    ImGui::SetNextWindowSizeConstraints ( ImVec2 (font_size *  9.0f, font_size * 3.0f),
-                                          ImVec2 (font_size * 30.0f, font_size * 6.0f) );
-
-    extern ImRect windowRect;
-    ImGui::SetNextWindowPos  (windowRect.GetCenter(), ImGuiCond_Always, ImVec2 (0.5f, 0.5f));
-
-    // Render over all other windows
-    //ImGui::SetNextWindowFocus ( );
-
-    g_activeKeybindPopup = true;
+    keybind->applyChanges ( );
+    return keybind->hasNewState ( );
   }
 
-  if (ImGui::BeginPopupModal (keybind->bind_name.c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove     | ImGuiWindowFlags_Tooltip | // ImGuiWindowFlags_Tooltip is required to work around a pesky z-order issue on first appearance
-                                                           ImGuiWindowFlags_NoCollapse       | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings))
-  {
-		// Render over all other windows
-		//ImGui::BringWindowToDisplayFront (ImGui::GetCurrentWindow ( ));
+  // Seen by SK_ImGui_KeybindCancelIfHidden ( )
+  keybind->dialogFrame = ImGui::GetFrameCount ( );
 
-    // Indicate that we are assigning (this disables the keybinding while the popup is opened)
-    keybind->assigning = true;
+  const ImGuiViewport* vp        = ImGui::GetWindowViewport ( );
+
+  // Keys are only read while the window the dialog is in has focus, so typing in another window (the INI editor, the main
+  //   window, or another app) neither changes the binding nor confirms or cancels it. SKIF's hotkeys are only held back
+  //     in that window too (g_activeKeybindPopup), so they keep working in the other one.
+  const bool           focused   = SKIF_ImGui_IsViewportFocused (vp);
+
+  if (focused)
+    g_activeKeybindPopup = true;
+
+  // At most 35 times the font size wide, and never wider than the window it is centered on; longer text wraps
+  const  float         max_width = ImMax (font_size * 9.0f, ImMin (font_size * 35.0f, vp->Size.x - font_size * 2.0f));
+
+  // One dialog per window (viewport): with the same name, dialogs open in both the main window and the INI editor at once
+  //   would be one and the same ImGui window, drawn in only one of them
+  char dialog_name [48];
+  snprintf (dialog_name, sizeof (dialog_name), "###SKIFKeybindDialog_%08X", vp->ID);
+
+  if (SKIF_ImGui_BeginPopup (dialog_name, nullptr, ImVec2 (0.0f, 0.0f),
+                             ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove))
+  {
+    // Minimum width (SKIF popups do not take size constraints)
+    ImGui::Dummy (ImVec2 (font_size * 9.0f - ImGui::GetStyle ( ).WindowPadding.x * 2.0f, 0.0f));
 
     int  vKey = 256;
 
-#ifndef IMGUI_DISABLE_OBSOLETE_KEYIO
+// ImGui removed IMGUI_DISABLE_OBSOLETE_KEYIO in 1.91.5 (the legacy key IO is gone), so the ImGuiKey scan below is
+//   the one in use, as it was before with IMGUI_DISABLE_OBSOLETE_KEYIO defined. This VK scan is kept for reference.
+#if 0
     for (vKey = 0x08; vKey < 256; vKey++)
     {
       if ( vKey == VK_LCONTROL || vKey == VK_RCONTROL || vKey == VK_CONTROL || // Ctrl
@@ -814,15 +838,15 @@ SK_ImGui_KeybindDialog (SK_KeybindMultiState* keybind)
         continue;
 
       extern
-          ImGuiKey       ImGui_ImplWin32_VirtualKeyToImGuiKey (WPARAM);
-      if (ImGuiKey key = ImGui_ImplWin32_VirtualKeyToImGuiKey (vKey))
+          ImGuiKey       ImGui_ImplWin32_KeyEventToImGuiKey (WPARAM, LPARAM);
+      if (ImGuiKey key = ImGui_ImplWin32_KeyEventToImGuiKey (vKey, (LPARAM)(MapVirtualKeyW (vKey, MAPVK_VK_TO_VSC) << 16)))
       {
         if (ImGui::IsKeyPressed (key, false))
           break;
       }
     }
 #else
-    for (ImGuiKey imKey = ImGuiKey_NamedKey_BEGIN; imKey < ImGuiKey_NamedKey_END; imKey = (ImGuiKey)(imKey + 1))
+    for (ImGuiKey imKey = ImGuiKey_NamedKey_BEGIN; focused && imKey < ImGuiKey_NamedKey_END; imKey = (ImGuiKey)(imKey + 1))
     {
       if ( imKey == ImGuiKey_LeftCtrl  || imKey == ImGuiKey_RightCtrl  || // Ctrl
            imKey == ImGuiKey_LeftShift || imKey == ImGuiKey_RightShift || // Shift
@@ -845,20 +869,37 @@ SK_ImGui_KeybindDialog (SK_KeybindMultiState* keybind)
 
     bool modifierKey = io.KeyCtrl || io.KeyShift || io.KeyAlt || io.KeySuper;
 
-    bool bEscape    = (! modifierKey && // Cancel operation
+    bool bEscape    = (focused && ! modifierKey && // Cancel operation
       ImGui::IsKeyPressed (ImGuiKey_Escape,    false)),
-         bBackspace = (! modifierKey && // Clear keybinding
+         bBackspace = (focused && ! modifierKey && // Clear keybinding
       ImGui::IsKeyPressed (ImGuiKey_Backspace, false)),
-         bDelete    = (! modifierKey && // Reset to default
+         bDelete    = (focused && ! modifierKey && // Reset to default
       ImGui::IsKeyPressed (ImGuiKey_Delete,    false)),
-         bEnter     = (! modifierKey && // Confirm
+         bEnter     = (focused && ! modifierKey && // Confirm
      (ImGui::IsKeyPressed (ImGuiKey_Enter,     false) || ImGui::IsKeyPressed (ImGuiKey_KeypadEnter, false)));
 
-    ImGui::Text         ("Keybinding:"); //  %hs, keybind->pending.human_readable_utf8.c_str ()); // (0x%02X), keybind->vKey
+    // Wrap the text at the widest the dialog may be (Text, TextColored and TextDisabled all follow the wrap position)
+    ImGui::PushTextWrapPos (ImGui::GetCursorPosX ( ) + max_width - ImGui::GetStyle ( ).WindowPadding.x * 2.0f);
+
+    ImGui::Text         ("%s", _("Keybinding:")); //  %hs, keybind->pending.human_readable_utf8.c_str ()); // (0x%02X), keybind->vKey
     ImGui::SameLine     ( );
-    ImGui::TextColored  (ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_TextBase), keybind->pending.human_readable_utf8.c_str ());
+    ImGui::TextColored  (ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_TextBase), "%s", keybind->pending.human_readable_utf8.c_str ());
     ImGui::Separator    ( );
-    ImGui::TextDisabled ("Press RETURN to confirm, ESC to cancel, BACKSPACE to clear, DELETE to reset.");
+    if (keybind->clearable)
+      // TRANSLATORS: RETURN, ESC, BACKSPACE and DELETE are keys of the keyboard (use the names printed on keyboards in your language)
+      ImGui::TextDisabled ("%s", _("Press RETURN to confirm, ESC to cancel, BACKSPACE to clear, DELETE to reset."));
+    else
+      // TRANSLATORS: RETURN, ESC and DELETE are keys of the keyboard (use the names printed on keyboards in your language)
+      ImGui::TextDisabled ("%s", _("Press RETURN to confirm, ESC to cancel, DELETE to reset."));
+
+    ImGui::PopTextWrapPos  ( );
+
+    // A keybinding that can't be cleared is reset to its default instead
+    if (bBackspace && ! keybind->clearable)
+    {
+      bBackspace = false;
+      bDelete    = true;
+    }
 
     // Update the key binding after printing out the current one, to prevent a one-frame graphics glitch
     if (bBackspace)
@@ -896,25 +937,40 @@ SK_ImGui_KeybindDialog (SK_KeybindMultiState* keybind)
       keybind->pending.alt   = io.KeyAlt;
       keybind->pending.super = io.KeySuper;
       keybind->pending.makeMask ( );
-      keybind->pending.makeMask ( );
       keybind->pending.update   ( );
     }
 
-    // If we are done with the changes, mark it as such
+    // If we are done with the changes, mark it as such (closes the dialog)
     if (bEscape || bEnter)
-    {
       keybind->assigning = false;
-      ImGui::CloseCurrentPopup ( );
-    }
-
-    ImGui::EndPopup ();
   }
+
+  SKIF_ImGui_EndPopup ( ); // Must always be called, regardless of the return value of SKIF_ImGui_BeginPopup
 
   // This applies any pending changes, once done
   keybind->applyChanges ( );
 
   // This returns true every time we change the state (active -> pending -> active, etc)
   return keybind->hasNewState ( );
+}
+
+bool
+SK_ImGui_KeybindCancelIfHidden (SK_KeybindMultiState* binding)
+{
+  if (binding == nullptr || ! binding->assigning || binding->dialogFrame == ImGui::GetFrameCount ( ))
+    return false;
+
+  // As Esc in the dialog: back to the saved keybinding
+  binding->pending = binding->saved;
+  binding->pending.parse    ( );
+  binding->pending.makeMask ( );
+  binding->pending.update   ( );
+  binding->assigning = false;
+
+  binding->applyChanges ( );
+  binding->hasNewState  ( );
+
+  return true;
 }
 
 bool
@@ -925,8 +981,9 @@ SK_ImGui_Keybinding (SK_KeybindMultiState* binding)
 
   ImGui::PushID              (binding->bind_name.c_str());
 
+  // Opens the dialog of SK_ImGui_KeybindDialog ( )
   if (SK_ImGui_KeybindSelect (&binding->saved))
-    ImGui::OpenPopup         (binding->bind_name.c_str());
+    binding->assigning = true;
 
   bool results =
     SK_ImGui_KeybindDialog   (binding);

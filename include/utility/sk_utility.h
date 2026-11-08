@@ -239,6 +239,13 @@ class SK_AutoHandle : public CHandle
 
 public:
    SK_AutoHandle (HANDLE hHandle) noexcept : CHandle (hHandle) { };
+
+  bool isValid (void) const noexcept
+  {
+    return
+      (reinterpret_cast <intptr_t> (m_h) > 0);
+  }
+
   ~SK_AutoHandle (void)           noexcept
   {
     // We cannot close these handles because technically they
@@ -335,60 +342,6 @@ std::queue <DWORD>
 void
                SK_ResumeThreads          (std::queue <DWORD> threads);
 
-
-bool __cdecl   SK_IsRunDLLInvocation     (void);
-bool __cdecl   SK_IsSuperSpecialK        (void);
-
-
-// TODO: Push the SK_GetHostApp (...) stuff into this class
-class SK_HostAppUtil
-{
-public:
-  void         init                      (void);
-
-  bool         isInjectionTool           (void)
-  {
-    init ();
-
-    return SKIF || SKIM || (RunDll32 && SK_IsRunDLLInvocation ());
-  }
-
-
-protected:
-  bool        SKIM     = false;
-  bool        SKIF     = false;
-  bool        RunDll32 = false;
-};
-
-SK_HostAppUtil*
-SK_GetHostAppUtil (void);
-
-bool __stdcall SK_IsDLLSpecialK          (const wchar_t* wszName);
-void __stdcall SK_SelfDestruct           (void) noexcept;
-
-
-
-struct sk_import_test_s {
-  const char* szModuleName;
-  bool        used;
-};
-
-void __stdcall SK_TestImports          (HMODULE hMod, sk_import_test_s* pTests, int nCount);
-
-//
-// This prototype is now completely ridiculous, this "design" sucks...
-//   FIXME!!
-//
-void
-SK_TestRenderImports ( HMODULE hMod,
-                       bool*   gl,
-                       bool*   vulkan,
-                       bool*   d3d9,
-                       bool*   dxgi,
-                       bool*   d3d11,
-                       bool*   d3d8,
-                       bool*   ddraw,
-                       bool*   glide );
 
 void
 __stdcall
@@ -810,10 +763,12 @@ struct SK_KeybindMultiState
   std::string  bind_name = ""; // Needed as otherwise this is limited to solely static objects
   bool         assigning = false,
                state     = false;
+  int          dialogFrame = -1; // The ImGui frame the dialog of SK_ImGui_Keybinding ( ) was last shown in
+  bool         clearable   = true; // false: BACKSPACE resets to the default instead of clearing (it can't be left unbound)
   SK_Keybind   default, pending, saved;
 
   // This empty object is used during assignment to disable hotkeys temporarily
-  static constexpr SK_Keybind disabled = { };
+  static constexpr SK_Keybind disabled;
 
   SK_KeybindMultiState (std::string _n, std::wstring _h) {
     bind_name                   = _n;
@@ -828,6 +783,10 @@ struct SK_KeybindMultiState
 };
 
 bool SK_ImGui_Keybinding    (SK_KeybindMultiState* binding);
+// Cancels the assignment of a keybinding (as Esc would) if its dialog was not shown in the current frame, e.g. because
+//   the tab or the window mode changed while it was open. Call after all UI of the frame; returns true if it was cancelled.
+//     Only for keybindings that outlive their UI (the INI editor's are discarded with their window).
+bool SK_ImGui_KeybindCancelIfHidden (SK_KeybindMultiState* binding);
 
 #include <winstring.h>
 

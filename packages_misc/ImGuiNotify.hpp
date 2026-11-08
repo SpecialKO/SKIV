@@ -58,7 +58,7 @@ extern float SKIF_ImGui_GlobalDPIScale;
 
 
 
-static const ImGuiChildFlags  NOTIFY_DEFAULT_CHILD_FLAGS  = ImGuiChildFlags_AlwaysAutoResize | ImGuiChildFlags_AutoResizeX | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Border;
+static const ImGuiChildFlags  NOTIFY_DEFAULT_CHILD_FLAGS  = ImGuiChildFlags_AlwaysAutoResize | ImGuiChildFlags_AutoResizeX | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders;
 static const ImGuiWindowFlags NOTIFY_DEFAULT_WINDOW_FLAGS = ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_Tooltip; // ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoFocusOnAppearing;
 
 #define NOTIFY_NULL_OR_EMPTY(str)		(!str || !strlen(str))
@@ -113,6 +113,8 @@ private:
 	std::function<void()>						onButtonPress = nullptr; // A lambda variable, which will be executed when button in notification is pressed
 	char 										buttonLabel[NOTIFY_MAX_MSG_LENGTH];
 
+  HWND hwnd = (HWND)ImGui::GetWindowViewport()->PlatformHandleRaw;
+
 	static int32_t maxAssignedId;
 	       int32_t      uniqueId = 0;
 
@@ -135,6 +137,16 @@ private:
 	}
 
 public:
+
+	/**
+	 * @brief Set the HWND of the toast notification.
+	 *
+	 * @return HWND The HWND of the toast notification.
+	 */
+	inline void setHWnd(const HWND hwnd_)
+	{
+		this->hwnd = hwnd_;
+	};
 
 	/**
 	 * @brief Set the title of the toast notification.
@@ -202,6 +214,16 @@ public:
 
 public:
 	// Getters
+
+	/**
+	 * @brief Get the HWND of the toast notification.
+	 *
+	 * @return HWND The HWND of the toast notification.
+	 */
+	inline const HWND getHWND()
+	{
+		return this->hwnd;
+	};
 
 	/**
 	 * @brief Get the title of the toast notification.
@@ -552,7 +574,7 @@ namespace ImGui
 	 * Each notification is rendered as a toast window with a title, content and an optional icon.
 	 * If a notification is expired, it is removed from the vector.
 	 */
-	inline void RenderNotifications()
+	inline void RenderNotifications(HWND hwnd = (HWND)ImGui::GetWindowViewport()->PlatformHandleRaw)
 	{
 		const ImVec2 mainWindowSize = GetCurrentWindowRead()->Size;
 		const float  textWrapWidth  = (600.0f * SKIF_ImGui_GlobalDPIScale < mainWindowSize.x - NOTIFY_PADDING_X * 2)
@@ -563,6 +585,10 @@ namespace ImGui
 		for (unsigned int i = 0; i < notifications.size(); ++i)
 		{
 			ImGuiToast* currentToast = &notifications[i];
+
+      // Only process toasts intended for the current viewport
+      if (currentToast->getHWND() != hwnd)
+        continue;
 
 			// Remove toast if expired
 			if (currentToast->getPhase() == ImGuiToastPhase::Expired)
@@ -667,7 +693,7 @@ namespace ImGui
 					  // NEEDS TO BE REWORKED
 					  float scale = 0.8f;
 
-					  if (CalcTextSize(content).x > GetWindowContentRegionMax().x)
+					  if (CalcTextSize(content).x > GetCurrentWindowRead()->ContentRegionRect.Max.x - GetWindowPos().x) // GetWindowContentRegionMax().x before ImGui 1.91.0
 					  {
 						  scale = 0.95f;
 					  }
