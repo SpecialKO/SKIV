@@ -2659,7 +2659,7 @@ SKIF_Util_GetClipboardBitmapData (void)
 
   // A positive height is the usual bottom-up row order, a negative height means top-down
   const bool     bottomUp = (heightRaw > 0);
-  const uint64_t w        = (    width > 0) ?  static_cast <uint64_t> (width) : 0;
+  const uint64_t w        = (width > 0) ? static_cast <uint64_t> (width) : 0;
   const uint64_t h        = (heightRaw > 0) ?  static_cast <uint64_t> (heightRaw)
                                             : -static_cast <int64_t>  (heightRaw);
 
@@ -2690,7 +2690,7 @@ SKIF_Util_GetClipboardBitmapData (void)
       if (cbGlobal - offset >= 3 * sizeof (DWORD))
       {
         DWORD masks [3] = { };
-        memcpy (masks, pData + offset, sizeof (masks));
+        memcpy (masks, pData + static_cast <size_t> (offset), sizeof (masks));
 
         if (masks [0] == redMask   &&
             masks [1] == greenMask &&
@@ -2709,7 +2709,7 @@ SKIF_Util_GetClipboardBitmapData (void)
       }
 
       DWORD masks [3] = { };
-      memcpy (masks, pData + offset, sizeof (masks));
+      memcpy (masks, pData + static_cast <size_t> (offset), sizeof (masks));
 
       redMask   = masks [0];
       greenMask = masks [1];
@@ -2767,21 +2767,67 @@ SKIF_Util_GetClipboardBitmapData (void)
     return img;
   }
 
-  const DirectX::Image* pDst  = converted.GetImage (0, 0, 0);
-  const BYTE*           pBits = pData + offset;
+  // Everything below was bounds checked against the clipboard data size, so it fits in size_t
+  const size_t width_px  = static_cast <size_t> (w);
+  const size_t height_px = static_cast <size_t> (h);
+  const size_t pitch     = static_cast <size_t> (srcRowPitch);
 
-  for (uint64_t y = 0; y < h; y++)
+  const DirectX::Image* pDst  = converted.GetImage (0, 0, 0);
+  const BYTE*           pBits = pData + static_cast <size_t> (offset);
+
+  // 24 bpp carries no alpha. For 32 bpp the high byte is only meaningful when the
+  //   source actually filled it in: BI_RGB leaves it undefined, and many apps copy
+  //   32 bpp images with it left at zero, which would otherwise decode as a fully
+  //   transparent image. Treat an all-zero alpha channel as opaque, and preserve
+  //   the alpha only when at least one pixel has a non-zero value.
+  bool forceOpaque = true;
+
+  if (bitCount == 32)
+  {
+    for (size_t y = 0; y < height_px && forceOpaque; y++)
+    {
+      const BYTE* srcRow = pBits + (bottomUp ? (height_px - 1 - y) : y) * pitch;
+
+      for (size_t x = 0; x < width_px; x++)
+      {
+        if (srcRow [x * 4 + 3] != 0x00)
+        {
+          forceOpaque = false;
+          break;
+        }
+      }
+    }
+
+    if (forceOpaque)
+      PLOG_VERBOSE << "Clipboard bitmap has an all-zero alpha channel; treating it as opaque.";
+  }
+
+  for (size_t y = 0; y < height_px; y++)
   {
     // Bottom-up bitmaps store the last row first
-    const BYTE* srcRow = pBits + (bottomUp ? (h - 1 - y) : y) * srcRowPitch;
+    const BYTE* srcRow = pBits + (bottomUp ? (height_px - 1 - y) : y) * pitch;
           BYTE* dstRow = pDst->pixels + y * pDst->rowPitch;
 
     if (bytesPerPixel == 4)
-      memcpy (dstRow, srcRow, static_cast <size_t> (w * 4));
+    {
+      if (! forceOpaque)
+        memcpy (dstRow, srcRow, width_px * 4);
+
+      else
+      {
+        for (size_t x = 0; x < width_px; x++)
+        {
+          dstRow [x * 4 + 0] = srcRow [x * 4 + 0];
+          dstRow [x * 4 + 1] = srcRow [x * 4 + 1];
+          dstRow [x * 4 + 2] = srcRow [x * 4 + 2];
+          dstRow [x * 4 + 3] = 0xFF;
+        }
+      }
+    }
 
     else
     {
-      for (uint64_t x = 0; x < w; x++)
+      for (size_t x = 0; x < width_px; x++)
       {
         dstRow [x * 4 + 0] = srcRow [x * 3 + 0]; // B
         dstRow [x * 4 + 1] = srcRow [x * 3 + 1]; // G
@@ -2812,7 +2858,6 @@ SKIF_Util_GetClipboardBitmapData (void)
 
   return img;
 }
-
 
 // Adds/removes environment variables in a given environment block
 // Parts of this is CC BY-SA 4.0, https://stackoverflow.com/a/59597519
