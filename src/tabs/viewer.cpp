@@ -3042,6 +3042,7 @@ SKIF_UI_Tab_DrawViewer (void)
   if (! loadImage && ! tryingToLoadImage)
   {
     static DWORD dwLastSignaled = 0;
+    static bool  bNotifyRefresh = false; // Only notify about scans caused by changes made to the folder outside of the app
 
     // Identify when an image has been closed
     if (cover.file_info.path.empty())
@@ -3070,6 +3071,7 @@ SKIF_UI_Tab_DrawViewer (void)
 
       // This triggers a new updateFolderData() run below
       dwLastSignaled = 1;
+      bNotifyRefresh = false;
     }
 
     // Identify when a new file from the same folder has been dropped
@@ -3087,7 +3089,10 @@ SKIF_UI_Tab_DrawViewer (void)
     // Identify when the folder was changed outside of the app
     //PLOG_VERBOSE << "_current_folder.watch was signaled! Delay checking the folder for another 500 ms...";
     if (_current_folder.watch.isSignaled (_current_folder.folder_path))
+    {
       dwLastSignaled = SKIF_Util_timeGetTime();
+      bNotifyRefresh = true;
+    }
 
     if (dwLastSignaled != 0 && dwLastSignaled + 500 < SKIF_Util_timeGetTime())
     {
@@ -3112,8 +3117,10 @@ SKIF_UI_Tab_DrawViewer (void)
           cover.file_info.filename != _current_folder.fileList.getActiveFile()->filename)
                dragDroppedFilePath  = _current_folder.fileList.getActiveFile()->path;
 
-      if (results == 2)
+      if (results == 2 && bNotifyRefresh)
         ImGui::InsertNotification ({ ImGuiToastType::Info, 5000, "Refreshed nearby images.", "" });
+
+      bNotifyRefresh = false;
     }
   }
 
