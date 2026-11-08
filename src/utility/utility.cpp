@@ -2582,89 +2582,237 @@ SKIF_Util_GetClipboardBitmapData (void)
 {
   static SKIF_CommonPathsCache& _path_cache = SKIF_CommonPathsCache::GetInstance ( );
 
+  // Describes the decoded image. pixels is always nullptr on return:
+  //   the converted copy only lives inside this function.
   DirectX::Image img = { };
 
-  if (true) // OpenClipboard (SKIF_ImGui_hWnd)
+  // The caller is expected to have opened the clipboard already
+  HGLOBAL hGlobal = GetClipboardData (CF_DIBV5);
+
+  if (hGlobal == NULL)
+    return img;
+
+  // Nothing past this many bytes of the clipboard data may be read
+  const uint64_t cbGlobal =
+    static_cast <uint64_t> (GlobalSize (hGlobal));
+
+  const BYTE* pData =
+    static_cast <const BYTE *> (GlobalLock (hGlobal));
+
+  if (pData == nullptr)
+    return img;
+
+  // Unlocks the clipboard data on every return path
+  struct scoped_unlock_s {
+    HGLOBAL hMem;
+   ~scoped_unlock_s (void) { GlobalUnlock (hMem); }
+  } _unlock { hGlobal };
+
+  if (cbGlobal < sizeof (BITMAPINFOHEADER))
   {
-    HGLOBAL hGlobal = GetClipboardData (CF_DIBV5);
+    PLOG_ERROR << "Clipboard bitmap is too small to hold a bitmap header (" << cbGlobal << " bytes)!";
+    return img;
+  }
 
-    if (hGlobal)
+  // Only the first bV5Size bytes are guaranteed to be header fields;
+  //   the BITMAPINFOHEADER part (the first 40 bytes) is always present.
+  const BITMAPV5HEADER* bmp5hdr =
+    reinterpret_cast <const BITMAPV5HEADER *> (pData);
+
+  const uint64_t headerSize  = bmp5hdr->bV5Size;
+  const LONG     width       = bmp5hdr->bV5Width;
+  const LONG     heightRaw   = bmp5hdr->bV5Height;
+  const WORD     bitCount    = bmp5hdr->bV5BitCount;
+  const DWORD    compression = bmp5hdr->bV5Compression;
+  const uint64_t clrUsed     = bmp5hdr->bV5ClrUsed;
+
+  PLOG_VERBOSE << "Clipboard bitmap: " << width << "x" << heightRaw << ", "
+               << bitCount   << " bpp, "
+               << headerSize << " byte header, "
+               << cbGlobal   << " bytes in total, compression: " <<
+       ((compression == BI_JPEG)      ? "BI_JPEG"      :
+        (compression == BI_PNG)       ? "BI_PNG"       :
+        (compression == BI_RGB)       ? "BI_RGB"       :
+        (compression == BI_RLE4)      ? "BI_RLE4"      :
+        (compression == BI_RLE8)      ? "BI_RLE8"      :
+        (compression == BI_BITFIELDS) ? "BI_BITFIELDS" :
+                                        "Unknown"     );
+
+  if (headerSize < sizeof (BITMAPINFOHEADER) || headerSize > cbGlobal)
+  {
+    PLOG_ERROR << "Clipboard bitmap has an invalid header size!";
+    return img;
+  }
+
+  if (compression != BI_RGB && compression != BI_BITFIELDS)
+  {
+    PLOG_WARNING << "Clipboard bitmap uses an unsupported compression!";
+    return img;
+  }
+
+  // BI_RGB is valid for 24 and 32 bpp, BI_BITFIELDS only for 32 bpp (among those two)
+  if (! (bitCount == 32 || (bitCount == 24 && compression == BI_RGB)))
+  {
+    PLOG_WARNING << "Clipboard bitmap uses an unsupported bit depth!";
+    return img;
+  }
+
+  // A positive height is the usual bottom-up row order, a negative height means top-down
+  const bool     bottomUp = (heightRaw > 0);
+  const uint64_t w        = (    width > 0) ?  static_cast <uint64_t> (width) : 0;
+  const uint64_t h        = (heightRaw > 0) ?  static_cast <uint64_t> (heightRaw)
+                                            : -static_cast <int64_t>  (heightRaw);
+
+  if (w == 0 || h == 0)
+  {
+    PLOG_ERROR << "Clipboard bitmap has invalid dimensions!";
+    return img;
+  }
+
+  // Pixel data starts after the header, the optional three DWORD color masks, and the optional color table
+  uint64_t offset = headerSize;
+
+  DWORD redMask   = 0x00FF0000,  // BI_RGB always uses BGR(X) order
+        greenMask = 0x0000FF00,
+        blueMask  = 0x000000FF;
+
+  if (compression == BI_BITFIELDS)
+  {
+    // BITMAPV2INFOHEADER and later headers hold the masks themselves
+    if (headerSize >= offsetof (BITMAPV5HEADER, bV5AlphaMask))
     {
-      BITMAPV5HEADER* bmp5hdr =
-        static_cast <BITMAPV5HEADER *> (GlobalLock (hGlobal));
+      redMask   = bmp5hdr->bV5RedMask;
+      greenMask = bmp5hdr->bV5GreenMask;
+      blueMask  = bmp5hdr->bV5BlueMask;
 
-      if (bmp5hdr != nullptr)
+      // Some sources, Windows' own conversion to CF_DIBV5 among them, still put a copy
+      //   of the masks after the larger header. Skip that copy if it is there.
+      if (cbGlobal - offset >= 3 * sizeof (DWORD))
       {
-        int offset =
-          bmp5hdr->bV5Size + bmp5hdr->bV5ClrUsed * sizeof (RGBQUAD);
+        DWORD masks [3] = { };
+        memcpy (masks, pData + offset, sizeof (masks));
 
-        PLOG_VERBOSE << "bmp5hdr->bV5Compression: " <<
-             ((bmp5hdr->bV5Compression == BI_JPEG)      ? "JPEG"         :
-              (bmp5hdr->bV5Compression == BI_PNG)       ? "BI_PNG"       :
-              (bmp5hdr->bV5Compression == BI_RGB)       ? "BI_RGB"       :
-              (bmp5hdr->bV5Compression == BI_RLE4)      ? "BI_RLE4"      :
-              (bmp5hdr->bV5Compression == BI_RLE8)      ? "BI_RLE8"      :
-              (bmp5hdr->bV5Compression == BI_BITFIELDS) ? "BI_BITFIELDS" :
-                                                          "Unknown"     );
-
-        if (bmp5hdr->bV5Compression == BI_BITFIELDS ||
-            bmp5hdr->bV5Compression == BI_RGB)
-        {
-          offset += 12;
-
-          if (bmp5hdr->bV5BitCount == 24)
-            img.format = DXGI_FORMAT_B8G8R8X8_UNORM;
-          else if (bmp5hdr->bV5BitCount == 32)
-            img.format = DXGI_FORMAT_B8G8R8A8_UNORM;
-
-          if (img.format == DXGI_FORMAT_B8G8R8A8_UNORM ||
-              img.format == DXGI_FORMAT_B8G8R8X8_UNORM)
-          {
-            img.pixels     = (BYTE *)bmp5hdr + offset;
-            img.width      = bmp5hdr->bV5Width;
-            img.height     = bmp5hdr->bV5Height;
-            img.slicePitch = 4 * bmp5hdr->bV5Width * bmp5hdr->bV5Height;
-            img.rowPitch   = 4 * bmp5hdr->bV5Width;
-            DirectX::TexMetadata
-              meta           = { };
-              meta.width     = img.width;
-              meta.height    = img.height;
-              meta.format    = img.format;
-              meta.depth     = 1;
-              meta.arraySize = 1;
-              meta.mipLevels = 1;
-              meta.dimension = DirectX::TEX_DIMENSION_TEXTURE2D;
-              meta.SetAlphaMode (DirectX::TEX_ALPHA_MODE_OPAQUE);
-
-            // DIBs are upside down :)
-            DirectX::ScratchImage
-              flipped;
-              flipped.Initialize (meta);
-
-            if (SUCCEEDED (DirectX::FlipRotate (&img, 1, meta, DirectX::TEX_FR_FLIP_VERTICAL, flipped)))
-            {
-              GlobalUnlock (hGlobal);
-
-              std::wstring path = std::wstring(_path_cache.skiv_temp) + L"paste.tiff";
-
-              if (SUCCEEDED (DirectX::SaveToWICFile (*flipped.GetImage (0,0,0), DirectX::WIC_FLAGS_FORCE_SRGB, GUID_ContainerFormatTiff, path.c_str())))
-              {
-                extern std::wstring dragDroppedFilePath;
-                dragDroppedFilePath = path;
-                PLOG_VERBOSE << "Successfully received and saved image data from the clipboard!";
-              }
-            }
-            else GlobalUnlock (hGlobal);
-          } else GlobalUnlock (hGlobal);
-        }
+        if (masks [0] == redMask   &&
+            masks [1] == greenMask &&
+            masks [2] == blueMask)
+          offset += sizeof (masks);
       }
     }
 
-    //CloseClipboard ( );
+    // A plain BITMAPINFOHEADER is followed by the three masks
+    else
+    {
+      if (cbGlobal - offset < 3 * sizeof (DWORD))
+      {
+        PLOG_ERROR << "Clipboard bitmap is too small to hold its color masks!";
+        return img;
+      }
+
+      DWORD masks [3] = { };
+      memcpy (masks, pData + offset, sizeof (masks));
+
+      redMask   = masks [0];
+      greenMask = masks [1];
+      blueMask  = masks [2];
+      offset   += sizeof (masks);
+    }
   }
+
+  // The color table is optional at these bit depths but must be skipped when present
+  if (clrUsed > (cbGlobal - offset) / sizeof (RGBQUAD))
+  {
+    PLOG_ERROR << "Clipboard bitmap has an invalid color table size!";
+    return img;
+  }
+
+  offset += clrUsed * sizeof (RGBQUAD);
+
+  // Rows are padded to a multiple of 4 bytes
+  const uint64_t bytesPerPixel = bitCount / 8;
+  const uint64_t srcRowPitch   = ((w * bitCount + 31) / 32) * 4;
+
+  // Make sure every row lies within the clipboard data before reading anything
+  if (h > (cbGlobal - offset) / srcRowPitch)
+  {
+    PLOG_ERROR << "Clipboard bitmap is smaller than its dimensions require ("
+               << cbGlobal << " bytes available, "
+               << offset + srcRowPitch * h << " bytes needed)!";
+    return img;
+  }
+
+  DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
+
+  if (bitCount == 24)
+    format = DXGI_FORMAT_B8G8R8X8_UNORM; // Expanded to 32 bpp below; there is no 24 bpp DXGI format
+
+  else if (redMask == 0x00FF0000 && greenMask == 0x0000FF00 && blueMask == 0x000000FF)
+    format = DXGI_FORMAT_B8G8R8A8_UNORM;
+
+  else if (redMask == 0x000000FF && greenMask == 0x0000FF00 && blueMask == 0x00FF0000)
+    format = DXGI_FORMAT_R8G8B8A8_UNORM;
+
+  if (format == DXGI_FORMAT_UNKNOWN)
+  {
+    PLOG_WARNING << "Clipboard bitmap uses unsupported color masks!";
+    return img;
+  }
+
+  // Copy into our own buffer, in top-down row order and in a format DXGI understands
+  DirectX::ScratchImage
+    converted;
+
+  if (FAILED (converted.Initialize2D (format, static_cast <size_t> (w), static_cast <size_t> (h), 1, 1)))
+  {
+    PLOG_ERROR << "Failed to allocate memory for the clipboard bitmap!";
+    return img;
+  }
+
+  const DirectX::Image* pDst  = converted.GetImage (0, 0, 0);
+  const BYTE*           pBits = pData + offset;
+
+  for (uint64_t y = 0; y < h; y++)
+  {
+    // Bottom-up bitmaps store the last row first
+    const BYTE* srcRow = pBits + (bottomUp ? (h - 1 - y) : y) * srcRowPitch;
+          BYTE* dstRow = pDst->pixels + y * pDst->rowPitch;
+
+    if (bytesPerPixel == 4)
+      memcpy (dstRow, srcRow, static_cast <size_t> (w * 4));
+
+    else
+    {
+      for (uint64_t x = 0; x < w; x++)
+      {
+        dstRow [x * 4 + 0] = srcRow [x * 3 + 0]; // B
+        dstRow [x * 4 + 1] = srcRow [x * 3 + 1]; // G
+        dstRow [x * 4 + 2] = srcRow [x * 3 + 2]; // R
+        dstRow [x * 4 + 3] = 0xFF;               // X
+      }
+    }
+  }
+
+  img.width      = pDst->width;
+  img.height     = pDst->height;
+  img.format     = pDst->format;
+  img.rowPitch   = pDst->rowPitch;
+  img.slicePitch = pDst->slicePitch;
+  img.pixels     = nullptr;
+
+  std::wstring path = std::wstring(_path_cache.skiv_temp) + L"paste.tiff";
+
+  if (SUCCEEDED (DirectX::SaveToWICFile (*pDst, DirectX::WIC_FLAGS_FORCE_SRGB, GUID_ContainerFormatTiff, path.c_str())))
+  {
+    extern std::wstring dragDroppedFilePath;
+    dragDroppedFilePath = path;
+    PLOG_VERBOSE << "Successfully received and saved image data from the clipboard!";
+  }
+
+  else
+    PLOG_ERROR << "Failed to save the clipboard bitmap to " << path;
 
   return img;
 }
+
 
 // Adds/removes environment variables in a given environment block
 // Parts of this is CC BY-SA 4.0, https://stackoverflow.com/a/59597519
