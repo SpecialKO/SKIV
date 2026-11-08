@@ -2020,8 +2020,9 @@ wWinMain ( _In_     HINSTANCE hInstance,
       const bool bNoMove =
         (io.KeyCtrl || ! SKIF_MouseDragMoveAllowed);
 
-      ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2());
-      ImGui::PushStyleVar (ImGuiStyleVar_WindowBorderSize, 0.0f); // Disable ImGui's 1 px window border
+      ImGui::PushStyleColor (ImGuiCol_WindowBg, ImGui::GetStyleColorVec4 (ImGuiCol_ChildBg));
+      ImGui::PushStyleVar   (ImGuiStyleVar_WindowPadding, ImVec2());
+      ImGui::PushStyleVar   (ImGuiStyleVar_WindowBorderSize, 0.0f); // Disable ImGui's 1 px window border
       ImGui::Begin (SKIV_WINDOW_TITLE_HASH,
                        nullptr,
                        //ImGuiWindowFlags_NoResize          |
@@ -2035,7 +2036,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
                          ImGuiWindowFlags_NoDecoration :
                          ImGuiWindowFlags_None)
       );
-      ImGui::PopStyleVar (2);
+      ImGui::PopStyleVar   (2);
+      ImGui::PopStyleColor (1);
 
       SK_RunOnce (ImGui::GetCurrentWindow()->HiddenFramesCannotSkipItems += 2);
 
@@ -2693,13 +2695,18 @@ wWinMain ( _In_     HINSTANCE hInstance,
           if (SKIF_Tab_ChangeTo == UITab_Settings || RefreshSettingsTab)
             SKIF_Util_IsHDRActive (NULL); // true
 
+          // The max width of the content of the Settings page (centered in wider windows)
+          const float fTabColumnMaxWidth = 1000.0f * SKIF_ImGui_GlobalDPIScale;
+
           ImGui::PushStyleVar (ImGuiStyleVar_FramePadding, ImVec2 (15.0f, 15.0f) * SKIF_ImGui_GlobalDPIScale);
           bool show = SKIF_ImGui_BeginMainChildFrame ( );
           ImGui::PopStyleVar  ( );
 
           if (show)
           {
-            SKIF_UI_Tab_DrawSettings ( );
+            SKIF_ImGui_BeginCenteredColumn ("###SettingsColumn", fTabColumnMaxWidth);
+            SKIF_UI_Tab_DrawSettings       ( );
+            SKIF_ImGui_EndCenteredColumn   (true);
 
             SKIF_ImGui_AutoScroll  (true, SKIF_ImGuiAxis_Both, "##AutoScrollViewer2");
             SKIF_ImGui_UpdateScrollbarState ( );
