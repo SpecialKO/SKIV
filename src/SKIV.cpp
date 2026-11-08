@@ -112,7 +112,6 @@ bool  SKIF_MouseDragMoveAllowed = true;
 bool  SKIF_debuggerPresent      = false;
 DWORD SKIF_startupTime          = 0; // Used as a basis of how long the initialization took
 DWORD SKIF_firstFrameTime       = 0; // Used as a basis of how long the initialization took
-HANDLE SteamProcessHandle       = NULL;
 
 // Exporting RTSSHooksCompatibility set to 0x0 prevents RTSS from drawing.
 //
@@ -3813,28 +3812,6 @@ wWinMain ( _In_     HINSTANCE hInstance,
     // Don't pause if there's hidden frames that needs rendering
     if (HiddenFramesContinueProcessing)
       pause = false;
-
-    // Follow up on our attempt to restart the Steam client
-    if (SteamProcessHandle != NULL &&
-        SteamProcessHandle != INVALID_HANDLE_VALUE)
-    {
-      // When Steam has closed, restart it again
-      if (WaitForSingleObject (SteamProcessHandle, 0) != WAIT_TIMEOUT)
-      {
-        // Stop waiting for it on all tabs
-        for (auto& vWatchHandle : vWatchHandles)
-        {
-          if (! vWatchHandle.empty())
-            vWatchHandle.erase(std::remove(vWatchHandle.begin(), vWatchHandle.end(), SteamProcessHandle), vWatchHandle.end());
-        }
-
-        PLOG_INFO << "Starting up the Steam client...";
-        SKIF_Util_OpenURI (L"steam://open/main");
-
-        CloseHandle (SteamProcessHandle);
-        SteamProcessHandle = NULL;
-      }
-    }
 
     SK_RunOnce (PLOG_INFO << "Processed first frame! Start -> End took " << (SKIF_Util_timeGetTime1() - SKIF_firstFrameTime) << " ms.");
 
