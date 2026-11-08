@@ -102,6 +102,14 @@ extern UITab       SKIF_Tab_ChangeTo; // Tab we want to change to
 
 extern std::vector<HANDLE> vWatchHandles[UITab_ALL];
 
+// The main loop waits on the handles of the current tab with MsgWaitForMultipleObjects ( ), which accepts at most
+//   MAXIMUM_WAIT_OBJECTS - 1 (63) handles. Always add and remove handles through these helpers, which enforce that
+//     limit per tab (a watch over the limit still works when polled, but no longer wakes the main loop by itself).
+constexpr size_t SKIF_MaxWatchHandles = MAXIMUM_WAIT_OBJECTS - 1;
+
+bool            SKIF_Util_AddWatchHandle              (HANDLE handle, UITab waitTab); // UITab_ALL adds it to every tab; false if any tab was full
+void            SKIF_Util_RemoveWatchHandle           (HANDLE handle, UITab waitTab); // Must be called before the handle is closed
+
 // Generic Utilities
 
 char *
@@ -337,24 +345,36 @@ struct SKIF_DirectoryWatch
                                     DWORD dwNotifyFilter = FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_LAST_WRITE);
   ~SKIF_DirectoryWatch (void);
 
-  bool isSignaled      (void) const;
+  // Copy: creates a fresh, independent watch on the same path.
+  // The source's handle is left untouched.
+  SKIF_DirectoryWatch            (const SKIF_DirectoryWatch&  other);
+  SKIF_DirectoryWatch& operator= (const SKIF_DirectoryWatch&  other);
 
+  // Move: takes ownership of the source's handle.
+  SKIF_DirectoryWatch            (      SKIF_DirectoryWatch&& other) noexcept;
+  SKIF_DirectoryWatch& operator= (      SKIF_DirectoryWatch&& other) noexcept;
+
+  std::wstring getPath (void) const;
+  bool isActive        (void) const;
+  bool isSignaled      (void) const;
   bool isSignaled      (std::wstring_view wstrPath,
                                     UITab waitTab        = UITab_None,
                                      BOOL bWatchSubtree  = FALSE,
                                     DWORD dwNotifyFilter = FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_LAST_WRITE);
-
   void reset           (void);
 
-  HANDLE       _hChangeNotification = INVALID_HANDLE_VALUE; // If the FindFirstChangeNotification function fails, the return value is INVALID_HANDLE_VALUE.
-  UITab        _waitTab             = UITab_None;
-  std::wstring _path                = L"";
 
 private:
   void registerNotify  (std::wstring_view wstrPath,
                                     UITab waitTab        = UITab_None,
                                      BOOL bWatchSubtree  = FALSE,
                                     DWORD dwNotifyFilter = FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_LAST_WRITE);
+
+  HANDLE       _hChangeNotification = INVALID_HANDLE_VALUE; // If the FindFirstChangeNotification function fails, the return value is INVALID_HANDLE_VALUE.
+  UITab        _waitTab             = UITab_None;
+  std::wstring _path                = L"";
+  BOOL         _watchSubtree        = FALSE;
+  DWORD        _notifyFilter        = FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_LAST_WRITE;
 };
 
 
@@ -372,20 +392,38 @@ struct SKIF_RegistryWatch {
 
   ~SKIF_RegistryWatch    (void);
 
-  LSTATUS registerNotify (void) const;
-  void reset             (void);
+  SKIF_RegistryWatch            (const SKIF_RegistryWatch&  other);
+  SKIF_RegistryWatch& operator= (const SKIF_RegistryWatch&  other);
+  SKIF_RegistryWatch            (      SKIF_RegistryWatch&& other) noexcept;
+  SKIF_RegistryWatch& operator= (      SKIF_RegistryWatch&& other) noexcept;
+
   bool isSignaled        (void);
 
+  // Read-only access to the watched key, e.g. to read values from the same key that is being watched
+  HKEY                getKey       (void) const; // The opened key, or NULL if it could not be opened
+  HKEY                getRootKey   (void) const;
+  const std::wstring& getSubKey    (void) const;
+  bool                isWOW6432Key (void) const;
+  bool                isWOW6464Key (void) const;
+
+private:
+  LSTATUS registerNotify (void);
+  void    reset          (void);
+
   struct {
-    HKEY         root        = { };
+    HKEY         root          = NULL;
     std::wstring sub_key;
-    BOOL         watch_subtree;
-    DWORD        filter_mask;
-    BOOL         wow64_32key; // Access a 32-bit key from either a 32-bit or 64-bit application.
-    BOOL         wow64_64key; // Access a 64-bit key from either a 32-bit or 64-bit application.
+    std::wstring event_name;            // Base name given by the caller (see _eventNameActual)
+    BOOL         watch_subtree = FALSE;
+    DWORD        filter_mask   = 0;
+    BOOL         wow64_32key   = FALSE; // Access a 32-bit key from either a 32-bit or 64-bit application.
+    BOOL         wow64_64key   = FALSE; // Access a 64-bit key from either a 32-bit or 64-bit application.
   } _init;
 
-  HKEY    _hKeyBase    = NULL;
-  HANDLE  _hEvent      = NULL; // If the CreateEvent function fails, the return value is NULL.
-  UITab   _waitTab     = UITab_None;
+  HKEY         _hKeyBase        = NULL;
+  HANDLE       _hEvent          = NULL; // If the CreateEvent function fails, the return value is NULL.
+  UITab        _waitTab         = UITab_None;
+  std::wstring _eventNameActual = L"";  // Named, so the event is easy to identify in e.g. Process Explorer (made unique per object)
+
+  void swap (SKIF_RegistryWatch& other) noexcept;
 };
