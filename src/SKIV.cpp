@@ -2415,12 +2415,12 @@ wWinMain ( _In_     HINSTANCE hInstance,
           ImGui::PushStyleColor    (ImGuiCol_ChildBg, ImGui::GetStyleColorVec4 (ImGuiCol_WindowBg));
           ImGui::BeginChild        ("Snipping Tool###SnippingToolbar", ImVec2 (0.0f, 0.0f),
                                       ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_AutoResizeX |
-                                      ImGuiChildFlags_AutoResizeY | ((_registry.bUIBorders) ? ImGuiChildFlags_Borders
+                                      ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysAutoResize |
+                                                                    ((_registry.bUIBorders) ? ImGuiChildFlags_Borders
                                                                                             : ImGuiChildFlags_None
                                                                   | ImGuiChildFlags_FrameStyle),
                                       ImGuiWindowFlags_NoScrollbar  |
-                                      ImGuiWindowFlags_NoDecoration |
-                                      ImGuiWindowFlags_AlwaysAutoResize);
+                                      ImGuiWindowFlags_NoDecoration);
 
           ImGui::BringWindowToDisplayFront (ImGui::GetCurrentWindow ());
 
