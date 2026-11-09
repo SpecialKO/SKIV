@@ -656,6 +656,35 @@ _IsHDR10ColorSource (const color_source_s& cs)
   return false;
 }
 
+// The primaries of an HLG image (BT.2100), by the same precedence as _IsHDR10ColorSource: its cICP, or its ICC profile's
+//   cicp tag; 0 if it is not HLG, or of primaries the viewer does not convert from (Rec. 2020, Rec. 709 and Display P3
+//     are converted)
+static uint8_t
+_HLGPrimaries (const color_source_s& cs)
+{
+  uint8_t primaries = 0, transfer = 0;
+
+  if (cs.has_cicp && (cs.cicp_first || cs.icc.empty ( )))
+    primaries = cs.primaries,     transfer = cs.transfer;
+
+  else if (cs.icc_has_cicp)
+    primaries = cs.icc_primaries, transfer = cs.icc_transfer;
+
+  return (transfer == 18 && (primaries == 9 || primaries == 1 || primaries == 12)) ? primaries : 0;
+}
+
+// The luminance (Y) of each of the primaries of a cICP code (for HLG's OOTF, see _HLGToDisplay): Rec. 709, Display P3,
+//   or else Rec. 2020
+static const float*
+_LuminanceWeights (uint8_t primaries)
+{
+  static constexpr float bt709 [3] = { 0.2126f, 0.7152f, 0.0722f },
+                         p3    [3] = { 0.2290f, 0.6917f, 0.0793f },
+                         bt2020[3] = { 0.2627f, 0.6780f, 0.0593f };
+
+  return (primaries == 1) ? bt709 : (primaries == 12) ? p3 : bt2020;
+}
+
 // Whether a JPEG XL image (decoded into scRGB) is HDR, or SDR of colors outside of sRGB (wide gamut): HDR if it says so (a
 //   PQ or HLG transfer, by its color source; or an intensity target above SDR's 255 nits, libjxl's default), or if its
 //     pixels go above SDR white (aboveOne: a luminance over 1.0); wide gamut if they only go outside of sRGB (belowZero:

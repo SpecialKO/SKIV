@@ -2268,7 +2268,12 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
     // HDR10 PNGs (Rec. 2020 primaries, PQ): by their cICP chunk, or the cICP of their ICC profile (as SKIV and Special K
     //   write them), see _IsHDR10ColorSource. Decoded by WIC below, then converted to scRGB. Every other PNG is SDR.
     const bool hdr10 = (image_sig->mime_type == L"image/png") && _IsHDR10ColorSource (image.color_source);
-    const bool cicp  = hdr10;
+
+    // HLG PNGs (BT.2100: Rec. 2020, Rec. 709 or Display P3 primaries), by their cICP or their ICC profile's cicp tag: as
+    //   HDR10 ones, decoded by WIC, then converted (for a 1,000-nit display, see _HLGToDisplay)
+    const uint8_t hlgPrimaries = (image_sig->mime_type == L"image/png" && ! hdr10) ? _HLGPrimaries (image.color_source) : 0;
+    const bool    hlg          = (hlgPrimaries != 0);
+    const bool    cicp         = hdr10 || hlg;
 
     SKIV_STBI_ICCP.iCCP = ! image.color_source.icc.empty ();
 
@@ -2277,15 +2282,16 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
     if (image_sig->mime_type == L"image/png")
       memcpy (&SKIV_STBI_SBIT, image.color_source.sbit, std::min <size_t> (image.color_source.sbit_count, sizeof (SKIV_STBI_SBIT)));
 
-    float*                pixels = hdr10 ?
+    float*                pixels = cicp ?
                                  nullptr :
                                    stbi_loadf_from_memory (_scratchMemory.get (), static_cast <int> (_.getInitialSize ()), &width, &height, &channels_in_file, desired_channels);
 
-    // stb_image reads a cICP chunk into SKIV_STBI_CICP itself: only HDR10 is taken from it (others crashed the HDR path)
-    if (hdr10)
+    // stb_image reads a cICP chunk into SKIV_STBI_CICP itself: only HDR10 and HLG are taken from it (others crashed the
+    //   HDR path)
+    if (hdr10 || hlg)
     {
-      SKIV_STBI_CICP.primaries     =  9;
-      SKIV_STBI_CICP.transfer_func = 16;
+      SKIV_STBI_CICP.primaries     = (hlg) ? hlgPrimaries :  9;
+      SKIV_STBI_CICP.transfer_func = (hlg) ?           18 : 16;
       SKIV_STBI_CICP.matrix_coeffs =  0;
     }
 
@@ -2332,8 +2338,7 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
         else
           dxgi_format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
 
-        assert (SKIV_STBI_CICP.primaries     ==  9); // BT 2020
-        assert (SKIV_STBI_CICP.transfer_func == 16); // ST 2084
+        assert (SKIV_STBI_CICP.transfer_func == 16 || SKIV_STBI_CICP.transfer_func == 18); // ST 2084, or HLG
         assert (SKIV_STBI_CICP.matrix_coeffs ==  0); // Identity
         // RGB is currently the only supported color model in PNG,
         //   and as such Matrix Coefficients shall be set to 0.
@@ -2371,9 +2376,9 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
         // Good grief this is inefficient, let's convert it to something reasonable...
         DirectX::ScratchImage raw_fp32_img;
 
-        // Check for BT.2020 using ST.2084 (HDR10)
-        if ( SKIV_STBI_CICP.primaries     ==  9 &&
-             SKIV_STBI_CICP.transfer_func == 16 )
+        // Check for BT.2020 using ST.2084 (HDR10), or HLG
+        if ( (SKIV_STBI_CICP.primaries     ==  9 &&
+              SKIV_STBI_CICP.transfer_func == 16) || hlg )
         {
           DirectX::ScratchImage temp_img  = { };
           DirectX::ScratchImage temp_img2 = { };
@@ -2389,7 +2394,10 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
             image.channels =
               DirectX::HasAlpha     (meta.format) ? 4 : 3; // Expect 3... 4 would be weird for an HDR image
 
-            PLOG_INFO << "HDR10 PNG detected, transforming to scRGB...";
+            PLOG_INFO << ((hlg) ? "HLG PNG detected (decoded as for a 1,000-nit display), transforming to scRGB..."
+                                : "HDR10 PNG detected, transforming to scRGB...");
+
+            const float* weights = _LuminanceWeights (hlgPrimaries);
 
             // PNG will be loaded as UNORM, we need to convert to float...
             if (SUCCEEDED (DirectX::Convert        (*temp_img.GetImages (), DXGI_FORMAT_R16G16B16A16_FLOAT, DirectX::TEX_FILTER_DEFAULT, 0.0f, temp_img2)))
@@ -2407,9 +2415,24 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
                 for (size_t j = 0; j < width; ++j)
                 {
                   XMVECTOR v = inPixels [j];
+                  XMVECTOR r;
 
-                  XMVECTOR r =
-                    XMVector3Transform (SKIV_Image_PQToLinear (v), c_Bt2100toscRGB);
+                  if (! hlg)
+                    r = XMVector3Transform (SKIV_Image_PQToLinear (v), c_Bt2100toscRGB);
+
+                  else
+                  {
+                    // Display light (1.0: 10,000 nits), then scRGB (1.0: 80 nits) of its primaries
+                    const float signal [3] = { XMVectorGetX (v), XMVectorGetY (v), XMVectorGetZ (v) };
+                    float       light  [3];
+                    _HLGToDisplay (signal, weights, light);
+
+                    const XMVECTOR l = XMVectorSet (light [0], light [1], light [2], 0.0f);
+
+                    r = (hlgPrimaries == 1)  ? XMVectorScale (l, 125.0f) :
+                        (hlgPrimaries == 12) ? XMVectorScale (XMVector3Transform (l, c_fromDCIP3to709), 125.0f)
+                                             : XMVector3Transform (l, c_Bt2100toscRGB);
+                  }
 
                   outPixels[j] = XMVectorSetW(r, XMVectorGetW(v));
                 }
@@ -3443,6 +3466,20 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
             actual_encoding.primaries         == JXL_PRIMARIES_SRGB &&
             actual_encoding.transfer_function == JXL_TRANSFER_FUNCTION_LINEAR;
 
+          // HLG (BT.2100), as libjxl hands it over unconverted (all but XYB images): decoded for a 1,000-nit display
+          //   (_HLGToDisplay), then its primaries (Rec. 2020, Rec. 709 or P3) converted to scRGB's
+          const bool bIsHLG =
+            actual_encoding.transfer_function == JXL_TRANSFER_FUNCTION_HLG &&
+           (actual_encoding.primaries         == JXL_PRIMARIES_2100 ||
+            actual_encoding.primaries         == JXL_PRIMARIES_SRGB ||
+            actual_encoding.primaries         == JXL_PRIMARIES_P3);
+
+          const uint8_t hlgPrimaries = (actual_encoding.primaries == JXL_PRIMARIES_SRGB) ?  1 :
+                                       (actual_encoding.primaries == JXL_PRIMARIES_P3)   ? 12 : 9;
+          const float*  hlgWeights   = _LuminanceWeights (hlgPrimaries);
+
+          PLOG_INFO_IF (bIsHLG) << "HLG JPEG XL image: decoded as for a 1,000-nit display";
+
           if (actual_encoding.white_point != JXL_WHITE_POINT_D65)
           {
             PLOG_WARNING << "Unexpected non-D65 white point";
@@ -3454,7 +3491,7 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
           //       wrong colors).
           bool bConvertedHere = false;
 
-          if (! (bIsHDR10 || bIsRec709Linear))
+          if (! (bIsHDR10 || bIsRec709Linear || bIsHLG))
           {
             cmsHPROFILE           source = _CreateSDRSourceProfile (image.color_source);
             const DirectX::Image* data   = img.GetImage (0, 0, 0);
@@ -3497,6 +3534,19 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
                     {
                       v =
                         XMVector3Transform (SKIV_Image_PQToLinear (v), c_Bt2100toscRGB);
+                    }
+
+                    else if (bIsHLG)
+                    {
+                      const float signal [3] = { XMVectorGetX (v), XMVectorGetY (v), XMVectorGetZ (v) };
+                      float       light  [3];
+                      _HLGToDisplay (signal, hlgWeights, light);
+
+                      const XMVECTOR l = XMVectorSet (light [0], light [1], light [2], 0.0f);
+
+                      v = (hlgPrimaries == 1)  ? XMVectorScale (l, 125.0f) :
+                          (hlgPrimaries == 12) ? XMVectorScale (XMVector3Transform (l, c_fromDCIP3to709), 125.0f)
+                                               : XMVector3Transform (l, c_Bt2100toscRGB);
                     }
 
                     // Outside of sRGB: a channel below 0 (past rounding). Above SDR white: its luminance over 1.0, as a
