@@ -476,6 +476,110 @@
     <ClInclude Include="version.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="packages_misc\lcms2\src\cmsalpha.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmscam02.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmscgats.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmscnvrt.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmserr.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsgamma.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsgmt.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmshalf.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsintrp.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsio0.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsio1.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmslut.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsmd5.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsmtrx.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsnamed.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsopt.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmspack.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmspcs.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsplugin.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsps2.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmssamp.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmssm.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmstypes.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsvirt.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmswtpnt.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsxform.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
     <ClCompile Include="packages_misc\libwebp\src\dec\alpha_dec.c">
       <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\libwebp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>

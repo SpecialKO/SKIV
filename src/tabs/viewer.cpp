@@ -96,6 +96,12 @@
 #include "../utility/animated_images.inl"
 #include "../utility/color_source.inl"
 
+// Color conversion of images that are not sRGB (wide gamut): Little CMS (packages_misc\lcms2)
+#include <thread>
+#define CMS_NO_REGISTER_KEYWORD 1 // C++17 has no register keyword
+#include <lcms2/include/lcms2.h>
+#include "../utility/color_convert.inl"
+
 #include <html_coder.hpp>
 #include <utility/image.h>
 
@@ -563,6 +569,7 @@ struct image_s {
 
   bool         not_hdr     = false; //just an excessive bool for checks
   bool         is_hdr      = false;
+  bool         is_wcg      = false; // SDR, of colors outside of sRGB: converted to scRGB (see color_convert.inl)
   bool         is_dds      = false;
 
   CComPtr <ID3D11ShaderResourceView>  pRawTexSRV;
@@ -626,6 +633,7 @@ struct image_s {
     color_source        = other.color_source;
     not_hdr             = other.not_hdr;
     is_hdr              = other.is_hdr;
+    is_wcg              = other.is_wcg;
     is_dds              = other.is_dds;
     light_info          = other.light_info;
     colorimetry         = other.colorimetry;
@@ -651,6 +659,7 @@ struct image_s {
     anim                = nullptr; // Not released: whoever was given it (cover_old) releases it
     color_source        = { };
     is_hdr              = false;
+    is_wcg              = false;
     is_dds              = false;
     light_info          = { };
     colorimetry         = { };
@@ -834,8 +843,19 @@ SKIV_CaptureImage (image_s& image, DirectX::ScratchImage& captured)
   if (pTexResource.p == nullptr)
     return E_POINTER;
 
-  if (image.anim == nullptr)
+  if (image.anim == nullptr && ! image.is_wcg)
     return DirectX::CaptureTexture (pDevice, pDevCtx, pTexResource.p, captured);
+
+  // Wide gamut SDR images (scRGB): as sRGB again, of 8 bpc, the colors outside of it clipped, to be copied or saved as SDR
+  if (image.anim == nullptr)
+  {
+    DirectX::ScratchImage scrgb;
+    HRESULT hr =
+      DirectX::CaptureTexture (pDevice, pDevCtx, pTexResource.p, scrgb);
+
+    return FAILED (hr) ? hr :
+      DirectX::Convert (*scrgb.GetImages (), DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, DirectX::TEX_FILTER_DEFAULT, 0.0f, captured);
+  }
 
   DirectX::ScratchImage page;
   HRESULT hr =
@@ -1448,6 +1468,19 @@ _LoadAnimatedImage (image_s& image, const std::function <bool (void)>& wanted)
 
   DWORD elapsed = 0;
 
+  // Colors that are not sRGB (wide gamut, see color_convert.inl): made sRGB, the colors outside of it clipped. The frames
+  //   stay 8 bpc, as scRGB (half floats) would fit only half as many of them into the budget.
+  std::unique_ptr <void, decltype (&cmsDeleteTransform)> toSRGB (nullptr, &cmsDeleteTransform);
+
+  if (cmsHPROFILE profile = _CreateSourceProfile (image.color_source))
+  {
+    toSRGB.reset (_CreateSRGBTransform (profile));
+    cmsCloseProfile (profile);
+
+    PLOG_INFO_IF (toSRGB != nullptr) << "[Image Processing] The animated image's colors (" << _DescribeColorSource (image.color_source)
+                                     << ") are converted to sRGB";
+  }
+
   auto _OnFrame = [&](const uint8_t* canvas, uint32_t delay) -> bool
   {
     if (wanted && ! wanted ( ))
@@ -1472,6 +1505,11 @@ _LoadAnimatedImage (image_s& image, const std::function <bool (void)>& wanted)
     }
 
     memcpy (img.GetImage (0, 0, 0)->pixels, canvas, static_cast <size_t> (width) * height * 4);
+
+    if (toSRGB != nullptr)
+      for (uint32_t y = 0; y < height; y++)
+        cmsDoTransform (toSRGB.get (), img.GetImage (0, 0, 0)->pixels + y * img.GetImage (0, 0, 0)->rowPitch,
+                                       img.GetImage (0, 0, 0)->pixels + y * img.GetImage (0, 0, 0)->rowPitch, width);
 
     if (resize)
     {
@@ -1584,6 +1622,7 @@ _LoadAnimatedImage (image_s& image, const std::function <bool (void)>& wanted)
   image.bpc          = 8;
   image.channels     = 4;
   image.is_hdr       = false;
+  image.is_wcg       = false; // Made sRGB, if they were not
   image.light_info   = { };
   image.colorimetry  = { };
 
@@ -2291,13 +2330,19 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
       //   texture's values as linear, so they become an _SRGB format (8 bpc), or are made linear here (more bits).
       //     DirectXTex is not asked (WIC_FLAGS_IGNORE_SRGB): it takes any image without Exif ColorSpace 1 or a PNG sRGB
       //       chunk for a linear one, so pictures with ColorSpace 65535 (uncalibrated) showed washed out.
+      //         Images of other colors (wide gamut: see color_convert.inl) are left as they are decoded (as RGBA), and
+      //           converted to scRGB after all the decoders.
+      const bool sdr_wide =
+        (! image.is_hdr && DirectX::FormatDataType (meta.format) == DirectX::FORMAT_TYPE_UNORM &&
+           _NeedsColorConversion (image.color_source));
+
       const bool sdr_srgb =
-        (! image.is_hdr && ! DirectX::IsSRGB (meta.format) &&
+        (! image.is_hdr && ! sdr_wide && ! DirectX::IsSRGB (meta.format) &&
            DirectX::FormatDataType (meta.format) == DirectX::FORMAT_TYPE_UNORM &&
          ! _IsLinearColorSource (image.color_source));
 
       // Grayscale, and formats of fewer bits (or without an _SRGB form): as RGBA of 8 or 16 bpc
-      if (sdr_srgb && DirectX::MakeSRGB (meta.format) == meta.format && meta.format != DXGI_FORMAT_R16G16B16A16_UNORM)
+      if ((sdr_srgb || sdr_wide) && DirectX::MakeSRGB (meta.format) == meta.format && meta.format != DXGI_FORMAT_R16G16B16A16_UNORM)
       {
         const DXGI_FORMAT rgba = (DirectX::BitsPerColor (meta.format) <= 8) ? DXGI_FORMAT_R8G8B8A8_UNORM
                                                                             : DXGI_FORMAT_R16G16B16A16_UNORM;
@@ -3105,6 +3150,64 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
   if (! succeeded)
     return false;
 
+  // SDR images whose colors are not sRGB (wide gamut: Display P3, Adobe RGB...; see color_convert.inl): converted to scRGB
+  //   (linear, unclamped half floats), which keeps their colors outside of sRGB. Drawn as any other SDR image is (the
+  //     shaders take its values as linear, and keep the sign of those below 0), and made sRGB again to be copied or saved.
+  //       Only the decoders that leave the colors as they are in the file: JPEG XL converts them itself, and the others
+  //         are HDR or of fixed colors.
+  if (! image.is_hdr && (decoder == ImageDecoder_WIC  || decoder == ImageDecoder_stbi ||
+                         decoder == ImageDecoder_WebP || decoder == ImageDecoder_AVIF))
+  {
+    if (cmsHPROFILE source = _CreateSourceProfile (image.color_source))
+    {
+      const DXGI_FORMAT format = img.GetMetadata ().format;
+
+      const cmsUInt32Number lcmsFormat =
+        (format == DXGI_FORMAT_R8G8B8A8_UNORM     || format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB) ? TYPE_RGBA_8  :
+        (format == DXGI_FORMAT_B8G8R8A8_UNORM     || format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB ||
+         format == DXGI_FORMAT_B8G8R8X8_UNORM     || format == DXGI_FORMAT_B8G8R8X8_UNORM_SRGB) ? TYPE_BGRA_8  :
+        (format == DXGI_FORMAT_R16G16B16A16_UNORM)                                              ? TYPE_RGBA_16 : 0;
+
+      const DirectX::Image* in = img.GetImage (0, 0, 0);
+      DirectX::ScratchImage wide;
+      const DWORD           start = SKIF_Util_timeGetTime1 ();
+
+      if (lcmsFormat != 0 && in != nullptr &&
+          SUCCEEDED (wide.Initialize2D (DXGI_FORMAT_R16G16B16A16_FLOAT, in->width, in->height, 1, 1)) &&
+          _ConvertToScRGB (source, lcmsFormat, in->pixels, in->rowPitch, wide.GetPixels (), wide.GetImage (0, 0, 0)->rowPitch,
+                           static_cast <uint32_t> (in->width), static_cast <uint32_t> (in->height)))
+      {
+        // No alpha (X8): opaque
+        if (format == DXGI_FORMAT_B8G8R8X8_UNORM || format == DXGI_FORMAT_B8G8R8X8_UNORM_SRGB)
+        {
+          const DirectX::Image* out = wide.GetImage (0, 0, 0);
+
+          for (size_t y = 0; y < out->height; y++)
+            for (size_t x = 0; x < out->width; x++)
+              reinterpret_cast <uint16_t*> (out->pixels + y * out->rowPitch) [x * 4 + 3] = 0x3C00; // 1.0
+        }
+
+        std::swap (img, wide);
+        meta         = img.GetMetadata ();
+        image.is_wcg = true;
+
+        PLOG_INFO << "[Image Processing] Converted the image's colors (" << _DescribeColorSource (image.color_source)
+                  << ") to scRGB in " << (SKIF_Util_timeGetTime1 () - start) << " ms.";
+      }
+
+      else
+      {
+        PLOG_WARNING << "[Image Processing] Could not convert the image's colors (" << _DescribeColorSource (image.color_source)
+                     << ", format " << static_cast <int> (format) << "): shown as sRGB";
+
+        if (DirectX::MakeSRGB (format) != format && img.OverrideFormat (DirectX::MakeSRGB (format)))
+          meta.format = DirectX::MakeSRGB (format);
+      }
+
+      cmsCloseProfile (source);
+    }
+  }
+
   DirectX::ScratchImage* pImg  =   &img;
   DirectX::ScratchImage   converted_img;
 
@@ -3403,9 +3506,9 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
       }
     }
 
-    // Remember HDR images read using the WIC encoder
+    // Remember HDR images read using the WIC encoder (not SDR ones converted to scRGB, above)
     if ((meta.format == DXGI_FORMAT_R16G16B16A16_FLOAT  ||
-         meta.format == DXGI_FORMAT_R32G32B32A32_FLOAT) && decoder == ImageDecoder_WIC)
+         meta.format == DXGI_FORMAT_R32G32B32A32_FLOAT) && decoder == ImageDecoder_WIC && ! image.is_wcg)
       image.light_info.isHDR = true;
 
     D3D11_SHADER_RESOURCE_VIEW_DESC
@@ -4366,7 +4469,7 @@ SKIF_UI_Tab_DrawViewer (void)
                                       cover.width,
                                       cover.height,
                                       cover.zoom * 100,
-                                     (cover.is_hdr) ? "HDR" : "SDR",
+                                     (cover.is_hdr) ? "HDR" : (cover.is_wcg) ? "SDR, wide gamut" : "SDR",
                                       cover.channels == 0 ? "Unknown" :
                                       cover.channels == 1 ? "R"       :
                                       cover.channels == 2 ? "RG"      :
@@ -5279,6 +5382,7 @@ SKIF_UI_Tab_DrawViewer (void)
         cover.light_info        = _data->image.light_info;
         cover.colorimetry       = _data->image.colorimetry;
         cover.is_hdr            = _data->image.is_hdr;
+        cover.is_wcg            = _data->image.is_wcg;
         cover.is_dds            = _data->image.is_dds;
         cover.anim              = std::move (_data->image.anim);
         cover.color_source      = std::move (_data->image.color_source);
