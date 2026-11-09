@@ -16,6 +16,9 @@
     <Filter Include="Source Files\ImGui">
       <UniqueIdentifier>{63076e31-4f80-4ca1-b4af-bfe9a9c359b2}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Source Files\lcms2">
+      <UniqueIdentifier>{9c2f3e1a-6d4b-4a7e-8f15-2b8c0d7e4a31}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Source Files\libwebp">
       <UniqueIdentifier>{4f74a996-f2cc-5b04-95d5-e1a81299a0f3}</UniqueIdentifier>
     </Filter>
@@ -302,6 +305,84 @@
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="packages_misc\lcms2\src\cmsalpha.c">
+      <Filter>Source Files\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmscam02.c">
+      <Filter>Source Files\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmscgats.c">
+      <Filter>Source Files\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmscnvrt.c">
+      <Filter>Source Files\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmserr.c">
+      <Filter>Source Files\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsgamma.c">
+      <Filter>Source Files\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsgmt.c">
+      <Filter>Source Files\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmshalf.c">
+      <Filter>Source Files\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsintrp.c">
+      <Filter>Source Files\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsio0.c">
+      <Filter>Source Files\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsio1.c">
+      <Filter>Source Files\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmslut.c">
+      <Filter>Source Files\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsmd5.c">
+      <Filter>Source Files\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsmtrx.c">
+      <Filter>Source Files\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsnamed.c">
+      <Filter>Source Files\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsopt.c">
+      <Filter>Source Files\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmspack.c">
+      <Filter>Source Files\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmspcs.c">
+      <Filter>Source Files\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsplugin.c">
+      <Filter>Source Files\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsps2.c">
+      <Filter>Source Files\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmssamp.c">
+      <Filter>Source Files\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmssm.c">
+      <Filter>Source Files\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmstypes.c">
+      <Filter>Source Files\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsvirt.c">
+      <Filter>Source Files\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmswtpnt.c">
+      <Filter>Source Files\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsxform.c">
+      <Filter>Source Files\lcms2</Filter>
+    </ClCompile>
     <ClCompile Include="packages_misc\libwebp\src\dec\alpha_dec.c">
       <Filter>Source Files\libwebp</Filter>
     </ClCompile>

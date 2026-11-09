@@ -40,8 +40,14 @@ thread_local stbi__result_info     SKIV_STBI_ResultInfo;
 #include <string>
 #include <vector>
 
+#define CMS_NO_REGISTER_KEYWORD 1 // C++17 has no register keyword
+#include <lcms2.h>
+
+#include <thread>
+
 #include "../../src/utility/animated_images.inl"
 #include "../../src/utility/color_source.inl"
+#include "../../src/utility/color_convert.inl"
 
 namespace fs = std::filesystem;
 
@@ -541,6 +547,151 @@ TestColorSources (const fs::path& images)
 
 #pragma endregion
 
+#pragma region Color conversion
+
+static float
+HalfToFloat (uint16_t h)
+{
+  const uint32_t sign = (h >> 15) & 1, exponent = (h >> 10) & 0x1F, mantissa = h & 0x3FF;
+  const float    value = (exponent == 0) ? std::ldexp (static_cast <float> (mantissa), -24)
+                                         : std::ldexp (static_cast <float> (mantissa | 0x400), static_cast <int> (exponent) - 25);
+  return sign ? -value : value;
+}
+
+// The scRGB (RGBA) a single pixel converts to from the color source
+static bool
+ConvertPixel (const color_source_s& cs, cmsUInt32Number format, const std::vector <uint8_t>& pixel, float out [4])
+{
+  cmsHPROFILE source = _CreateSourceProfile (cs);
+
+  if (source == nullptr)
+    return false;
+
+  uint16_t   half [4] = { };
+  const bool ok       = _ConvertToScRGB (source, format, pixel.data ( ), pixel.size ( ), reinterpret_cast <uint8_t*> (half), sizeof (half), 1, 1);
+  cmsCloseProfile (source);
+
+  for (int i = 0; i < 4; i++)
+    out [i] = HalfToFloat (half [i]);
+
+  return ok;
+}
+
+static bool
+Near (const float got [4], float r, float g, float b, float a, float tolerance = 0.004f)
+{
+  return std::abs (got [0] - r) < tolerance && std::abs (got [1] - g) < tolerance &&
+         std::abs (got [2] - b) < tolerance && std::abs (got [3] - a) < tolerance;
+}
+
+static std::string
+Pixel (const float p [4])
+{
+  char text [96];
+  snprintf (text, sizeof (text), "%.4f %.4f %.4f %.4f", p [0], p [1], p [2], p [3]);
+  return text;
+}
+
+// An ICC profile made by Little CMS, as a file would have it
+static std::vector <uint8_t>
+SaveProfile (cmsHPROFILE profile)
+{
+  cmsUInt32Number       size = 0;
+  std::vector <uint8_t> bytes;
+
+  if (profile != nullptr && cmsSaveProfileToMem (profile, nullptr, &size) && size > 0)
+  {
+    bytes.resize (size);
+    cmsSaveProfileToMem (profile, bytes.data ( ), &size);
+  }
+
+  if (profile != nullptr)
+    cmsCloseProfile (profile);
+
+  return bytes;
+}
+
+static void
+TestColorConversion (void)
+{
+  auto cicp = [] (uint8_t primaries, uint8_t transfer)
+  {
+    color_source_s cs;
+    cs.has_cicp = true; cs.cicp_first = true; cs.primaries = primaries; cs.transfer = transfer; cs.full_range = 1;
+    return cs;
+  };
+
+  auto icc = [] (const std::vector <uint8_t>& profile)
+  {
+    color_source_s cs;
+    _SetICC (cs, profile.data ( ), profile.size ( ));
+    return cs;
+  };
+
+  float px [4];
+
+  // Not converted: sRGB, linear Rec. 709, HDR, unspecified, and files that say nothing
+  Check (! _NeedsColorConversion (cicp ( 1, 13)), "cICP sRGB",          "converted");
+  Check (! _NeedsColorConversion (cicp ( 1,  1)), "cICP Rec. 709",      "converted");
+  Check (! _NeedsColorConversion (cicp ( 1,  8)), "cICP linear 709",    "converted");
+  Check (! _NeedsColorConversion (cicp ( 2,  2)), "cICP unspecified",   "converted");
+  Check (! _NeedsColorConversion (cicp ( 9, 16)), "cICP HDR10",         "converted");
+  Check (! _NeedsColorConversion (cicp ( 9, 18)), "cICP HLG",           "converted");
+  Check (! _NeedsColorConversion (color_source_s { }), "No color source", "converted");
+
+  // Display P3 (cICP): its pure red is outside of sRGB, so scRGB red goes over 1 and green and blue below 0
+  Check (_NeedsColorConversion (cicp (12, 13)), "cICP Display P3", "not converted");
+  Check (ConvertPixel (cicp (12, 13), TYPE_RGBA_8, { 255, 0, 0, 255 }, px) && Near (px, 1.2249f, -0.0421f, -0.0196f, 1.0f),
+         "Display P3 red", "converted to " + Pixel (px));
+  Check (ConvertPixel (cicp (12, 13), TYPE_RGBA_8, { 255, 255, 255, 128 }, px) && Near (px, 1.0f, 1.0f, 1.0f, 128.0f / 255.0f),
+         "Display P3 white", "converted to " + Pixel (px));
+
+  // The same as BGRA, and as 16 bpc
+  Check (ConvertPixel (cicp (12, 13), TYPE_BGRA_8, { 0, 0, 255, 255 }, px) && Near (px, 1.2249f, -0.0421f, -0.0196f, 1.0f),
+         "Display P3 red (BGRA)", "converted to " + Pixel (px));
+  Check (ConvertPixel (cicp (12, 13), TYPE_RGBA_16, { 0xFF, 0xFF, 0, 0, 0, 0, 0xFF, 0xFF }, px) && Near (px, 1.2249f, -0.0421f, -0.0196f, 1.0f),
+         "Display P3 red (16 bpc)", "converted to " + Pixel (px));
+
+  // Rec. 2020 (SDR, Rec. 709 curve): green, far outside of sRGB
+  Check (ConvertPixel (cicp (9, 1), TYPE_RGBA_8, { 0, 255, 0, 255 }, px) && Near (px, -0.5876f, 1.1329f, -0.1006f, 1.0f),
+         "Rec. 2020 green", "converted to " + Pixel (px));
+
+  // ICC profiles: sRGB (as Little CMS makes it) is not converted, Display P3 is
+  Check (! _NeedsColorConversion (icc (SaveProfile (cmsCreate_sRGBProfile ( )))), "ICC sRGB", "converted");
+
+  color_primaries_s p3;
+  _CICPPrimaries (12, p3);
+  const auto iccP3 = SaveProfile (_CreateRGBProfile (p3, _SRGBCurve ( )));
+  Check (ConvertPixel (icc (iccP3), TYPE_RGBA_8, { 255, 0, 0, 255 }, px) && Near (px, 1.2249f, -0.0421f, -0.0196f, 1.0f),
+         "ICC Display P3 red", "converted to " + Pixel (px));
+
+  // Gray profiles are not converted (the pixels are RGBA by then)
+  cmsToneCurve* gamma = cmsBuildGamma (nullptr, 2.2);
+  Check (! _NeedsColorConversion (icc (SaveProfile (cmsCreateGrayProfile (cmsD50_xyY ( ), gamma)))), "ICC gray", "converted");
+  cmsFreeToneCurve (gamma);
+
+  // Adobe RGB, by Exif (R03): its pure green
+  color_source_s adobe;
+  adobe.exif_color_space = 65535;
+  memcpy (adobe.exif_interop, "R03", 4);
+  Check (ConvertPixel (adobe, TYPE_RGBA_8, { 0, 255, 0, 255 }, px) && Near (px, -0.3982f, 1.0f, -0.0429f, 1.0f),
+         "Adobe RGB green", "converted to " + Pixel (px));
+
+  color_source_s uncalibrated;
+  uncalibrated.exif_color_space = 65535;
+  Check (! _NeedsColorConversion (uncalibrated), "Exif uncalibrated", "converted");
+
+  // PNG gamma: 1/2.2 and 1.0 are not converted; 1/2.0 is (0.5 becomes 0.25)
+  color_source_s png;
+  png.gamma = 45455;  Check (! _NeedsColorConversion (png), "PNG gAMA 1/2.2", "converted");
+  png.gamma = 100000; Check (! _NeedsColorConversion (png), "PNG gAMA 1.0",   "converted");
+  png.gamma = 50000;
+  Check (ConvertPixel (png, TYPE_RGBA_16, { 0x00, 0x80, 0x00, 0x80, 0x00, 0x80, 0xFF, 0xFF }, px) && Near (px, 0.25f, 0.25f, 0.25f, 1.0f),
+         "PNG gAMA 1/2.0", "converted to " + Pixel (px));
+}
+
+#pragma endregion
+
 int
 main (int argc, char** argv)
 {
@@ -643,6 +794,7 @@ main (int argc, char** argv)
     Check (Decode (ReadFile (images / name)).result <= 0, name, "decoded");
 
   TestColorSources (images);
+  TestColorConversion ( );
 
   printf ("%s: %d of %d checks passed\n", (failures == 0) ? "PASS" : "FAIL", checks - failures, checks);
   return (failures == 0) ? 0 : 1;

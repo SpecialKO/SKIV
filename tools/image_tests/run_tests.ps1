@@ -11,6 +11,8 @@
     * That decoding stops when it is told to.
     * IsAnimatedImageFile, for animated and still images, files that are not images, and a missing file.
     * Still WebPs (as the viewer loads them).
+    * Color sources (color_source.inl) and conversions (color_convert.inl, with Little CMS): ICC profiles, cICP,
+      PNG chunks and Exif, which of them are sRGB, linear or HDR10, and what wide gamut colors convert to.
     * Malformed files: cut off at many points, or not images at all. They must fail (or keep the frames before
       the cut) and never crash. With -Sanitize, reading or writing outside a buffer is caught as well.
 
@@ -40,13 +42,22 @@ $root   = (Resolve-Path (Join-Path $here '..\..')).Path
 $bin    = Join-Path $here 'bin'
 $misc   = Join-Path $root 'packages_misc'
 $webp   = Join-Path $misc 'libwebp'
+$lcms   = Join-Path $misc 'lcms2'
 $source = Join-Path $here 'image_tests.cpp'
 
+# The C libraries: libwebp, and Little CMS (for color_convert.inl)
 $webpSources = @(Get-ChildItem -Path (Join-Path $webp 'src') -Filter '*.c' -Recurse | ForEach-Object { $_.FullName })
+$lcmsSources = @(Get-ChildItem -Path (Join-Path $lcms 'src') -Filter '*.c' | ForEach-Object { $_.FullName })
 
 if ($webpSources.Count -eq 0) {
   throw "libwebp was not found in $webp"
 }
+
+if ($lcmsSources.Count -eq 0) {
+  throw "Little CMS was not found in $lcms"
+}
+
+$webpSources += $lcmsSources
 
 New-Item -ItemType Directory -Force -Path $bin | Out-Null
 
@@ -68,13 +79,13 @@ if ($onWindows) {
 
   $vcvars = Join-Path $vs 'VC\Auxiliary\Build\vcvars64.bat'
   $exe    = Join-Path $bin 'image_tests.exe'
-  $common = "/nologo /MP /O2 /Zi /utf-8 /I`"$misc`" /I`"$webp`" /Fo`"$bin\\`" /Fd`"$bin\\`""
+  $common = "/nologo /MP /O2 /Zi /utf-8 /I`"$misc`" /I`"$webp`" /I`"$lcms\include`" /Fo`"$bin\\`" /Fd`"$bin\\`""
 
   if ($Sanitize) {
     $common += ' /fsanitize=address'
   }
 
-  # libwebp as C (warnings off, as in SKIV.vcxproj), then the tests as C++
+  # libwebp and Little CMS as C (warnings off, as in SKIV.vcxproj), then the tests as C++
   $cFiles = ($webpSources | ForEach-Object { "`"$_`"" }) -join ' '
   $objs   = ($webpSources | ForEach-Object { "`"$(Join-Path $bin ([IO.Path]::GetFileNameWithoutExtension($_) + '.obj'))`"" }) -join ' '
   $script = Join-Path $bin 'build.cmd'
@@ -93,7 +104,7 @@ else {
   $cxx   = if ($env:CXX) { $env:CXX } else { 'g++' }
   $cc    = if ($env:CC)  { $env:CC  } else { 'gcc' }
   $exe   = Join-Path $bin 'image_tests'
-  $flags = @('-O1', '-g', "-I$misc", "-I$webp")
+  $flags = @('-O1', '-g', "-I$misc", "-I$webp", "-I$lcms/include")
 
   if ($Sanitize) {
     $flags += '-fsanitize=address,undefined', '-fno-omit-frame-pointer'
