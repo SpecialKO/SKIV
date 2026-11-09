@@ -824,6 +824,25 @@ TestColorConversion (void)
     float       o   [3];
     _HLGToDisplay (red, bt2020, o);
     Check (o [0] * 10000.0f < 203.0f && o [0] > 0.0f && o [1] == 0.0f, "HLG red", std::to_string (o [0] * 10000.0f) + " nits");
+
+    // Which images are HLG (and of which primaries): by cICP, or an ICC profile's cicp tag
+    auto hlg = [] (uint8_t primaries, uint8_t transfer)
+    {
+      color_source_s cs;
+      cs.has_cicp = true; cs.cicp_first = true; cs.primaries = primaries; cs.transfer = transfer;
+      return _HLGPrimaries (cs);
+    };
+
+    Check (hlg ( 9, 18) ==  9 && hlg ( 1, 18) ==  1 && hlg (12, 18) == 12, "HLG primaries", "not found");
+    Check (hlg ( 9, 16) ==  0 && hlg ( 1, 13) ==  0,                       "HLG primaries", "found in PQ or sRGB");
+    Check (hlg (22, 18) ==  0,                                             "HLG primaries", "found for EBU 3213 (not converted)");
+
+    color_source_s tagged;
+    tagged.icc = { 0 }; tagged.icc_has_cicp = true; tagged.icc_primaries = 9; tagged.icc_transfer = 18;
+    Check (_HLGPrimaries (tagged) == 9, "HLG primaries (ICC cicp)", "not found");
+
+    Check (_LuminanceWeights (1) [0] == 0.2126f && _LuminanceWeights (9) [1] == 0.6780f && _LuminanceWeights (12) [2] == 0.0793f,
+           "Luminance weights", "wrong");
   }
 
   // The fast way (matrix/shaper profiles into half floats) gives what Little CMS gives (as floats), for random pixels
