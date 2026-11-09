@@ -249,15 +249,203 @@ _NeedsColorConversion (const color_source_s& cs)
 
 #pragma region Convert
 
+// Calls rows (first, last) for all of height's rows, spread over the CPU's threads (64 rows each at least)
+static void
+_ForRows (uint32_t height, const std::function <void (uint32_t, uint32_t)>& rows)
+{
+  const uint32_t threads = std::clamp (std::thread::hardware_concurrency ( ), 1u, std::max (1u, height / 64));
+  std::vector <std::thread> workers;
+
+  for (uint32_t t = 1; t < threads; t++)
+    workers.emplace_back (rows, height * t / threads, height * (t + 1) / threads);
+
+  rows (0, height / threads);
+
+  for (auto& worker : workers)
+    worker.join ( );
+}
+
+// A float as a half float, rounded to the nearest (even); out of its range: infinity (NaN stays NaN).
+//   Fabian Giesen's float_to_half_fast3_rtne (public domain).
+static uint16_t
+_FloatToHalf (float value)
+{
+  uint32_t f;
+  memcpy (&f, &value, 4);
+
+  const uint32_t sign = f & 0x80000000u;
+  f ^= sign;
+
+  uint32_t half;
+
+  if (f >= 0x47800000u)                 // Too large for a half (65520 and up), infinity, or NaN
+    half = (f > 0x7F800000u) ? 0x7E00u : 0x7C00u;
+
+  else if (f < 0x38800000u)             // Below a half's smallest normal number: subnormal, or zero
+  {
+    float v;
+    memcpy (&v, &f, 4);
+    v += 0.5f;                          // Shifts the mantissa into place, rounding it
+    memcpy (&f, &v, 4);
+    half = f - 0x3F000000u;
+  }
+
+  else
+  {
+    const uint32_t odd = (f >> 13) & 1; // Rounds to even
+    f   += 0xC8000FFFu + odd;           // Rebiases the exponent (by -112), and rounds
+    half = f >> 13;
+  }
+
+  return static_cast <uint16_t> (half | (sign >> 16));
+}
+
+// A matrix/shaper profile's tone curves and the matrix from its linear colors to scRGB's (relative colorimetric: from
+//   its colorants, which are adapted to D50, to scRGB's): what Little CMS does with two matrix/shaper profiles.
+//     False if the profile is not one (a LUT based one).
+static bool
+_ReadMatrixShaper (cmsHPROFILE profile, const cmsToneCurve* curves [3], double toScRGB [3][3])
+{
+  if (! cmsIsMatrixShaper (profile) || cmsGetColorSpace (profile) != cmsSigRgbData)
+    return false;
+
+  static constexpr cmsTagSignature colorantTags [3] = { cmsSigRedColorantTag, cmsSigGreenColorantTag, cmsSigBlueColorantTag },
+                                   curveTags    [3] = { cmsSigRedTRCTag,      cmsSigGreenTRCTag,      cmsSigBlueTRCTag      };
+
+  cmsHPROFILE scrgb = _CreateScRGBProfile ( );
+
+  if (scrgb == nullptr)
+    return false;
+
+  // Their colorants, as the columns of matrices from their linear RGB to XYZ (D50)
+  double src [3][3], dst [3][3];
+  bool   ok = true;
+
+  for (int c = 0; c < 3 && ok; c++)
+  {
+    const auto* s = static_cast <const cmsCIEXYZ*>    (cmsReadTag (profile, colorantTags [c]));
+    const auto* d = static_cast <const cmsCIEXYZ*>    (cmsReadTag (scrgb,   colorantTags [c]));
+    curves [c]    = static_cast <const cmsToneCurve*> (cmsReadTag (profile, curveTags    [c]));
+
+    ok = (s != nullptr && d != nullptr && curves [c] != nullptr);
+
+    if (ok)
+    {
+      src [0][c] = s->X; src [1][c] = s->Y; src [2][c] = s->Z;
+      dst [0][c] = d->X; dst [1][c] = d->Y; dst [2][c] = d->Z;
+    }
+  }
+
+  cmsCloseProfile (scrgb);
+
+  if (! ok)
+    return false;
+
+  // toScRGB = inverse (dst) * src
+  const double (&m) [3][3] = dst;
+  const double det = m [0][0] * (m [1][1] * m [2][2] - m [1][2] * m [2][1]) -
+                     m [0][1] * (m [1][0] * m [2][2] - m [1][2] * m [2][0]) +
+                     m [0][2] * (m [1][0] * m [2][1] - m [1][1] * m [2][0]);
+
+  if (std::abs (det) < 1e-12)
+    return false;
+
+  const double inv [3][3] = {
+    { (m [1][1] * m [2][2] - m [1][2] * m [2][1]) / det, (m [0][2] * m [2][1] - m [0][1] * m [2][2]) / det, (m [0][1] * m [1][2] - m [0][2] * m [1][1]) / det },
+    { (m [1][2] * m [2][0] - m [1][0] * m [2][2]) / det, (m [0][0] * m [2][2] - m [0][2] * m [2][0]) / det, (m [0][2] * m [1][0] - m [0][0] * m [1][2]) / det },
+    { (m [1][0] * m [2][1] - m [1][1] * m [2][0]) / det, (m [0][1] * m [2][0] - m [0][0] * m [2][1]) / det, (m [0][0] * m [1][1] - m [0][1] * m [1][0]) / det } };
+
+  for (int i = 0; i < 3; i++)
+    for (int j = 0; j < 3; j++)
+      toScRGB [i][j] = inv [i][0] * src [0][j] + inv [i][1] * src [1][j] + inv [i][2] * src [2][j];
+
+  return true;
+}
+
+// The fast way to convert 8 or 16-bpc pixels of a matrix/shaper profile (most of them: cICP, PNG gAMA and cHRM, Adobe
+//   RGB, and most ICC profiles) into scRGB half floats: their tone curves as tables, and a matrix. About ten times as
+//     fast as Little CMS's float pipeline; the same results, but for float rounding. False if it does not apply.
+static bool
+_ConvertMatrixShaperToScRGB (cmsHPROFILE source, cmsUInt32Number inFormat, const uint8_t* in, size_t inStride,
+                                                                               uint8_t* out, size_t outStride, uint32_t width, uint32_t height)
+{
+  const bool sixteen = (inFormat == TYPE_RGBA_16),
+             bgra    = (inFormat == TYPE_BGRA_8);
+
+  if (! (sixteen || bgra || inFormat == TYPE_RGBA_8))
+    return false;
+
+  const cmsToneCurve* curves [3];
+  double              matrix [3][3];
+
+  if (! _ReadMatrixShaper (source, curves, matrix))
+    return false;
+
+  // Each channel's values, linear
+  const uint32_t      levels = sixteen ? 65536 : 256;
+  std::vector <float> table (static_cast <size_t> (levels) * 3);
+
+  for (uint32_t c = 0; c < 3; c++)
+    for (uint32_t i = 0; i < levels; i++)
+      table [c * levels + i] = cmsEvalToneCurveFloat (curves [c], static_cast <float> (i) / static_cast <float> (levels - 1));
+
+  const float* lr = table.data ( );
+  const float* lg = lr + levels;
+  const float* lb = lg + levels;
+  const float  m [3][3] = { { (float) matrix [0][0], (float) matrix [0][1], (float) matrix [0][2] },
+                            { (float) matrix [1][0], (float) matrix [1][1], (float) matrix [1][2] },
+                            { (float) matrix [2][0], (float) matrix [2][1], (float) matrix [2][2] } };
+  const float  alpha = 1.0f / static_cast <float> (levels - 1);
+
+  _ForRows (height, [&] (uint32_t first, uint32_t last)
+  {
+    for (uint32_t y = first; y < last; y++)
+    {
+      uint16_t* dst = reinterpret_cast <uint16_t*> (out + y * outStride);
+
+      for (uint32_t x = 0; x < width; x++, dst += 4)
+      {
+        uint32_t r, g, b, a;
+
+        if (sixteen)
+        {
+          const uint16_t* p = reinterpret_cast <const uint16_t*> (in + y * inStride) + x * 4;
+          r = p [0]; g = p [1]; b = p [2]; a = p [3];
+        }
+
+        else
+        {
+          const uint8_t* p = in + y * inStride + x * 4;
+          r = p [bgra ? 2 : 0]; g = p [1]; b = p [bgra ? 0 : 2]; a = p [3];
+        }
+
+        const float R = lr [r], G = lg [g], B = lb [b];
+
+        dst [0] = _FloatToHalf (m [0][0] * R + m [0][1] * G + m [0][2] * B);
+        dst [1] = _FloatToHalf (m [1][0] * R + m [1][1] * G + m [1][2] * B);
+        dst [2] = _FloatToHalf (m [2][0] * R + m [2][1] * G + m [2][2] * B);
+        dst [3] = _FloatToHalf (static_cast <float> (a) * alpha);
+      }
+    }
+  });
+
+  return true;
+}
+
 // Converts the rows of an image (inFormat: TYPE_RGBA_8, TYPE_BGRA_8, TYPE_RGBA_16 or TYPE_RGBA_FLT of lcms2.h) from the
 //   source profile into scRGB, as RGBA half floats (TYPE_RGBA_HALF_FLT) or floats (TYPE_RGBA_FLT: in and out may then be
-//     the same); alpha is copied. Spread over the CPU's threads, the transform being made without its cache
-//       (cmsFLAGS_NOCACHE), which lets them share it. False if it cannot be made.
+//     the same); alpha is copied. Matrix/shaper profiles into half floats take the fast way (_ConvertMatrixShaperToScRGB);
+//       the others go through Little CMS, spread over the CPU's threads, the transform being made without its cache
+//         (cmsFLAGS_NOCACHE), which lets them share it. False if it cannot be made.
 static bool
 _ConvertToScRGB (cmsHPROFILE source, cmsUInt32Number inFormat, const uint8_t* in, size_t inStride,
                                                                      uint8_t* out, size_t outStride, uint32_t width, uint32_t height,
                  cmsUInt32Number outFormat = TYPE_RGBA_HALF_FLT)
 {
+  if (outFormat == TYPE_RGBA_HALF_FLT &&
+      _ConvertMatrixShaperToScRGB (source, inFormat, in, inStride, out, outStride, width, height))
+    return true;
+
   cmsHPROFILE   scrgb     = _CreateScRGBProfile ( );
   cmsHTRANSFORM transform = (scrgb == nullptr) ? nullptr :
     cmsCreateTransform (source, inFormat, scrgb, outFormat, INTENT_RELATIVE_COLORIMETRIC,
@@ -269,22 +457,11 @@ _ConvertToScRGB (cmsHPROFILE source, cmsUInt32Number inFormat, const uint8_t* in
   if (transform == nullptr)
     return false;
 
-  const uint32_t threads = std::clamp (std::thread::hardware_concurrency ( ), 1u, std::max (1u, height / 64));
-  std::vector <std::thread> workers;
-
-  auto rows = [&] (uint32_t first, uint32_t last)
+  _ForRows (height, [&] (uint32_t first, uint32_t last)
   {
     for (uint32_t y = first; y < last; y++)
       cmsDoTransform (transform, in + y * inStride, out + y * outStride, width);
-  };
-
-  for (uint32_t t = 1; t < threads; t++)
-    workers.emplace_back (rows, height * t / threads, height * (t + 1) / threads);
-
-  rows (0, height / threads);
-
-  for (auto& worker : workers)
-    worker.join ( );
+  });
 
   cmsDeleteTransform (transform);
   return true;

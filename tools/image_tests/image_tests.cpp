@@ -333,6 +333,23 @@ TestColorSources (const fs::path& images)
     }
   }
 
+  // sBIT: read from its chunk (not found by searching the file's bytes); not read past IDAT
+  {
+    color_source_s cs, rgba, none;
+    const auto     file = png ({ { "sBIT", { 10, 10, 10 } } });
+    _ReadColorSourcePNG (file.data ( ), file.size ( ), cs);
+    Check (cs.sbit_count == 3 && cs.sbit [0] == 10 && cs.sbit [2] == 10 && cs.sbit [3] == 0, "PNG sBIT", "not read");
+
+    const auto four = png ({ { "sBIT", { 12, 12, 12, 8 } } });
+    _ReadColorSourcePNG (four.data ( ), four.size ( ), rgba);
+    Check (rgba.sbit_count == 4 && rgba.sbit [3] == 8, "PNG sBIT (RGBA)", "not read");
+
+    // The bytes "sBIT" inside other chunks (text) are not an sBIT chunk
+    const auto text = png ({ { "tEXt", { 'C', 0, 's', 'B', 'I', 'T', 1, 2, 3, 4 } } });
+    _ReadColorSourcePNG (text.data ( ), text.size ( ), none);
+    Check (none.sbit_count == 0, "PNG \"sBIT\" in text", "taken for an sBIT chunk");
+  }
+
   {
     color_source_s cs;
     const auto     file = png ({ { "cICP", { 9, 16, 0, 1 } }, { "iCCP", iccp } });
@@ -559,6 +576,50 @@ TestColorSources (const fs::path& images)
     Check (_JXLDynamicRange (icc, 255.0f, false, false).hdr, "JPEG XL ICC cicp PQ", "not HDR");
   }
 
+  // Embedding an ICC profile into a saved PNG or JPEG: read back the same; the old color chunks gone; still decodable
+  {
+    auto file = png ({ { "sRGB", { 0 } }, { "gAMA", { 0, 1, 0x86, 0xA0 } }, { "iCCP", iccp } });
+
+    Check (_EmbedICCInPNG (file, iccV2), "Embed ICC (PNG)", "failed");
+
+    color_source_s cs;
+    _ReadColorSourcePNG (file.data ( ), file.size ( ), cs);
+    Check (cs.icc == iccV2 && ! cs.has_srgb && cs.gamma == 0, "Embed ICC (PNG)", "read back as " + _DescribeColorSource (cs));
+
+    int w = 0, h = 0, c = 0;
+    stbi_uc* pixels = stbi_load_from_memory (file.data ( ), static_cast <int> (file.size ( )), &w, &h, &c, 4);
+    Check (pixels != nullptr && w > 0, "Embed ICC (PNG)", std::string ("no longer decodes: ") + (stbi_failure_reason ( ) ? stbi_failure_reason ( ) : ""));
+    stbi_image_free (pixels);
+
+    std::vector <uint8_t> notPNG = { 1, 2, 3 };
+    Check (! _EmbedICCInPNG (notPNG, iccV2), "Embed ICC (not a PNG)", "done");
+  }
+
+  {
+    // JFIF, an old ICC profile, a quantization table, then the image data
+    std::vector <uint8_t> jpeg = { 0xFF, 0xD8, 0xFF, 0xE0, 0, 16, 'J', 'F', 'I', 'F', 0, 1, 1, 0, 0, 1, 0, 1, 0, 0 };
+    std::vector <uint8_t> old  = { 0xFF, 0xE2, 0, 2 + 14 + 4, 'I', 'C', 'C', '_', 'P', 'R', 'O', 'F', 'I', 'L', 'E', 0, 1, 1, 9, 9, 9, 9 };
+    jpeg.insert (jpeg.end ( ), old.begin ( ), old.end ( ));
+    jpeg.insert (jpeg.end ( ), { 0xFF, 0xDB, 0, 4, 0, 0, 0xFF, 0xDA, 0, 2, 0x12, 0x34, 0xFF, 0xD9 });
+
+    // A profile larger than one segment can hold
+    std::vector <uint8_t> large = iccV4;
+    large.resize (150000, 0x5A);
+    const auto& big = large;
+
+    for (const std::vector <uint8_t>* profile : { &iccV2, &big })
+    {
+      auto file = jpeg;
+      Check (_EmbedICCInJPEG (file, *profile), "Embed ICC (JPEG)", "failed");
+
+      color_source_s cs;
+      _ReadColorSourceJPEG (file.data ( ), file.size ( ), cs);
+      Check (cs.icc == *profile, "Embed ICC (JPEG)", "not read back (" + std::to_string (profile->size ( )) + " bytes)");
+      Check (file [2] == 0xFF && file [3] == 0xE0 && file [20] == 0xFF && file [21] == 0xE2, "Embed ICC (JPEG)", "not after JFIF");
+      Check (memcmp (&file [file.size ( ) - 8], "\xFF\xDA\x00\x02\x12\x34\xFF\xD9", 8) == 0, "Embed ICC (JPEG)", "the image data changed");
+    }
+  }
+
   // Not images, or garbage
   for (const char* name : { "garbage.png", "garbage.gif", "garbage.webp" })
   {
@@ -745,6 +806,69 @@ TestColorConversion (void)
     // An ICC profile only (no encoded color space), of sRGB: converted as sRGB
     color_source_s iccOnly = icc (SaveProfile (cmsCreate_sRGBProfile ( )));
     Check (convert (iccOnly, 0.5f, 0.5f, 0.5f, px) && Near (px, 0.2140f, 0.2140f, 0.2140f, 0.5f), "JPEG XL ICC sRGB", "converted to " + Pixel (px));
+  }
+
+  // The fast way (matrix/shaper profiles into half floats) gives what Little CMS gives (as floats), for random pixels
+  {
+    color_source_s adobeRGB;
+    adobeRGB.exif_color_space = 2;
+
+    color_source_s gamma20;
+    gamma20.gamma = 50000;
+
+    const std::pair <const char*, color_source_s> sources [] = {
+      { "Display P3 (cICP)",  cicp (12, 13) }, { "Rec. 2020 (cICP)", cicp (9, 1) }, { "Adobe RGB (Exif)", adobeRGB },
+      { "PNG gAMA 1/2.0",     gamma20 },       { "ICC Display P3",   icc (iccP3) } };
+
+    srand (7);
+
+    for (const auto& [name, cs] : sources)
+    {
+      cmsHPROFILE source = _CreateSourceProfile (cs);
+
+      for (cmsUInt32Number format : { TYPE_RGBA_8, TYPE_BGRA_8, TYPE_RGBA_16 })
+      {
+        const bool  sixteen = (format == TYPE_RGBA_16);
+        const int   n       = 4096;
+        std::vector <uint8_t>  in (n * 4 * (sixteen ? 2 : 1));
+        std::vector <uint16_t> fast (n * 4);
+        std::vector <float>    reference (n * 4);
+
+        for (auto& b : in) b = static_cast <uint8_t> (rand ( ) & 0xFF);
+
+        const bool used = _ConvertMatrixShaperToScRGB (source, format, in.data ( ), in.size ( ), reinterpret_cast <uint8_t*> (fast.data ( )), fast.size ( ) * 2, n, 1);
+
+        cmsHPROFILE   scrgb = _CreateScRGBProfile ( );
+        cmsHTRANSFORM xform = cmsCreateTransform (source, format, scrgb, TYPE_RGBA_FLT, INTENT_RELATIVE_COLORIMETRIC, cmsFLAGS_COPY_ALPHA);
+        cmsDoTransform (xform, in.data ( ), reference.data ( ), n);
+        cmsDeleteTransform (xform);
+        cmsCloseProfile (scrgb);
+
+        float most = 0.0f;
+        for (int i = 0; i < n * 4; i++)
+          most = std::max (most, std::abs (HalfToFloat (fast [i]) - reference [i]) / std::max (1.0f, std::abs (reference [i])));
+
+        const std::string what = std::string (name) + (sixteen ? " (16 bpc)" : (format == TYPE_BGRA_8) ? " (BGRA)" : " (8 bpc)");
+        Check (used,          "Fast conversion: " + what, "not taken");
+        Check (most < 0.002f, "Fast conversion: " + what, "differs from Little CMS by " + std::to_string (most));
+      }
+
+      cmsCloseProfile (source);
+    }
+
+    // A LUT based profile is left to Little CMS
+    cmsHPROFILE lab = cmsCreateLab4Profile (nullptr);
+    uint8_t     px4 [4] = { }; uint16_t out4 [4];
+    Check (! _ConvertMatrixShaperToScRGB (lab, TYPE_RGBA_8, px4, 4, reinterpret_cast <uint8_t*> (out4), 8, 1, 1), "Fast conversion: Lab", "taken");
+    cmsCloseProfile (lab);
+
+    // Half floats: exact for small integers and halves, rounded to even, out of range as infinity, NaN kept
+    Check (_FloatToHalf (1.0f) == 0x3C00 && _FloatToHalf (-2.0f) == 0xC000 && _FloatToHalf (0.5f) == 0x3800 && _FloatToHalf (0.0f) == 0,
+           "Half floats", "wrong for 1, -2, 0.5 or 0");
+    Check (_FloatToHalf (65504.0f) == 0x7BFF && _FloatToHalf (1e6f) == 0x7C00 && _FloatToHalf (-1e6f) == 0xFC00, "Half floats", "wrong at the edges of the range");
+    Check ((_FloatToHalf (std::nanf ("")) & 0x7FFF) > 0x7C00, "Half floats", "NaN lost");
+    Check (_FloatToHalf (1.0f + 1.0f / 2048.0f) == 0x3C00 && _FloatToHalf (1.0f + 3.0f / 2048.0f) == 0x3C02, "Half floats", "not rounded to even");
+    Check (std::abs (HalfToFloat (_FloatToHalf (3e-6f)) - 3e-6f) < 6e-8f, "Half floats", "wrong for subnormals");
   }
 
   // PNG gamma: 1/2.2 and 1.0 are not converted; 1/2.0 is (0.5 becomes 0.25)

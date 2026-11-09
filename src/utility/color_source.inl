@@ -31,6 +31,9 @@ struct color_source_s {
   bool                  has_chrm         = false;   // PNG cHRM: white point, red, green, blue (x, y each)
   float                 chrm [8]         = { };
 
+  uint8_t               sbit [4]         = { };     // PNG sBIT: the significant bits of each channel, as the chunk has them
+  uint8_t               sbit_count       = 0;       //   (1 to 4 bytes, by the color type: gray, gray + alpha, RGB, RGBA); 0 if none
+
   uint16_t              exif_color_space = 0;       // Exif ColorSpace: 0 if none, 1 sRGB, 2 Adobe RGB (WIC only), 65535 uncalibrated
   char                  exif_interop [4] = { };     // Exif InteroperabilityIndex: "R98" (sRGB), "R03" (Adobe RGB), "THM"
 
@@ -295,6 +298,13 @@ _ReadColorSourcePNG (const uint8_t* data, size_t size, color_source_s& out)
     else if (memcmp (type, "gAMA", 4) == 0 && length == 4)
       out.gamma = _ReadBE32 (body);
 
+    // Not color information, but read here as it comes before the image data too (the viewer's PNG decoder uses it)
+    else if (memcmp (type, "sBIT", 4) == 0 && length >= 1 && length <= 4)
+    {
+      out.sbit_count = static_cast <uint8_t> (length);
+      memcpy (out.sbit, body, length);
+    }
+
     else if (memcmp (type, "cHRM", 4) == 0 && length == 32)
     {
       out.has_chrm = true;
@@ -406,6 +416,185 @@ _ReadColorSourceWebP (const uint8_t* data, size_t size, color_source_s& out)
   }
 
   WebPDemuxDelete (demux);
+}
+
+#pragma endregion
+
+#pragma region Embed
+
+// Embedding an ICC profile into a PNG or JPEG file that was just written (by WIC, which cannot add one): for wide gamut
+//   SDR images saved in their own colors (viewer.cpp, SKIV_Image_SaveWideGamutSDR)
+
+static uint32_t
+_CRC32 (const uint8_t* data, size_t size, uint32_t crc = 0)
+{
+  static const auto table = []
+  {
+    std::vector <uint32_t> t (256);
+
+    for (uint32_t n = 0; n < 256; n++)
+    {
+      uint32_t c = n;
+      for (int k = 0; k < 8; k++) c = (c & 1) ? 0xEDB88320u ^ (c >> 1) : (c >> 1);
+      t [n] = c;
+    }
+
+    return t;
+  } ( );
+
+  crc = ~crc;
+
+  for (size_t i = 0; i < size; i++)
+    crc = table [(crc ^ data [i]) & 0xFF] ^ (crc >> 8);
+
+  return ~crc;
+}
+
+// data as a zlib stream of uncompressed blocks (an ICC profile is small; iCCP only needs a valid stream)
+static std::vector <uint8_t>
+_ZlibStored (const uint8_t* data, size_t size)
+{
+  std::vector <uint8_t> out = { 0x78, 0x01 };
+  size_t                pos = 0;
+
+  do
+  {
+    const size_t   n   = std::min <size_t> (size - pos, 65535);
+    const uint16_t len = static_cast <uint16_t> (n);
+
+    out.push_back ((pos + n == size) ? 1 : 0); // Final block, or not; stored
+    out.insert (out.end ( ), { static_cast <uint8_t> (len), static_cast <uint8_t> (len >> 8),
+                               static_cast <uint8_t> (~len), static_cast <uint8_t> (~len >> 8) });
+    out.insert (out.end ( ), data + pos, data + pos + n);
+    pos += n;
+  } while (pos < size);
+
+  uint32_t a = 1, b = 0;
+  for (size_t i = 0; i < size; i++) { a = (a + data [i]) % 65521; b = (b + a) % 65521; }
+
+  const uint32_t adler = (b << 16) | a;
+  out.insert (out.end ( ), { static_cast <uint8_t> (adler >> 24), static_cast <uint8_t> (adler >> 16),
+                             static_cast <uint8_t> (adler >>  8), static_cast <uint8_t> (adler) });
+  return out;
+}
+
+// A PNG with the ICC profile as its iCCP chunk (after IHDR), and without its other color chunks (sRGB, gAMA, cHRM, cICP,
+//   and any iCCP it had), which would say otherwise. False if it is not a PNG.
+static bool
+_EmbedICCInPNG (std::vector <uint8_t>& file, const std::vector <uint8_t>& icc, const char* name = "ICC Profile")
+{
+  static constexpr uint8_t signature [8] = { 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n' };
+
+  if (file.size ( ) < 33 || memcmp (file.data ( ), signature, 8) != 0 || memcmp (file.data ( ) + 12, "IHDR", 4) != 0 || icc.empty ( ))
+    return false;
+
+  // The chunk: its name (1-79 bytes), a zero, the compression method (0), and the profile (zlib)
+  std::vector <uint8_t> body (name, name + std::min <size_t> (strlen (name), 79));
+  body.insert (body.end ( ), { 0, 0 });
+
+  const auto z = _ZlibStored (icc.data ( ), icc.size ( ));
+  body.insert (body.end ( ), z.begin ( ), z.end ( ));
+
+  std::vector <uint8_t> chunk (8);
+  _WriteBE32 (chunk.data ( ), static_cast <uint32_t> (body.size ( )));
+  memcpy (&chunk [4], "iCCP", 4);
+  chunk.insert (chunk.end ( ), body.begin ( ), body.end ( ));
+  chunk.resize (chunk.size ( ) + 4);
+  _WriteBE32 (&chunk [chunk.size ( ) - 4], _CRC32 (chunk.data ( ) + 4, body.size ( ) + 4));
+
+  std::vector <uint8_t> out (file.begin ( ), file.begin ( ) + 8);
+
+  for (size_t pos = 8; pos + 12 <= file.size ( ); )
+  {
+    const uint32_t length = _ReadBE32 (file.data ( ) + pos);
+
+    if (length > file.size ( ) - pos - 12)
+      return false;
+
+    const uint8_t* type = file.data ( ) + pos + 4;
+    const size_t   next = pos + 12 + length;
+
+    const bool color = memcmp (type, "sRGB", 4) == 0 || memcmp (type, "gAMA", 4) == 0 || memcmp (type, "cHRM", 4) == 0 ||
+                       memcmp (type, "cICP", 4) == 0 || memcmp (type, "iCCP", 4) == 0;
+
+    if (! color)
+      out.insert (out.end ( ), file.begin ( ) + pos, file.begin ( ) + next);
+
+    if (memcmp (type, "IHDR", 4) == 0)
+      out.insert (out.end ( ), chunk.begin ( ), chunk.end ( ));
+
+    pos = next;
+  }
+
+  file.swap (out);
+  return true;
+}
+
+// A JPEG with the ICC profile in APP2 segments (ICC_PROFILE: up to 65519 bytes each), after its leading APP0/APP1 ones
+//   (JFIF, Exif), and without any it had. False if it is not a JPEG.
+static bool
+_EmbedICCInJPEG (std::vector <uint8_t>& file, const std::vector <uint8_t>& icc)
+{
+  if (file.size ( ) < 4 || file [0] != 0xFF || file [1] != 0xD8 || icc.empty ( ))
+    return false;
+
+  constexpr size_t chunk = 65519;
+  const     size_t count = (icc.size ( ) + chunk - 1) / chunk;
+
+  if (count > 255)
+    return false;
+
+  std::vector <uint8_t> segments;
+
+  for (size_t i = 0; i < count; i++)
+  {
+    const size_t n      = std::min (chunk, icc.size ( ) - i * chunk);
+    const size_t length = 2 + 14 + n;
+
+    segments.insert (segments.end ( ), { 0xFF, 0xE2, static_cast <uint8_t> (length >> 8), static_cast <uint8_t> (length) });
+    segments.insert (segments.end ( ), { 'I', 'C', 'C', '_', 'P', 'R', 'O', 'F', 'I', 'L', 'E', 0,
+                                         static_cast <uint8_t> (i + 1), static_cast <uint8_t> (count) });
+    segments.insert (segments.end ( ), icc.begin ( ) + i * chunk, icc.begin ( ) + i * chunk + n);
+  }
+
+  std::vector <uint8_t> out = { 0xFF, 0xD8 };
+  size_t                pos = 2;
+  bool                  put = false;
+
+  while (pos + 4 <= file.size ( ) && file [pos] == 0xFF)
+  {
+    const uint8_t marker = file [pos + 1];
+
+    // The image data (start of scan) and what follows are kept as they are
+    if (marker == 0xDA || marker == 0xD9 || marker == 0x01 || (marker >= 0xD0 && marker <= 0xD7))
+      break;
+
+    const size_t length = _ReadBE16 (file.data ( ) + pos + 2);
+
+    if (length < 2 || pos + 2 + length > file.size ( ))
+      return false;
+
+    // After the leading APP0 and APP1 segments
+    if (! put && marker != 0xE0 && marker != 0xE1)
+    {
+      out.insert (out.end ( ), segments.begin ( ), segments.end ( ));
+      put = true;
+    }
+
+    const bool oldICC = (marker == 0xE2 && length >= 2 + 12 && memcmp (file.data ( ) + pos + 4, "ICC_PROFILE\0", 12) == 0);
+
+    if (! oldICC)
+      out.insert (out.end ( ), file.begin ( ) + pos, file.begin ( ) + pos + 2 + length);
+
+    pos += 2 + length;
+  }
+
+  if (! put)
+    out.insert (out.end ( ), segments.begin ( ), segments.end ( ));
+
+  out.insert (out.end ( ), file.begin ( ) + pos, file.end ( ));
+  file.swap (out);
+  return true;
 }
 
 #pragma endregion
