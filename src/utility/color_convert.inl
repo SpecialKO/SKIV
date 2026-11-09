@@ -207,12 +207,12 @@ _CreateSourceProfile (const color_source_s& cs)
   return nullptr;
 }
 
-// A profile of the colors libjxl hands a JPEG XL over in, when it did not convert them into scRGB itself (it only does
-//   so for XYB encoded images): those of its color source, sRGB included (which _CreateSourceProfile leaves out, as other
-//     decoders' sRGB images are drawn as they are). nullptr if they are linear Rec. 709 already, HDR (PQ: converted by
-//       the viewer itself), or unknown.
+// A profile of the colors of SDR images that decoders hand over as they are encoded, of more than 8 bpc (JPEG XL, as
+//   libjxl does for all but XYB encoded images; AVIF of 10 or 12 bpc): those of their color source, sRGB included (which
+//     _CreateSourceProfile leaves out, as 8-bpc sRGB images are drawn as they are). nullptr if they are linear Rec. 709
+//       already, HDR (PQ: converted by the viewer itself), or unknown.
 static cmsHPROFILE
-_CreateJXLSourceProfile (const color_source_s& cs)
+_CreateSDRSourceProfile (const color_source_s& cs)
 {
   // A plain gamma (JPEG XL's own transfer function; cICP has none)
   if (cs.has_cicp && cs.transfer == 2 && cs.gamma != 0)

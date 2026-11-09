@@ -719,7 +719,7 @@ TestColorConversion (void)
 
     auto convert = [] (const color_source_s& cs, float r, float g, float b, float out [4])
     {
-      cmsHPROFILE source = _CreateJXLSourceProfile (cs);
+      cmsHPROFILE source = _CreateSDRSourceProfile (cs);
       out [0] = r; out [1] = g; out [2] = b; out [3] = 0.5f;
       const bool ok = source != nullptr &&
         _ConvertToScRGB (source, TYPE_RGBA_FLT, reinterpret_cast <uint8_t*> (out), 16, reinterpret_cast <uint8_t*> (out), 16, 1, 1, TYPE_RGBA_FLT);
@@ -737,9 +737,9 @@ TestColorConversion (void)
            "JPEG XL Rec. 2020 SDR green", "converted to " + Pixel (px));
 
     cmsHPROFILE none = nullptr;
-    Check ((none = _CreateJXLSourceProfile (jxl (1,  8))) == nullptr, "JPEG XL linear Rec. 709", "converted");
+    Check ((none = _CreateSDRSourceProfile (jxl (1,  8))) == nullptr, "JPEG XL linear Rec. 709", "converted");
     if (none) cmsCloseProfile (none);
-    Check ((none = _CreateJXLSourceProfile (jxl (9, 16))) == nullptr, "JPEG XL PQ",              "converted");
+    Check ((none = _CreateSDRSourceProfile (jxl (9, 16))) == nullptr, "JPEG XL PQ",              "converted");
     if (none) cmsCloseProfile (none);
 
     // An ICC profile only (no encoded color space), of sRGB: converted as sRGB
