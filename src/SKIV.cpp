@@ -3673,6 +3673,11 @@ wWinMain ( _In_     HINSTANCE hInstance,
       // Store snapshot
       snapVtxBufferData.swap (newVtxBufferData);
       snapVtxBufferSize = newVtxBufferSize;
+
+      // An animated image shows another frame: its texture changed, which the vertices do not show
+      extern bool SKIV_Viewer_ConsumeAnimationChange (void);
+      if (SKIV_Viewer_ConsumeAnimationChange ( ) && SKIF_Tab_Selected == UITab_Viewer)
+        bRefresh = true;
     }
 
     // Update, Render and Present the main and any additional Platform Windows
@@ -3840,9 +3845,23 @@ wWinMain ( _In_     HINSTANCE hInstance,
         if (_registry.bEfficiencyMode && ! _registry._EfficiencyMode && SKIF_Notify_hWnd != NULL && ! msgDontRedraw && ! SKIF_ImGui_IsFocused ( ))
           SetTimer (SKIF_Notify_hWnd, cIDT_TIMER_EFFICIENCY, 1000, (TIMERPROC) &SKIF_EfficiencyModeTimerProc);
 
+        // An animated image plays: wake up when its next frame is due
+        extern DWORD SKIV_Viewer_GetAnimationWakeIn (void);
+        const DWORD dwAnimWakeIn = (SKIF_Tab_Selected == UITab_Viewer) ? SKIV_Viewer_GetAnimationWakeIn ( ) : INFINITE;
+        const DWORD dwTimeout    = std::min (bWaitTimeoutMsgInputFallback ? dwDwmPeriod : INFINITE, dwAnimWakeIn);
+
+        // The default timer resolution (15.6 ms) would make short frames late
+        const bool  bPreciseWait = (dwAnimWakeIn != INFINITE);
+
+        if (bPreciseWait)
+          timeBeginPeriod (1);
+
         // Sleep until a message is in the queue or a change notification occurs
         DWORD res =
-          MsgWaitForMultipleObjects (static_cast<DWORD>(std::min (vWatchHandles[SKIF_Tab_Selected].size(), SKIF_MaxWatchHandles)), vWatchHandles[SKIF_Tab_Selected].data(), false, bWaitTimeoutMsgInputFallback ? dwDwmPeriod : INFINITE, QS_ALLINPUT); // Never more than the 63 handles it accepts
+          MsgWaitForMultipleObjects (static_cast<DWORD>(std::min (vWatchHandles[SKIF_Tab_Selected].size(), SKIF_MaxWatchHandles)), vWatchHandles[SKIF_Tab_Selected].data(), false, dwTimeout, QS_ALLINPUT); // Never more than the 63 handles it accepts
+
+        if (bPreciseWait)
+          timeEndPeriod   (1);
 
         // The below is required as a fallback if V-Sync OFF is forced on SKIF and e.g. analog stick drift is causing constant input.
         // Throttle to monitors refresh rate unless a new event is triggered, or user input is posted, but only if the frame rate is detected as being unlocked

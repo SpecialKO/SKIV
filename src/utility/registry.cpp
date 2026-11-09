@@ -418,6 +418,9 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
   if (regKVCrossFade.hasData(&hKey))
     bCrossFade            =   regKVCrossFade             .getData (&hKey);
 
+  if (regKVAnimatedImages.hasData(&hKey))
+    bAnimatedImages        =   regKVAnimatedImages         .getData (&hKey);
+
   if (regKVControllers.hasData(&hKey))
     bControllers           =   regKVControllers            .getData (&hKey);
 

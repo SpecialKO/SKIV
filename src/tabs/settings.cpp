@@ -568,6 +568,13 @@ SKIF_UI_Tab_DrawSettings (void)
 
     SKIF_ImGui_SetHoverTip ("Use a cross-fade transition when cycling between images.");
 
+    if (ImGui::Checkbox ("Animated images", &_registry.bAnimatedImages))
+      _registry.regKVAnimatedImages.putData (_registry.bAnimatedImages);
+
+    SKIF_ImGui_SetHoverTip ("Play animated images (APNG, GIF, WebP). When disabled, only their first frame is shown.\n"
+                            "Applies to images opened afterwards.\n\n"
+                            "While an animation is shown: Space pauses or resumes it, and , / . step between its frames.");
+
     if (SKIF_Util_IsWindows11orGreater ( ))
     {
       if ( ImGui::Checkbox ( "Win11 corners", &_registry.bWin11Corners) )

@@ -32,6 +32,7 @@
 
 #include "DirectXTex/DirectXTex.h"
 #include <wincodec.h>
+#include <dxgi1_4.h> // IDXGIAdapter3::QueryVideoMemoryInfo (animated images)
 
 #ifdef OpenEXR
 #ifdef _M_X64
@@ -86,6 +87,14 @@
 #endif
 
 #include <stb_image.h>
+
+// Animated images (APNG, GIF, WebP), and WebP still images: libwebp, and the decoders ported from SKIF. They use
+//   stb_image's internals, so they are included here, where stb_image is implemented.
+#include <functional>
+#include <libwebp/src/webp/decode.h>
+#include <libwebp/src/webp/demux.h>
+#include "../utility/animated_images.inl"
+
 #include <html_coder.hpp>
 #include <utility/image.h>
 
@@ -440,6 +449,93 @@ PopupState ExportSDRDialog = PopupState_Closed;
 PopupState ContextMenu     = PopupState_Closed;
 PopupState ConfigEncoders  = PopupState_Closed;
 
+// The frames of an animated image (APNG, GIF, WebP), and where it is in playing them (_LoadAnimatedImage).
+//   Frames that fit share a few textures (pages), each in a cell of its own: a texture per frame takes much more video
+//     memory than its pixels, as drivers place textures in pages of video memory (as SKIF learned with its animated covers).
+//       Each cell has a one-pixel border repeating the frame's edges, so filtering never takes in a neighboring frame.
+struct image_anim_s {
+  struct frame_s {
+    CComPtr <ID3D11ShaderResourceView> srv;                    // Its texture (shared with the other frames of its page)
+    ImVec2                             uv0    = ImVec2 (0, 0); // Its part of the texture
+    ImVec2                             uv1    = ImVec2 (1, 1);
+    ImVec2                             offset = ImVec2 (0, 0); // ... in pixels (its top left corner)
+  };
+
+  std::vector <frame_s> frames;
+  std::vector <DWORD>   frameEnds;                        // When each frame ends (ms into the animation)
+  DWORD                 duration     = 0;                 // ms
+  ImVec2                resolution   = ImVec2 (0, 0);     // The frames' size (smaller than the image if it had to be scaled down)
+  size_t                textures     = 0;                 // How many textures the frames take
+  size_t                bytes        = 0;                 //   ... and how much video memory
+
+  // Playback (main thread only)
+  DWORD                 playingSince = 0;                 // 0: not playing (paused, or not started yet)
+  DWORD                 position     = 0;                 // ms into the animation when it was last paused / started
+  bool                  paused       = false;             // Paused by the user
+  size_t                current      = 0;                 // The frame shown last
+
+  DWORD  getPosition     (DWORD now) const;               // ms into the animation
+  size_t getFrameAt      (DWORD position) const;
+  DWORD  getFrameStart   (size_t frame) const { return (frame == 0 || frame > frameEnds.size ( )) ? 0 : frameEnds [frame - 1]; }
+  void   play            (DWORD now);
+  void   pause           (DWORD now);
+  void   step            (DWORD now, int frames);         // Pauses, and moves this many frames ahead (or back)
+};
+
+DWORD
+image_anim_s::getPosition (DWORD now) const
+{
+  if (duration == 0)
+    return 0;
+
+  return (playingSince != 0) ? (position + (now - playingSince)) % duration
+                             :  position                         % duration;
+}
+
+size_t
+image_anim_s::getFrameAt (DWORD pos) const
+{
+  const auto frameEnd = std::upper_bound (frameEnds.begin ( ), frameEnds.end ( ), pos);
+  const auto frame    = static_cast <size_t> (std::distance (frameEnds.begin ( ), frameEnd));
+
+  return std::min (frame, frames.size ( ) - 1);
+}
+
+void
+image_anim_s::play (DWORD now)
+{
+  paused = false;
+
+  if (playingSince == 0)
+    playingSince = now;
+}
+
+void
+image_anim_s::pause (DWORD now)
+{
+  paused = true;
+
+  if (playingSince != 0)
+  {
+    position     = getPosition (now);
+    playingSince = 0;
+  }
+}
+
+void
+image_anim_s::step (DWORD now, int count)
+{
+  pause (now);
+
+  if (frames.empty ( ))
+    return;
+
+  const int size  = static_cast <int> (frames.size ( ));
+  const int frame = ((static_cast <int> (getFrameAt (position)) + count) % size + size) % size;
+
+  position = getFrameStart (static_cast <size_t> (frame));
+}
+
 struct image_s {
   struct file_s {
     std::wstring filename         = { }; // Image filename
@@ -471,6 +567,10 @@ struct image_s {
   CComPtr <ID3D11ShaderResourceView>  pRawTexSRV;
   CComPtr <ID3D11UnorderedAccessView> pGamutCoverageUAV;
   CComPtr <ID3D11ShaderResourceView>  pGamutCoverageSRV;
+
+  // Animated images: their frames (pRawTexSRV is then the first frame's texture, holding a reference of its own).
+  //   Released with SKIV_ReleaseAnimation, like the textures above are pushed to SKIF_ResourcesToFree.
+  std::shared_ptr <image_anim_s>      anim;
 
   struct light_info_s {
     float max_cll      = 0.0f;
@@ -518,6 +618,7 @@ struct image_s {
     pRawTexSRV.p        = other.pRawTexSRV.p;
     pGamutCoverageSRV.p = other.pGamutCoverageSRV.p;
     pGamutCoverageUAV.p = other.pGamutCoverageUAV.p;
+    anim                = other.anim;
     not_hdr             = other.not_hdr;
     is_hdr              = other.is_hdr;
     is_dds              = other.is_dds;
@@ -542,6 +643,7 @@ struct image_s {
     pRawTexSRV.p        = nullptr;
     pGamutCoverageSRV.p = nullptr;
     pGamutCoverageUAV.p = nullptr;
+    anim                = nullptr; // Not released: whoever was given it (cover_old) releases it
     is_hdr              = false;
     is_dds              = false;
     light_info          = { };
@@ -609,6 +711,144 @@ extern std::string     SKIF_StatusBarHelp;
 extern std::string     SKIF_StatusBarText;
 extern DWORD           invalidatedDevice;
 extern concurrency::concurrent_queue <IUnknown *> SKIF_ResourcesToFree;
+
+// Drops this reference to an animated image's frames. The last one pushes their textures to be released after the frame
+//   (SKIF_ResourcesToFree), as they may still be drawn in it.
+static void
+SKIV_ReleaseAnimation (std::shared_ptr <image_anim_s>& anim)
+{
+  if (anim == nullptr)
+    return;
+
+  if (anim.use_count ( ) == 1)
+  {
+    for (auto& frame : anim->frames)
+      if (frame.srv.p != nullptr)
+        SKIF_ResourcesToFree.push (frame.srv.Detach ( ));
+
+    PLOG_VERBOSE << "SKIF_ResourcesToFree: Pushed the " << anim->frames.size ( ) << " frames of an animated image to be released";
+  }
+
+  anim.reset ( );
+}
+
+// Animated images, for the main loop (SKIV.cpp): when the frame shown changes, the window is presented again even though
+//   nothing else changed, and while one plays, the loop wakes up when its next frame is due.
+static DWORD SKIV_Viewer_AnimNextFrameAt = 0;     // When the next frame is due (SKIF_Util_timeGetTime1); 0: none
+static int   SKIV_Viewer_AnimDrawnFrame  = -1;    // The last frame (ImGui::GetFrameCount) an animation was drawn in
+static bool  SKIV_Viewer_AnimChanged     = false; // The frame shown changed since the window was last presented
+
+// ms until the next frame of the animation shown is due (0: now); INFINITE if none plays
+DWORD
+SKIV_Viewer_GetAnimationWakeIn (void)
+{
+  if (SKIV_Viewer_AnimNextFrameAt == 0 || ImGui::GetFrameCount ( ) - SKIV_Viewer_AnimDrawnFrame > 1)
+    return INFINITE;
+
+  if (SKIF_ImGui_hWnd == NULL || ::IsIconic (SKIF_ImGui_hWnd))
+    return INFINITE;
+
+  const LONG wakeIn = static_cast <LONG> (SKIV_Viewer_AnimNextFrameAt - SKIF_Util_timeGetTime1 ( ));
+
+  return (wakeIn > 0) ? static_cast <DWORD> (wakeIn) : 0;
+}
+
+// Whether the frame of the animation shown changed since this was last asked (the window must be presented again)
+bool
+SKIV_Viewer_ConsumeAnimationChange (void)
+{
+  return std::exchange (SKIV_Viewer_AnimChanged, false);
+}
+
+// The texture to draw an image with, and its part of it: an animated image's current frame (which starts playing the
+//   first time it is drawn), or the image's own texture. track: the shown image (cover), which wakes the main loop.
+static ID3D11ShaderResourceView*
+SKIV_GetImageFrame (image_s& image, ImVec2& uv0, ImVec2& uv1, bool track)
+{
+  uv0 = image.uv0;
+  uv1 = image.uv1;
+
+  if (image.anim == nullptr || image.anim->frames.empty ( ))
+    return image.pRawTexSRV.p;
+
+  image_anim_s& anim = *image.anim;
+  const DWORD   now  = SKIF_Util_timeGetTime ( );
+
+  if (! anim.paused && anim.playingSince == 0)
+    anim.play (now);
+
+  const DWORD  position = anim.getPosition (now);
+  const size_t frame    = anim.getFrameAt  (position);
+
+  if (track)
+  {
+    if (frame != anim.current)
+      SKIV_Viewer_AnimChanged = true;
+
+    SKIV_Viewer_AnimDrawnFrame  = ImGui::GetFrameCount ( );
+    SKIV_Viewer_AnimNextFrameAt = (anim.playingSince != 0)
+                                ? std::max (SKIF_Util_timeGetTime1 ( ) + (anim.frameEnds [frame] - position), 1UL)
+                                : 0;
+  }
+
+  anim.current = frame;
+
+  uv0 = anim.frames [frame].uv0;
+  uv1 = anim.frames [frame].uv1;
+
+  return anim.frames [frame].srv.p;
+}
+
+// The pixels of the image shown, read back from the GPU: an animated image's current frame (at the size its frames
+//   were made at), or the whole image
+static HRESULT
+SKIV_CaptureImage (image_s& image, DirectX::ScratchImage& captured)
+{
+  extern CComPtr <ID3D11Device> SKIF_D3D11_GetDevice (bool bWait = true);
+
+  auto pDevice =
+    SKIF_D3D11_GetDevice ();
+
+  if (pDevice == nullptr || image.pRawTexSRV.p == nullptr)
+    return E_POINTER;
+
+  CComPtr <ID3D11DeviceContext>  pDevCtx;
+  pDevice->GetImmediateContext (&pDevCtx.p);
+
+  if (pDevCtx.p == nullptr)
+    return E_POINTER;
+
+  ImVec2 uv0, uv1;
+  ID3D11ShaderResourceView* pSRV =
+    SKIV_GetImageFrame (image, uv0, uv1, false);
+
+  CComPtr <ID3D11Resource> pTexResource;
+  pSRV->GetResource (&pTexResource.p);
+
+  if (pTexResource.p == nullptr)
+    return E_POINTER;
+
+  if (image.anim == nullptr)
+    return DirectX::CaptureTexture (pDevice, pDevCtx, pTexResource.p, captured);
+
+  DirectX::ScratchImage page;
+  HRESULT hr =
+    DirectX::CaptureTexture (pDevice, pDevCtx, pTexResource.p, page);
+
+  if (FAILED (hr))
+    return hr;
+
+  const image_anim_s::frame_s& frame = image.anim->frames [image.anim->current];
+
+  const size_t width  = static_cast <size_t> (image.anim->resolution.x),
+               height = static_cast <size_t> (image.anim->resolution.y);
+
+  if (FAILED (hr = captured.Initialize2D (page.GetMetadata ( ).format, width, height, 1, 1)))
+    return hr;
+
+  return DirectX::CopyRectangle (*page.GetImages ( ), DirectX::Rect (static_cast <size_t> (frame.offset.x), static_cast <size_t> (frame.offset.y), width, height),
+                                 *captured.GetImages ( ), DirectX::TEX_FILTER_DEFAULT, 0, 0);
+}
 
 #define _WIDTH_SCROLLBAR (SKIF_vecAlteredSize.y > 0.0f ? ImGui::GetStyle().ScrollbarSize : 0.0f)
 #define _WIDTH   (378.0f * SKIF_ImGui_GlobalDPIScale) - _WIDTH_SCROLLBAR // GameList, GameDetails, Injection_Summary_Frame (prev. 414.0f)
@@ -767,7 +1007,8 @@ enum ImageDecoder {
 #endif
   ImageDecoder_HDR,
   ImageDecoder_UHDR,
-  ImageDecoder_AVIF
+  ImageDecoder_AVIF,
+  ImageDecoder_WebP
 };
 
 class SK_AutoFile {
@@ -976,8 +1217,381 @@ SKIV_DXGI_NumberOfChannels (DXGI_FORMAT format)
   }
 }
 
+#pragma region AnimatedImages
+
+// An animated image (APNG, GIF, WebP), read and parsed: its canvas, and how many frames it has. Decode ( ) hands over its
+//   frames (the canvas as it is at each, RGBA, and how long it is shown).
+struct animated_image_s
+{
+  std::vector <uint8_t> file;
+  apng_s                apng;    // APNG: the parsed frames
+  bool                  isGIF  = false;
+  bool                  isWebP = false;
+  uint32_t              width  = 0,
+                        height = 0,
+                        count  = 0;
+
+  int Decode (const std::function <bool (const uint8_t*, uint32_t)>& onFrame) const
+  {
+    return (isWebP) ? _DecodeWebP (file.data ( ), file.size ( ), onFrame) :
+           (isGIF)  ? _DecodeGIF  (file.data ( ), file.size ( ), onFrame)
+                    : _DecodeAPNG (apng, onFrame);
+  }
+};
+
+// All the frames of an animated image together are kept below this much video memory (they are scaled down to fit), and
+//   there can be no more frames than this. Below a quarter of the size (each way) it would look too poor: it is shown as
+//     a still image then.
+#ifdef _WIN64
+static constexpr double   s_animBudget       = 2048.0 * 1024 * 1024;
+#else
+static constexpr double   s_animBudget       =  512.0 * 1024 * 1024;
+#endif
+static constexpr uint32_t s_animMaxFrames    = 10000;
+static constexpr double   s_animMinScale     = 0.25;
+static constexpr size_t   s_animPageSize     = 4096; // The shared textures (pages) are at most this large (each way)
+static constexpr size_t   s_animMaxCellSize  = 2048; // Frames larger than this (each way, with their border) get a texture each
+
+// Reads and parses an animated image. False if it is not one (fewer than two frames), is malformed, or is too large.
+static bool
+_OpenAnimatedImage (const std::wstring& path, animated_image_s& image)
+{
+  std::error_code ec;
+  const auto fileSize = std::filesystem::file_size (std::filesystem::path (path), ec);
+
+  if (ec || fileSize < 16 || fileSize > 1024ULL * 1024 * 1024)
+    return false;
+
+  image.file.resize (static_cast <size_t> (fileSize));
+  {
+    std::ifstream stream (std::filesystem::path (path), std::ios::binary);
+
+    if (! stream.read (reinterpret_cast <char*> (image.file.data ( )), image.file.size ( )))
+      return false;
+  }
+
+  image.isWebP = _IsWebP (image.file.data ( ), image.file.size ( ));
+  image.isGIF  = (memcmp (image.file.data ( ), "GIF8", 4) == 0);
+
+  if (image.isWebP)
+  {
+    if (! _ScanWebP (image.file.data ( ), image.file.size ( ), image.width, image.height, image.count))
+      return false;
+  }
+
+  else if (image.isGIF)
+  {
+    if (! _ScanGIF (image.file.data ( ), image.file.size ( ), image.width, image.height, image.count))
+      return false;
+  }
+
+  else
+  {
+    if (! _ParseAPNG (image.file.data ( ), image.file.size ( ), image.apng))
+      return false;
+
+    image.width  = image.apng.width;
+    image.height = image.apng.height;
+    image.count  = static_cast <uint32_t> (image.apng.frames.size ( ));
+  }
+
+  if (image.count < 2 || image.count > s_animMaxFrames || image.width == 0 || image.height == 0 || image.width > 16384 || image.height > 16384)
+  {
+    PLOG_WARNING_IF (image.count > s_animMaxFrames) << "Animated image has too many frames to play (" << image.count << ")";
+    return false;
+  }
+
+  return true;
+}
+
+// Creates a texture (and its view) of the image (RGBA), as sRGB: as the general purpose decoder (WIC) loads 8-bpc images
+static bool
+_CreateAnimationTexture (ID3D11Device* pDevice, const DirectX::ScratchImage& img, CComPtr <ID3D11ShaderResourceView>& srv)
+{
+  CComPtr <ID3D11Texture2D> pTex2D;
+
+  if (FAILED (DirectX::CreateTextureEx (pDevice, img.GetImages ( ), img.GetImageCount ( ), img.GetMetadata ( ),
+                                        D3D11_USAGE_DEFAULT, D3D11_BIND_SHADER_RESOURCE, 0, 0, DirectX::CREATETEX_FORCE_SRGB,
+                                        (ID3D11Resource **)&pTex2D.p)) || pTex2D.p == nullptr)
+    return false;
+
+  D3D11_SHADER_RESOURCE_VIEW_DESC
+    srv_desc                           = { };
+    srv_desc.Format                    = DXGI_FORMAT_UNKNOWN;
+    srv_desc.ViewDimension             = D3D11_SRV_DIMENSION_TEXTURE2D;
+    srv_desc.Texture2D.MipLevels       = UINT_MAX;
+    srv_desc.Texture2D.MostDetailedMip =  0;
+
+  return SUCCEEDED (pDevice->CreateShaderResourceView (pTex2D.p, &srv_desc, &srv.p)) && srv.p != nullptr;
+}
+
+// Loads all the frames of an animated image (APNG, GIF, WebP) into image (anim, and pRawTexSRV: its first frame). Each
+//   frame is the canvas as it is at that point, at its full size unless all of them would not fit s_animBudget.
+//     wanted (if set) is asked between frames, and stops the load once it returns false. False if it is not animated,
+//       cannot be decoded, is too large, or was stopped: it is then loaded as a still image.
+static bool
+_LoadAnimatedImage (image_s& image, const std::function <bool (void)>& wanted)
+{
+  DWORD pre = SKIF_Util_timeGetTime1 ( );
+
+  animated_image_s source;
+
+  if (! _OpenAnimatedImage (image.file_info.path, source))
+    return false;
+
+  const uint32_t width  = source.width,
+                 height = source.height,
+                 count  = source.count;
+
+  auto pDevice =
+    SKIF_D3D11_GetDevice ();
+
+  if (! pDevice)
+    return false;
+
+  // The budget: s_animBudget, or three quarters of the video memory Windows says is left for SKIV, if that is less
+  double budget = s_animBudget;
+
+  if (CComQIPtr <IDXGIDevice> pDXGIDevice (pDevice.p); pDXGIDevice.p != nullptr)
+  {
+    CComPtr <IDXGIAdapter> pAdapter;
+
+    if (SUCCEEDED (pDXGIDevice->GetAdapter (&pAdapter.p)))
+    {
+      DXGI_QUERY_VIDEO_MEMORY_INFO info = { };
+
+      if (CComQIPtr <IDXGIAdapter3> pAdapter3 (pAdapter.p);
+          pAdapter3.p != nullptr && SUCCEEDED (pAdapter3->QueryVideoMemoryInfo (0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &info)) && info.Budget > 0)
+      {
+        const double available = (info.Budget > info.CurrentUsage) ? static_cast <double> (info.Budget - info.CurrentUsage) : 0.0;
+        budget = std::min (budget, available * 0.75);
+      }
+    }
+  }
+
+  // The size the frames are made at: as they are, unless all of them would take more than the budget
+  double scale = 1.0;
+
+  if (const double bytes = static_cast <double> (width) * height * 4.0 * count; bytes > budget)
+  {
+    scale = std::sqrt (budget / bytes);
+
+    if (scale < s_animMinScale)
+    {
+      PLOG_WARNING << "Animated image is too large to play (" << width << "x" << height << ", " << count << " frames, "
+                   << static_cast <int> (budget / (1024 * 1024)) << " MB of video memory to spare): showing its first frame";
+      return false;
+    }
+
+    PLOG_INFO << "Animated image is scaled down to " << static_cast <int> (scale * 100.0) << "% to fit in " << static_cast <int> (budget / (1024 * 1024)) << " MB of video memory";
+  }
+
+  const size_t outWidth  = std::max (static_cast <size_t> (width  * scale), size_t (1)),
+               outHeight = std::max (static_cast <size_t> (height * scale), size_t (1));
+  const bool   resize    = (outWidth != width || outHeight != height);
+
+  // The frames are made (and scaled, as browsers do) as plain RGBA, as DirectX::Resize cannot scale sRGB images with
+  //   WIC's filters; their textures are sRGB (_CreateAnimationTexture)
+  constexpr DXGI_FORMAT format = DXGI_FORMAT_R8G8B8A8_UNORM;
+
+  // The pages: as many frames side by side as fit in s_animPageSize, each in a cell with a one-pixel border
+  const size_t cellWidth  = outWidth  + 2,
+               cellHeight = outHeight + 2;
+  const bool   shared     = (cellWidth <= s_animMaxCellSize && cellHeight <= s_animMaxCellSize);
+  const size_t cols       = (shared) ? std::clamp (s_animPageSize / cellWidth, size_t (1), static_cast <size_t> (count)) : 1,
+               perPage    = (shared) ? cols * std::max (s_animPageSize / cellHeight, size_t (1))                       : 1;
+
+  auto anim = std::make_shared <image_anim_s> ( );
+  anim->resolution = ImVec2 (static_cast <float> (outWidth), static_cast <float> (outHeight));
+  anim->frames   .reserve (count);
+  anim->frameEnds.reserve (count);
+
+  DirectX::ScratchImage page;            // The page being filled
+  size_t                pageStart = 0,   // Its first frame
+                        pageCols  = 0,
+                        pageCount = 0;   // How many frames it is for
+  const char*           failure   = nullptr; // Why it could not be loaded (logged)
+
+  // Makes the page being filled a texture, which its frames share
+  auto _FinishPage = [&](void) -> bool
+  {
+    CComPtr <ID3D11ShaderResourceView> srv;
+
+    if (! _CreateAnimationTexture (pDevice, page, srv))
+      return false;
+
+    const DirectX::TexMetadata& meta = page.GetMetadata ( );
+
+    for (size_t i = pageStart; i < anim->frames.size ( ); i++)
+      anim->frames [i].srv = srv; // Its own reference
+
+    anim->textures++;
+    anim->bytes += page.GetPixelsSize ( );
+
+    // The texture coordinates were set relative to the page's size
+    for (size_t i = pageStart; i < anim->frames.size ( ); i++)
+    {
+      auto& frame = anim->frames [i];
+      frame.uv0 = ImVec2 ( frame.offset.x                               / meta.width,  frame.offset.y                                / meta.height);
+      frame.uv1 = ImVec2 ((frame.offset.x + static_cast <float> (outWidth)) / meta.width, (frame.offset.y + static_cast <float> (outHeight)) / meta.height);
+    }
+
+    page.Release ( );
+    return true;
+  };
+
+  DWORD elapsed = 0;
+
+  auto _OnFrame = [&](const uint8_t* canvas, uint32_t delay) -> bool
+  {
+    if (wanted && ! wanted ( ))
+    {
+      failure = "it is no longer wanted";
+      return false;
+    }
+
+    // More frames than it was scanned to have (its pages are laid out for those)
+    if (anim->frames.size ( ) >= count)
+      return false;
+
+    // The canvas at this point, scaled if need be
+    DirectX::ScratchImage  img;
+    DirectX::ScratchImage  resized;
+    DirectX::ScratchImage* pImg = &img;
+
+    if (FAILED (img.Initialize2D (format, width, height, 1, 1)))
+    {
+      failure = "out of memory (canvas)";
+      return false;
+    }
+
+    memcpy (img.GetImage (0, 0, 0)->pixels, canvas, static_cast <size_t> (width) * height * 4);
+
+    if (resize)
+    {
+      if (FAILED (DirectX::Resize (img.GetImages ( ), img.GetImageCount ( ), img.GetMetadata ( ),
+                                   outWidth, outHeight, DirectX::TEX_FILTER_FANT, resized)))
+      {
+        failure = "a frame could not be scaled";
+        return false;
+      }
+
+      pImg = &resized;
+    }
+
+    const DirectX::Image* src = pImg->GetImage (0, 0, 0);
+
+    image_anim_s::frame_s frame;
+
+    if (! shared)
+    {
+      if (! _CreateAnimationTexture (pDevice, *pImg, frame.srv))
+      {
+        failure = "a frame's texture could not be created (out of video memory?)";
+        return false;
+      }
+
+      anim->textures++;
+      anim->bytes += pImg->GetPixelsSize ( );
+    }
+
+    else
+    {
+      const size_t index = anim->frames.size ( );
+
+      // A new page: for the frames left, up to as many as fit
+      if (page.GetImageCount ( ) == 0)
+      {
+        pageStart = index;
+        pageCount = std::min (perPage, static_cast <size_t> (count) - index);
+        pageCols  = std::min (cols,    pageCount);
+
+        const size_t pageRows = (pageCount + pageCols - 1) / pageCols;
+
+        if (FAILED (page.Initialize2D (format, pageCols * cellWidth, pageRows * cellHeight, 1, 1)))
+        {
+          failure = "out of memory (page)";
+          return false;
+        }
+
+        memset (page.GetPixels ( ), 0, page.GetPixelsSize ( )); // The cells no frame uses (the last row)
+      }
+
+      // Into its cell, with the border repeating its edges
+      const DirectX::Image* dst  = page.GetImage (0, 0, 0);
+      const size_t          slot = index - pageStart,
+                            x    = (slot % pageCols) * cellWidth,
+                            y    = (slot / pageCols) * cellHeight;
+
+      for (size_t row = 0; row < cellHeight; row++)
+      {
+        const size_t   srcRow = (row == 0) ? 0 : std::min (row - 1, outHeight - 1);
+        const uint8_t* s      = src->pixels + srcRow * src->rowPitch;
+        uint8_t*       d      = dst->pixels + (y + row) * dst->rowPitch + x * 4;
+
+        memcpy (d,                    s,                        4);
+        memcpy (d + 4,                s,                        outWidth * 4);
+        memcpy (d + 4 + outWidth * 4, s + (outWidth - 1) * 4,   4);
+      }
+
+      frame.offset = ImVec2 (static_cast <float> (x + 1), static_cast <float> (y + 1));
+    }
+
+    elapsed += delay;
+
+    anim->frames   .push_back (std::move (frame));
+    anim->frameEnds.push_back (elapsed);
+
+    // The page is full
+    if (shared && anim->frames.size ( ) == pageStart + pageCount && ! _FinishPage ( ))
+    {
+      failure = "a page's texture could not be created (out of video memory?)";
+      return false;
+    }
+
+    return true;
+  };
+
+  const int decoded = source.Decode (_OnFrame);
+
+  // A GIF that broke off early: its page is not full
+  if (failure == nullptr && shared && page.GetImageCount ( ) != 0 && ! _FinishPage ( ))
+    failure = "a page's texture could not be created (out of video memory?)";
+
+  if (failure == nullptr && (decoded < 2 || anim->frames.size ( ) < 2))
+    failure = "it could not be decoded";
+
+  if (failure != nullptr)
+  {
+    PLOG_WARNING << "Could not load the animated image, as " << failure << " (" << anim->frames.size ( ) << " of " << count << " frames): showing its first frame";
+    return false; // Released right away: nothing else has seen them
+  }
+
+  anim->duration = elapsed;
+
+  image.anim         = anim;
+  image.pRawTexSRV   = anim->frames [0].srv; // A reference of its own
+  image.uv0          = anim->frames [0].uv0;
+  image.uv1          = anim->frames [0].uv1;
+  image.width        = static_cast <float> (width);
+  image.height       = static_cast <float> (height);
+  image.bpc          = 8;
+  image.channels     = 4;
+  image.is_hdr       = false;
+  image.light_info   = { };
+  image.colorimetry  = { };
+
+  DWORD post = SKIF_Util_timeGetTime1 ( );
+  PLOG_INFO << "[Image Processing] Loaded an animated image (" << anim->frames.size ( ) << " frames, " << outWidth << "x" << outHeight << ", "
+            << anim->duration << " ms) into " << anim->textures << " texture(s), " << (anim->bytes / (1024 * 1024)) << " MB, in " << (post - pre) << " ms.";
+
+  return true;
+}
+
+#pragma endregion
+
 bool
-LoadLibraryTexture (image_s& image)
+LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = nullptr)
 {
   SKIV_ScopedThreadPriority_Viewer _scoped_thread_prio;
 
@@ -1061,7 +1675,7 @@ LoadLibraryTexture (image_s& image)
              (type.mime_type == L"image/vnd.radiance"        ) ? ImageDecoder_HDR  :
            //(type.mime_type == L"image/x-targa"             ) ? ImageDecoder_stbi : // TGA has no real unique header identifier, so just use the file extension on those
              (type.mime_type == L"image/vnd.ms-photo"        ) ? ImageDecoder_WIC  :
-             (type.mime_type == L"image/webp"                ) ? ImageDecoder_WIC  :
+             (type.mime_type == L"image/webp"                ) ? ImageDecoder_WebP : // libwebp (WIC needs the WebP Image Extensions)
              (type.mime_type == L"image/tiff"                ) ? ImageDecoder_WIC  :
              (type.mime_type == L"image/heif"                ) ? ImageDecoder_WIC  :
              (type.mime_type == L"image/heic"                ) ? ImageDecoder_WIC  :
@@ -1099,6 +1713,22 @@ LoadLibraryTexture (image_s& image)
 
   SK_AutoFile _(pImageFile);
 
+  // Animated images (APNG, GIF, WebP): all their frames, which the viewer plays. One that cannot be played (too large,
+  //   or malformed) is loaded as a still image below: its first frame (an APNG: its default image).
+  //     GIFs skip IsAnimatedImageFile, which only reads GIFs up to 64 MB: _LoadAnimatedImage counts their frames itself.
+  if (_registry.bAnimatedImages && image_sig != nullptr &&
+     ((image_sig->mime_type == L"image/gif") ||
+     ((image_sig->mime_type == L"image/png" ||
+       image_sig->mime_type == L"image/webp") && IsAnimatedImageFile (image.file_info.path))))
+  {
+    if (_LoadAnimatedImage (image, wanted))
+      return true;
+
+    // Stopped, as the image is no longer wanted
+    if (wanted && ! wanted ( ))
+      return false;
+  }
+
   auto _scratchMemory =
     std::make_unique <unsigned char []> (_.getInitialSize ());
 
@@ -1112,6 +1742,7 @@ LoadLibraryTexture (image_s& image)
 #endif
   PLOG_DEBUG_IF(decoder == ImageDecoder_HDR ) << "Using Radiance HDR decoder...";
   PLOG_DEBUG_IF(decoder == ImageDecoder_UHDR) << "Using Ultra HDR decoder...";
+  PLOG_DEBUG_IF(decoder == ImageDecoder_WebP) << "Using libwebp decoder...";
 
   if (decoder == ImageDecoder_None)
     return false;
@@ -1434,6 +2065,38 @@ LoadLibraryTexture (image_s& image)
 
       //decoder = ImageDecoder_WIC;
       //PLOG_INFO << "Using WIC decoder";
+    }
+  }
+
+  // WebP still images (and an animated one's first frame): libwebp, or WIC if it cannot decode it
+  if (decoder == ImageDecoder_WebP)
+  {
+    fseek  (pImageFile,                                 0, SEEK_SET  );
+    fread  (_scratchMemory.get (), _.getInitialSize (), 1, pImageFile);
+    rewind (pImageFile);
+
+    uint32_t              width    = 0,
+                          height   = 0;
+    std::vector <uint8_t> rgba;
+    WebPBitstreamFeatures features = { };
+
+    if (_DecodeWebPStill (_scratchMemory.get (), _.getInitialSize (), width, height, rgba) &&
+        WebPGetFeatures  (_scratchMemory.get (), _.getInitialSize (), &features) == VP8_STATUS_OK &&
+        SUCCEEDED (img.Initialize2D (DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, width, height, 1, 1)))
+    {
+      memcpy (img.GetPixels (), rgba.data (), std::min (rgba.size (), img.GetPixelsSize ()));
+
+      meta           = img.GetMetadata ();
+      image.bpc      = 8;
+      image.channels = (features.has_alpha) ? 4 : 3;
+
+      succeeded      = true;
+    }
+
+    else
+    {
+      decoder = ImageDecoder_WIC;
+      PLOG_ERROR << "Using WIC decoder due to libwebp failing to decode the image";
     }
   }
 
@@ -2811,28 +3474,23 @@ SKIF_UI_Tab_DrawViewer (void)
 
     if (cover.pRawTexSRV.p != nullptr /* && cover.is_hdr */)
     {
-      auto
-          pDevice = SKIF_D3D11_GetDevice ();
-      if (pDevice != nullptr)
       {
-        CComPtr <ID3D11DeviceContext>  pDevCtx;
-        pDevice->GetImmediateContext (&pDevCtx.p);
-
-        CComPtr <ID3D11Resource>        pTexResource;
-        cover.pRawTexSRV->GetResource (&pTexResource.p);
-
-        if (pTexResource.p != nullptr)
         {
-          DirectX::ScratchImage                                                     captured_img;
-          if (SUCCEEDED (DirectX::CaptureTexture (pDevice, pDevCtx, pTexResource.p, captured_img)))
+          // An animated image: its current frame
+          DirectX::ScratchImage                          captured_img;
+          if (SUCCEEDED (SKIV_CaptureImage (cover, captured_img)))
           {
             if (copyRect.GetArea () != 0)
             {
+              // The frames of an animated image may have been scaled down
+              const float scale =
+                (cover.anim != nullptr && cover.width > 0.0f) ? cover.anim->resolution.x / cover.width : 1.0f;
+
               const size_t
-                x      = static_cast <size_t> (std::max (0.0f, copyRect.Min.x)),
-                y      = static_cast <size_t> (std::max (0.0f, copyRect.Min.y)),
-                width  = static_cast <size_t> (std::max (0.0f, copyRect.GetWidth  ())),
-                height = static_cast <size_t> (std::max (0.0f, copyRect.GetHeight ()));
+                x      = static_cast <size_t> (std::max (0.0f, copyRect.Min.x       * scale)),
+                y      = static_cast <size_t> (std::max (0.0f, copyRect.Min.y       * scale)),
+                width  = static_cast <size_t> (std::max (0.0f, copyRect.GetWidth  () * scale)),
+                height = static_cast <size_t> (std::max (0.0f, copyRect.GetHeight () * scale));
 
               const DirectX::Rect
                 src_rect (x,y, width,height);
@@ -2933,6 +3591,8 @@ SKIF_UI_Tab_DrawViewer (void)
         cover_old.pGamutCoverageUAV.p = nullptr;
       }
 
+      SKIV_ReleaseAnimation (cover_old.anim);
+
       // Set up the current one to be released
       cover_old = cover;
       cover.reset();
@@ -3004,6 +3664,8 @@ SKIF_UI_Tab_DrawViewer (void)
       SKIF_ResourcesToFree.push(cover_old.pGamutCoverageUAV.p);
       cover_old.pGamutCoverageUAV.p = nullptr;
     }
+
+    SKIV_ReleaseAnimation (cover_old.anim);
   }
 
   // Apply changes when the image changes
@@ -3240,11 +3902,16 @@ SKIF_UI_Tab_DrawViewer (void)
 
     sizeCover_old = ImFloor (sizeCover_old);
 
-    SKIF_ImGui_OptImage  (cover_old.pRawTexSRV.p,
+    // An animated image: its current frame
+    ImVec2 frame_uv0, frame_uv1;
+    ID3D11ShaderResourceView* pFrameSRV =
+      SKIV_GetImageFrame (cover_old, frame_uv0, frame_uv1, false);
+
+    SKIF_ImGui_OptImage  (pFrameSRV,
                                                       ImVec2 (sizeCover_old.x,
                                                               sizeCover_old.y),
-                                    cover_old.light_info.isHDR ? hdr_uv0 : cover_old.is_dds ? srgb_uv0 : cover_old.uv0, // Top Left coordinates
-                                    cover_old.light_info.isHDR ? hdr_uv1 : cover_old.is_dds ? srgb_uv1 : cover_old.uv1, // Bottom Right coordinates
+                                    cover_old.light_info.isHDR ? hdr_uv0 : cover_old.is_dds ? srgb_uv0 : frame_uv0, // Top Left coordinates
+                                    cover_old.light_info.isHDR ? hdr_uv1 : cover_old.is_dds ? srgb_uv1 : frame_uv1, // Bottom Right coordinates
                                     (_registry._StyleLightMode) ? ImVec4 (1.0f, 1.0f, 1.0f, fGammaCorrectedTint * AdjustAlpha (fAlphaPrev))  : ImVec4 (fTint, fTint, fTint, fAlphaPrev) // Alpha transparency
     );
 
@@ -3284,11 +3951,18 @@ SKIF_UI_Tab_DrawViewer (void)
   ImVec2 image_pos  = ImFloor (ImGui::GetCursorScreenPos ( )); // NOTE! Actual screen position (since that's what ImGui::Image uses)
   ImRect image_rect = ImRect (image_pos, image_pos + sizeCover);
 
-  SKIF_ImGui_OptImage  (cover.pRawTexSRV.p,
+  // An animated image: its current frame (this also keeps the main loop waking up for its next one)
+  SKIV_Viewer_AnimNextFrameAt = 0;
+
+  ImVec2 frame_uv0, frame_uv1;
+  ID3D11ShaderResourceView* pFrameSRV =
+    SKIV_GetImageFrame (cover, frame_uv0, frame_uv1, true);
+
+  SKIF_ImGui_OptImage  (pFrameSRV,
                                                     ImVec2 (sizeCover.x,
                                                             sizeCover.y),
-                                  cover.light_info.isHDR ? hdr_uv0 : cover.is_dds ? srgb_uv0 : cover.uv0, // Top Left coordinates
-                                  cover.light_info.isHDR ? hdr_uv1 : cover.is_dds ? srgb_uv1 : cover.uv1, // Bottom Right coordinates
+                                  cover.light_info.isHDR ? hdr_uv0 : cover.is_dds ? srgb_uv0 : frame_uv0, // Top Left coordinates
+                                  cover.light_info.isHDR ? hdr_uv1 : cover.is_dds ? srgb_uv1 : frame_uv1, // Bottom Right coordinates
                                   (_registry._StyleLightMode) ? ImVec4 (1.0f, 1.0f, 1.0f, fGammaCorrectedTint * AdjustAlpha (fAlpha))  :
                                                                 ImVec4 (1.f, 1.f, 1.f, 1.f) // Alpha transparency (2024-01-01, removed fGammaCorrectedTint * fAlpha for the light style)
   );
@@ -3544,6 +4218,30 @@ SKIF_UI_Tab_DrawViewer (void)
         ImGui::PushFont (fontConsolas, SKIF_ImGui_GetFontConsolasSize ( ));
         ImGui::EndGroup             ();
       }
+    }
+
+    // Animated images
+    if (cover.anim != nullptr && ! cover.anim->frames.empty ())
+    {
+      const image_anim_s& anim  = *cover.anim;
+      const size_t        frame = anim.current;
+
+      char szAnimLabels [128] = { };
+      char szAnimData   [256] = { };
+
+      sprintf (szAnimLabels, "Frame:\n"
+                             "Duration:\n");
+      sprintf (szAnimData,   "%zu / %zu (%lu ms)%s\n"
+                             "%.2f s%s\n",
+                              frame + 1, anim.frames.size (),
+                              anim.frameEnds [frame] - anim.getFrameStart (frame),
+                              anim.paused ? ", paused" : "",
+                              static_cast <float> (anim.duration) / 1000.0f,
+                              (anim.resolution.x != cover.width) ? " (scaled down to fit)" : "");
+
+      ImGui::TextUnformatted (szAnimLabels);
+      ImGui::SameLine        (posXvalues);
+      ImGui::TextUnformatted (szAnimData);
     }
 
     // HDR Light Levels
@@ -4143,6 +4841,26 @@ SKIF_UI_Tab_DrawViewer (void)
 
       if (SKIF_ImGui_MenuItemEx2 ("Copy",         ICON_FA_CLIPBOARD,    ImGui::GetStyleColorVec4(ImGuiCol_Text),      "Ctrl+C"))
         wantCopyToClipboard = true;
+
+      // Animated images
+      if (cover.anim != nullptr)
+      {
+        const DWORD now = SKIF_Util_timeGetTime ( );
+
+        if (cover.anim->paused)
+        {
+          if (SKIF_ImGui_MenuItemEx2 ("Play",     ICON_FA_PLAY,         ImGui::GetStyleColorVec4(ImGuiCol_Text),      "Space"))
+            cover.anim->play  (now);
+        }
+
+        else if (SKIF_ImGui_MenuItemEx2 ("Pause", ICON_FA_PAUSE,        ImGui::GetStyleColorVec4(ImGuiCol_Text),      "Space"))
+          cover.anim->pause (now);
+
+        if (SKIF_ImGui_MenuItemEx2 ("Next frame", 0,                    ImGui::GetStyleColorVec4(ImGuiCol_Text),      "."))
+          cover.anim->step (now,  1);
+        if (SKIF_ImGui_MenuItemEx2 ("Previous frame", 0,                ImGui::GetStyleColorVec4(ImGuiCol_Text),      ","))
+          cover.anim->step (now, -1);
+      }
       if (SKIF_ImGui_MenuItemEx2 ("Close", 0,                           ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info), "Ctrl+W"))
         _SwapOutCover ();
       if (_current_folder.fileList.getActiveFile() != nullptr && ! _current_folder.fileList.getActiveFile()->path.empty() &&
@@ -4347,7 +5065,8 @@ SKIF_UI_Tab_DrawViewer (void)
       int queuePos = getTextureLoadQueuePos();
       //PLOG_VERBOSE << "queuePos = " << queuePos;
 
-      bool success = LoadLibraryTexture ( _data->image );
+      // Animated images are stopped between frames once another image is to be shown instead
+      bool success = LoadLibraryTexture ( _data->image, [queuePos](void) -> bool { return textureLoadQueueLength.load() == queuePos; } );
 
       PLOG_VERBOSE << "_pRawTexSRV = "        << _data->image.pRawTexSRV;
 
@@ -4375,6 +5094,7 @@ SKIF_UI_Tab_DrawViewer (void)
         cover.colorimetry       = _data->image.colorimetry;
         cover.is_hdr            = _data->image.is_hdr;
         cover.is_dds            = _data->image.is_dds;
+        cover.anim              = std::move (_data->image.anim);
 
         // Parent folder (used for the directory watch)
         std::filesystem::path path       = SKIF_Util_NormalizeFullPath (cover.file_info.path);
@@ -4397,8 +5117,11 @@ SKIF_UI_Tab_DrawViewer (void)
 
       else if (_data->image.pRawTexSRV.p        != nullptr ||
                _data->image.pGamutCoverageSRV.p != nullptr ||
-               _data->image.pGamutCoverageUAV.p != nullptr)
+               _data->image.pGamutCoverageUAV.p != nullptr ||
+               _data->image.anim                != nullptr)
       {
+        SKIV_ReleaseAnimation (_data->image.anim);
+
         if (_data->image.pRawTexSRV.p != nullptr)
         {
           PLOG_DEBUG << "Texture is late! (" << queuePos << " vs " << currentQueueLength << ")";
@@ -4507,16 +5230,10 @@ SKIF_UI_Tab_DrawViewer (void)
 
       if (pDevice && cover.pRawTexSRV.p != nullptr)
       {
-        CComPtr <ID3D11DeviceContext>  pDevCtx;
-        pDevice->GetImmediateContext (&pDevCtx);
-
-        if (pDevCtx)
         {
-          CComPtr <ID3D11Resource>        pCoverRes;
-          cover.pRawTexSRV->GetResource (&pCoverRes.p);
-
-          DirectX::ScratchImage                                                captured_img;
-          if (SUCCEEDED (DirectX::CaptureTexture (pDevice, pDevCtx, pCoverRes, captured_img)))
+          // An animated image: its current frame
+          DirectX::ScratchImage                          captured_img;
+          if (SUCCEEDED (SKIV_CaptureImage (cover, captured_img)))
           {
             if (cover.is_hdr)
             {
@@ -4643,6 +5360,26 @@ SKIF_UI_Tab_DrawViewer (void)
     {
       dragDroppedFilePath = _current_folder.fileList.prevImage ( );
     }
+
+    // Animated images: Space pauses / resumes, and , / . step a frame back / ahead (pausing it)
+    else if (cover.anim != nullptr && ! ImGui::GetIO ( ).WantTextInput && ! ImGui::IsPopupOpen (nullptr, ImGuiPopupFlags_AnyPopupId))
+    {
+      const DWORD now = SKIF_Util_timeGetTime ( );
+
+      if (ImGui::IsKeyPressed (ImGuiKey_Space, false))
+      {
+        if (cover.anim->paused)
+          cover.anim->play  (now);
+        else
+          cover.anim->pause (now);
+      }
+
+      else if (ImGui::IsKeyPressed (ImGuiKey_Period))
+        cover.anim->step (now,  1);
+
+      else if (ImGui::IsKeyPressed (ImGuiKey_Comma))
+        cover.anim->step (now, -1);
+    }
   }
 
   if (! dragDroppedFilePath.empty())
@@ -4754,7 +5491,7 @@ SKIF_UI_Tab_DrawViewer (void)
         prev_ext = type_ext;
       }
       error_label   += "\n"
-                       "Note that the app has no support for animated images.";
+                       "Animated images are supported as APNG, GIF, and WebP.";
 
       SKIF_ImGui_InfoMessage (error_title, error_label);
     }
@@ -4834,6 +5571,9 @@ SKIF_UI_Tab_DrawViewer (void)
   // In case of a device reset, unload all currently loaded textures
   if (invalidatedDevice == 1)
   {   invalidatedDevice  = 2;
+
+    SKIV_ReleaseAnimation (cover.anim);
+    SKIV_ReleaseAnimation (cover_old.anim);
 
     if (cover.pRawTexSRV.p != nullptr)
     {
