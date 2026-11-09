@@ -1724,7 +1724,6 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
 
   bool succeeded = false;
   bool converted = false;
-  bool need_srgb = false;
 
   DWORD pre = SKIF_Util_timeGetTime1 ();
 
@@ -1814,12 +1813,6 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
               type.mime_type == L"image/x-exr")          // .exr
           {
             image.is_hdr = true;
-          }
-
-          if (type.mime_type == L"image/png")
-          {
-            // XXX: Check for the appropriate chunk
-            need_srgb = true;
           }
 
           break;
@@ -2228,7 +2221,7 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
     if (SUCCEEDED (
         DirectX::LoadFromWICMemory (
           _scratchMemory.get (), _.getInitialSize (),
-            DirectX::WIC_FLAGS_FILTER_POINT | DirectX::WIC_FLAGS_DEFAULT_SRGB,
+            DirectX::WIC_FLAGS_FILTER_POINT | DirectX::WIC_FLAGS_IGNORE_SRGB, // sRGB or not: decided below
               &meta, img,
           [&](IWICMetadataQueryReader* metadataReader) noexcept
           {
@@ -2288,7 +2281,6 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
             meta.format = DXGI_FORMAT_R16G16B16A16_FLOAT;
             converted = true;
             succeeded = true;
-            need_srgb = false;
           }
       }
 
@@ -2299,10 +2291,7 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
         {
           PLOG_INFO << "HDR capable image format does not contain HDR pixels... demoting to SDR!";
 
-          image.is_hdr = false;
-
-          if (! DirectX::IsSRGB (meta.format))
-            need_srgb  = true;
+          image.is_hdr = false; // Made sRGB below
         }
 
         else
@@ -2311,8 +2300,36 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
         }
       }
 
-      // DirectXTex does not handle gamma on 10-bpc PNGs correctly
-      if (need_srgb && DirectX::BitsPerColor (meta.format) != 8)
+      // SDR images (integer formats): their colors are sRGB, unless the file says they are linear. The shaders take the
+      //   texture's values as linear, so they become an _SRGB format (8 bpc), or are made linear here (more bits).
+      //     DirectXTex is not asked (WIC_FLAGS_IGNORE_SRGB): it takes any image without Exif ColorSpace 1 or a PNG sRGB
+      //       chunk for a linear one, so pictures with ColorSpace 65535 (uncalibrated) showed washed out.
+      const bool sdr_srgb =
+        (! image.is_hdr && ! DirectX::IsSRGB (meta.format) &&
+           DirectX::FormatDataType (meta.format) == DirectX::FORMAT_TYPE_UNORM &&
+         ! _IsLinearColorSource (image.color_source));
+
+      // Grayscale, and formats of fewer bits (or without an _SRGB form): as RGBA of 8 or 16 bpc
+      if (sdr_srgb && DirectX::MakeSRGB (meta.format) == meta.format && meta.format != DXGI_FORMAT_R16G16B16A16_UNORM)
+      {
+        const DXGI_FORMAT rgba = (DirectX::BitsPerColor (meta.format) <= 8) ? DXGI_FORMAT_R8G8B8A8_UNORM
+                                                                            : DXGI_FORMAT_R16G16B16A16_UNORM;
+        DirectX::ScratchImage expanded;
+
+        if (SUCCEEDED (DirectX::Convert (*img.GetImages (), rgba, DirectX::TEX_FILTER_DEFAULT, 0.0f, expanded)))
+        {
+          std::swap (img, expanded);
+          meta.format = rgba;
+        }
+      }
+
+      if (sdr_srgb && DirectX::MakeSRGB (meta.format) != meta.format)
+      {
+        if (img.OverrideFormat (DirectX::MakeSRGB (meta.format)))
+          meta.format = DirectX::MakeSRGB (meta.format);
+      }
+
+      else if (sdr_srgb)
       {
         using namespace DirectX;
 

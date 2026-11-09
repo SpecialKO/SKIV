@@ -104,6 +104,42 @@ _ReadICCName (const uint8_t* icc, size_t size)
   return { };
 }
 
+// Whether an ICC profile's tone curve is linear: its red TRC is the identity (a 'curv' of no points, or of gamma 1.0;
+//   a 'para' of type 0 with gamma 1.0). Profiles of other curves (and of no rTRC, such as LUT based ones) are not.
+static bool
+_IsLinearICC (const uint8_t* icc, size_t size)
+{
+  if (size < 132)
+    return false;
+
+  const uint32_t tags = _ReadBE32 (icc + 128);
+
+  for (uint32_t i = 0; i < tags && 132 + (i + 1) * 12ull <= size; i++)
+  {
+    const uint8_t* entry  = icc + 132 + i * 12;
+    const uint32_t offset = _ReadBE32 (entry + 4),
+                   length = _ReadBE32 (entry + 8);
+
+    if (memcmp (entry, "rTRC", 4) != 0 || offset > size || length > size - offset || length < 12)
+      continue;
+
+    const uint8_t* tag = icc + offset;
+
+    if (memcmp (tag, "curv", 4) == 0)
+    {
+      const uint32_t count = _ReadBE32 (tag + 8);
+      return (count == 0) || (count == 1 && length >= 14 && _ReadBE16 (tag + 12) == 0x0100);
+    }
+
+    if (memcmp (tag, "para", 4) == 0 && length >= 16)
+      return _ReadBE16 (tag + 8) == 0 && _ReadBE32 (tag + 12) == 0x00010000;
+
+    return false;
+  }
+
+  return false;
+}
+
 static void
 _SetICC (color_source_s& out, const uint8_t* icc, size_t size)
 {
@@ -348,6 +384,28 @@ _ReadColorSourceWebP (const uint8_t* data, size_t size, color_source_s& out)
   }
 
   WebPDemuxDelete (demux);
+}
+
+#pragma endregion
+
+#pragma region Decide
+
+// Whether the file says its colors are linear (not sRGB), by the same precedence as _DescribeColorSource: cICP of the
+//   linear transfer, an ICC profile of a linear tone curve, or (without either, or an sRGB chunk) a PNG gAMA of 1.0.
+//     Everything else is taken as sRGB, as browsers do; other gammas and primaries are not told apart yet.
+static bool
+_IsLinearColorSource (const color_source_s& cs)
+{
+  if (cs.has_cicp && (cs.cicp_first || cs.icc.empty ( )))
+    return cs.transfer == 8;
+
+  if (! cs.icc.empty ( ))
+    return _IsLinearICC (cs.icc.data ( ), cs.icc.size ( ));
+
+  if (cs.has_srgb)
+    return false;
+
+  return cs.gamma == 100000;
 }
 
 #pragma endregion
