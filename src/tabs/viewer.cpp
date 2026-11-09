@@ -94,6 +94,7 @@
 #include <libwebp/src/webp/decode.h>
 #include <libwebp/src/webp/demux.h>
 #include "../utility/animated_images.inl"
+#include "../utility/color_source.inl"
 
 #include <html_coder.hpp>
 #include <utility/image.h>
@@ -572,6 +573,9 @@ struct image_s {
   //   Released with SKIV_ReleaseAnimation, like the textures above are pushed to SKIF_ResourcesToFree.
   std::shared_ptr <image_anim_s>      anim;
 
+  // How the file describes its colors (ICC profile, cICP, ...), see color_source.inl
+  color_source_s color_source;
+
   struct light_info_s {
     float max_cll      = 0.0f;
     char  max_cll_name =  '?';
@@ -619,6 +623,7 @@ struct image_s {
     pGamutCoverageSRV.p = other.pGamutCoverageSRV.p;
     pGamutCoverageUAV.p = other.pGamutCoverageUAV.p;
     anim                = other.anim;
+    color_source        = other.color_source;
     not_hdr             = other.not_hdr;
     is_hdr              = other.is_hdr;
     is_dds              = other.is_dds;
@@ -644,6 +649,7 @@ struct image_s {
     pGamutCoverageSRV.p = nullptr;
     pGamutCoverageUAV.p = nullptr;
     anim                = nullptr; // Not released: whoever was given it (cover_old) releases it
+    color_source        = { };
     is_hdr              = false;
     is_dds              = false;
     light_info          = { };
@@ -1590,6 +1596,117 @@ _LoadAnimatedImage (image_s& image, const std::function <bool (void)>& wanted)
 
 #pragma endregion
 
+// The ICC profile or Exif color space WIC finds in a file (TIFF, HEIF, JPEG XR: formats color_source.inl does not read itself)
+static void
+_ReadColorSourceWIC (const std::wstring& path, color_source_s& out)
+{
+  bool                iswic2  = false;
+  IWICImagingFactory* factory = DirectX::GetWICFactory (iswic2);
+
+  CComPtr <IWICBitmapDecoder>     decoder;
+  CComPtr <IWICBitmapFrameDecode> frame;
+  UINT                            count = 0;
+
+  if (factory == nullptr ||
+      FAILED (factory->CreateDecoderFromFilename (path.c_str (), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &decoder.p)) ||
+      FAILED (decoder->GetFrame (0, &frame.p)) ||
+      FAILED (frame->GetColorContexts (0, nullptr, &count)) || count == 0)
+    return;
+
+  std::vector <CComPtr <IWICColorContext>> contexts (count);
+  std::vector <IWICColorContext*>          raw      (count);
+
+  for (UINT i = 0; i < count; i++)
+  {
+    if (FAILED (factory->CreateColorContext (&contexts [i].p)))
+      return;
+
+    raw [i] = contexts [i].p;
+  }
+
+  if (FAILED (frame->GetColorContexts (count, raw.data (), &count)))
+    return;
+
+  out.origin = "WIC";
+
+  for (UINT i = 0; i < count; i++)
+  {
+    WICColorContextType type = WICColorContextUninitialized;
+
+    if (FAILED (raw [i]->GetType (&type)))
+      continue;
+
+    if (type == WICColorContextProfile && out.icc.empty ())
+    {
+      UINT bytes = 0;
+
+      if (SUCCEEDED (raw [i]->GetProfileBytes (0, nullptr, &bytes)) && bytes > 0)
+      {
+        std::vector <BYTE> icc (bytes);
+
+        if (SUCCEEDED (raw [i]->GetProfileBytes (bytes, icc.data (), &bytes)))
+          _SetICC (out, icc.data (), bytes);
+      }
+    }
+
+    else if (type == WICColorContextExifColorSpace)
+    {
+      UINT value = 0;
+
+      if (SUCCEEDED (raw [i]->GetExifColorSpace (&value)))
+        out.exif_color_space = static_cast <uint16_t> (value);
+    }
+  }
+}
+
+// How the file describes its colors: read from the file itself (AVIF and JPEG XL: by their decoders, below). Shown in the
+//   details panel; nothing uses it to convert colors yet.
+static void
+_ReadColorSource (image_s& image, const FileSignature* image_sig, FILE* pImageFile, size_t fileSize)
+{
+  image.color_source = { };
+
+  if (image_sig == nullptr || pImageFile == nullptr)
+    return;
+
+  const std::wstring& mime = image_sig->mime_type;
+
+  if (mime == L"image/png" || mime == L"image/jpeg" || mime == L"image/webp")
+  {
+    // Their color information comes before the image data (but for the EXIF chunk of a WebP), so the start of the file will do
+    std::vector <uint8_t> head (std::min <size_t> (fileSize, 64 * 1024 * 1024));
+
+    fseek (pImageFile, 0, SEEK_SET);
+    head.resize (fread (head.data (), 1, head.size (), pImageFile));
+    rewind (pImageFile);
+
+    if      (mime == L"image/png")  _ReadColorSourcePNG  (head.data (), head.size (), image.color_source);
+    else if (mime == L"image/jpeg") _ReadColorSourceJPEG (head.data (), head.size (), image.color_source);
+    else                            _ReadColorSourceWebP (head.data (), head.size (), image.color_source);
+  }
+
+  else if (mime == L"image/tiff" || mime == L"image/heif" || mime == L"image/heic" || mime == L"image/vnd.ms-photo")
+    _ReadColorSourceWIC (image.file_info.path, image.color_source);
+
+  else if (mime == L"image/x-exr")
+    image.color_source.format_defined = "Linear, Rec. 709 (OpenEXR)";
+
+  else if (mime == L"image/vnd.radiance")
+    image.color_source.format_defined = "Linear (Radiance HDR)";
+
+  else if (mime == L"image/vnd-ms.dds")
+    image.color_source.format_defined = "Set by the texture format (DDS)";
+}
+
+static void
+_LogColorSource (const image_s& image)
+{
+  std::string detail = _DescribeColorSourceInDetail (image.color_source);
+  std::replace (detail.begin (), detail.end (), '\n', ';');
+
+  PLOG_INFO << "Color space: " << _DescribeColorSource (image.color_source) << " [" << detail << "]";
+}
+
 bool
 LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = nullptr)
 {
@@ -1712,6 +1829,8 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
   }
 
   SK_AutoFile _(pImageFile);
+
+  _ReadColorSource (image, image_sig, pImageFile, _.getInitialSize ());
 
   // Animated images (APNG, GIF, WebP): all their frames, which the viewer plays. One that cannot be played (too large,
   //   or malformed) is loaded as a still image below: its first frame (an APNG: its default image).
@@ -2352,6 +2471,17 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
         avifRGBImage                 rgb;
         SK_avifRGBImageSetDefaults (&rgb, avif_decoder->image);
 
+        // Its color information: the ICC profile and nclx (cICP), both of which it may have
+        image.color_source.origin     = "AVIF";
+        image.color_source.has_cicp   = (avif_decoder->image->colorPrimaries          != AVIF_COLOR_PRIMARIES_UNSPECIFIED ||
+                                         avif_decoder->image->transferCharacteristics != AVIF_TRANSFER_CHARACTERISTICS_UNSPECIFIED);
+        image.color_source.primaries  = static_cast <uint8_t> (avif_decoder->image->colorPrimaries);
+        image.color_source.transfer   = static_cast <uint8_t> (avif_decoder->image->transferCharacteristics);
+        image.color_source.matrix     = static_cast <uint8_t> (avif_decoder->image->matrixCoefficients);
+        image.color_source.full_range = (avif_decoder->image->yuvRange == AVIF_RANGE_FULL) ? 1 : 0;
+
+        _SetICC (image.color_source, avif_decoder->image->icc.data, avif_decoder->image->icc.size);
+
         int bpc = rgb.depth;
         bool is_hdr_image = (avif_decoder->image->depth > 8) ||
           (avif_decoder->image->transferCharacteristics == AVIF_TRANSFER_CHARACTERISTICS_SMPTE2084);
@@ -2639,6 +2769,8 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
     using JxlDecoderCloseInput_pfn               = void             (*)(      JxlDecoder* dec);
     using JxlDecoderSetPreferredColorProfile_pfn = JxlDecoderStatus (*)(      JxlDecoder* dec, const JxlColorEncoding* color_encoding);
     using JxlDecoderGetColorAsEncodedProfile_pfn = JxlDecoderStatus (*)(const JxlDecoder* dec, JxlColorProfileTarget target, JxlColorEncoding* color_encoding);
+    using JxlDecoderGetICCProfileSize_pfn        = JxlDecoderStatus (*)(const JxlDecoder* dec, JxlColorProfileTarget target, size_t* size);
+    using JxlDecoderGetColorAsICCProfile_pfn     = JxlDecoderStatus (*)(const JxlDecoder* dec, JxlColorProfileTarget target, uint8_t* icc_profile, size_t size);
     using JxlDecoderSetParallelRunner_pfn        = JxlDecoderStatus (*)(      JxlDecoder* dec,
                                                                         JxlParallelRunner parallel_runner,
                                                                                     void* parallel_runner_opaque);
@@ -2667,6 +2799,8 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
     JxlDecoderSetParallelRunner_pfn        jxlDecoderSetParallelRunner        = (JxlDecoderSetParallelRunner_pfn)       GetProcAddress (hModJXL, "JxlDecoderSetParallelRunner");
     JxlDecoderSetPreferredColorProfile_pfn jxlDecoderSetPreferredColorProfile = (JxlDecoderSetPreferredColorProfile_pfn)GetProcAddress (hModJXL, "JxlDecoderSetPreferredColorProfile");
     JxlDecoderGetColorAsEncodedProfile_pfn jxlDecoderGetColorAsEncodedProfile = (JxlDecoderGetColorAsEncodedProfile_pfn)GetProcAddress (hModJXL, "JxlDecoderGetColorAsEncodedProfile");
+    JxlDecoderGetICCProfileSize_pfn        jxlDecoderGetICCProfileSize        = (JxlDecoderGetICCProfileSize_pfn)       GetProcAddress (hModJXL, "JxlDecoderGetICCProfileSize");
+    JxlDecoderGetColorAsICCProfile_pfn     jxlDecoderGetColorAsICCProfile     = (JxlDecoderGetColorAsICCProfile_pfn)    GetProcAddress (hModJXL, "JxlDecoderGetColorAsICCProfile");
 
     JxlResizableParallelRunnerCreate_pfn         jxlResizableParallelRunnerCreate         = (JxlResizableParallelRunnerCreate_pfn)        GetProcAddress (hModJXLThreads, "JxlResizableParallelRunnerCreate");
     JxlResizableParallelRunnerSuggestThreads_pfn jxlResizableParallelRunnerSuggestThreads = (JxlResizableParallelRunnerSuggestThreads_pfn)GetProcAddress (hModJXLThreads, "JxlResizableParallelRunnerSuggestThreads");
@@ -2744,6 +2878,41 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
 
         else if (status == JXL_DEC_COLOR_ENCODING)
         {
+          // Its own color space (before asking for scRGB): an encoded one (libjxl's enums match cICP's numbers), or
+          //   else an ICC profile
+          JxlColorEncoding original = { };
+          image.color_source.origin = "JPEG XL";
+
+          if (JXL_DEC_SUCCESS == jxlDecoderGetColorAsEncodedProfile (jxl_decoder, JXL_COLOR_PROFILE_TARGET_ORIGINAL, &original) &&
+              original.color_space != JXL_COLOR_SPACE_XYB && original.color_space != JXL_COLOR_SPACE_UNKNOWN)
+          {
+            image.color_source.has_cicp   = true;
+            image.color_source.full_range = 1;
+            image.color_source.primaries  =
+              (original.color_space == JXL_COLOR_SPACE_GRAY)                                    ?  1 : // Gray: Rec. 709 white
+              (original.primaries   == JXL_PRIMARIES_P3 && original.white_point == JXL_WHITE_POINT_D65) ? 12 : // Display P3
+              (original.primaries   == JXL_PRIMARIES_CUSTOM)                                    ?  2 :
+                                                  static_cast <uint8_t> (original.primaries);
+            image.color_source.transfer   =
+              (original.transfer_function == JXL_TRANSFER_FUNCTION_GAMMA) ? 2 : static_cast <uint8_t> (original.transfer_function);
+
+            if (original.transfer_function == JXL_TRANSFER_FUNCTION_GAMMA)
+              image.color_source.gamma = static_cast <uint32_t> (original.gamma * 100000.0 + 0.5);
+          }
+
+          else if (jxlDecoderGetICCProfileSize != nullptr && jxlDecoderGetColorAsICCProfile != nullptr)
+          {
+            size_t icc_size = 0;
+
+            if (JXL_DEC_SUCCESS == jxlDecoderGetICCProfileSize (jxl_decoder, JXL_COLOR_PROFILE_TARGET_ORIGINAL, &icc_size) && icc_size > 0)
+            {
+              std::vector <uint8_t> icc (icc_size);
+
+              if (JXL_DEC_SUCCESS == jxlDecoderGetColorAsICCProfile (jxl_decoder, JXL_COLOR_PROFILE_TARGET_ORIGINAL, icc.data (), icc.size ()))
+                _SetICC (image.color_source, icc.data (), icc.size ());
+            }
+          }
+
           static constexpr JxlColorEncoding
             scrgb_encoding = { .color_space       = JXL_COLOR_SPACE_RGB,
                                .white_point       = JXL_WHITE_POINT_D65,
@@ -4220,6 +4389,16 @@ SKIF_UI_Tab_DrawViewer (void)
       }
     }
 
+    // How the file describes its colors; everything it has, on hover
+    {
+      const std::string colorSpace = _DescribeColorSource (cover.color_source);
+
+      ImGui::TextUnformatted ("Color Space:");
+      ImGui::SameLine        (posXvalues);
+      ImGui::TextUnformatted (colorSpace.c_str ());
+      SKIF_ImGui_SetHoverTip (_DescribeColorSourceInDetail (cover.color_source));
+    }
+
     // Animated images
     if (cover.anim != nullptr && ! cover.anim->frames.empty ())
     {
@@ -5079,6 +5258,9 @@ SKIF_UI_Tab_DrawViewer (void)
         else
           PLOG_WARNING << "Queue position is live, but texture failed to load properly...";
 
+        if (success)
+          _LogColorSource (_data->image);
+
         cover.file_info         = _data->image.file_info;
         cover.bpc               = _data->image.bpc;
         cover.channels          = _data->image.channels;
@@ -5095,6 +5277,7 @@ SKIF_UI_Tab_DrawViewer (void)
         cover.is_hdr            = _data->image.is_hdr;
         cover.is_dds            = _data->image.is_dds;
         cover.anim              = std::move (_data->image.anim);
+        cover.color_source      = std::move (_data->image.color_source);
 
         // Parent folder (used for the directory watch)
         std::filesystem::path path       = SKIF_Util_NormalizeFullPath (cover.file_info.path);
