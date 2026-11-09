@@ -1,5 +1,6 @@
 // Tests of the animated image decoders (src/utility/animated_images.inl): APNG, GIF and WebP frames, delays, disposal and
-//   blending, IsAnimatedImageFile, still WebPs, and malformed files. The expected frames (expected.txt, frames\) come from
+//   blending, IsAnimatedImageFile, still WebPs, malformed files, and color sources (src/utility/color_source.inl: ICC
+//   profiles, cICP, gAMA/cHRM and Exif in PNG, JPEG and WebP files made here). The expected frames (expected.txt, frames\) come from
 //     reference decoders (ffmpeg, Pillow), see make_expected.py. Built and run by run_tests.ps1; returns 0 if all pass.
 //       Ported from SKIF (tools\image_tests), and built against SKIV's own stb_image (packages_misc), as the viewer is.
 //
@@ -40,6 +41,7 @@ thread_local stbi__result_info     SKIV_STBI_ResultInfo;
 #include <vector>
 
 #include "../../src/utility/animated_images.inl"
+#include "../../src/utility/color_source.inl"
 
 namespace fs = std::filesystem;
 
@@ -185,6 +187,259 @@ ReadExpected (const fs::path& folder)
   return out;
 }
 
+#pragma region Color sources
+
+// A minimal ICC profile: the header (its size, "acsp") and a description tag, as a v2 profile has it ('desc') or a v4
+//   one ('mluc', UTF-16BE)
+static std::vector <uint8_t>
+MakeICC (const std::string& name, bool v4)
+{
+  std::vector <uint8_t> tag;
+  auto put32 = [] (std::vector <uint8_t>& v, uint32_t x) { for (int s = 24; s >= 0; s -= 8) v.push_back (static_cast <uint8_t> (x >> s)); };
+
+  if (v4)
+  {
+    tag = { 'm', 'l', 'u', 'c', 0, 0, 0, 0 };
+    put32 (tag, 1); put32 (tag, 12);                      // One record, of 12 bytes
+    tag.insert (tag.end ( ), { 'e', 'n', 'U', 'S' });
+    put32 (tag, static_cast <uint32_t> (name.size ( ) * 2)); put32 (tag, 28);
+    for (char c : name) { tag.push_back (0); tag.push_back (static_cast <uint8_t> (c)); }
+  }
+
+  else
+  {
+    tag = { 'd', 'e', 's', 'c', 0, 0, 0, 0 };
+    put32 (tag, static_cast <uint32_t> (name.size ( ) + 1));
+    tag.insert (tag.end ( ), name.begin ( ), name.end ( ));
+    tag.push_back (0);
+    tag.resize (tag.size ( ) + 79, 0);                   // The (empty) Unicode and ScriptCode parts
+  }
+
+  std::vector <uint8_t> icc (128, 0);
+  memcpy (&icc [36], "acsp", 4);
+  put32 (icc, 1);                                        // One tag
+  icc.insert (icc.end ( ), { 'd', 'e', 's', 'c' });
+  put32 (icc, 144); put32 (icc, static_cast <uint32_t> (tag.size ( )));
+  icc.insert (icc.end ( ), tag.begin ( ), tag.end ( ));
+  _WriteBE32 (icc.data ( ), static_cast <uint32_t> (icc.size ( )));
+  return icc;
+}
+
+// A zlib stream of one uncompressed block
+static std::vector <uint8_t>
+ZlibStored (const std::vector <uint8_t>& data)
+{
+  std::vector <uint8_t> out = { 0x78, 0x01, 0x01 };
+  const uint16_t        len = static_cast <uint16_t> (data.size ( ));
+  out.insert (out.end ( ), { static_cast <uint8_t> (len), static_cast <uint8_t> (len >> 8),
+                             static_cast <uint8_t> (~len), static_cast <uint8_t> (~len >> 8) });
+  out.insert (out.end ( ), data.begin ( ), data.end ( ));
+
+  uint32_t a = 1, b = 0;
+  for (uint8_t c : data) { a = (a + c) % 65521; b = (b + a) % 65521; }
+  out.resize (out.size ( ) + 4);
+  _WriteBE32 (&out [out.size ( ) - 4], (b << 16) | a);
+  return out;
+}
+
+// An Exif block (TIFF): IFD0 pointing at the Exif IFD (ColorSpace), which points at the interoperability IFD (its index)
+static std::vector <uint8_t>
+MakeExif (bool little, uint16_t colorSpace, const char* interop)
+{
+  std::vector <uint8_t> t;
+  auto p16 = [&] (uint32_t x) { if (little) { t.push_back (x & 0xFF); t.push_back ((x >> 8) & 0xFF); } else { t.push_back ((x >> 8) & 0xFF); t.push_back (x & 0xFF); } };
+  auto p32 = [&] (uint32_t x) { if (little) { p16 (x & 0xFFFF); p16 (x >> 16); } else { p16 (x >> 16); p16 (x & 0xFFFF); } };
+
+  t.insert (t.end ( ), { static_cast <uint8_t> (little ? 'I' : 'M'), static_cast <uint8_t> (little ? 'I' : 'M') });
+  p16 (42); p32 (8);
+  p16 (1); p16 (0x8769); p16 (4); p32 (1); p32 (26); p32 (0);                // IFD0, at 8
+  p16 (2); p16 (0xA001); p16 (3); p32 (1); p16 (colorSpace); p16 (0);        // Exif IFD, at 26
+           p16 (0xA005); p16 (4); p32 (1); p32 (56); p32 (0);
+  p16 (1); p16 (0x0001); p16 (2); p32 (4);                                   // Interoperability IFD, at 56
+  t.insert (t.end ( ), interop, interop + 3); t.push_back (0); p32 (0);
+  return t;
+}
+
+static void
+TestColorSources (const fs::path& images)
+{
+  const auto iccV2 = MakeICC ("Test Profile", false),
+             iccV4 = MakeICC ("Display P3",   true);
+
+  // The names of both kinds of profile
+  Check (_ReadICCName (iccV2.data ( ), iccV2.size ( )) == "Test Profile", "ICC v2", "wrong name: " + _ReadICCName (iccV2.data ( ), iccV2.size ( )));
+  Check (_ReadICCName (iccV4.data ( ), iccV4.size ( )) == "Display P3",   "ICC v4", "wrong name: " + _ReadICCName (iccV4.data ( ), iccV4.size ( )));
+
+  // PNG: chunks inserted after IHDR (33 bytes in)
+  const auto still = ReadFile (images / "still.png");
+
+  auto png = [&] (const std::vector <std::pair <const char*, std::vector <uint8_t>>>& chunks)
+  {
+    std::vector <uint8_t> out (still.begin ( ), still.begin ( ) + 33), chunk;
+
+    for (const auto& c : chunks)
+    {
+      chunk.clear ( );
+      _AppendPNGChunk (chunk, c.first, c.second.data ( ), c.second.size ( ));
+      out.insert (out.end ( ), chunk.begin ( ), chunk.end ( ));
+    }
+
+    out.insert (out.end ( ), still.begin ( ) + 33, still.end ( ));
+    return out;
+  };
+
+  std::vector <uint8_t> iccp = { 'P', '3', 0, 0 };
+  const auto            z    = ZlibStored (iccV4);
+  iccp.insert (iccp.end ( ), z.begin ( ), z.end ( ));
+
+  std::vector <uint8_t> chrm (32);
+  const uint32_t        chrmValues [8] = { 31270, 32900, 64000, 33000, 30000, 60000, 15000, 6000 };
+  for (int i = 0; i < 8; i++) _WriteBE32 (&chrm [i * 4], chrmValues [i]);
+
+  {
+    color_source_s cs;
+    const auto     file = png ({ { "iCCP", iccp }, { "gAMA", { 0, 0, 0xB1, 0x8F } }, { "cHRM", chrm } });
+    _ReadColorSourcePNG (file.data ( ), file.size ( ), cs);
+
+    Check (cs.icc == iccV4 && cs.icc_name == "Display P3", "PNG iCCP", "profile not read");
+    Check (cs.gamma == 45455 && cs.has_chrm && cs.chrm [2] == 0.64f, "PNG gAMA, cHRM", "not read");
+    Check (_DescribeColorSource (cs) == "ICC: Display P3", "PNG iCCP", "described as " + _DescribeColorSource (cs));
+
+    for (size_t size = 0; size < file.size ( ); size++)
+    {
+      color_source_s cut;
+      _ReadColorSourcePNG (file.data ( ), size, cut);
+    }
+  }
+
+  {
+    color_source_s cs;
+    const auto     file = png ({ { "cICP", { 9, 16, 0, 1 } }, { "iCCP", iccp } });
+    _ReadColorSourcePNG (file.data ( ), file.size ( ), cs);
+
+    Check (cs.has_cicp && cs.primaries == 9 && cs.transfer == 16 && cs.full_range == 1, "PNG cICP", "not read");
+    Check (_DescribeColorSource (cs) == "cICP: Rec. 2020, PQ", "PNG cICP", "does not override iCCP: " + _DescribeColorSource (cs));
+  }
+
+  {
+    color_source_s cs, none;
+    const auto     file = png ({ { "sRGB", { 0 } }, { "gAMA", { 0, 0, 0xB1, 0x8F } } });
+    _ReadColorSourcePNG (file.data ( ), file.size ( ), cs);
+    _ReadColorSourcePNG (still.data ( ), still.size ( ), none);
+
+    Check (cs.has_srgb && _DescribeColorSource (cs) == "sRGB (PNG sRGB chunk)", "PNG sRGB", "described as " + _DescribeColorSource (cs));
+    Check (_DescribeColorSource (none) == "Not specified", "still.png", "described as " + _DescribeColorSource (none));
+  }
+
+  {
+    color_source_s cs;
+    const auto     file = png ({ { "gAMA", { 0, 1, 0x86, 0xA0 } } }); // 100000: linear
+    _ReadColorSourcePNG (file.data ( ), file.size ( ), cs);
+    Check (_DescribeColorSource (cs) == "Gamma 1.00 (PNG gAMA)", "PNG gAMA 1.0", "described as " + _DescribeColorSource (cs));
+  }
+
+  // JPEG: Exif (both byte orders) and an ICC profile split across two APP2 segments
+  for (bool little : { false, true })
+  {
+    std::vector <uint8_t> jpeg = { 0xFF, 0xD8 };
+
+    auto segment = [&] (uint8_t marker, const std::vector <uint8_t>& body)
+    {
+      jpeg.insert (jpeg.end ( ), { 0xFF, marker, static_cast <uint8_t> ((body.size ( ) + 2) >> 8), static_cast <uint8_t> (body.size ( ) + 2) });
+      jpeg.insert (jpeg.end ( ), body.begin ( ), body.end ( ));
+    };
+
+    const auto exif = MakeExif (little, 65535, "R03");
+    std::vector <uint8_t> app1 = { 'E', 'x', 'i', 'f', 0, 0 };
+    app1.insert (app1.end ( ), exif.begin ( ), exif.end ( ));
+
+    segment (0xE0, { 'J', 'F', 'I', 'F', 0, 1, 1, 0, 0, 1, 0, 1, 0, 0 });
+    segment (0xE1, app1);
+
+    const size_t half = iccV2.size ( ) / 2;
+
+    for (int part = 0; part < 2; part++)
+    {
+      std::vector <uint8_t> app2 = { 'I', 'C', 'C', '_', 'P', 'R', 'O', 'F', 'I', 'L', 'E', 0, static_cast <uint8_t> (part + 1), 2 };
+      app2.insert (app2.end ( ), iccV2.begin ( ) + (part ? half : 0), part ? iccV2.end ( ) : iccV2.begin ( ) + half);
+      segment (0xE2, app2);
+    }
+
+    jpeg.insert (jpeg.end ( ), { 0xFF, 0xDA, 0, 2, 0x12, 0x34, 0xFF, 0xD9 });
+
+    const std::string name = little ? "JPEG (Exif II)" : "JPEG (Exif MM)";
+    color_source_s    cs;
+    _ReadColorSourceJPEG (jpeg.data ( ), jpeg.size ( ), cs);
+
+    Check (cs.exif_color_space == 65535 && strcmp (cs.exif_interop, "R03") == 0, name, "Exif not read");
+    Check (cs.icc == iccV2 && _DescribeColorSource (cs) == "ICC: Test Profile", name, "profile not read: " + _DescribeColorSource (cs));
+
+    // Without the profile: the Exif color space
+    cs.icc.clear ( );
+    Check (_DescribeColorSource (cs) == "Adobe RGB (Exif, R03)", name, "described as " + _DescribeColorSource (cs));
+
+    for (size_t size = 0; size < jpeg.size ( ); size++)
+    {
+      color_source_s cut;
+      _ReadColorSourceJPEG (jpeg.data ( ), size, cut);
+      Check (cut.icc.empty ( ) || cut.icc == iccV2, name, "a cut-off profile was kept");
+    }
+  }
+
+  // WebP: an extended WebP (VP8X) made of a still lossless one, with ICCP and EXIF chunks
+  {
+    const auto lossless = ReadFile (images / "webp_still_lossless.webp");
+    std::vector <uint8_t> body = { 'W', 'E', 'B', 'P' };
+
+    auto chunk = [&] (const char* fourcc, const std::vector <uint8_t>& data)
+    {
+      body.insert (body.end ( ), fourcc, fourcc + 4);
+      const uint32_t size = static_cast <uint32_t> (data.size ( ));
+      body.insert (body.end ( ), { static_cast <uint8_t> (size), static_cast <uint8_t> (size >> 8), static_cast <uint8_t> (size >> 16), static_cast <uint8_t> (size >> 24) });
+      body.insert (body.end ( ), data.begin ( ), data.end ( ));
+      if (size & 1) body.push_back (0);
+    };
+
+    chunk ("VP8X", { 0x20 | 0x08, 0, 0, 0, 59, 0, 0, 89, 0, 0 }); // ICCP and EXIF; 60x90
+    chunk ("ICCP", iccV4);
+    body.insert (body.end ( ), lossless.begin ( ) + 12, lossless.end ( ));   // Its VP8L chunk
+    chunk ("EXIF", MakeExif (true, 1, "R98"));
+
+    std::vector <uint8_t> webp = { 'R', 'I', 'F', 'F', 0, 0, 0, 0 };
+    webp.insert (webp.end ( ), body.begin ( ), body.end ( ));
+    const uint32_t riff = static_cast <uint32_t> (body.size ( ));
+    memcpy (&webp [4], &riff, 4);
+
+    color_source_s cs;
+    _ReadColorSourceWebP (webp.data ( ), webp.size ( ), cs);
+
+    Check (cs.icc == iccV4 && _DescribeColorSource (cs) == "ICC: Display P3", "WebP ICCP", "profile not read: " + _DescribeColorSource (cs));
+    Check (cs.exif_color_space == 1 && strcmp (cs.exif_interop, "R98") == 0, "WebP EXIF", "not read");
+
+    uint32_t width = 0, height = 0; std::vector <uint8_t> rgba;
+    Check (_DecodeWebPStill (webp.data ( ), webp.size ( ), width, height, rgba) && width == 60 && height == 90, "WebP ICCP", "the test file does not decode");
+
+    for (size_t size = 0; size < webp.size ( ); size++)
+    {
+      color_source_s cut;
+      _ReadColorSourceWebP (webp.data ( ), size, cut);
+    }
+  }
+
+  // Not images, or garbage
+  for (const char* name : { "garbage.png", "garbage.gif", "garbage.webp" })
+  {
+    const auto     file = ReadFile (images / name);
+    color_source_s cs;
+    _ReadColorSourcePNG  (file.data ( ), file.size ( ), cs);
+    _ReadColorSourceJPEG (file.data ( ), file.size ( ), cs);
+    _ReadColorSourceWebP (file.data ( ), file.size ( ), cs);
+    Check (cs.icc.empty ( ) && ! cs.has_cicp && cs.exif_color_space == 0, name, "color information found in garbage");
+  }
+}
+
+#pragma endregion
+
 int
 main (int argc, char** argv)
 {
@@ -285,6 +540,8 @@ main (int argc, char** argv)
 
   for (const char* name : { "garbage.png", "garbage.gif", "garbage.webp" })
     Check (Decode (ReadFile (images / name)).result <= 0, name, "decoded");
+
+  TestColorSources (images);
 
   printf ("%s: %d of %d checks passed\n", (failures == 0) ? "PASS" : "FAIL", checks - failures, checks);
   return (failures == 0) ? 0 : 1;
