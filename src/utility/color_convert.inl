@@ -247,6 +247,35 @@ _NeedsColorConversion (const color_source_s& cs)
 
 #pragma endregion
 
+#pragma region HLG
+
+// HLG (BT.2100) to display light, as a fraction of 10,000 nits (as PQ decodes to, SKIV_Image_PQToLinear): its inverse
+//   OETF (to scene light), then the OOTF of a 1,000-nit display (system gamma 1.2) on the luminance of the image's own
+//     primaries (weights: their Y, e.g. 0.2627, 0.6780, 0.0593 for Rec. 2020). Its reference white (0.75) is 203 nits.
+static void
+_HLGToDisplay (const float signal [3], const float weights [3], float out [3])
+{
+  constexpr float a = 0.17883277f,
+                  b = 0.28466892f, // 1 - 4a
+                  c = 0.55991073f; // 0.5 - a ln (4a)
+
+  float scene [3];
+
+  for (int i = 0; i < 3; i++)
+  {
+    const float e = std::max (signal [i], 0.0f);
+    scene [i] = (e <= 0.5f) ? (e * e / 3.0f) : ((std::exp ((e - c) / a) + b) / 12.0f);
+  }
+
+  const float y    = weights [0] * scene [0] + weights [1] * scene [1] + weights [2] * scene [2];
+  const float gain = (y > 0.0f) ? 0.1f * std::pow (y, 0.2f) : 0.0f; // 1,000 nits * Y^(1.2 - 1), over 10,000 nits
+
+  for (int i = 0; i < 3; i++)
+    out [i] = gain * scene [i];
+}
+
+#pragma endregion
+
 #pragma region Convert
 
 // Calls rows (first, last) for all of height's rows, spread over the CPU's threads (64 rows each at least)

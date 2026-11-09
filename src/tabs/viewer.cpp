@@ -2957,7 +2957,44 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
             temp_img.Release ();
           }
 
-          else if (avif_decoder->image->colorPrimaries == AVIF_COLOR_PRIMARIES_XYZ)
+          // HDR: the signal to display light (1.0: 10,000 nits), by its transfer: HLG (BT.2100, for a 1,000-nit display,
+          //   see _HLGToDisplay, on the luminance of its own primaries), or else PQ. The primaries are converted below.
+          const bool hlg =
+            (avif_decoder->image->transferCharacteristics == AVIF_TRANSFER_CHARACTERISTICS_HLG);
+
+          const float* lumaWeights = [&](void) -> const float*
+          {
+            static constexpr float bt2020 [3] = { 0.2627f, 0.6780f, 0.0593f },
+                                   bt709  [3] = { 0.2126f, 0.7152f, 0.0722f },
+                                   p3     [3] = { 0.2290f, 0.6917f, 0.0793f },
+                                   bt601  [3] = { 0.2124f, 0.7011f, 0.0866f },
+                                   xyz    [3] = { 0.0f,    1.0f,    0.0f    };
+
+            switch (avif_decoder->image->colorPrimaries)
+            {
+              case AVIF_COLOR_PRIMARIES_XYZ:    return xyz;
+              case AVIF_COLOR_PRIMARIES_BT601:  return bt601;
+              case AVIF_COLOR_PRIMARIES_DCI_P3: return p3;
+              case AVIF_COLOR_PRIMARIES_BT709:  return bt709;
+              default:                          return bt2020;
+            }
+          } ( );
+
+          auto _ToLinear = [&](XMVECTOR v) -> XMVECTOR
+          {
+            if (! hlg)
+              return SKIV_Image_PQToLinear (v);
+
+            const float signal [3] = { XMVectorGetX (v), XMVectorGetY (v), XMVectorGetZ (v) };
+            float       light  [3];
+
+            _HLGToDisplay (signal, lumaWeights, light);
+            return XMVectorSet (light [0], light [1], light [2], XMVectorGetW (v));
+          };
+
+          PLOG_INFO_IF (hlg) << "[Image Processing] HLG AVIF image: decoded as for a 1,000-nit display";
+
+          if (avif_decoder->image->colorPrimaries == AVIF_COLOR_PRIMARIES_XYZ)
           {
             if ( SUCCEEDED ( TransformImage (*temp_img.GetImages (),
                   [&](      XMVECTOR* outPixels,
@@ -2973,7 +3010,7 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
 
                       XMVECTOR r =
                         XMVectorScale (
-                          XMVector3Transform (SKIV_Image_PQToLinear (v), c_fromXYZto709), 125.0f
+                          XMVector3Transform (_ToLinear (v), c_fromXYZto709), 125.0f
                         );
 
                       outPixels [j] = XMVectorSetW (r, XMVectorGetW (v));
@@ -3002,7 +3039,7 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
 
                       XMVECTOR r =
                         XMVectorScale (
-                          XMVector3Transform (SKIV_Image_PQToLinear (v), c_from601to709), 125.0f
+                          XMVector3Transform (_ToLinear (v), c_from601to709), 125.0f
                         );
 
                       outPixels [j] = XMVectorSetW (r, XMVectorGetW (v));
@@ -3031,7 +3068,7 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
 
                       XMVECTOR r =
                         XMVectorScale (
-                          XMVector3Transform (SKIV_Image_PQToLinear (v), c_fromDCIP3to709), 125.0f
+                          XMVector3Transform (_ToLinear (v), c_fromDCIP3to709), 125.0f
                         );
 
                       outPixels [j] = XMVectorSetW (r, XMVectorGetW (v));
@@ -3048,7 +3085,7 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
                    avif_decoder->image->colorPrimaries == AVIF_COLOR_PRIMARIES_SRGB)
           {
             if (avif_decoder->image->transferCharacteristics == AVIF_TRANSFER_CHARACTERISTICS_PQ ||
-                avif_decoder->image->transferCharacteristics == AVIF_TRANSFER_CHARACTERISTICS_SMPTE2084)
+                avif_decoder->image->transferCharacteristics == AVIF_TRANSFER_CHARACTERISTICS_SMPTE2084 || hlg)
             {
               if ( SUCCEEDED ( TransformImage(*temp_img.GetImages (),
                     [&](      XMVECTOR* outPixels,
@@ -3064,7 +3101,7 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
 
                     XMVECTOR r =
                       XMVectorScale(
-                        SKIV_Image_PQToLinear(v), 125.0f
+                        _ToLinear (v), 125.0f
                       );
 
                     outPixels[j] = XMVectorSetW (r, XMVectorGetW (v));
@@ -3127,7 +3164,7 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
                       XMVECTOR v = inPixels [j];
 
                       XMVECTOR r =
-                        XMVector3Transform (SKIV_Image_PQToLinear (v), c_Bt2100toscRGB);
+                        XMVector3Transform (_ToLinear (v), c_Bt2100toscRGB);
 
                       outPixels [j] = XMVectorSetW (r, XMVectorGetW (v));
                     }
