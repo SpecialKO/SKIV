@@ -172,7 +172,7 @@
       </Command>
     </PreBuildEvent>
     <PostBuildEvent>
-      <Command>post_build.bat "$(TargetPath)" "$(TargetFileName)"</Command>
+      <Command>"$(ProjectDir)post_build.bat" "$(TargetPath)" "$(TargetFileName)"</Command>
       <Message>Execute post-build events</Message>
     </PostBuildEvent>
     <Manifest>
@@ -236,7 +236,7 @@
       </Command>
     </PreBuildEvent>
     <PostBuildEvent>
-      <Command>post_build.bat "$(TargetPath)" "$(TargetFileName)"</Command>
+      <Command>"$(ProjectDir)post_build.bat" "$(TargetPath)" "$(TargetFileName)"</Command>
       <Message>Execute post-build events</Message>
     </PostBuildEvent>
     <Manifest>
@@ -306,7 +306,7 @@
       <AdditionalManifestFiles>.\resources\appcompat.manifest %(AdditionalManifestFiles)</AdditionalManifestFiles>
     </Manifest>
     <PostBuildEvent>
-      <Command>post_build.bat "$(TargetPath)" "$(TargetFileName)"</Command>
+      <Command>"$(ProjectDir)post_build.bat" "$(TargetPath)" "$(TargetFileName)"</Command>
     </PostBuildEvent>
     <PostBuildEvent>
       <Message>Execute post-build events</Message>
@@ -389,7 +389,7 @@
       </Message>
     </PreBuildEvent>
     <PostBuildEvent>
-      <Command>post_build.bat "$(TargetPath)" "$(TargetFileName)"</Command>
+      <Command>"$(ProjectDir)post_build.bat" "$(TargetPath)" "$(TargetFileName)"</Command>
     </PostBuildEvent>
     <PostBuildEvent>
       <Message>Execute post-build events</Message>
