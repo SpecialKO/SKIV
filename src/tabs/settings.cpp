@@ -571,7 +571,7 @@ SKIF_UI_Tab_DrawSettings (void)
     if (ImGui::Checkbox ("Animated images", &_registry.bAnimatedImages))
       _registry.regKVAnimatedImages.putData (_registry.bAnimatedImages);
 
-    SKIF_ImGui_SetHoverTip ("Play animated images (APNG, GIF, WebP). When disabled, only their first frame is shown.\n"
+    SKIF_ImGui_SetHoverTip ("Play animated images (APNG, GIF, WebP, AVIF). When disabled, only their first frame is shown.\n"
                             "Applies to images opened afterwards.\n\n"
                             "While an animation is shown: Space pauses or resumes it, and , / . step between its frames.");
 

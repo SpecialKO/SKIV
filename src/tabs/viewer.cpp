@@ -88,7 +88,7 @@
 
 #include <stb_image.h>
 
-// Animated images (APNG, GIF, WebP), and WebP still images: libwebp, and the decoders ported from SKIF. They use
+// Animated images (APNG, GIF, WebP; AVIF: further below), and WebP still images: libwebp, and the decoders ported from SKIF. They use
 //   stb_image's internals, so they are included here, where stb_image is implemented.
 #include <functional>
 #include <libwebp/src/webp/decode.h>
@@ -162,6 +162,8 @@ const std::initializer_list<FileSignature> supported_formats =
                                                                         { 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF } }, // ?? ?? ?? ?? 66 74 79 70 68 65 69 63
   FileSignature { L"image/avif",                { L".avif" },           { 0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x61, 0x76, 0x69, 0x66 },   // ftypavif
                                                                         { 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF } }, // ?? ?? ?? ?? 66 74 79 70 61 76 69 66
+  FileSignature { L"image/avif",                { L".avif", L".avifs" }, { 0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x61, 0x76, 0x69, 0x73 },  // ftypavis: image sequences (animated)
+                                                                        { 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF } }, // ?? ?? ?? ?? 66 74 79 70 61 76 69 73
   FileSignature { L"image/jxl",                 { L".jxl"  },           { 0xFF, 0x0A } },                                                             // Naked
   FileSignature { L"image/jxl",                 { L".jxl"  },           { 0x00, 0x00, 0x00, 0x0C, 0x4A, 0x58, 0x4C, 0x20, 0x0D, 0x0A, 0x87, 0x0A } }, // ISOBMFF-based container
   FileSignature { L"image/vnd-ms.dds",          { L".dds"  },           { 0x44, 0x44, 0x53, 0x20 } },
@@ -1245,21 +1247,179 @@ SKIV_DXGI_NumberOfChannels (DXGI_FORMAT format)
 
 #pragma region AnimatedImages
 
-// An animated image (APNG, GIF, WebP), read and parsed: its canvas, and how many frames it has. Decode ( ) hands over its
-//   frames (the canvas as it is at each, RGBA, and how long it is shown).
+#pragma region AVIF
+
+// Animated AVIF (an image sequence, by libavif: see isAVIFEncoderAvailable, which loads it). Not in animated_images.inl,
+//   which is shared with SKIF and does not use libavif. Each frame is a whole image (no blending, nor disposal).
+
+// Whether a file is an AVIF image sequence: its ftyp box has the brand avis (as its own, or among the compatible ones)
+static bool
+_IsAVIFSequence (const uint8_t* data, size_t size)
+{
+  if (size < 16 || memcmp (data + 4, "ftyp", 4) != 0)
+    return false;
+
+  const size_t box = std::min (static_cast <size_t> (_ReadBE32 (data)), size);
+
+  for (size_t brand = 8; brand + 4 <= box; brand += 4)
+  {
+    if (brand == 12) // The minor version
+      continue;
+
+    if (memcmp (data + brand, "avis", 4) == 0)
+      return true;
+  }
+
+  return false;
+}
+
+static bool
+_IsAVIFSequenceFile (const std::wstring& path)
+{
+  uint8_t       head [256] = { };
+  std::ifstream stream (std::filesystem::path (path), std::ios::binary);
+
+  stream.read (reinterpret_cast <char*> (head), sizeof (head));
+  return _IsAVIFSequence (head, static_cast <size_t> (stream.gcount ( )));
+}
+
+// The decoder (libavif's), set up for the file in data; nullptr if libavif is missing or cannot parse it
+static avifDecoder*
+_OpenAVIF (const uint8_t* data, size_t size)
+{
+  if (! isAVIFEncoderAvailable ())
+    return nullptr;
+
+  avifDecoder* decoder = SK_avifDecoderCreate ( );
+
+  if (decoder == nullptr)
+    return nullptr;
+
+  decoder->maxThreads = static_cast <int> (std::clamp (std::thread::hardware_concurrency ( ), 1u, 64u));
+
+  if (SK_avifDecoderSetIOMemory (decoder, data, size) != AVIF_RESULT_OK ||
+      SK_avifDecoderParse       (decoder)             != AVIF_RESULT_OK || decoder->image == nullptr)
+  {
+    PLOG_ERROR << "libavif could not read the animated image: " << decoder->diag.error;
+    SK_avifDecoderDestroy (decoder);
+    return nullptr;
+  }
+
+  return decoder;
+}
+
+// The size of an AVIF image sequence, how many frames it has, and its colors (as the still AVIF decoder reads them). False
+//   if it cannot be played: not a sequence, or HDR (PQ, HLG: the frames of animated images are 8 bpc sRGB), which is shown
+//     as a still image then, by the AVIF decoder.
+static bool
+_ScanAVIF (const uint8_t* data, size_t size, uint32_t& width, uint32_t& height, uint32_t& count, color_source_s& color)
+{
+  avifDecoder* decoder = _OpenAVIF (data, size);
+
+  if (decoder == nullptr)
+    return false;
+
+  const avifImage* image = decoder->image;
+
+  width  = image->width;
+  height = image->height;
+  count  = static_cast <uint32_t> (std::max (decoder->imageCount, 0));
+
+  color            = { };
+  color.origin     = "AVIF";
+  color.has_cicp   = (image->colorPrimaries          != AVIF_COLOR_PRIMARIES_UNSPECIFIED ||
+                      image->transferCharacteristics != AVIF_TRANSFER_CHARACTERISTICS_UNSPECIFIED);
+  color.primaries  = static_cast <uint8_t> (image->colorPrimaries);
+  color.transfer   = static_cast <uint8_t> (image->transferCharacteristics);
+  color.matrix     = static_cast <uint8_t> (image->matrixCoefficients);
+  color.full_range = (image->yuvRange == AVIF_RANGE_FULL) ? 1 : 0;
+
+  _SetICC (color, image->icc.data, image->icc.size);
+
+  const bool hdr = (_IsHDR10ColorSource (color) || color.transfer == AVIF_TRANSFER_CHARACTERISTICS_HLG);
+
+  PLOG_INFO_IF (hdr) << "Animated AVIF is HDR (" << _DescribeColorSource (color) << "): showing its first frame";
+
+  SK_avifDecoderDestroy (decoder);
+  return ! hdr;
+}
+
+// Decodes the frames of an AVIF image sequence, as RGBA (8 bpc), handing each over to onFrame with how long it is shown
+//   (in milliseconds), until it returns false. How many frames were decoded, or -1 if none could be.
+static int
+_DecodeAVIF (const uint8_t* data, size_t size, const std::function <bool (const uint8_t*, uint32_t)>& onFrame)
+{
+  avifDecoder* decoder = _OpenAVIF (data, size);
+
+  if (decoder == nullptr)
+    return -1;
+
+  const uint32_t        width  = decoder->image->width,
+                        height = decoder->image->height;
+  std::vector <uint8_t> canvas (static_cast <size_t> (width) * height * 4);
+  int                   frames = 0;
+
+  while (SK_avifDecoderNextImage (decoder) == AVIF_RESULT_OK)
+  {
+    // All the frames of a sequence are its size
+    if (decoder->image->width != width || decoder->image->height != height)
+      break;
+
+    avifRGBImage rgb;
+    SK_avifRGBImageSetDefaults (&rgb, decoder->image);
+    rgb.format      = AVIF_RGB_FORMAT_RGBA;
+    rgb.depth       = 8;
+    rgb.ignoreAlpha = AVIF_FALSE;
+    rgb.maxThreads  = decoder->maxThreads;
+
+    bool converted = false;
+
+    if (SK_avifRGBImageAllocatePixels (&rgb) == AVIF_RESULT_OK)
+    {
+      converted = (SK_avifImageYUVToRGB (decoder->image, &rgb) == AVIF_RESULT_OK);
+
+      if (converted)
+        for (uint32_t y = 0; y < height; y++)
+          memcpy (&canvas [static_cast <size_t> (y) * width * 4], rgb.pixels + static_cast <size_t> (y) * rgb.rowBytes, static_cast <size_t> (width) * 4);
+
+      SK_avifRGBImageFreePixels (&rgb);
+    }
+
+    if (! converted)
+      break;
+
+    frames++;
+
+    const uint32_t delay = static_cast <uint32_t> (std::lround (std::max (decoder->imageTiming.duration, 0.0) * 1000.0));
+
+    if (! onFrame (canvas.data ( ), delay))
+      break;
+  }
+
+  SK_avifDecoderDestroy (decoder);
+  return (frames > 0) ? frames : -1;
+}
+
+#pragma endregion
+
+// An animated image (APNG, GIF, WebP, AVIF), read and parsed: its canvas, and how many frames it has. Decode ( ) hands
+//   over its frames (the canvas as it is at each, RGBA, and how long it is shown).
 struct animated_image_s
 {
   std::vector <uint8_t> file;
   apng_s                apng;    // APNG: the parsed frames
   bool                  isGIF  = false;
   bool                  isWebP = false;
+  bool                  isAVIF = false;
+  color_source_s        color;   // AVIF: its colors (those of the others are read from the file by _ReadColorSource)
   uint32_t              width  = 0,
                         height = 0,
                         count  = 0;
 
   int Decode (const std::function <bool (const uint8_t*, uint32_t)>& onFrame) const
   {
-    return (isWebP) ? _DecodeWebP (file.data ( ), file.size ( ), onFrame) :
+    return (isAVIF) ? _DecodeAVIF (file.data ( ), file.size ( ), onFrame) :
+           (isWebP) ? _DecodeWebP (file.data ( ), file.size ( ), onFrame) :
            (isGIF)  ? _DecodeGIF  (file.data ( ), file.size ( ), onFrame)
                     : _DecodeAPNG (apng, onFrame);
   }
@@ -1296,10 +1456,17 @@ _OpenAnimatedImage (const std::wstring& path, animated_image_s& image)
       return false;
   }
 
-  image.isWebP = _IsWebP (image.file.data ( ), image.file.size ( ));
+  image.isAVIF = _IsAVIFSequence (image.file.data ( ), image.file.size ( ));
+  image.isWebP = _IsWebP         (image.file.data ( ), image.file.size ( ));
   image.isGIF  = (memcmp (image.file.data ( ), "GIF8", 4) == 0);
 
-  if (image.isWebP)
+  if (image.isAVIF)
+  {
+    if (! _ScanAVIF (image.file.data ( ), image.file.size ( ), image.width, image.height, image.count, image.color))
+      return false;
+  }
+
+  else if (image.isWebP)
   {
     if (! _ScanWebP (image.file.data ( ), image.file.size ( ), image.width, image.height, image.count))
       return false;
@@ -1364,6 +1531,10 @@ _LoadAnimatedImage (image_s& image, const std::function <bool (void)>& wanted)
 
   if (! _OpenAnimatedImage (image.file_info.path, source))
     return false;
+
+  // AVIF: its colors come from libavif (the other formats' were read from the file by _ReadColorSource)
+  if (source.isAVIF)
+    image.color_source = source.color;
 
   const uint32_t width  = source.width,
                  height = source.height,
@@ -1864,11 +2035,13 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
 
   _ReadColorSource (image, image_sig, pImageFile, _.getInitialSize ());
 
-  // Animated images (APNG, GIF, WebP): all their frames, which the viewer plays. One that cannot be played (too large,
+  // Animated images (APNG, GIF, WebP, AVIF): all their frames, which the viewer plays. One that cannot be played (too large,
   //   or malformed) is loaded as a still image below: its first frame (an APNG: its default image).
   //     GIFs skip IsAnimatedImageFile, which only reads GIFs up to 64 MB: _LoadAnimatedImage counts their frames itself.
+  //       AVIF: image sequences (by their ftyp box), whose frames libavif decodes (HDR ones are shown as still images).
   if (_registry.bAnimatedImages && image_sig != nullptr &&
      ((image_sig->mime_type == L"image/gif") ||
+      (image_sig->mime_type == L"image/avif" && _IsAVIFSequenceFile (image.file_info.path)) ||
      ((image_sig->mime_type == L"image/png" ||
        image_sig->mime_type == L"image/webp") && IsAnimatedImageFile (image.file_info.path))))
   {
@@ -2512,7 +2685,9 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
       rewind (pImageFile);
 
       SK_avifDecoderSetIOMemory (avif_decoder, _scratchMemory.get (), _.getInitialSize ());
-      SK_avifDecoderParse       (avif_decoder);
+
+      if (SK_avifDecoderParse (avif_decoder) != AVIF_RESULT_OK)
+        PLOG_ERROR << "libavif could not read the image: " << avif_decoder->diag.error;
 
       // We only want 1 image, if there are more... too bad.
       if (SK_avifDecoderNextImage  (avif_decoder) == AVIF_RESULT_OK)
@@ -2532,7 +2707,15 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
         _SetICC (image.color_source, avif_decoder->image->icc.data, avif_decoder->image->icc.size);
 
         int bpc = rgb.depth;
-        bool is_hdr_image = (avif_decoder->image->depth > 8) ||
+        // Of more than 8 bpc, but of an SDR curve (Rec. 709, sRGB, a gamma, linear...): SDR, converted to scRGB below from
+        //   its colors (cICP or ICC profile). The HDR conversions take every image of more than 8 bpc for PQ.
+        const uint32_t transfer = avif_decoder->image->transferCharacteristics;
+        const bool     sdr_high_bit =
+          (avif_decoder->image->depth > 8) &&
+          (transfer ==  1 || transfer ==  4 || transfer ==  5 || transfer ==  6 || transfer ==  7 ||
+           transfer ==  8 || transfer == 13 || transfer == 14 || transfer == 15 || transfer == 17);
+
+        bool is_hdr_image = (avif_decoder->image->depth > 8 && ! sdr_high_bit) ||
           (avif_decoder->image->transferCharacteristics == AVIF_TRANSFER_CHARACTERISTICS_SMPTE2084);
 
         if (avif_decoder->image->colorPrimaries == AVIF_COLOR_PRIMARIES_UNSPECIFIED)
@@ -2543,11 +2726,12 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
         bool bHasAlpha = avif_decoder->image->alphaPlane ? true : false;
 
         DXGI_FORMAT dxgi_format = is_hdr_image  ? DXGI_FORMAT_R16G16B16A16_FLOAT  :
+                                  sdr_high_bit  ? DXGI_FORMAT_R16G16B16A16_UNORM  :
                                      bHasAlpha  ? DXGI_FORMAT_B8G8R8A8_UNORM_SRGB :
                                                   DXGI_FORMAT_B8G8R8X8_UNORM_SRGB ;
 
-        rgb.depth       = is_hdr_image ? 16 : 8;
-        rgb.format      = is_hdr_image ? AVIF_RGB_FORMAT_RGBA : AVIF_RGB_FORMAT_BGRA;
+        rgb.depth       = (is_hdr_image || sdr_high_bit) ? 16 : 8;
+        rgb.format      = (is_hdr_image || sdr_high_bit) ? AVIF_RGB_FORMAT_RGBA : AVIF_RGB_FORMAT_BGRA;
 #if _WIN64
         rgb.maxThreads  = std::min (64U, std::min ((UINT)si.dwNumberOfProcessors, (UINT)__popcnt64 (si.dwActiveProcessorMask)));
 #else
@@ -2607,7 +2791,40 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
             );
           }
 
-          if (avif_decoder->image->colorPrimaries == AVIF_COLOR_PRIMARIES_XYZ)
+          // SDR of more than 8 bpc: its encoded values (16-bit) converted to scRGB, from its colors (sRGB included); a
+          //   linear Rec. 709 one is drawn as it is
+          if (sdr_high_bit)
+          {
+            cmsHPROFILE           source = _CreateSDRSourceProfile (image.color_source);
+            const DirectX::Image* in     = temp_img.GetImage (0, 0, 0);
+            bool                  done   = (source == nullptr);
+
+            if (source != nullptr)
+            {
+              if (SUCCEEDED (img.Initialize2D (DXGI_FORMAT_R16G16B16A16_FLOAT, in->width, in->height, 1, 1)) &&
+                  _ConvertToScRGB (source, TYPE_RGBA_16, in->pixels, in->rowPitch, img.GetPixels (), img.GetImage (0, 0, 0)->rowPitch,
+                                   static_cast <uint32_t> (in->width), static_cast <uint32_t> (in->height)))
+              {
+                meta.format  = DXGI_FORMAT_R16G16B16A16_FLOAT;
+                image.is_wcg = _NeedsColorConversion (image.color_source);
+                done         = true;
+
+                PLOG_INFO << "[Image Processing] Converted the " << avif_decoder->image->depth << "-bpc AVIF image's colors ("
+                          << _DescribeColorSource (image.color_source) << ") to scRGB";
+              }
+
+              cmsCloseProfile (source);
+            }
+
+            PLOG_WARNING_IF (! done) << "Could not convert the " << avif_decoder->image->depth << "-bpc AVIF image's colors";
+
+            if (meta.format != DXGI_FORMAT_R16G16B16A16_FLOAT)
+              std::swap (img, temp_img);
+
+            temp_img.Release ();
+          }
+
+          else if (avif_decoder->image->colorPrimaries == AVIF_COLOR_PRIMARIES_XYZ)
           {
             if ( SUCCEEDED ( TransformImage (*temp_img.GetImages (),
                   [&](      XMVECTOR* outPixels,
@@ -3069,7 +3286,7 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
 
           if (! (bIsHDR10 || bIsRec709Linear))
           {
-            cmsHPROFILE           source = _CreateJXLSourceProfile (image.color_source);
+            cmsHPROFILE           source = _CreateSDRSourceProfile (image.color_source);
             const DirectX::Image* data   = img.GetImage (0, 0, 0);
 
             if (source != nullptr && data != nullptr)
@@ -3186,7 +3403,8 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
   //       Only the decoders that leave the colors as they are in the file: JPEG XL converts them itself, and the others
   //         are HDR or of fixed colors.
   if (! image.is_hdr && (decoder == ImageDecoder_WIC  || decoder == ImageDecoder_stbi ||
-                         decoder == ImageDecoder_WebP || decoder == ImageDecoder_AVIF))
+                         decoder == ImageDecoder_WebP || decoder == ImageDecoder_AVIF) &&
+      DirectX::FormatDataType (img.GetMetadata ().format) == DirectX::FORMAT_TYPE_UNORM) // Not ones already converted (AVIF of 10+ bpc)
   {
     if (cmsHPROFILE source = _CreateSourceProfile (image.color_source))
     {
@@ -5876,7 +6094,7 @@ SKIF_UI_Tab_DrawViewer (void)
         prev_ext = type_ext;
       }
       error_label   += "\n"
-                       "Animated images are supported as APNG, GIF, and WebP.";
+                       "Animated images are supported as APNG, GIF, WebP, and AVIF.";
 
       SKIF_ImGui_InfoMessage (error_title, error_label);
     }
