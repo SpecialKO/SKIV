@@ -1907,20 +1907,16 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
     fread  (_scratchMemory.get (), _.getInitialSize (), 1, pImageFile);
     rewind (pImageFile);
 
-    bool cicp = false;
+    // HDR10 PNGs (Rec. 2020 primaries, PQ): by their cICP chunk, or the cICP of their ICC profile (as SKIV and Special K
+    //   write them), see _IsHDR10ColorSource. Decoded by WIC below, then converted to scRGB. Every other PNG is SDR.
+    const bool hdr10 = (image_sig->mime_type == L"image/png") && _IsHDR10ColorSource (image.color_source);
+    const bool cicp  = hdr10;
+
+    SKIV_STBI_ICCP.iCCP = ! image.color_source.icc.empty ();
 
     if (image_sig->mime_type == L"image/png")
     {
-      SKIV_STBI_ICCP.iCCP = false;
-
       std::string_view     data_view ((const char *)_scratchMemory.get (), _.getInitialSize ());
-      if (auto cicp_pos  = data_view.find ("cICP", 0, 4);
-               cicp_pos != data_view.npos)
-      {
-        memcpy (&SKIV_STBI_CICP, &_scratchMemory.get ()[cicp_pos+4], 4);
-
-        cicp = true;
-      }
 
       if (auto sbit_pos  = data_view.find ("sBIT", 0, 4);
                sbit_pos != data_view.npos)
@@ -1934,25 +1930,22 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
 
         memcpy (&SKIV_STBI_SBIT, &_scratchMemory.get ()[sbit_pos+4], std::min (4ul, size));
       }
-
-      if (auto iccp_pos  = data_view.find ("iCCP", 0, 4);
-               iccp_pos != data_view.npos)
-      {
-        unsigned long size =
-          *((unsigned long *)&_scratchMemory.get ()[iccp_pos-4]);
-
-#if (defined _M_IX86) || (defined _M_X64)
-        size = _byteswap_ulong (size);
-#endif
-
-        SKIV_STBI_ICCP.iCCP = true;
-        //memcpy (&SKIV_STBI_SBIT, &_scratchMemory.get ()[iccp_pos+4], std::min (4ul, size));
-      }
     }
 
-    float*                pixels = SKIV_STBI_CICP.primaries != 0 ?
-                                                         nullptr :
+    float*                pixels = hdr10 ?
+                                 nullptr :
                                    stbi_loadf_from_memory (_scratchMemory.get (), static_cast <int> (_.getInitialSize ()), &width, &height, &channels_in_file, desired_channels);
+
+    // stb_image reads a cICP chunk into SKIV_STBI_CICP itself: only HDR10 is taken from it (others crashed the HDR path)
+    if (hdr10)
+    {
+      SKIV_STBI_CICP.primaries     =  9;
+      SKIV_STBI_CICP.transfer_func = 16;
+      SKIV_STBI_CICP.matrix_coeffs =  0;
+    }
+
+    else
+      SKIV_STBI_CICP = { };
     typedef float         pixel_size;
     DXGI_FORMAT           dxgi_format = DXGI_FORMAT::DXGI_FORMAT_R32G32B32A32_FLOAT;
 #ifndef STBI_FLOAT
@@ -1986,13 +1979,6 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
       PLOG_VERBOSE << ".full_range   : " << (int)SKIV_STBI_CICP.full_range;
 
 #endif // _DEBUG
-
-      if (SKIV_STBI_ICCP.iCCP && SKIV_STBI_SBIT.red_bits <= 8)
-      {
-        SKIV_STBI_CICP.primaries     =  9;
-        SKIV_STBI_CICP.transfer_func = 16;
-        SKIV_STBI_CICP.matrix_coeffs =  0;
-      }
 
       if (SKIV_STBI_CICP.primaries != 0)
       {
@@ -2244,9 +2230,10 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
       image.channels =
         DirectX::HasAlpha          (meta.format) ? 4 : 3; // 2 and 1 channel images are unsupported for now
 
+      // HDR10 (TIFF, JPEG XR...): only when the file says so, not every 16-bit image without a PNG sRGB chunk
       if (image.bpc >= 16 &&
           meta.format == DXGI_FORMAT_R16G16B16A16_UNORM &&
-         !image.not_hdr)
+          _IsHDR10ColorSource (image.color_source))
       {
         image.is_hdr = true;
         image.light_info.isHDR = true;
