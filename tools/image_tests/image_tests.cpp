@@ -192,7 +192,7 @@ ReadExpected (const fs::path& folder)
 // A minimal ICC profile: the header (its size, "acsp") and a description tag, as a v2 profile has it ('desc') or a v4
 //   one ('mluc', UTF-16BE)
 static std::vector <uint8_t>
-MakeICC (const std::string& name, bool v4, const std::vector <uint8_t>& trc = { })
+MakeICC (const std::string& name, bool v4, const std::vector <uint8_t>& trc = { }, const std::vector <uint8_t>& cicp = { })
 {
   std::vector <uint8_t> tag;
   auto put32 = [] (std::vector <uint8_t>& v, uint32_t x) { for (int s = 24; s >= 0; s -= 8) v.push_back (static_cast <uint8_t> (x >> s)); };
@@ -215,24 +215,27 @@ MakeICC (const std::string& name, bool v4, const std::vector <uint8_t>& trc = { 
     tag.resize (tag.size ( ) + 79, 0);                   // The (empty) Unicode and ScriptCode parts
   }
 
-  // The description, and the red tone curve (rTRC) if given
-  const uint32_t tags  = trc.empty ( ) ? 1 : 2,
-                 first = 132 + tags * 12;
+  // The description, then the red tone curve (rTRC) and the cicp tag, if given (their type and data)
+  std::vector <std::pair <const char*, std::vector <uint8_t>>> all = { { "desc", tag } };
+
+  if (! trc.empty ( ))  all.push_back ({ "rTRC", trc });
+  if (! cicp.empty ( )) all.push_back ({ "cicp", cicp });
 
   std::vector <uint8_t> icc (128, 0);
   memcpy (&icc [36], "acsp", 4);
-  put32 (icc, tags);
-  icc.insert (icc.end ( ), { 'd', 'e', 's', 'c' });
-  put32 (icc, first); put32 (icc, static_cast <uint32_t> (tag.size ( )));
+  put32 (icc, static_cast <uint32_t> (all.size ( )));
 
-  if (! trc.empty ( ))
+  uint32_t at = 132 + static_cast <uint32_t> (all.size ( )) * 12;
+
+  for (const auto& t : all)
   {
-    icc.insert (icc.end ( ), { 'r', 'T', 'R', 'C' });
-    put32 (icc, first + static_cast <uint32_t> (tag.size ( ))); put32 (icc, static_cast <uint32_t> (trc.size ( )));
+    icc.insert (icc.end ( ), t.first, t.first + 4);
+    put32 (icc, at); put32 (icc, static_cast <uint32_t> (t.second.size ( )));
+    at += static_cast <uint32_t> (t.second.size ( ));
   }
 
-  icc.insert (icc.end ( ), tag.begin ( ), tag.end ( ));
-  icc.insert (icc.end ( ), trc.begin ( ), trc.end ( ));
+  for (const auto& t : all)
+    icc.insert (icc.end ( ), t.second.begin ( ), t.second.end ( ));
   _WriteBE32 (icc.data ( ), static_cast <uint32_t> (icc.size ( )));
   return icc;
 }
@@ -479,6 +482,49 @@ TestColorSources (const fs::path& images)
     color_source_s exif;
     exif.exif_color_space = 65535;
     Check (! _IsLinearColorSource (exif), "Exif 65535", "linear");
+  }
+
+  // HDR10 or not: by cICP, an ICC profile's cicp tag (as SKIV writes HDR PNGs: v4.4, LUT based), or its name
+  {
+    const std::vector <uint8_t> cicpPQ   = { 'c', 'i', 'c', 'p', 0, 0, 0, 0,  9, 16, 0, 1 },
+                                cicpSRGB = { 'c', 'i', 'c', 'p', 0, 0, 0, 0,  1, 13, 0, 1 },
+                                cicpHLG  = { 'c', 'i', 'c', 'p', 0, 0, 0, 0,  9, 18, 0, 1 };
+
+    auto hdr10 = [&] (const std::vector <std::pair <const char*, std::vector <uint8_t>>>& chunks)
+    {
+      color_source_s cs;
+      const auto     file = png (chunks);
+      _ReadColorSourcePNG (file.data ( ), file.size ( ), cs);
+      return _IsHDR10ColorSource (cs);
+    };
+
+    auto iccChunk = [&] (const std::vector <uint8_t>& icc)
+    {
+      std::vector <uint8_t> chunk = { 'P', 'Q', 0, 0 };
+      const auto            zz    = ZlibStored (icc);
+      chunk.insert (chunk.end ( ), zz.begin ( ), zz.end ( ));
+      return chunk;
+    };
+
+    Check (  hdr10 ({ { "cICP", { 9, 16, 0, 1 } } }),                                       "PNG cICP Rec. 2020 PQ",     "not HDR10");
+    Check (! hdr10 ({ { "cICP", { 1, 13, 0, 1 } } }),                                       "PNG cICP sRGB",             "HDR10");
+    Check (! hdr10 ({ { "cICP", { 9, 18, 0, 1 } } }),                                       "PNG cICP HLG",              "HDR10");
+    Check (  hdr10 ({ { "iCCP", iccChunk (MakeICC ("Rec2100", true, { }, cicpPQ)) } }),     "PNG ICC cicp PQ",           "not HDR10");
+    Check (! hdr10 ({ { "iCCP", iccChunk (MakeICC ("Rec2100", true, { }, cicpHLG)) } }),    "PNG ICC cicp HLG",          "HDR10");
+    Check (! hdr10 ({ { "iCCP", iccChunk (MakeICC ("Named PQ", true, { }, cicpSRGB)) } }),  "PNG ICC cicp sRGB, PQ name", "HDR10");
+    Check (  hdr10 ({ { "iCCP", iccChunk (MakeICC ("RGB_D65_202_Rel_PeQ", true)) } }),      "PNG ICC named PeQ",         "not HDR10");
+    Check (  hdr10 ({ { "iCCP", iccChunk (MakeICC ("ITUR_2100_PQ_FULL", true)) } }),        "PNG ICC named PQ",          "not HDR10");
+    Check (  hdr10 ({ { "iCCP", iccChunk (MakeICC ("Rec. ST2084", false)) } }),             "PNG ICC named 2084",        "not HDR10");
+    Check (! hdr10 ({ { "iCCP", iccChunk (iccV2) } }),                                      "PNG ICC unnamed for PQ",    "HDR10");
+    Check (! hdr10 ({ { "iCCP", iccChunk (MakeICC ("Display P3", true)) } }),               "PNG ICC Display P3",        "HDR10");
+    Check (! hdr10 ({ { "iCCP", iccChunk (MakeICC ("SPQR", true)) } }),                     "PNG ICC named SPQR",        "HDR10");
+    Check (! hdr10 ({ }),                                                                   "PNG without chunks",        "HDR10");
+    Check (  hdr10 ({ { "cICP", { 9, 16, 0, 1 } }, { "iCCP", iccChunk (iccV2) } }),         "PNG cICP PQ + ICC",         "not HDR10");
+
+    color_source_s cs;
+    const auto     icc = MakeICC ("Rec2100", true, { }, cicpPQ);
+    _SetICC (cs, icc.data ( ), icc.size ( ));
+    Check (_DescribeColorSource (cs) == "ICC: Rec2100 (Rec. 2020, PQ)", "ICC cicp", "described as " + _DescribeColorSource (cs));
   }
 
   // Not images, or garbage

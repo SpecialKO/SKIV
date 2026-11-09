@@ -13,6 +13,9 @@ struct color_source_s {
 
   std::vector <uint8_t> icc;                        // ICC profile (decompressed)
   std::string           icc_name;                   // Its description ('desc' tag)
+  bool                  icc_has_cicp     = false;   // Its cicp tag (ICC 4.4), as HDR profiles have
+  uint8_t               icc_primaries    = 0,
+                        icc_transfer     = 0;
 
   bool                  has_cicp         = false;   // cICP (PNG), nclx (AVIF), or an encoded color space (JPEG XL)
   bool                  cicp_first       = false;   // cICP overrides the ICC profile (PNG: as the PNG specification says)
@@ -149,6 +152,25 @@ _SetICC (color_source_s& out, const uint8_t* icc, size_t size)
 
   out.icc.assign (icc, icc + size);
   out.icc_name = _ReadICCName (icc, size);
+
+  // Its cicp tag (ICC 4.4): the signature, 4 reserved bytes, then primaries, transfer, matrix and range
+  const uint32_t tags = _ReadBE32 (icc + 128);
+
+  for (uint32_t i = 0; i < tags && 132 + (i + 1) * 12ull <= size; i++)
+  {
+    const uint8_t* entry  = icc + 132 + i * 12;
+    const uint32_t offset = _ReadBE32 (entry + 4),
+                   length = _ReadBE32 (entry + 8);
+
+    if (memcmp (entry, "cicp", 4) == 0 && offset <= size && length <= size - offset && length >= 12 &&
+        memcmp (icc + offset, "cicp", 4) == 0)
+    {
+      out.icc_has_cicp  = true;
+      out.icc_primaries = icc [offset + 8];
+      out.icc_transfer  = icc [offset + 9];
+      break;
+    }
+  }
 }
 
 #pragma endregion
@@ -400,12 +422,49 @@ _IsLinearColorSource (const color_source_s& cs)
     return cs.transfer == 8;
 
   if (! cs.icc.empty ( ))
-    return _IsLinearICC (cs.icc.data ( ), cs.icc.size ( ));
+    return (cs.icc_has_cicp) ? cs.icc_transfer == 8 : _IsLinearICC (cs.icc.data ( ), cs.icc.size ( ));
 
   if (cs.has_srgb)
     return false;
 
   return cs.gamma == 100000;
+}
+
+// Whether the file says it is HDR10 (Rec. 2020 primaries, PQ), by the same precedence: its cICP, or its ICC profile's
+//   cicp tag (as SKIV and Special K write HDR PNGs), or a profile without one but named for PQ ("...PQ...", "...PeQ",
+//     "...2084..."), as profiles of HDR PNGs made before ICC 4.4 are.
+static bool
+_IsHDR10ColorSource (const color_source_s& cs)
+{
+  if (cs.has_cicp && (cs.cicp_first || cs.icc.empty ( )))
+    return cs.primaries == 9 && cs.transfer == 16;
+
+  if (cs.icc.empty ( ))
+    return false;
+
+  if (cs.icc_has_cicp)
+    return cs.icc_primaries == 9 && cs.icc_transfer == 16;
+
+  // The name's words (split at anything but letters and digits)
+  std::string word;
+
+  for (size_t i = 0; i <= cs.icc_name.size ( ); i++)
+  {
+    const char c = (i < cs.icc_name.size ( )) ? cs.icc_name [i] : ' ';
+
+    if (isalnum (static_cast <unsigned char> (c)))
+      word += c;
+
+    else
+    {
+      if (word == "PQ" || word == "PeQ" || word.find ("2084") != std::string::npos)
+        return true;
+
+      word.clear ( );
+    }
+  }
+
+  return false;
 }
 
 #pragma endregion
@@ -472,7 +531,8 @@ static std::string
 _DescribeColorSource (const color_source_s& cs)
 {
   const auto cicp = [&] { return std::string ("cICP: ") + _CICPPrimariesName (cs.primaries) + ", " + _CICPTransferName (cs.transfer); };
-  const auto icc  = [&] { return "ICC: " + (cs.icc_name.empty ( ) ? std::string ("Unnamed profile") : cs.icc_name); };
+  const auto icc  = [&] { return "ICC: " + (cs.icc_name.empty ( ) ? std::string ("Unnamed profile") : cs.icc_name) +
+                                 (cs.icc_has_cicp ? std::string (" (") + _CICPPrimariesName (cs.icc_primaries) + ", " + _CICPTransferName (cs.icc_transfer) + ")" : ""); };
 
   if (cs.has_cicp && (cs.cicp_first || cs.icc.empty ( )))
     return cicp ( );
@@ -515,6 +575,12 @@ _DescribeColorSourceInDetail (const color_source_s& cs)
   {
     snprintf (line, sizeof (line), "ICC profile: %s (%zu bytes)\n", cs.icc_name.empty ( ) ? "unnamed" : cs.icc_name.c_str ( ), cs.icc.size ( ));
     text += line;
+
+    if (cs.icc_has_cicp)
+    {
+      snprintf (line, sizeof (line), "ICC cicp tag: %s, %s\n", _CICPPrimariesName (cs.icc_primaries), _CICPTransferName (cs.icc_transfer));
+      text += line;
+    }
   }
 
   if (cs.has_cicp)
