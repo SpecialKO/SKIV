@@ -180,6 +180,10 @@ bool    SKIV_Image_IsUltraHDR      (const wchar_t* wszFileName);
 bool    SKIV_Image_IsUltraHDR      (void* data, int size);
 HRESULT SKIV_Image_LoadUltraHDR    (DirectX::ScratchImage& image, void* data, int size);
 
+// Whether the image file is animated: an APNG (acTL chunk before its image data), a GIF with more than one frame, or a WebP
+//   with its animation flag set (utility/animated_images.inl, implemented in viewer.cpp). Reads the file.
+bool    IsAnimatedImageFile        (const std::wstring& path);
+
 #include <avif/avif.h>
 
 bool isAVIFEncoderAvailable (void);

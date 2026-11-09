@@ -237,6 +237,10 @@ struct SKIF_RegistrySettings {
     SKIF_MakeRegKeyB ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(Cross-Fade)" );
 
+  KeyValue <bool> regKVAnimatedImages =
+    SKIF_MakeRegKeyB ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(Animated Images)" );
+
   KeyValue <bool> regKVControllers =
     SKIF_MakeRegKeyB ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(Controllers)" );
@@ -508,6 +512,7 @@ struct SKIF_RegistrySettings {
   bool bDeveloperMode           = false;
   bool bEfficiencyMode          =  true; // Should the main thread try to engage EcoQoS / Efficiency Mode on Windows 11 ?
   bool bCrossFade              =  true;
+  bool bAnimatedImages          =  true; // Play animated images (APNG, GIF, WebP); off: only their first frame is shown
   bool bControllers             =  true; // Should SKIF support controller input ?
   bool bLoggingDeveloper        = false; // This is a log level "above" verbose logging that also includes stuff like window messages. Only useable for SKIF developers
 
