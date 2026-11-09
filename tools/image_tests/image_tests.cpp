@@ -533,6 +533,32 @@ TestColorSources (const fs::path& images)
     Check (_DescribeColorSource (cs) == "ICC: Rec2100 (Rec. 2020, PQ)", "ICC cicp", "described as " + _DescribeColorSource (cs));
   }
 
+  // JPEG XL: HDR, wide gamut SDR, or plain SDR (from its color source, intensity target, and the range of its pixels)
+  {
+    auto jxl = [] (uint8_t primaries, uint8_t transfer, float target, bool belowZero, bool aboveOne)
+    {
+      color_source_s cs;
+      cs.has_cicp = true; cs.primaries = primaries; cs.transfer = transfer;
+      const dynamic_range_s r = _JXLDynamicRange (cs, target, belowZero, aboveOne);
+      return std::string (r.hdr ? "HDR" : r.wcg ? "WCG" : "SDR");
+    };
+
+    Check (jxl ( 1, 13, 255.0f,   false, false) == "SDR", "JPEG XL sRGB",                     jxl ( 1, 13, 255.0f,   false, false));
+    Check (jxl (12, 13, 255.0f,   true,  false) == "WCG", "JPEG XL Display P3",               jxl (12, 13, 255.0f,   true,  false));
+    Check (jxl (12, 13, 255.0f,   false, false) == "SDR", "JPEG XL Display P3, inside sRGB",  jxl (12, 13, 255.0f,   false, false));
+    Check (jxl ( 1,  8, 255.0f,   false, true)  == "HDR", "JPEG XL linear, above SDR white",  jxl ( 1,  8, 255.0f,   false, true));
+    Check (jxl ( 1,  8, 255.0f,   true,  true)  == "HDR", "JPEG XL linear, wide and bright",  jxl ( 1,  8, 255.0f,   true,  true));
+    Check (jxl ( 9, 16, 10000.0f, false, false) == "HDR", "JPEG XL PQ, dim content",          jxl ( 9, 16, 10000.0f, false, false));
+    Check (jxl ( 9, 16, 255.0f,   true,  false) == "HDR", "JPEG XL PQ (by its transfer)",     jxl ( 9, 16, 255.0f,   true,  false));
+    Check (jxl ( 9, 18, 1000.0f,  false, false) == "HDR", "JPEG XL HLG",                      jxl ( 9, 18, 1000.0f,  false, false));
+    Check (jxl ( 1, 13, 1000.0f,  false, false) == "HDR", "JPEG XL, intensity target 1000",   jxl ( 1, 13, 1000.0f,  false, false));
+
+    // An ICC profile's cicp tag (no encoded color space)
+    color_source_s icc;
+    icc.icc = { 0 }; icc.icc_has_cicp = true; icc.icc_primaries = 9; icc.icc_transfer = 16;
+    Check (_JXLDynamicRange (icc, 255.0f, false, false).hdr, "JPEG XL ICC cicp PQ", "not HDR");
+  }
+
   // Not images, or garbage
   for (const char* name : { "garbage.png", "garbage.gif", "garbage.webp" })
   {
@@ -680,6 +706,46 @@ TestColorConversion (void)
   color_source_s uncalibrated;
   uncalibrated.exif_color_space = 65535;
   Check (! _NeedsColorConversion (uncalibrated), "Exif uncalibrated", "converted");
+
+  // JPEG XL: what libjxl hands over unconverted (its own encoding, as floats), converted in place. sRGB is converted here
+  //   too (the data is not drawn as it is); linear Rec. 709 and HDR are not.
+  {
+    auto jxl = [] (uint8_t primaries, uint8_t transfer, uint32_t gamma = 0)
+    {
+      color_source_s cs;
+      cs.origin = "JPEG XL"; cs.has_cicp = true; cs.primaries = primaries; cs.transfer = transfer; cs.gamma = gamma;
+      return cs;
+    };
+
+    auto convert = [] (const color_source_s& cs, float r, float g, float b, float out [4])
+    {
+      cmsHPROFILE source = _CreateJXLSourceProfile (cs);
+      out [0] = r; out [1] = g; out [2] = b; out [3] = 0.5f;
+      const bool ok = source != nullptr &&
+        _ConvertToScRGB (source, TYPE_RGBA_FLT, reinterpret_cast <uint8_t*> (out), 16, reinterpret_cast <uint8_t*> (out), 16, 1, 1, TYPE_RGBA_FLT);
+      if (source != nullptr) cmsCloseProfile (source);
+      return ok;
+    };
+
+    Check (convert (jxl ( 1, 13), 128.0f / 255.0f, 0.5f, 1.0f, px) && Near (px, 0.2158f, 0.2140f, 1.0f, 0.5f),
+           "JPEG XL sRGB (in place)",     "converted to " + Pixel (px));
+    Check (convert (jxl (12, 13), 1.0f, 0.0f, 0.0f, px)            && Near (px, 1.2249f, -0.0421f, -0.0196f, 0.5f),
+           "JPEG XL Display P3 red",      "converted to " + Pixel (px));
+    Check (convert (jxl ( 1,  2, 45455), 0.5f, 0.5f, 0.5f, px)     && Near (px, 0.2176f, 0.2176f, 0.2176f, 0.5f),
+           "JPEG XL gamma 1/2.2",         "converted to " + Pixel (px));
+    Check (convert (jxl ( 9,  1), 0.0f, 1.0f, 0.0f, px)            && Near (px, -0.5876f, 1.1329f, -0.1006f, 0.5f),
+           "JPEG XL Rec. 2020 SDR green", "converted to " + Pixel (px));
+
+    cmsHPROFILE none = nullptr;
+    Check ((none = _CreateJXLSourceProfile (jxl (1,  8))) == nullptr, "JPEG XL linear Rec. 709", "converted");
+    if (none) cmsCloseProfile (none);
+    Check ((none = _CreateJXLSourceProfile (jxl (9, 16))) == nullptr, "JPEG XL PQ",              "converted");
+    if (none) cmsCloseProfile (none);
+
+    // An ICC profile only (no encoded color space), of sRGB: converted as sRGB
+    color_source_s iccOnly = icc (SaveProfile (cmsCreate_sRGBProfile ( )));
+    Check (convert (iccOnly, 0.5f, 0.5f, 0.5f, px) && Near (px, 0.2140f, 0.2140f, 0.2140f, 0.5f), "JPEG XL ICC sRGB", "converted to " + Pixel (px));
+  }
 
   // PNG gamma: 1/2.2 and 1.0 are not converted; 1/2.0 is (0.5 becomes 0.25)
   color_source_s png;

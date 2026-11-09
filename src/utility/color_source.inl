@@ -467,6 +467,26 @@ _IsHDR10ColorSource (const color_source_s& cs)
   return false;
 }
 
+// Whether a JPEG XL image (decoded into scRGB) is HDR, or SDR of colors outside of sRGB (wide gamut): HDR if it says so (a
+//   PQ or HLG transfer, by its color source; or an intensity target above SDR's 255 nits, libjxl's default), or if its
+//     pixels go above SDR white (aboveOne: a luminance over 1.0); wide gamut if they only go outside of sRGB (belowZero:
+//       a channel below 0)
+struct dynamic_range_s { bool hdr = false, wcg = false; };
+
+static dynamic_range_s
+_JXLDynamicRange (const color_source_s& cs, float intensity_target, bool belowZero, bool aboveOne)
+{
+  const bool declared =
+    (cs.has_cicp     && (cs.transfer     == 16 || cs.transfer     == 18)) ||
+    (cs.icc_has_cicp && (cs.icc_transfer == 16 || cs.icc_transfer == 18)) ||
+    (intensity_target > 255.0f);
+
+  dynamic_range_s range;
+  range.hdr = declared || aboveOne;
+  range.wcg = belowZero && ! range.hdr;
+  return range;
+}
+
 #pragma endregion
 
 #pragma region Describe

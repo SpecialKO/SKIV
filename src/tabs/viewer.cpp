@@ -3061,9 +3061,30 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
             PLOG_WARNING << "Unexpected non-D65 white point";
           }
 
+          // libjxl converts only XYB encoded images (lossy ones) into the scRGB asked for, even with its color management
+          //   set (libjxl 0.10): any other comes as it is encoded (sRGB, Display P3...). Those are converted here (with
+          //     Little CMS, see color_convert.inl), as they were otherwise taken as scRGB (shown washed out, and of the
+          //       wrong colors).
+          bool bConvertedHere = false;
+
           if (! (bIsHDR10 || bIsRec709Linear))
           {
-            PLOG_WARNING << "Encoded image is neither HDR10 nor scRGB...";
+            cmsHPROFILE           source = _CreateJXLSourceProfile (image.color_source);
+            const DirectX::Image* data   = img.GetImage (0, 0, 0);
+
+            if (source != nullptr && data != nullptr)
+              bConvertedHere =
+                _ConvertToScRGB (source, TYPE_RGBA_FLT, data->pixels, data->rowPitch, data->pixels, data->rowPitch,
+                                 static_cast <uint32_t> (data->width), static_cast <uint32_t> (data->height), TYPE_RGBA_FLT);
+
+            if (source != nullptr)
+              cmsCloseProfile (source);
+
+            if (bConvertedHere)
+              PLOG_INFO    << "Converted the JPEG XL image's colors (" << _DescribeColorSource (image.color_source) << ") to scRGB";
+            else
+              PLOG_WARNING << "Encoded image is neither HDR10 nor scRGB, and could not be converted ("
+                           << _DescribeColorSource (image.color_source) << ")";
           }
 
           if ( SUCCEEDED ( TransformImage (*img.GetImages (),
@@ -3079,7 +3100,7 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
                     XMVECTOR v = inPixels [j];
                     float vW = XMVectorGetW(v);
 
-                    if (bIsRec709Linear)
+                    if (bIsRec709Linear || bConvertedHere)
                     {
                       v =
                         XMVectorMultiply (v, vRelativeToAbsoluteNits);
@@ -3091,17 +3112,20 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
                         XMVector3Transform (SKIV_Image_PQToLinear (v), c_Bt2100toscRGB);
                     }
 
-                    uint32_t xm_test_rec709 = 0x0,
-                             xm_test_hdr    = 0x0;
+                    // Outside of sRGB: a channel below 0 (past rounding). Above SDR white: its luminance over 1.0, as a
+                    //   channel over 1.0 is also what colors outside of sRGB have (Display P3 red is 1.22 in scRGB).
+                    static const XMVECTOR vRounding  = XMVectorReplicate (-0.0001f);
+                    static const XMVECTOR vLuminance = XMVectorSet (0.2126f, 0.7152f, 0.0722f, 0.0f);
 
-                    if (XMVectorGreaterOrEqualR (&xm_test_rec709, v, g_XMZero);
+                    uint32_t xm_test_rec709 = 0x0;
+
+                    if (XMVectorGreaterOrEqualR (&xm_test_rec709, XMVectorSetW (v, 1.0f), vRounding);
                         XMComparisonAnyFalse    ( xm_test_rec709))
                     {
                       wcg = true;
                     }
 
-                    if (XMVectorGreaterR    (&xm_test_hdr, v, g_XMOne);
-                        XMComparisonAnyTrue ( xm_test_hdr))
+                    if (XMVectorGetX (XMVector3Dot (v, vLuminance)) > 1.001f)
                     {
                       hdr = true;
                     }
@@ -3115,8 +3139,14 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
             DirectX::Convert (*converted_img.GetImages (), DXGI_FORMAT_R16G16B16A16_FLOAT, DirectX::TEX_FILTER_DEFAULT, 0.0f, img);
           }
 
-          image.light_info.isHDR = wcg||hdr;
-          image.is_hdr           = wcg||hdr;
+          // HDR only if it says so, or goes above SDR white; SDR images of colors outside of sRGB (below 0) are wide gamut
+          //   SDR ones, as images of other formats converted to scRGB are (see color_convert.inl)
+          const dynamic_range_s range =
+            _JXLDynamicRange (image.color_source, info.intensity_target, wcg, hdr);
+
+          image.light_info.isHDR = range.hdr;
+          image.is_hdr           = range.hdr;
+          image.is_wcg           = range.wcg;
 
           break;
         }
