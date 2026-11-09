@@ -85,16 +85,22 @@ if ($onWindows) {
     $common += ' /fsanitize=address'
   }
 
-  # libwebp and Little CMS as C (warnings off, as in SKIV.vcxproj), then the tests as C++
-  $cFiles = ($webpSources | ForEach-Object { "`"$_`"" }) -join ' '
-  $objs   = ($webpSources | ForEach-Object { "`"$(Join-Path $bin ([IO.Path]::GetFileNameWithoutExtension($_) + '.obj'))`"" }) -join ' '
+  # libwebp and Little CMS as C (warnings off, as in SKIV.vcxproj), then the tests as C++. The lists of their files go
+  #   into response files (one file a line): on the command line, they would exceed the 8191 characters cmd.exe allows
+  #     once the repository is in a long enough path.
+  $cRsp   = Join-Path $bin 'sources.rsp'
+  $objRsp = Join-Path $bin 'objects.rsp'
   $script = Join-Path $bin 'build.cmd'
+
+  $webpSources | ForEach-Object { "`"$_`"" } | Set-Content -Path $cRsp -Encoding ASCII
+  $webpSources | ForEach-Object { "`"$(Join-Path $bin ([IO.Path]::GetFileNameWithoutExtension($_) + '.obj'))`"" } |
+    Set-Content -Path $objRsp -Encoding ASCII
 
   @(
     '@echo off'
     "call `"$vcvars`" >nul || exit /b 1"
-    "cl $common /W0 /c $cFiles || exit /b 1"
-    "cl $common /W3 /std:c++17 /EHsc `"$source`" $objs /Fe`"$exe`" /link /DEBUG || exit /b 1"
+    "cl $common /W0 /c `"@$cRsp`" || exit /b 1"
+    "cl $common /W3 /std:c++17 /EHsc `"$source`" `"@$objRsp`" /Fe`"$exe`" /link /DEBUG || exit /b 1"
   ) | Set-Content -Path $script -Encoding ASCII
 
   & cmd.exe /c "`"$script`""
