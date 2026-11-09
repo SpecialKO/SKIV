@@ -808,6 +808,24 @@ TestColorConversion (void)
     Check (convert (iccOnly, 0.5f, 0.5f, 0.5f, px) && Near (px, 0.2140f, 0.2140f, 0.2140f, 0.5f), "JPEG XL ICC sRGB", "converted to " + Pixel (px));
   }
 
+  // HLG (BT.2100) to display light, for a 1,000-nit display (as a fraction of 10,000 nits): black, 50 % signal, reference
+  //   white (75 %: 203 nits), peak (1,000 nits); a saturated color is dimmer than gray of the same signal (the OOTF)
+  {
+    static constexpr float bt2020 [3] = { 0.2627f, 0.6780f, 0.0593f };
+
+    auto nits = [&] (float signal) { const float s [3] = { signal, signal, signal }; float o [3]; _HLGToDisplay (s, bt2020, o); return o [1] * 10000.0f; };
+
+    Check (nits (0.00f) == 0.0f,                 "HLG black",          std::to_string (nits (0.00f)) + " nits");
+    Check (std::abs (nits (0.50f) -  50.7f) < 1, "HLG 50 %",           std::to_string (nits (0.50f)) + " nits");
+    Check (std::abs (nits (0.75f) - 203.0f) < 1, "HLG reference white", std::to_string (nits (0.75f)) + " nits");
+    Check (std::abs (nits (1.00f) - 1000.f) < 2, "HLG peak",           std::to_string (nits (1.00f)) + " nits");
+
+    const float red [3] = { 0.75f, 0.0f, 0.0f };
+    float       o   [3];
+    _HLGToDisplay (red, bt2020, o);
+    Check (o [0] * 10000.0f < 203.0f && o [0] > 0.0f && o [1] == 0.0f, "HLG red", std::to_string (o [0] * 10000.0f) + " nits");
+  }
+
   // The fast way (matrix/shaper profiles into half floats) gives what Little CMS gives (as floats), for random pixels
   {
     color_source_s adobeRGB;
