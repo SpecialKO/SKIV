@@ -476,6 +476,7 @@ struct image_anim_s {
   ImVec2                resolution   = ImVec2 (0, 0);     // The frames' size (smaller than the image if it had to be scaled down)
   size_t                textures     = 0;                 // How many textures the frames take
   size_t                bytes        = 0;                 //   ... and how much video memory
+  bool                  wide         = false;             // Of wide gamut colors: the frames are scRGB (half floats)
 
   // Playback (main thread only)
   DWORD                 playingSince = 0;                 // 0: not playing (paused, or not started yet)
@@ -817,9 +818,10 @@ SKIV_GetImageFrame (image_s& image, ImVec2& uv0, ImVec2& uv1, bool track)
 }
 
 // The pixels of the image shown, read back from the GPU: an animated image's current frame (at the size its frames
-//   were made at), or the whole image
+//   were made at), or the whole image. Wide gamut SDR images (scRGB) are made sRGB of 8 bpc, the colors outside of it
+//     clipped (to be copied), unless scRGB is set (to be saved in their own colors, SKIV_Image_SaveWideGamutSDR).
 static HRESULT
-SKIV_CaptureImage (image_s& image, DirectX::ScratchImage& captured)
+SKIV_CaptureImage (image_s& image, DirectX::ScratchImage& captured, bool scRGB = false)
 {
   extern CComPtr <ID3D11Device> SKIF_D3D11_GetDevice (bool bWait = true);
 
@@ -845,37 +847,157 @@ SKIV_CaptureImage (image_s& image, DirectX::ScratchImage& captured)
   if (pTexResource.p == nullptr)
     return E_POINTER;
 
-  if (image.anim == nullptr && ! image.is_wcg)
-    return DirectX::CaptureTexture (pDevice, pDevCtx, pTexResource.p, captured);
+  const bool wideSDR =
+    (! image.is_hdr && (image.is_wcg || (image.anim != nullptr && image.anim->wide)));
 
-  // Wide gamut SDR images (scRGB): as sRGB again, of 8 bpc, the colors outside of it clipped, to be copied or saved as SDR
-  if (image.anim == nullptr)
-  {
-    DirectX::ScratchImage scrgb;
-    HRESULT hr =
-      DirectX::CaptureTexture (pDevice, pDevCtx, pTexResource.p, scrgb);
-
-    return FAILED (hr) ? hr :
-      DirectX::Convert (*scrgb.GetImages (), DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, DirectX::TEX_FILTER_DEFAULT, 0.0f, captured);
-  }
-
-  DirectX::ScratchImage page;
+  DirectX::ScratchImage texture;
   HRESULT hr =
-    DirectX::CaptureTexture (pDevice, pDevCtx, pTexResource.p, page);
+    DirectX::CaptureTexture (pDevice, pDevCtx, pTexResource.p, texture);
 
   if (FAILED (hr))
     return hr;
 
-  const image_anim_s::frame_s& frame = image.anim->frames [image.anim->current];
+  // An animated image: its frame's part of the page
+  DirectX::ScratchImage frameImg;
 
-  const size_t width  = static_cast <size_t> (image.anim->resolution.x),
-               height = static_cast <size_t> (image.anim->resolution.y);
+  if (image.anim != nullptr)
+  {
+    const image_anim_s::frame_s& frame = image.anim->frames [image.anim->current];
 
-  if (FAILED (hr = captured.Initialize2D (page.GetMetadata ( ).format, width, height, 1, 1)))
+    const size_t width  = static_cast <size_t> (image.anim->resolution.x),
+                 height = static_cast <size_t> (image.anim->resolution.y);
+
+    if (FAILED (hr = frameImg.Initialize2D (texture.GetMetadata ( ).format, width, height, 1, 1)) ||
+        FAILED (hr = DirectX::CopyRectangle (*texture.GetImages ( ), DirectX::Rect (static_cast <size_t> (frame.offset.x), static_cast <size_t> (frame.offset.y), width, height),
+                                             *frameImg.GetImages ( ), DirectX::TEX_FILTER_DEFAULT, 0, 0)))
+      return hr;
+
+    texture = std::move (frameImg);
+  }
+
+  // Wide gamut SDR (scRGB): as sRGB of 8 bpc, the colors outside of it clipped, unless asked for as it is
+  if (wideSDR && ! scRGB)
+    return DirectX::Convert (*texture.GetImages ( ), DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, DirectX::TEX_FILTER_DEFAULT, 0.0f, captured);
+
+  captured = std::move (texture);
+  return S_OK;
+}
+
+// Saves a wide gamut SDR image (scRGB, as captured with SKIV_CaptureImage's scRGB) in its own colors: those of the file
+//   it was loaded from (its ICC profile, or one made of its cICP, Exif...), of 8 bpc, the profile embedded in the file:
+//     PNG (iCCP) and JPEG (APP2). Other formats (WIC cannot embed one), or colors with no profile: sRGB, the colors outside
+//       of it clipped (SKIV_Image_SaveToDisk_SDR).
+static HRESULT
+SKIV_Image_SaveWideGamutSDR (const DirectX::Image& scrgb, const wchar_t* path, const color_source_s& cs)
+{
+  const wchar_t* ext  = PathFindExtensionW (path);
+  const bool     png  = (ext != nullptr && _wcsicmp (ext, L".png")  == 0),
+                 jpeg = (ext != nullptr && (_wcsicmp (ext, L".jpg") == 0 || _wcsicmp (ext, L".jpeg") == 0));
+
+  std::unique_ptr <void, decltype (&cmsCloseProfile)> target (
+    (png || jpeg) ? _CreateSourceProfile (cs) : nullptr, &cmsCloseProfile);
+
+  auto _AsSRGB = [&](void) -> HRESULT
+  {
+    DirectX::ScratchImage srgb;
+    HRESULT hr = DirectX::Convert (scrgb, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, DirectX::TEX_FILTER_DEFAULT, 0.0f, srgb);
+    return FAILED (hr) ? hr : SKIV_Image_SaveToDisk_SDR (*srgb.GetImages ( ), path, false);
+  };
+
+  if (target == nullptr)
+  {
+    PLOG_INFO << "Saving the wide gamut image as sRGB (" << ((png || jpeg) ? "its colors have no profile" : "the format cannot have an ICC profile") << ")";
+    return _AsSRGB ( );
+  }
+
+  // The profile in the file: the file's own, if its colors are those of its ICC profile; otherwise one made of them
+  std::vector <uint8_t> icc;
+
+  if (! cs.icc.empty ( ) && ! cs.icc_has_cicp && ! (cs.has_cicp && cs.cicp_first))
+    icc = cs.icc;
+
+  else
+  {
+    // Its description: its colors, as the details panel names them ("Display P3, sRGB", "Adobe RGB (1998)", ...)
+    std::string name = _DescribeColorSource (cs);
+
+    if      (name.rfind ("cICP: ", 0) == 0)            name = name.substr (6);
+    else if (name.find  ("Adobe RGB") != name.npos)     name = "Adobe RGB (1998)";
+
+    if (cmsMLU* desc = cmsMLUalloc (nullptr, 1))
+    {
+      cmsMLUsetASCII (desc, "en", "US", name.c_str ( ));
+      cmsWriteTag    (target.get ( ), cmsSigProfileDescriptionTag, desc);
+      cmsMLUfree     (desc);
+    }
+
+    cmsUInt32Number size = 0;
+
+    if (cmsSaveProfileToMem (target.get ( ), nullptr, &size) && size > 0)
+    {
+      icc.resize (size);
+      cmsSaveProfileToMem (target.get ( ), icc.data ( ), &size);
+    }
+  }
+
+  // scRGB to its colors, 8 bpc
+  DirectX::ScratchImage encoded;
+  cmsHPROFILE           scrgbProfile = _CreateScRGBProfile ( );
+  cmsHTRANSFORM         transform    = (scrgbProfile == nullptr) ? nullptr :
+    cmsCreateTransform (scrgbProfile, TYPE_RGBA_HALF_FLT, target.get ( ), TYPE_RGBA_8, INTENT_RELATIVE_COLORIMETRIC, cmsFLAGS_COPY_ALPHA | cmsFLAGS_NOCACHE);
+
+  if (scrgbProfile != nullptr)
+    cmsCloseProfile (scrgbProfile);
+
+  if (transform == nullptr || icc.empty ( ) || scrgb.format != DXGI_FORMAT_R16G16B16A16_FLOAT ||
+      FAILED (encoded.Initialize2D (DXGI_FORMAT_R8G8B8A8_UNORM, scrgb.width, scrgb.height, 1, 1)))
+  {
+    if (transform != nullptr)
+      cmsDeleteTransform (transform);
+
+    PLOG_WARNING << "Could not convert the wide gamut image to its colors: saving it as sRGB";
+    return _AsSRGB ( );
+  }
+
+  const DirectX::Image* out = encoded.GetImage (0, 0, 0);
+
+  _ForRows (static_cast <uint32_t> (scrgb.height), [&](uint32_t first, uint32_t last)
+  {
+    for (uint32_t y = first; y < last; y++)
+      cmsDoTransform (transform, scrgb.pixels + y * scrgb.rowPitch, out->pixels + y * out->rowPitch, static_cast <cmsUInt32Number> (scrgb.width));
+  });
+
+  cmsDeleteTransform (transform);
+
+  // Written by WIC (as sRGB), then given its profile instead
+  HRESULT hr = SKIV_Image_SaveToDisk_SDR (*out, path, false);
+
+  if (FAILED (hr))
     return hr;
 
-  return DirectX::CopyRectangle (*page.GetImages ( ), DirectX::Rect (static_cast <size_t> (frame.offset.x), static_cast <size_t> (frame.offset.y), width, height),
-                                 *captured.GetImages ( ), DirectX::TEX_FILTER_DEFAULT, 0, 0);
+  std::vector <uint8_t> file;
+  {
+    std::ifstream stream (std::filesystem::path (path), std::ios::binary);
+    file.assign ((std::istreambuf_iterator <char> (stream)), std::istreambuf_iterator <char> ( ));
+  }
+
+  if (! (png ? _EmbedICCInPNG (file, icc) : _EmbedICCInJPEG (file, icc)))
+  {
+    PLOG_WARNING << "Could not embed the ICC profile: saving the wide gamut image as sRGB";
+    return _AsSRGB ( );
+  }
+
+  {
+    std::ofstream stream (std::filesystem::path (path), std::ios::binary | std::ios::trunc);
+    stream.write (reinterpret_cast <const char*> (file.data ( )), static_cast <std::streamsize> (file.size ( )));
+
+    if (! stream)
+      return E_FAIL;
+  }
+
+  PLOG_INFO << "Saved the wide gamut image in its own colors (" << _DescribeColorSource (cs) << "), with an ICC profile of "
+            << icc.size ( ) << " bytes";
+  return S_OK;
 }
 
 #define _WIDTH_SCROLLBAR (SKIF_vecAlteredSize.y > 0.0f ? ImGui::GetStyle().ScrollbarSize : 0.0f)
@@ -1566,10 +1688,20 @@ _LoadAnimatedImage (image_s& image, const std::function <bool (void)>& wanted)
     }
   }
 
+  // Colors that are not sRGB (wide gamut, see color_convert.inl): frames of scRGB (half floats), which keeps the colors
+  //   outside of sRGB, if they fit the budget at their full size (they take twice the memory); otherwise they are made
+  //     sRGB (8 bpc), the colors outside of it clipped
+  std::unique_ptr <void, decltype (&cmsCloseProfile)> sourceProfile (_CreateSourceProfile (image.color_source), &cmsCloseProfile);
+
+  const bool wide =
+    (sourceProfile != nullptr && static_cast <double> (width) * height * 8.0 * count <= budget);
+
+  const size_t bpp = (wide) ? 8 : 4; // Bytes per pixel
+
   // The size the frames are made at: as they are, unless all of them would take more than the budget
   double scale = 1.0;
 
-  if (const double bytes = static_cast <double> (width) * height * 4.0 * count; bytes > budget)
+  if (const double bytes = static_cast <double> (width) * height * static_cast <double> (bpp) * count; bytes > budget)
   {
     scale = std::sqrt (budget / bytes);
 
@@ -1588,8 +1720,9 @@ _LoadAnimatedImage (image_s& image, const std::function <bool (void)>& wanted)
   const bool   resize    = (outWidth != width || outHeight != height);
 
   // The frames are made (and scaled, as browsers do) as plain RGBA, as DirectX::Resize cannot scale sRGB images with
-  //   WIC's filters; their textures are sRGB (_CreateAnimationTexture)
-  constexpr DXGI_FORMAT format = DXGI_FORMAT_R8G8B8A8_UNORM;
+  //   WIC's filters; their textures are sRGB (_CreateAnimationTexture). Wide gamut ones: scRGB, as half floats.
+  const DXGI_FORMAT format = (wide) ? DXGI_FORMAT_R16G16B16A16_FLOAT
+                                    : DXGI_FORMAT_R8G8B8A8_UNORM;
 
   // The pages: as many frames side by side as fit in s_animPageSize, each in a cell with a one-pixel border
   const size_t cellWidth  = outWidth  + 2,
@@ -1639,18 +1772,19 @@ _LoadAnimatedImage (image_s& image, const std::function <bool (void)>& wanted)
 
   DWORD elapsed = 0;
 
-  // Colors that are not sRGB (wide gamut, see color_convert.inl): made sRGB, the colors outside of it clipped. The frames
-  //   stay 8 bpc, as scRGB (half floats) would fit only half as many of them into the budget.
+  // Wide gamut frames that did not fit the budget as scRGB: made sRGB, the colors outside of it clipped
   std::unique_ptr <void, decltype (&cmsDeleteTransform)> toSRGB (nullptr, &cmsDeleteTransform);
 
-  if (cmsHPROFILE profile = _CreateSourceProfile (image.color_source))
+  if (sourceProfile != nullptr && ! wide)
   {
-    toSRGB.reset (_CreateSRGBTransform (profile));
-    cmsCloseProfile (profile);
+    toSRGB.reset (_CreateSRGBTransform (sourceProfile.get ( )));
 
     PLOG_INFO_IF (toSRGB != nullptr) << "[Image Processing] The animated image's colors (" << _DescribeColorSource (image.color_source)
-                                     << ") are converted to sRGB";
+                                     << ") are converted to sRGB, clipped: as scRGB, its frames would not fit in video memory";
   }
+
+  PLOG_INFO_IF (wide) << "[Image Processing] The animated image's colors (" << _DescribeColorSource (image.color_source)
+                      << ") are converted to scRGB";
 
   auto _OnFrame = [&](const uint8_t* canvas, uint32_t delay) -> bool
   {
@@ -1675,7 +1809,18 @@ _LoadAnimatedImage (image_s& image, const std::function <bool (void)>& wanted)
       return false;
     }
 
-    memcpy (img.GetImage (0, 0, 0)->pixels, canvas, static_cast <size_t> (width) * height * 4);
+    if (wide)
+    {
+      if (! _ConvertToScRGB (sourceProfile.get ( ), TYPE_RGBA_8, canvas, static_cast <size_t> (width) * 4,
+                             img.GetImage (0, 0, 0)->pixels, img.GetImage (0, 0, 0)->rowPitch, width, height))
+      {
+        failure = "a frame's colors could not be converted";
+        return false;
+      }
+    }
+
+    else
+      memcpy (img.GetImage (0, 0, 0)->pixels, canvas, static_cast <size_t> (width) * height * 4);
 
     if (toSRGB != nullptr)
       for (uint32_t y = 0; y < height; y++)
@@ -1742,11 +1887,11 @@ _LoadAnimatedImage (image_s& image, const std::function <bool (void)>& wanted)
       {
         const size_t   srcRow = (row == 0) ? 0 : std::min (row - 1, outHeight - 1);
         const uint8_t* s      = src->pixels + srcRow * src->rowPitch;
-        uint8_t*       d      = dst->pixels + (y + row) * dst->rowPitch + x * 4;
+        uint8_t*       d      = dst->pixels + (y + row) * dst->rowPitch + x * bpp;
 
-        memcpy (d,                    s,                        4);
-        memcpy (d + 4,                s,                        outWidth * 4);
-        memcpy (d + 4 + outWidth * 4, s + (outWidth - 1) * 4,   4);
+        memcpy (d,                        s,                          bpp);
+        memcpy (d + bpp,                  s,                          outWidth * bpp);
+        memcpy (d + bpp + outWidth * bpp, s + (outWidth - 1) * bpp,   bpp);
       }
 
       frame.offset = ImVec2 (static_cast <float> (x + 1), static_cast <float> (y + 1));
@@ -1783,6 +1928,7 @@ _LoadAnimatedImage (image_s& image, const std::function <bool (void)>& wanted)
   }
 
   anim->duration = elapsed;
+  anim->wide     = wide;
 
   image.anim         = anim;
   image.pRawTexSRV   = anim->frames [0].srv; // A reference of its own
@@ -1793,7 +1939,7 @@ _LoadAnimatedImage (image_s& image, const std::function <bool (void)>& wanted)
   image.bpc          = 8;
   image.channels     = 4;
   image.is_hdr       = false;
-  image.is_wcg       = false; // Made sRGB, if they were not
+  image.is_wcg       = false; // Wide gamut frames (anim->wide) have no gamut coverage: they are parts of shared textures
   image.light_info   = { };
   image.colorimetry  = { };
 
@@ -2126,23 +2272,10 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
 
     SKIV_STBI_ICCP.iCCP = ! image.color_source.icc.empty ();
 
+    // The significant bits of a PNG (sBIT), from its parsed chunks (see _ReadColorSourcePNG): the bytes as the chunk has
+    //   them, red to alpha (a gray image's in red)
     if (image_sig->mime_type == L"image/png")
-    {
-      std::string_view     data_view ((const char *)_scratchMemory.get (), _.getInitialSize ());
-
-      if (auto sbit_pos  = data_view.find ("sBIT", 0, 4);
-               sbit_pos != data_view.npos)
-      {
-        unsigned long size =
-          *((unsigned long *)&_scratchMemory.get ()[sbit_pos-4]);
-
-#if (defined _M_IX86) || (defined _M_X64)
-        size = _byteswap_ulong (size);
-#endif
-
-        memcpy (&SKIV_STBI_SBIT, &_scratchMemory.get ()[sbit_pos+4], std::min (4ul, size));
-      }
-    }
+      memcpy (&SKIV_STBI_SBIT, image.color_source.sbit, std::min <size_t> (image.color_source.sbit_count, sizeof (SKIV_STBI_SBIT)));
 
     float*                pixels = hdr10 ?
                                  nullptr :
@@ -4733,7 +4866,7 @@ SKIF_UI_Tab_DrawViewer (void)
                                       cover.width,
                                       cover.height,
                                       cover.zoom * 100,
-                                     (cover.is_hdr) ? "HDR" : (cover.is_wcg) ? "SDR, wide gamut" : "SDR",
+                                     (cover.is_hdr) ? "HDR" : (cover.is_wcg || (cover.anim != nullptr && cover.anim->wide)) ? "SDR, wide gamut" : "SDR",
                                       cover.channels == 0 ? "Unknown" :
                                       cover.channels == 1 ? "R"       :
                                       cover.channels == 2 ? "RG"      :
@@ -5834,14 +5967,23 @@ SKIF_UI_Tab_DrawViewer (void)
       if (pDevice && cover.pRawTexSRV.p != nullptr)
       {
         {
-          // An animated image: its current frame
+          // An animated image: its current frame. Wide gamut SDR ones: in their own colors (as scRGB until then).
+          const bool wideSDR =
+            (! cover.is_hdr && (cover.is_wcg || (cover.anim != nullptr && cover.anim->wide)));
+
           DirectX::ScratchImage                          captured_img;
-          if (SUCCEEDED (SKIV_CaptureImage (cover, captured_img)))
+          if (SUCCEEDED (SKIV_CaptureImage (cover, captured_img, wideSDR)))
           {
             if (cover.is_hdr)
             {
               hr =
                 SKIV_Image_SaveToDisk_HDR (*captured_img.GetImages (), pwszFilePath);
+            }
+
+            else if (wideSDR)
+            {
+              hr =
+                SKIV_Image_SaveWideGamutSDR (*captured_img.GetImages (), pwszFilePath, cover.color_source);
             }
 
             else
