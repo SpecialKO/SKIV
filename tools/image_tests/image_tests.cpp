@@ -192,7 +192,7 @@ ReadExpected (const fs::path& folder)
 // A minimal ICC profile: the header (its size, "acsp") and a description tag, as a v2 profile has it ('desc') or a v4
 //   one ('mluc', UTF-16BE)
 static std::vector <uint8_t>
-MakeICC (const std::string& name, bool v4)
+MakeICC (const std::string& name, bool v4, const std::vector <uint8_t>& trc = { })
 {
   std::vector <uint8_t> tag;
   auto put32 = [] (std::vector <uint8_t>& v, uint32_t x) { for (int s = 24; s >= 0; s -= 8) v.push_back (static_cast <uint8_t> (x >> s)); };
@@ -215,12 +215,24 @@ MakeICC (const std::string& name, bool v4)
     tag.resize (tag.size ( ) + 79, 0);                   // The (empty) Unicode and ScriptCode parts
   }
 
+  // The description, and the red tone curve (rTRC) if given
+  const uint32_t tags  = trc.empty ( ) ? 1 : 2,
+                 first = 132 + tags * 12;
+
   std::vector <uint8_t> icc (128, 0);
   memcpy (&icc [36], "acsp", 4);
-  put32 (icc, 1);                                        // One tag
+  put32 (icc, tags);
   icc.insert (icc.end ( ), { 'd', 'e', 's', 'c' });
-  put32 (icc, 144); put32 (icc, static_cast <uint32_t> (tag.size ( )));
+  put32 (icc, first); put32 (icc, static_cast <uint32_t> (tag.size ( )));
+
+  if (! trc.empty ( ))
+  {
+    icc.insert (icc.end ( ), { 'r', 'T', 'R', 'C' });
+    put32 (icc, first + static_cast <uint32_t> (tag.size ( ))); put32 (icc, static_cast <uint32_t> (trc.size ( )));
+  }
+
   icc.insert (icc.end ( ), tag.begin ( ), tag.end ( ));
+  icc.insert (icc.end ( ), trc.begin ( ), trc.end ( ));
   _WriteBE32 (icc.data ( ), static_cast <uint32_t> (icc.size ( )));
   return icc;
 }
@@ -424,6 +436,49 @@ TestColorSources (const fs::path& images)
       color_source_s cut;
       _ReadColorSourceWebP (webp.data ( ), size, cut);
     }
+  }
+
+  // Linear or not (sRGB): what the viewer decides from them
+  {
+    const std::vector <uint8_t> identity = { 'c', 'u', 'r', 'v', 0, 0, 0, 0,  0, 0, 0, 0 },
+                                gamma10  = { 'c', 'u', 'r', 'v', 0, 0, 0, 0,  0, 0, 0, 1,  1, 0 },
+                                gamma22  = { 'c', 'u', 'r', 'v', 0, 0, 0, 0,  0, 0, 0, 1,  2, 0x33 },
+                                para10   = { 'p', 'a', 'r', 'a', 0, 0, 0, 0,  0, 0, 0, 0,  0, 1, 0, 0 },
+                                para22   = { 'p', 'a', 'r', 'a', 0, 0, 0, 0,  0, 0, 0, 0,  0, 2, 0x33, 0x33 };
+
+    auto linearICC = [&] (const std::vector <uint8_t>& trc)
+    {
+      color_source_s cs;
+      const auto     icc = MakeICC ("Curve", false, trc);
+      _SetICC (cs, icc.data ( ), icc.size ( ));
+      return ! cs.icc.empty ( ) && _IsLinearColorSource (cs);
+    };
+
+    Check (  linearICC (identity), "ICC rTRC identity",  "not linear");
+    Check (  linearICC (gamma10),  "ICC rTRC gamma 1.0", "not linear");
+    Check (! linearICC (gamma22),  "ICC rTRC gamma 2.2", "linear");
+    Check (  linearICC (para10),   "ICC rTRC para 1.0",  "not linear");
+    Check (! linearICC (para22),   "ICC rTRC para 2.2",  "linear");
+    Check (! linearICC ({ }),      "ICC without rTRC",   "linear");
+
+    auto linearPNG = [&] (const std::vector <std::pair <const char*, std::vector <uint8_t>>>& chunks)
+    {
+      color_source_s cs;
+      const auto     file = png (chunks);
+      _ReadColorSourcePNG (file.data ( ), file.size ( ), cs);
+      return _IsLinearColorSource (cs);
+    };
+
+    Check (  linearPNG ({ { "gAMA", { 0, 1, 0x86, 0xA0 } } }),                        "PNG gAMA 1.0",          "not linear");
+    Check (! linearPNG ({ { "gAMA", { 0, 0, 0xB1, 0x8F } } }),                        "PNG gAMA 1/2.2",        "linear");
+    Check (! linearPNG ({ { "sRGB", { 0 } }, { "gAMA", { 0, 1, 0x86, 0xA0 } } }),     "PNG sRGB + gAMA 1.0",   "linear");
+    Check (  linearPNG ({ { "cICP", { 1, 8, 0, 1 } } }),                              "PNG cICP linear",       "not linear");
+    Check (! linearPNG ({ { "cICP", { 1, 13, 0, 1 } }, { "gAMA", { 0, 1, 0x86, 0xA0 } } }), "PNG cICP sRGB + gAMA 1.0", "linear");
+    Check (! linearPNG ({ }),                                                         "PNG without chunks",    "linear");
+
+    color_source_s exif;
+    exif.exif_color_space = 65535;
+    Check (! _IsLinearColorSource (exif), "Exif 65535", "linear");
   }
 
   // Not images, or garbage
