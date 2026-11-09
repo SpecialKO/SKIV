@@ -207,6 +207,32 @@ _CreateSourceProfile (const color_source_s& cs)
   return nullptr;
 }
 
+// A profile of the colors libjxl hands a JPEG XL over in, when it did not convert them into scRGB itself (it only does
+//   so for XYB encoded images): those of its color source, sRGB included (which _CreateSourceProfile leaves out, as other
+//     decoders' sRGB images are drawn as they are). nullptr if they are linear Rec. 709 already, HDR (PQ: converted by
+//       the viewer itself), or unknown.
+static cmsHPROFILE
+_CreateJXLSourceProfile (const color_source_s& cs)
+{
+  // A plain gamma (JPEG XL's own transfer function; cICP has none)
+  if (cs.has_cicp && cs.transfer == 2 && cs.gamma != 0)
+  {
+    color_primaries_s p = _sRGBPrimaries;
+    _CICPPrimaries (cs.primaries, p);
+    return _CreateRGBProfile (p, cmsBuildGamma (nullptr, 100000.0 / cs.gamma));
+  }
+
+  if (cmsHPROFILE profile = _CreateSourceProfile (cs))
+    return profile;
+
+  // What is left: Rec. 709 primaries (or ones that are not converted), of their curve
+  const uint8_t transfer = (cs.has_cicp && (cs.cicp_first || cs.icc.empty ( ))) ? cs.transfer
+                         : (cs.icc_has_cicp)                                    ? cs.icc_transfer
+                                                                                : 13;
+
+  return (transfer == 8) ? nullptr : _CreateRGBProfile (_sRGBPrimaries, _CICPTransferCurve (transfer));
+}
+
 // Whether an image of this color source is converted (to scRGB, by _ConvertToScRGB)
 static bool
 _NeedsColorConversion (const color_source_s& cs)
@@ -223,16 +249,18 @@ _NeedsColorConversion (const color_source_s& cs)
 
 #pragma region Convert
 
-// Converts the rows of an image (inFormat: TYPE_RGBA_8, TYPE_BGRA_8 or TYPE_RGBA_16 of lcms2.h) from the source profile into
-//   scRGB, as RGBA half floats (TYPE_RGBA_HALF_FLT); alpha is copied. Spread over the CPU's threads, the transform being
-//     made without its cache (cmsFLAGS_NOCACHE), which lets them share it. False if it cannot be made.
+// Converts the rows of an image (inFormat: TYPE_RGBA_8, TYPE_BGRA_8, TYPE_RGBA_16 or TYPE_RGBA_FLT of lcms2.h) from the
+//   source profile into scRGB, as RGBA half floats (TYPE_RGBA_HALF_FLT) or floats (TYPE_RGBA_FLT: in and out may then be
+//     the same); alpha is copied. Spread over the CPU's threads, the transform being made without its cache
+//       (cmsFLAGS_NOCACHE), which lets them share it. False if it cannot be made.
 static bool
 _ConvertToScRGB (cmsHPROFILE source, cmsUInt32Number inFormat, const uint8_t* in, size_t inStride,
-                                                                     uint8_t* out, size_t outStride, uint32_t width, uint32_t height)
+                                                                     uint8_t* out, size_t outStride, uint32_t width, uint32_t height,
+                 cmsUInt32Number outFormat = TYPE_RGBA_HALF_FLT)
 {
   cmsHPROFILE   scrgb     = _CreateScRGBProfile ( );
   cmsHTRANSFORM transform = (scrgb == nullptr) ? nullptr :
-    cmsCreateTransform (source, inFormat, scrgb, TYPE_RGBA_HALF_FLT, INTENT_RELATIVE_COLORIMETRIC,
+    cmsCreateTransform (source, inFormat, scrgb, outFormat, INTENT_RELATIVE_COLORIMETRIC,
                         cmsFLAGS_COPY_ALPHA | cmsFLAGS_NOCACHE);
 
   if (scrgb != nullptr)
