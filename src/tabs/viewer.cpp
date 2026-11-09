@@ -3255,7 +3255,8 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
 
   succeeded = false;
 
-  if (image.is_hdr)
+  // Light levels and gamut coverage: of HDR images, and of wide gamut SDR ones (scRGB as well, see color_convert.inl)
+  if (image.is_hdr || image.is_wcg)
   {
     using namespace DirectX;
 
@@ -3476,7 +3477,8 @@ LoadLibraryTexture (image_s& image, const std::function <bool (void)>& wanted = 
 
   if (SUCCEEDED (hr))
   {
-    if (image.is_hdr)
+    // The gamut coverage chart (drawn into by the shaders, in the Gamut Coverage visualization)
+    if (image.is_hdr || image.is_wcg)
     {
       D3D11_TEXTURE2D_DESC
         texDesc            = { };
@@ -3666,14 +3668,28 @@ int              tmp_iDarkenImages = _registry.iDarkenImages;
 
 int32_t ImGuiToast::maxAssignedId = 0;
 
+// Whether an image is drawn by the shaders' HDR path (its HDR visualizations): HDR images, and wide gamut SDR ones while
+//   their gamut coverage is shown (their only visualization; otherwise they are drawn as other SDR images are)
+static bool
+SKIV_Viewer_DrawAsHDR (const image_s& image)
+{
+  return image.light_info.isHDR ||
+        (image.is_wcg && SKIV_HDR_VisualizationId == SKIV_HDR_VISUALIZTION_GAMUT);
+}
+
 uint32_t
 SKIV_Viewer_CycleVisualizationModes (void)
 {
   static int32_t last_toast_id = -1;
 
-  if (cover.is_hdr)
+  if (cover.is_hdr || cover.is_wcg)
   {
-    if (++SKIV_HDR_VisualizationId >= SKIV_HDR_NUM_VISUALIZTIONS)
+    // Wide gamut SDR images: only gamut coverage (or none)
+    if (! cover.is_hdr)
+      SKIV_HDR_VisualizationId = (SKIV_HDR_VisualizationId == SKIV_HDR_VISUALIZTION_GAMUT) ? SKIV_HDR_VISUALIZTION_NONE
+                                                                                           : SKIV_HDR_VISUALIZTION_GAMUT;
+
+    else if (++SKIV_HDR_VisualizationId >= SKIV_HDR_NUM_VISUALIZTIONS)
           SKIV_HDR_VisualizationId  = SKIV_HDR_VISUALIZTION_NONE;
 
     ImGuiToast toast = {
@@ -4186,8 +4202,8 @@ SKIF_UI_Tab_DrawViewer (void)
     SKIF_ImGui_OptImage  (pFrameSRV,
                                                       ImVec2 (sizeCover_old.x,
                                                               sizeCover_old.y),
-                                    cover_old.light_info.isHDR ? hdr_uv0 : cover_old.is_dds ? srgb_uv0 : frame_uv0, // Top Left coordinates
-                                    cover_old.light_info.isHDR ? hdr_uv1 : cover_old.is_dds ? srgb_uv1 : frame_uv1, // Bottom Right coordinates
+                                    SKIV_Viewer_DrawAsHDR (cover_old) ? hdr_uv0 : cover_old.is_dds ? srgb_uv0 : frame_uv0, // Top Left coordinates
+                                    SKIV_Viewer_DrawAsHDR (cover_old) ? hdr_uv1 : cover_old.is_dds ? srgb_uv1 : frame_uv1, // Bottom Right coordinates
                                     (_registry._StyleLightMode) ? ImVec4 (1.0f, 1.0f, 1.0f, fGammaCorrectedTint * AdjustAlpha (fAlphaPrev))  : ImVec4 (fTint, fTint, fTint, fAlphaPrev) // Alpha transparency
     );
 
@@ -4197,7 +4213,7 @@ SKIF_UI_Tab_DrawViewer (void)
   }
 
   bIsHDR =
-    cover.is_hdr;
+    cover.is_hdr || cover.is_wcg; // Both have a gamut coverage chart
 
   if (bIsHDR && (! fading))
   {
@@ -4237,8 +4253,8 @@ SKIF_UI_Tab_DrawViewer (void)
   SKIF_ImGui_OptImage  (pFrameSRV,
                                                     ImVec2 (sizeCover.x,
                                                             sizeCover.y),
-                                  cover.light_info.isHDR ? hdr_uv0 : cover.is_dds ? srgb_uv0 : frame_uv0, // Top Left coordinates
-                                  cover.light_info.isHDR ? hdr_uv1 : cover.is_dds ? srgb_uv1 : frame_uv1, // Bottom Right coordinates
+                                  SKIV_Viewer_DrawAsHDR (cover) ? hdr_uv0 : cover.is_dds ? srgb_uv0 : frame_uv0, // Top Left coordinates
+                                  SKIV_Viewer_DrawAsHDR (cover) ? hdr_uv1 : cover.is_dds ? srgb_uv1 : frame_uv1, // Bottom Right coordinates
                                   (_registry._StyleLightMode) ? ImVec4 (1.0f, 1.0f, 1.0f, fGammaCorrectedTint * AdjustAlpha (fAlpha))  :
                                                                 ImVec4 (1.f, 1.f, 1.f, 1.f) // Alpha transparency (2024-01-01, removed fGammaCorrectedTint * fAlpha for the light style)
   );
@@ -4957,6 +4973,51 @@ SKIF_UI_Tab_DrawViewer (void)
       ImGui::SetCursorPos (orig_pos);
     }
 
+    // Wide gamut SDR images: their gamut coverage, as HDR images show it above (without their light levels). The rows
+    //   take the colors of the Gamut Coverage visualization while it is shown.
+    if (cover.is_wcg && ! cover.light_info.isHDR)
+    {
+      ImGui::TextUnformatted ("\n");
+
+      struct gamut_row_s { const char* label; float percent; const float* hue; };
+
+      const auto&       counts = cover.colorimetry.pixel_counts;
+      const gamut_row_s rows [] = {
+        { "Rec. 709:",  counts.getPercentRec709    (), SKIV_HDR_GamutHue_Rec709    },
+        { "DCI-P3:",    counts.getPercentDCIP3     (), SKIV_HDR_GamutHue_DciP3     },
+        { "Rec. 2020:", counts.getPercentRec2020   (), SKIV_HDR_GamutHue_Rec2020   },
+        { "ACES AP1:",  counts.getPercentAP1       (), SKIV_HDR_GamutHue_Ap1       },
+        { "ACES AP0:",  counts.getPercentAP0       (), SKIV_HDR_GamutHue_Ap0       },
+        { "Undefined:", counts.getPercentUndefined (), SKIV_HDR_GamutHue_Undefined }
+      };
+
+      for (const auto& row : rows)
+      {
+        if (row.percent <= 0.001f)
+          continue;
+
+        if (SKIV_HDR_VisualizationId == SKIV_HDR_VISUALIZTION_GAMUT)
+          ImGui::TextColored   (ImVec4 (row.hue [0], row.hue [1], row.hue [2], 1.0f), "%s", row.label);
+        else
+          ImGui::TextUnformatted (row.label);
+
+        ImGui::SameLine (posXvalues);
+        ImGui::Text     ("%8.4f %%", row.percent);
+      }
+
+      ImGui::Spacing ();
+
+      SKIF_ImGui_OptImage ( cover.pGamutCoverageSRV,
+                            ImVec2 (256.0f, 256.0f),
+                            cover.uv0, // Top Left coordinates
+                            cover.uv1, // Bottom Right coordinates
+                            ImVec4 (1.0f, 1.0f, 1.0f, 1.0f)
+      );
+
+      if (SKIV_HDR_VisualizationId != SKIV_HDR_VISUALIZTION_GAMUT)
+        SKIF_ImGui_SetHoverTip ("Charted while the Gamut Coverage visualization is shown (context menu: Visualization).");
+    }
+
     ImGui::PopFont      ( ); // fontConsolas
     ImGui::EndChild     ( ); // ###ImageDetails
     ImGui::SetCursorPos (parent_pos);
@@ -5190,7 +5251,8 @@ SKIF_UI_Tab_DrawViewer (void)
 
       ImGui::PopID ( ); // #ImageScaling
 
-      if (cover.is_hdr)
+      // HDR images, and wide gamut SDR ones (their gamut coverage only)
+      if (cover.is_hdr || cover.is_wcg)
       {
         ImGui::PushID ("#HDRVisualization");
 
@@ -5216,7 +5278,8 @@ SKIF_UI_Tab_DrawViewer (void)
             SKIV_HDR_VisualizationId = SKIV_HDR_VISUALIZTION_NONE;
           }
 
-          if (SKIF_ImGui_MenuItemEx2 ("Luminance Heatmap", ICON_FA_CIRCLE_RADIATION, ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Yellow), spaces, &bHeatmap))
+          if (cover.is_hdr &&
+              SKIF_ImGui_MenuItemEx2 ("Luminance Heatmap", ICON_FA_CIRCLE_RADIATION, ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Yellow), spaces, &bHeatmap))
           {
             _ResetSelection (bHeatmap);
             SKIV_HDR_VisualizationId = SKIV_HDR_VISUALIZTION_HEATMAP;
@@ -5228,7 +5291,8 @@ SKIF_UI_Tab_DrawViewer (void)
             SKIV_HDR_VisualizationId = SKIV_HDR_VISUALIZTION_GAMUT;
           }
 
-          if (SKIF_ImGui_MenuItemEx2 ("SDR Grayscale", ICON_FA_CIRCLE_HALF_STROKE, ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Icon), spaces, &bSDR))
+          if (cover.is_hdr &&
+              SKIF_ImGui_MenuItemEx2 ("SDR Grayscale", ICON_FA_CIRCLE_HALF_STROKE, ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Icon), spaces, &bSDR))
           {
             _ResetSelection (bSDR);
             SKIV_HDR_VisualizationId = SKIV_HDR_VISUALIZTION_SDR;
