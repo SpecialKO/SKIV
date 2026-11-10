@@ -5058,6 +5058,32 @@ SKIF_UI_Tab_DrawViewer (void)
     SKIV_HDR_MaxCLL = 1.0f;
 
   sizeCover         = ImFloor (sizeCover);
+
+  // Centering a new image (or one with a new scaling) that is larger than the frame, by scrolling to its middle: the
+  //   scroll position only applies from the next frame, so in this one the image is drawn where that will put it.
+  //   Right away, also while the previous image fades out, as that one is drawn where it was (see s_fadeOutLayout)
+  //   and is not part of the content; otherwise not until it has faded out (it would move along with the scroll).
+  const bool   centerNow    = resetScrollCenter && cover.pRawTexSRV.p != nullptr &&
+                              (cover_old.pRawTexSRV.p == nullptr || s_fadeOutLayout.valid);
+  ImVec2       centerScroll,
+               centerShift;  // How much further the image is drawn this frame than its layout position
+  const ImVec2 cursorMaxPos = ImGui::GetCurrentWindow ( )->DC.CursorMaxPos;
+  const ImVec2 idealMaxPos  = ImGui::GetCurrentWindow ( )->DC.IdealMaxPos;
+
+  if (centerNow)
+  {
+    ImGuiWindow* window     = ImGui::GetCurrentWindow ( );
+    const ImVec2 localStart = window->DC.CursorStartPos - window->Pos + window->Scroll;
+    const ImVec2 visible    = window->InnerRect.GetSize ( ) - window->WindowPadding * 2.0f;
+    const ImVec2 imageLocal = ImGui::GetCursorPos ( );
+
+    // (An axis where the image is smaller than the frame is centered by the layout above, without scrolling)
+    centerScroll = ImMax (ImVec2 (0.0f, 0.0f), ImFloor (imageLocal - localStart + (sizeCover - visible) * 0.5f));
+    centerShift  = window->Scroll - centerScroll;
+
+    ImGui::SetCursorPos (imageLocal + centerShift);
+  }
+
   ImVec2 image_pos  = ImFloor (ImGui::GetCursorScreenPos ( )); // NOTE! Actual screen position (since that's what ImGui::Image uses)
   ImRect image_rect = ImRect (image_pos, image_pos + sizeCover);
 
@@ -5078,6 +5104,21 @@ SKIF_UI_Tab_DrawViewer (void)
   );
 
   isImageHovered = ImGui::IsItemHovered() || s_imageDragActive; // (Being dragged makes the image item seem not hovered)
+
+  // Centered right away (see above): the image counts as content at its layout position, and the frame is scrolled
+  //   to where it was drawn
+  if (centerNow)
+  {
+    ImGuiWindow* window = ImGui::GetCurrentWindow ( );
+
+    window->DC.CursorMaxPos = ImMax (cursorMaxPos, image_rect.Max - centerShift);
+    window->DC.IdealMaxPos  = ImMax (idealMaxPos,  image_rect.Max - centerShift);
+
+    ImGui::SetScrollX (centerScroll.x);
+    ImGui::SetScrollY (centerScroll.y);
+
+    resetScrollCenter = false;
+  }
 
   {
     ImGuiWindow* window = ImGui::GetCurrentWindow ( );
