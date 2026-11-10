@@ -534,6 +534,12 @@ _IsAVIFSequenceFile (const std::wstring& path)
   return _IsAVIFSequence (head, static_cast <size_t> (stream.gcount ( )));
 }
 
+bool
+SKIV_IsAnimatedFile (const std::wstring& path)
+{
+  return IsAnimatedImageFile (path) || _IsAVIFSequenceFile (path);
+}
+
 // The decoder (libavif's), set up for the file in data; nullptr if libavif is missing or cannot parse it
 static avifDecoder*
 _OpenAVIF (const uint8_t* data, size_t size)

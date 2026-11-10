@@ -230,6 +230,9 @@ extern const std::initializer_list <FileSignature> supported_formats;
 bool isExtensionSupported  (const std::wstring extension);
 bool isJXLDecoderAvailable (void);
 
+// Whether the file is an animated image (APNG, GIF, WebP, or an AVIF image sequence), by its header
+bool SKIV_IsAnimatedFile (const std::wstring& path);
+
 struct SKIV_DecodeRequest {
   std::wstring                path;                  // The image file
   bool                        animatedImages = true; // Settings (bAnimatedImages), as they were when the request was made
