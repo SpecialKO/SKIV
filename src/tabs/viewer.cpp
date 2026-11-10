@@ -1496,6 +1496,18 @@ SKIF_UI_Tab_DrawViewer (void)
 
       bNotifyRefresh = false;
     }
+
+    // The image shown and the ones next to it in its folder: kept decoded by the image store (the ones next to it
+    //   preloaded), so switching to them is quick
+    {
+      auto*      active = _current_folder.fileList.getActiveFile ( );
+      const bool listed = (active != nullptr && ! cover.file_info.path.empty ( ) && active->path == cover.file_info.path);
+
+      _store.SetNeighbours (cover.file_info.path,
+                            listed ? _current_folder.fileList.peekPrev ( ) : L"",
+                            listed ? _current_folder.fileList.peekNext ( ) : L"",
+                            _registry.bAnimatedImages);
+    }
   }
 
   // Only apply changes to the scaling method if we actually have an image loaded
