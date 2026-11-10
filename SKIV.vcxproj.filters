@@ -201,6 +201,9 @@
     <ClInclude Include="include\utility\image.h">
       <Filter>Header Files\Utility</Filter>
     </ClInclude>
+    <ClInclude Include="include\utility\image_decode.h">
+      <Filter>Header Files\Utility</Filter>
+    </ClInclude>
     <ClInclude Include="packages_misc\DirectXTexEXR.h">
       <Filter>Header Files\Packages_Misc</Filter>
     </ClInclude>
@@ -573,6 +576,9 @@
       <Filter>Source Files\ImGui</Filter>
     </ClCompile>
     <ClCompile Include="src\utility\image.cpp">
+      <Filter>Source Files\Utility</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utility\image_decode.cpp">
       <Filter>Source Files\Utility</Filter>
     </ClCompile>
     <ClCompile Include="src\MinHook\buffer.c">
