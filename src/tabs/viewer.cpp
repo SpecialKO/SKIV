@@ -4235,6 +4235,14 @@ static struct {
   bool         emptyHovered = false; // The empty space around the image was hovered (not the image, nor e.g. the details)
 } s_viewerLayout;
 
+// Where the image being faded out (cover_old) was last shown, so it fades out there (rather than centered); captured
+//   when it is swapped out (see _SwapOutCover in SKIF_UI_Tab_DrawViewer)
+static struct {
+  bool   valid    = false;
+  ImVec2 position;          // Its top left corner, relative to the top left corner of the visible part of the frame
+  ImVec2 size;              // Its drawn size
+} s_fadeOutLayout;
+
 // Set when the image scaling is changed to show the image at a position of our own (e.g. a double-click to its actual
 //   size): keeps that change of scaling from centering the image (see GetCurrentAspectRatio and resetScrollCenter)
 static bool s_keepPlacementOnRescale = false;
@@ -4648,6 +4656,15 @@ SKIF_UI_Tab_DrawViewer (void)
       cover_old = cover;
       cover.reset();
 
+      // It fades out where it was last shown (s_viewerLayout is of the frame that last drew it)
+      s_fadeOutLayout.valid = (cover_old.pRawTexSRV.p != nullptr && s_viewerLayout.valid && s_viewerLayout.window != nullptr);
+
+      if (s_fadeOutLayout.valid)
+      {
+        s_fadeOutLayout.position = s_viewerLayout.imagePos - s_viewerLayout.window->InnerRect.Min;
+        s_fadeOutLayout.size     = s_viewerLayout.imageSize;
+      }
+
       fAlphaPrev          = (_registry.bCrossFade) ? fAlpha   : 0.0f;
       fAlpha              = (_registry.bCrossFade) ?   0.0f   : 1.0f;
 
@@ -4946,10 +4963,28 @@ SKIF_UI_Tab_DrawViewer (void)
   // Display previous fading out cover
   if (cover_old.pRawTexSRV.p != nullptr && fAlphaPrev > 0.0f)
   {
-    if (sizeCover_old.x < ImGui::GetContentRegionAvail().x)
-      ImGui::SetCursorPosX (ImFloor ((ImGui::GetContentRegionAvail().x - sizeCover_old.x) * 0.5f));
-    if (sizeCover_old.y < ImGui::GetContentRegionAvail().y)
-      ImGui::SetCursorPosY (ImFloor ((ImGui::GetContentRegionAvail().y - sizeCover_old.y) * 0.5f));
+    ImGuiWindow* window = ImGui::GetCurrentWindow ( );
+
+    // The content extents before it, to be restored after it: the image fading out is not part of the content
+    //   (it should not change the scroll limits of the image fading in)
+    const ImVec2 cursorMaxPos = window->DC.CursorMaxPos;
+    const ImVec2 idealMaxPos  = window->DC.IdealMaxPos;
+
+    // Where it was last shown, regardless of the scroll position (which is now that of the image fading in)
+    if (s_fadeOutLayout.valid)
+    {
+      ImGui::SetCursorScreenPos (window->InnerRect.Min + s_fadeOutLayout.position);
+      sizeCover_old = s_fadeOutLayout.size;
+    }
+
+    // Otherwise centered, when smaller than the frame
+    else
+    {
+      if (sizeCover_old.x < ImGui::GetContentRegionAvail().x)
+        ImGui::SetCursorPosX (ImFloor ((ImGui::GetContentRegionAvail().x - sizeCover_old.x) * 0.5f));
+      if (sizeCover_old.y < ImGui::GetContentRegionAvail().y)
+        ImGui::SetCursorPosY (ImFloor ((ImGui::GetContentRegionAvail().y - sizeCover_old.y) * 0.5f));
+    }
 
     sizeCover_old = ImFloor (sizeCover_old);
 
@@ -4965,6 +5000,12 @@ SKIF_UI_Tab_DrawViewer (void)
                                     SKIV_Viewer_DrawAsHDR (cover_old) ? hdr_uv1 : cover_old.is_dds ? srgb_uv1 : frame_uv1, // Bottom Right coordinates
                                     (_registry._StyleLightMode) ? ImVec4 (1.0f, 1.0f, 1.0f, fGammaCorrectedTint * AdjustAlpha (fAlphaPrev))  : ImVec4 (fTint, fTint, fTint, fAlphaPrev) // Alpha transparency
     );
+
+    if (s_fadeOutLayout.valid)
+    {
+      window->DC.CursorMaxPos = cursorMaxPos;
+      window->DC.IdealMaxPos  = idealMaxPos;
+    }
 
     ImGui::SetCursorPos (originalPos);
 
@@ -6545,6 +6586,17 @@ SKIF_UI_Tab_DrawViewer (void)
     ExportSDRDialog = PopupState_Closed;
   }
 
+
+  // The Left and Right arrow keys switch images: owning them keeps ImGui's keyboard navigation from also scrolling the
+  //   viewer with them (as it does in a window without items to navigate to), which would move the image as it is
+  //   being swapped out. Not while a popup (e.g. the context menu) or a text field uses them.
+  if (! ImGui::GetIO ( ).WantTextInput && ! ImGui::IsPopupOpen (nullptr, ImGuiPopupFlags_AnyPopupId))
+  {
+    const ImGuiID arrowKeysOwner = ImGui::GetID ("###SKIV_ImageArrowKeys");
+
+    ImGui::SetKeyOwner (ImGuiKey_LeftArrow,  arrowKeysOwner);
+    ImGui::SetKeyOwner (ImGuiKey_RightArrow, arrowKeysOwner);
+  }
 
   if (! tryingToLoadImage && ! tryingToDownImage)
   {
