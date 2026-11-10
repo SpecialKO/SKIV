@@ -2635,6 +2635,10 @@ wWinMain ( _In_     HINSTANCE hInstance,
         if (SKIF_Tab_Selected == UITab_Viewer ||
             SKIF_Tab_ChangeTo == UITab_Viewer)
         {
+          // Mouse wheel zoom and dragging the image: sets up the scroll position of the content frame below
+          extern void SKIV_Viewer_HandleMouseZoomPan (void);
+          SKIV_Viewer_HandleMouseZoomPan ( );
+
           ImGui::PushStyleVar (ImGuiStyleVar_FramePadding, ImVec2());
           bool show = SKIF_ImGui_BeginMainChildFrame (ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoScrollbar);
           ImGui::PopStyleVar  ( );
@@ -2914,6 +2918,15 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
       if (hotkeyCtrlN)
         ShowWindow (SKIF_ImGui_hWnd, SW_MINIMIZE);
+
+      // A double-click on the caption area (or the empty space around the image in the viewer): maximize/restore
+      if (SKIF_ImGui_CaptionDoubleClicked)
+      {   SKIF_ImGui_CaptionDoubleClicked = false;
+
+        // (Not in fullscreen, where the window is neither)
+        if (SKIF_ImGui_hWnd != NULL && ! SKIF_ImGui_IsFullscreen (SKIF_ImGui_hWnd))
+          ::PostMessage (SKIF_ImGui_hWnd, WM_SYSCOMMAND, ::IsZoomed (SKIF_ImGui_hWnd) ? SC_RESTORE : SC_MAXIMIZE, 0);
+      }
 
       if (hotkeyCtrlQ || bKeepWindowAlive == false) // HotkeyEsc is situational
         bKeepProcessAlive = false;
