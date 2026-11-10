@@ -32,15 +32,25 @@
 //   shown and next to it, and releases the rest.
 //
 //   Request (path) -> from the cache, or a worker decodes it -> WM_SKIF_IMAGE wakes the main loop -> TakeResult (cover).
-//   SetNeighbours (shown, previous, next): once nothing is loading, the viewer says what it shows and what is next to it.
-//     Those three are kept (within a budget of video memory), and the two next to it are preloaded, one at a time, while
-//     nothing else is decoding. Animated images are neither preloaded nor kept: their frames take much more memory.
+//   SetNeighbours (shown, around): once nothing is loading, the viewer says what it shows and what is around it.
+//     The shown image and the two next to it are kept (within a budget of video memory), and those two are preloaded,
+//     one at a time, while nothing else is decoding. Animated images are neither preloaded nor kept: their frames take
+//     much more memory.
+//   Thumbnails (Thumbnail (path)): small, still versions (for the carousel), kept within a budget of their own, the least
+//     recently used given up first. Those of the shown image and the ones nearest to it (SKIV_THUMBNAIL_REACH each way)
+//     are made ahead; others once asked for. Each full decode makes one too, once its image is handed over. They are
+//     made after the full preloads, one at a time.
 //   A device reset (OnDeviceReset) releases them all, and drops the results made on the old device.
 //
 //   The viewer holds its own references to the images it shows (cover, and cover_old as it fades out).
 
 // WM_SKIF_IMAGE's wParam when the store has a result to take: it only wakes the main loop (TakeResult takes it)
 constexpr WPARAM SKIV_IMAGE_STORE_RESULT = 0x1;
+
+// Thumbnails: scaled down to fit this many pixels each way. Made ahead: of the shown image and this many images each way
+//   (the 5 nearest images)
+constexpr size_t SKIV_THUMBNAIL_SIZE  = 256;
+constexpr int    SKIV_THUMBNAIL_REACH = 2;
 
 #include <atomic>
 #include <memory>
@@ -68,9 +78,16 @@ public:
   //   whether it could be decoded. Other results are kept (if they are wanted, see SetNeighbours) or released.
   bool TakeResult (image_s& image, bool& success);
 
-  // Main thread, once per frame while nothing is loading: the image shown (its path, empty if none) and the ones next to
-  //   it in its folder (empty if none). Keeps those three, releases the rest, and preloads the two next to it.
-  void SetNeighbours (const std::wstring& shown, const std::wstring& previous, const std::wstring& next, bool animatedImages);
+  // Main thread, once per frame while nothing is loading: the image shown (its path, empty if none) and the ones around it
+  //   in its folder, nearest first: the next one, the previous one, the one after the next, ... (empty where there is
+  //   none). Keeps the shown one and the two next to it, releases the rest, and preloads those two; then the thumbnails
+  //   of the shown one and the rest of around.
+  void SetNeighbours (const std::wstring& shown, const std::vector <std::wstring>& around, bool animatedImages);
+
+  // Main thread: the file's thumbnail (pRawTexSRV, its size, and what is known about it; no gamut coverage texture), or
+  //   nullptr if there is none yet. load: made if it is not kept, after the thumbnails due ahead of it. Valid until the
+  //   next call into the store; the textures are released after the frame they were last drawn in (SKIF_ResourcesToFree).
+  const image_s* Thumbnail (const std::wstring& path, bool load = true);
 
   // The notifications of the decodes (made on their worker threads), to be shown by the main thread
   bool TakeNotice (ImGuiToast& notice) { return m_notices.try_pop (notice); }
@@ -108,6 +125,8 @@ private:
     key_s        key;
     bool         preload    = false;
     bool         success    = false;
+    bool         thumbnail  = false;  // A thumbnail
+    bool         byproduct  = false;  //   ... of a full decode (none if it was animated: not a failure)
     image_s      image = { };
   };
 
@@ -116,6 +135,7 @@ private:
     int                                 job     = 0;
     key_s                               key;
     bool                                preload = false;
+    bool                                thumbnail = false; // A thumbnail only
     std::shared_ptr <std::atomic<bool>> wanted;            // Read by its worker (an animated image stops once false)
   };
 
@@ -126,15 +146,30 @@ private:
     size_t  bytes = 0;
   };
 
+  // A kept thumbnail (main thread)
+  struct thumb_s {
+    key_s    key;
+    image_s  image = { };
+    size_t   bytes = 0;
+    uint64_t used  = 0;     // When it was last asked for (m_tick)
+  };
+
   static unsigned __stdcall Worker (void* job);
 
-  int    Start     (const std::wstring& path, const key_s& key, bool animatedImages, bool preload); // Returns its job
+  int    Start     (const std::wstring& path, const key_s& key, bool animatedImages, bool preload,  // Returns its job
+                    bool thumbnailOnly = false);
   bool   IsWanted  (const key_s& key) const;               // Shown, next to it, or requested
   int    Priority  (const key_s& key) const;               // 3: shown or requested, 2: the next image, 1: the previous one, 0: not wanted
   bool   Keep      (const key_s& key, const image_s& image); // Into the cache (false if it does not fit the budget)
   entry_s*
          Find      (const key_s& key);
   void   Preload   (void);                                 // Starts one, if nothing is decoding and one is due
+  thumb_s*
+         FindThumbnail      (const key_s& key);
+  bool   IsThumbnailWanted  (const key_s& key) const;      // Of the shown image or the ones nearest to it, or asked for
+  bool   IsThumbnailComing  (const key_s& key) const;
+  bool   KeepThumbnail      (const key_s& key, const image_s& image);
+  bool   PreloadThumbnail   (void);                        // Starts one, if one is due (true if it did)
   static void   Copy  (const image_s& from, image_s& to);  // Its textures (references of to's own) and what is known about it
   static size_t Bytes (const image_s& image);               // What its textures take
 
@@ -155,7 +190,18 @@ private:
   std::wstring m_pendingPath;
   bool         m_pendingAnimated = true;
 
-  std::wstring m_shownPath, m_prevPath, m_nextPath; // SetNeighbours ( )
+  std::wstring m_shownPath;                       // SetNeighbours ( )
+  std::vector <std::wstring>
+               m_aroundPaths;
   key_s        m_shown,     m_prev,     m_next;
+  std::vector <key_s>       m_near;               // The thumbnails made ahead: the shown image's, then around, nearest first
   bool         m_neighbourAnimated = true;
+
+  std::vector <std::unique_ptr <thumb_s>>
+                            m_thumbnails;         // (By pointer, as m_cache)
+  std::vector <key_s>       m_thumbnailsAsked;    // Asked for (Thumbnail), not kept yet: the latest first
+  std::vector <std::pair <int, key_s>>
+                            m_thumbnailsComing;   // Being made, by their jobs (thumbnails only, and those of full decodes)
+  std::vector <key_s>       m_thumbnailsFailed;   // Could not be made (until the neighbours change)
+  uint64_t                  m_tick = 0;           // Counts the thumbnails asked for (least recently used)
 };

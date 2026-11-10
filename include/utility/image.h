@@ -404,8 +404,8 @@ struct skiv_image_directory_s {
     void         setImage    (const std::wstring& path);
     std::wstring nextImage   (void);
     std::wstring prevImage   (void);
-    std::wstring peekNext    (void); // The images nextImage ( ) and prevImage ( ) would go to, without going there
-    std::wstring peekPrev    (void); //   (empty if none, or if it is the current one)
+    std::wstring peek        (int offset); // The image nextImage ( ) (or prevImage ( ), if negative) would go to, this many
+                                           //   times, without going there (empty if none, or if it comes back to the current one)
     std::wstring deleteImage (void);
     void         updateFileIterator (const std::wstring& path); // Find the position of the image in the current folder
 
