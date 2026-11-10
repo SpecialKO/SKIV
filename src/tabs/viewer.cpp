@@ -5015,17 +5015,11 @@ SKIF_UI_Tab_DrawViewer (void)
   bIsHDR =
     cover.is_hdr || cover.is_wcg; // Both have a gamut coverage chart
 
-  if (bIsHDR && (! fading))
-  {
-    SKIV_HDR_GamutCoverageUAV = cover.pGamutCoverageUAV;
-    SKIV_HDR_GamutCoverageSRV = cover.pGamutCoverageSRV;
-  }
-
-  else
-  {
-    SKIV_HDR_GamutCoverageUAV = nullptr;
-    SKIV_HDR_GamutCoverageSRV = nullptr;
-  }
+  // The gamut coverage is not computed during a cross-fade (both images are drawn then), but its chart stays known
+  //   to the renderer by its SRV: that is what draws it opaque and without the checkerboard (it would otherwise be
+  //   drawn as an image with transparency, showing the checkerboard while it has not been computed yet)
+  SKIV_HDR_GamutCoverageUAV = (bIsHDR && ! fading) ? cover.pGamutCoverageUAV : nullptr;
+  SKIV_HDR_GamutCoverageSRV = (bIsHDR)             ? cover.pGamutCoverageSRV : nullptr;
 
   SKIV_HDR_MaxCLL          = cover.light_info.max_cll;
   SKIV_HDR_MaxLuminanceP99 = cover.light_info.p99_nits;
