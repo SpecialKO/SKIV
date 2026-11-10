@@ -1189,8 +1189,67 @@ _ReadColorSource (image_s& image, const FileSignature* image_sig, FILE* pImageFi
     image.color_source.format_defined = "Set by the texture format (DDS)";
 }
 
+// A thumbnail of the image: its first image (the top mip level), decompressed if it is block compressed, scaled down to
+//   fit size pixels each way (never up).
 static bool
-_DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <ImGuiToast>& notices)
+_MakeThumbnail (const DirectX::ScratchImage& from, size_t size, DirectX::ScratchImage& to)
+{
+  const DirectX::Image* src = from.GetImage (0, 0, 0);
+
+  if (src == nullptr || size == 0 || src->width == 0 || src->height == 0)
+    return false;
+
+  DirectX::ScratchImage decompressed;
+
+  if (DirectX::IsCompressed (src->format))
+  {
+    if (FAILED (DirectX::Decompress (*src, DXGI_FORMAT_UNKNOWN, decompressed)))
+      return false;
+
+    src = decompressed.GetImage (0, 0, 0);
+  }
+
+  const double scale  = std::min (1.0, static_cast <double> (size) / static_cast <double> (std::max (src->width, src->height)));
+  const size_t width  = std::max (static_cast <size_t> (std::round (static_cast <double> (src->width)  * scale)), size_t (1)),
+               height = std::max (static_cast <size_t> (std::round (static_cast <double> (src->height) * scale)), size_t (1));
+
+  if (width == src->width && height == src->height)
+    return SUCCEEDED (to.InitializeFromImage (*src));
+
+  // WIC's Fant filter is much quicker; DirectXTex's own triangle filter for the formats WIC cannot scale (sRGB ones)
+  if (SUCCEEDED (DirectX::Resize (*src, width, height, DirectX::TEX_FILTER_FANT | DirectX::TEX_FILTER_FORCE_WIC, to)))
+    return true;
+
+  return SUCCEEDED (DirectX::Resize (*src, width, height, DirectX::TEX_FILTER_TRIANGLE | DirectX::TEX_FILTER_FORCE_NON_WIC, to));
+}
+
+// The thumbnail's texture (and its view), into image (pRawTexSRV, width, height)
+static bool
+_CreateThumbnailTexture (ID3D11Device* pDevice, const DirectX::ScratchImage& img, image_s& image)
+{
+  CComPtr <ID3D11Texture2D> pTex2D;
+
+  if (FAILED (DirectX::CreateTexture (pDevice, img.GetImages ( ), img.GetImageCount ( ), img.GetMetadata ( ),
+                                      (ID3D11Resource **)&pTex2D.p)) || pTex2D.p == nullptr)
+    return false;
+
+  D3D11_SHADER_RESOURCE_VIEW_DESC
+    srv_desc                           = { };
+    srv_desc.Format                    = DXGI_FORMAT_UNKNOWN;
+    srv_desc.ViewDimension             = D3D11_SRV_DIMENSION_TEXTURE2D;
+    srv_desc.Texture2D.MipLevels       = UINT_MAX;
+    srv_desc.Texture2D.MostDetailedMip =  0;
+
+  if (FAILED (pDevice->CreateShaderResourceView (pTex2D.p, &srv_desc, &image.pRawTexSRV.p)) || image.pRawTexSRV.p == nullptr)
+    return false;
+
+  image.width  = static_cast <float> (img.GetMetadata ( ).width);
+  image.height = static_cast <float> (img.GetMetadata ( ).height);
+  return true;
+}
+
+static bool
+_DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <ImGuiToast>& notices, image_s* thumbnail)
 {
   const std::function <bool (void)>& wanted = request.wanted;
 
@@ -1310,7 +1369,7 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
   //   or malformed) is loaded as a still image below: its first frame (an APNG: its default image).
   //     GIFs skip IsAnimatedImageFile, which only reads GIFs up to 64 MB: _LoadAnimatedImage counts their frames itself.
   //       AVIF: image sequences (by their ftyp box), whose frames libavif decodes (HDR ones are shown as still images).
-  if (request.animatedImages && image_sig != nullptr &&
+  if (request.animatedImages && ! request.thumbnailOnly && image_sig != nullptr &&
      ((image_sig->mime_type == L"image/gif") ||
       (image_sig->mime_type == L"image/avif" && _IsAVIFSequenceFile (image.file_info.path)) ||
      ((image_sig->mime_type == L"image/png" ||
@@ -2838,6 +2897,21 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
   }
 #endif
 
+  // A thumbnail only: scaled down here, so that its light levels are measured on the thumbnail (close enough, and quicker)
+  DirectX::ScratchImage thumb_img;
+
+  if (request.thumbnailOnly && request.thumbnailSize > 0)
+  {
+    if (! _MakeThumbnail (*pImg, request.thumbnailSize, thumb_img))
+    {
+      PLOG_ERROR << "[Image Processing] Could not scale the image down to a thumbnail";
+      return false;
+    }
+
+    pImg = &thumb_img;
+    meta =  thumb_img.GetMetadata ();
+  }
+
   auto pDevice =
     SKIF_D3D11_GetDevice ();
 
@@ -3070,8 +3144,8 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
 
   if (SUCCEEDED (hr))
   {
-    // The gamut coverage chart (drawn into by the shaders, in the Gamut Coverage visualization)
-    if (image.is_hdr || image.is_wcg)
+    // The gamut coverage chart (drawn into by the shaders, in the Gamut Coverage visualization); thumbnails have none
+    if ((image.is_hdr || image.is_wcg) && ! request.thumbnailOnly)
     {
       D3D11_TEXTURE2D_DESC
         texDesc            = { };
@@ -3109,7 +3183,11 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
     if (pRawTex2D.p != nullptr && SUCCEEDED (pDevice->CreateShaderResourceView (pRawTex2D.p, &srv_desc, &image.pRawTexSRV.p)))
     {
       DWORD post = SKIF_Util_timeGetTime1 ( );
-      PLOG_INFO << "[Image Processing] Processed image in " << (post - pre) << " ms.";
+
+      if (request.thumbnailOnly)
+        PLOG_INFO << "[Image Processing] Made a thumbnail (" << meta.width << "x" << meta.height << ") in " << (post - pre) << " ms.";
+      else
+        PLOG_INFO << "[Image Processing] Processed image in " << (post - pre) << " ms.";
 
       // Update the image width/height
       image.width  = static_cast<float>(meta.width);
@@ -3123,20 +3201,45 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
     pGamutCoverageTex2D = nullptr;
   }
 
+  // A thumbnail too, from the decoded image: made once the image is handed over (decoded), so that it does not wait for it
+  if (succeeded && thumbnail != nullptr && request.thumbnailSize > 0 && ! request.thumbnailOnly)
+  {
+    thumbnail->file_info    = image.file_info;
+    thumbnail->bpc          = image.bpc;
+    thumbnail->channels     = image.channels;
+    thumbnail->not_hdr      = image.not_hdr;
+    thumbnail->is_hdr       = image.is_hdr;
+    thumbnail->is_wcg       = image.is_wcg;
+    thumbnail->is_dds       = image.is_dds;
+    thumbnail->light_info   = image.light_info;
+    thumbnail->color_source = image.color_source;
+
+    if (request.decoded)
+      request.decoded ( ); // (image is no longer ours)
+
+    const DWORD start = SKIF_Util_timeGetTime1 ( );
+
+    if (_MakeThumbnail (*pImg, request.thumbnailSize, thumb_img) && _CreateThumbnailTexture (pDevice, thumb_img, *thumbnail))
+      PLOG_INFO << "[Image Processing] Made a thumbnail (" << thumb_img.GetMetadata ().width << "x" << thumb_img.GetMetadata ().height
+                << ") in " << (SKIF_Util_timeGetTime1 ( ) - start) << " ms.";
+    else
+      PLOG_WARNING << "[Image Processing] Could not make a thumbnail of the image";
+  }
+
   return succeeded;
 };
 
 #pragma endregion
 
 bool
-SKIV_DecodeImage (const SKIV_DecodeRequest& request, image_s& image, std::vector <ImGuiToast>& notices)
+SKIV_DecodeImage (const SKIV_DecodeRequest& request, image_s& image, std::vector <ImGuiToast>& notices, image_s* thumbnail)
 {
   image.file_info.path      = request.path;
   image.file_info.path_utf8 = SK_WideCharToUTF8 (request.path);
   image.file_info.size      = SK_File_GetSize   (request.path.c_str ());
 
   return
-    _DecodeImage (image, request, notices);
+    _DecodeImage (image, request, notices, thumbnail);
 }
 
 #pragma region Colors

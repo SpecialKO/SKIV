@@ -238,12 +238,23 @@ struct SKIV_DecodeRequest {
   bool                        animatedImages = true; // Settings (bAnimatedImages), as they were when the request was made
   std::function <bool (void)> wanted;                // Optional: returns false once the image is no longer wanted (an
                                                      //   animated image then stops having its frames decoded)
+
+  // Thumbnails: scaled down to fit this many pixels each way (never up), in the image's own format (HDR and wide gamut
+  //   ones stay scRGB). No gamut coverage texture; their light levels are measured on the thumbnail.
+  size_t                      thumbnailSize  = 0;     // 0: none
+  bool                        thumbnailOnly  = false; // image is the thumbnail (still: an animated image's first frame,
+                                                      //   as with animatedImages off)
+  std::function <void (void)> decoded;                // Optional, with a thumbnail of a full decode: called once image is
+                                                      //   ready, before the thumbnail is made (image is not touched again)
 };
 
 // Decodes the file into image: its texture(s) (pRawTexSRV, the gamut coverage texture, an animated image's frames), what
 //   is known about it (its size, format, colors and light levels), and its file_info (path, path_utf8, size).
 //   notices: the notifications it has (to be shown on the main thread). Returns whether the file could be decoded.
-bool SKIV_DecodeImage (const SKIV_DecodeRequest& request, image_s& image, std::vector <ImGuiToast>& notices);
+//   thumbnail (with thumbnailSize, not thumbnailOnly): also made from the decoded image, if it is still (it is left
+//     without a texture otherwise, or if it could not be made).
+bool SKIV_DecodeImage (const SKIV_DecodeRequest& request, image_s& image, std::vector <ImGuiToast>& notices,
+                       image_s* thumbnail = nullptr);
 
 // How the file describes its colors, for the details panel: in a few words, and everything it has (one item per line)
 std::string SKIV_DescribeColorSource         (const color_source_s& cs);

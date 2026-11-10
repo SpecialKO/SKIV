@@ -1497,16 +1497,26 @@ SKIF_UI_Tab_DrawViewer (void)
       bNotifyRefresh = false;
     }
 
-    // The image shown and the ones next to it in its folder: kept decoded by the image store (the ones next to it
-    //   preloaded), so switching to them is quick
+    // The image shown and the ones around it in its folder: those next to it kept decoded by the image store (preloaded),
+    //   so switching to them is quick, and the thumbnails of the nearest ones made ahead
     {
       auto*      active = _current_folder.fileList.getActiveFile ( );
       const bool listed = (active != nullptr && ! cover.file_info.path.empty ( ) && active->path == cover.file_info.path);
 
-      _store.SetNeighbours (cover.file_info.path,
-                            listed ? _current_folder.fileList.peekPrev ( ) : L"",
-                            listed ? _current_folder.fileList.peekNext ( ) : L"",
-                            _registry.bAnimatedImages);
+      static std::vector <std::wstring> around;
+      around.clear ( );
+
+      // Nearest first: the next one, the previous one, the one after the next, ...
+      if (listed)
+      {
+        for (int distance = 1; distance <= SKIV_THUMBNAIL_REACH; distance++)
+        {
+          around.push_back (_current_folder.fileList.peek ( distance));
+          around.push_back (_current_folder.fileList.peek (-distance));
+        }
+      }
+
+      _store.SetNeighbours (cover.file_info.path, around, _registry.bAnimatedImages);
     }
   }
 

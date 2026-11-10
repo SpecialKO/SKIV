@@ -37,6 +37,12 @@ static constexpr size_t s_cacheBudget = 512ull * 1024 * 1024;
 static constexpr size_t s_cacheBudget = 256ull * 1024 * 1024;
 #endif
 
+// What the kept thumbnails may take (a 256x256 one takes 256 KB, or 512 KB as half floats)
+static constexpr size_t s_thumbnailBudget = 64ull * 1024 * 1024;
+
+// How many thumbnails asked for (Thumbnail) are remembered until they are made
+static constexpr size_t s_thumbnailsAsked = 64;
+
 namespace
 {
   // A request, handed to its worker thread
@@ -253,7 +259,7 @@ SKIV_ImageStore::Keep (const key_s& key, const image_s& image)
 }
 
 int
-SKIV_ImageStore::Start (const std::wstring& path, const key_s& key, bool animatedImages, bool preload)
+SKIV_ImageStore::Start (const std::wstring& path, const key_s& key, bool animatedImages, bool preload, bool thumbnailOnly)
 {
   job_s* job = new job_s;
 
@@ -261,8 +267,17 @@ SKIV_ImageStore::Start (const std::wstring& path, const key_s& key, bool animate
   job->generation            = m_generation.load ( );
   job->preload               = preload;
   job->decode.path           = path;
-  job->decode.animatedImages = animatedImages;
+  job->decode.animatedImages = animatedImages && ! thumbnailOnly;
   job->wanted                = std::make_shared <std::atomic<bool>> (true);
+
+  // A thumbnail: only one, or one made from a full decode, unless there is one (or one is being made)
+  if (thumbnailOnly || (key.exists && FindThumbnail (key) == nullptr && ! IsThumbnailComing (key)))
+  {
+    job->decode.thumbnailSize = SKIV_THUMBNAIL_SIZE;
+    job->decode.thumbnailOnly = thumbnailOnly;
+
+    m_thumbnailsComing.push_back ({ job->job, key });
+  }
 
   // Animated images are stopped between frames once they are no longer wanted
   std::shared_ptr <std::atomic<bool>> wanted = job->wanted;
@@ -271,11 +286,14 @@ SKIV_ImageStore::Start (const std::wstring& path, const key_s& key, bool animate
   inflight_s inflight;
   inflight.job     = job->job;
   inflight.key     = key;
-  inflight.preload = preload;
-  inflight.wanted  = job->wanted;
+  inflight.preload   = preload;
+  inflight.thumbnail = thumbnailOnly;
+  inflight.wanted    = job->wanted;
   m_inflight.push_back (inflight);
 
-  if (preload)
+  if (thumbnailOnly)
+    PLOG_INFO << "[Image Store] Making a thumbnail of " << SK_WideCharToUTF8 (path);
+  else if (preload)
     PLOG_INFO << "[Image Store] Preloading " << SK_WideCharToUTF8 (path);
 
   const int id = job->job;
@@ -298,8 +316,25 @@ SKIV_ImageStore::Start (const std::wstring& path, const key_s& key, bool animate
     result->generation = job->generation;
     result->key        = key;
     result->preload    = preload;
+    result->thumbnail  = thumbnailOnly;
 
     m_results.push (result);
+
+    // ... and so has its thumbnail
+    if (job->decode.thumbnailSize > 0 && ! thumbnailOnly)
+    {
+      result_s* thumbnail = new result_s;
+
+      thumbnail->job        = job->job;
+      thumbnail->generation = job->generation;
+      thumbnail->key        = key;
+      thumbnail->preload    = preload;
+      thumbnail->thumbnail  = true;
+      thumbnail->byproduct  = true;
+
+      m_results.push (thumbnail);
+    }
+
     delete job;
   }
 
@@ -321,6 +356,9 @@ SKIV_ImageStore::Request (const std::wstring& path, bool animatedImages)
 
   for (auto& inflight : m_inflight)
   {
+    if (inflight.thumbnail)
+      continue;
+
     if (inflight.key == key)
       decoding = &inflight;
     else
@@ -378,20 +416,57 @@ SKIV_ImageStore::Worker (void* var)
   result->generation = job->generation;
   result->key        = Key (job->decode.path);
   result->preload    = job->preload;
+  result->thumbnail  = job->decode.thumbnailOnly;
+
+  // A full decode's thumbnail: a result of its own, made once the image is handed over
+  result_s* thumbnail = nullptr;
+
+  if (job->decode.thumbnailSize > 0 && ! job->decode.thumbnailOnly)
+  {
+    thumbnail = new result_s;
+
+    thumbnail->job        = result->job;
+    thumbnail->generation = result->generation;
+    thumbnail->key        = result->key;
+    thumbnail->preload    = result->preload;
+    thumbnail->thumbnail  = true;
+    thumbnail->byproduct  = true;
+  }
 
   std::vector <ImGuiToast> notices;
-  result->success = SKIV_DecodeImage (job->decode, result->image, notices);
 
-  for (const auto& notice : notices)
-    store.m_notices.push (notice);
+  // The main thread decides what becomes of it (TakeResult): the notices first, so that they are shown with it. Wakes
+  //   the main loop (and refreshes the window) to take it.
+  auto _Hand = [&](result_s* handed)
+  {
+    for (const auto& notice : notices)
+      store.m_notices.push (notice);
 
-  PLOG_VERBOSE << "_pRawTexSRV = " << result->image.pRawTexSRV;
+    notices.clear ( );
 
-  // The main thread decides what becomes of it (TakeResult)
-  store.m_results.push (result);
+    store.m_results.push (handed);
+    PostMessage (SKIF_Notify_hWnd, WM_SKIF_IMAGE, SKIV_IMAGE_STORE_RESULT, 0);
+  };
 
-  // Wakes the main loop (and refreshes the window) to take it
-  PostMessage (SKIF_Notify_hWnd, WM_SKIF_IMAGE, SKIV_IMAGE_STORE_RESULT, 0);
+  bool handed = false;
+
+  if (thumbnail != nullptr)
+    job->decode.decoded = [&](void) { result->success = true; _Hand (result); handed = true; };
+
+  const bool success =
+    SKIV_DecodeImage (job->decode, result->image, notices, (thumbnail != nullptr) ? &thumbnail->image : nullptr);
+
+  if (! handed)
+  {
+    result->success = success;
+    _Hand (result);
+  }
+
+  if (thumbnail != nullptr)
+  {
+    thumbnail->success = (thumbnail->image.pRawTexSRV.p != nullptr);
+    _Hand (thumbnail);
+  }
 
   delete job;
 
@@ -417,6 +492,13 @@ SKIV_ImageStore::OnDeviceReset (void)
 
   m_inflight.clear ( );
   m_skip.clear ( );
+
+  for (auto& thumbnail : m_thumbnails)
+    Release (thumbnail->image);
+
+  m_thumbnails.clear ( );
+  m_thumbnailsComing.clear ( );
+  m_thumbnailsFailed.clear ( );
 
   if (m_pending == 0)
     return false;
@@ -465,6 +547,31 @@ SKIV_ImageStore::TakeResult (image_s& image, bool& success)
 
   while (m_results.try_pop (result))
   {
+    // A thumbnail: kept (if it fits), or remembered as one that cannot be made
+    if (result->thumbnail)
+    {
+      m_thumbnailsComing.erase (std::remove_if (m_thumbnailsComing.begin ( ), m_thumbnailsComing.end ( ),
+                                  [&](const auto& coming) { return coming.first == result->job; }), m_thumbnailsComing.end ( ));
+
+      if (! result->byproduct)
+        m_inflight.erase (std::remove_if (m_inflight.begin ( ), m_inflight.end ( ),
+                            [&](const inflight_s& inflight) { return inflight.job == result->job; }), m_inflight.end ( ));
+
+      if (result->generation == m_generation.load ( ))
+      {
+        if (result->success)
+          KeepThumbnail (result->key, result->image);
+
+        // (None from a full decode of an animated image: it is made of its first frame instead)
+        else if (! result->byproduct)
+          m_thumbnailsFailed.push_back (result->key);
+      }
+
+      Release (result->image);
+      delete result;
+      continue;
+    }
+
     m_inflight.erase (std::remove_if (m_inflight.begin ( ), m_inflight.end ( ),
                         [&](const inflight_s& inflight) { return inflight.job == result->job; }), m_inflight.end ( ));
 
@@ -509,17 +616,44 @@ SKIV_ImageStore::TakeResult (image_s& image, bool& success)
 }
 
 void
-SKIV_ImageStore::SetNeighbours (const std::wstring& shown, const std::wstring& previous, const std::wstring& next, bool animatedImages)
+SKIV_ImageStore::SetNeighbours (const std::wstring& shown, const std::vector <std::wstring>& around, bool animatedImages)
 {
   m_neighbourAnimated = animatedImages;
 
-  if (shown != m_shownPath || previous != m_prevPath || next != m_nextPath)
+  if (shown != m_shownPath || around != m_aroundPaths)
   {
-    m_shownPath = shown;    m_shown = Key (shown);
-    m_prevPath  = previous; m_prev  = Key (previous);
-    m_nextPath  = next;     m_next  = Key (next);
+    m_shownPath   = shown;
+    m_aroundPaths = around;
+
+    m_shown = Key (shown);
+    m_next  = Key ((around.size ( ) > 0) ? around [0] : L"");
+    m_prev  = Key ((around.size ( ) > 1) ? around [1] : L"");
+
+    m_near.clear ( );
+    m_near.push_back (m_shown);
+
+    for (size_t i = 0; i < around.size ( ); i++)
+      m_near.push_back ((i == 0) ? m_next : (i == 1) ? m_prev : Key (around [i]));
 
     m_skip.clear ( );
+    m_thumbnailsFailed.clear ( );
+
+    // Thumbnails of files changed since they were made
+    for (auto it = m_thumbnails.begin ( ); it != m_thumbnails.end ( ); )
+    {
+      const bool changed =
+        std::any_of (m_near.begin ( ), m_near.end ( ), [&](const key_s& key) {
+          return key.exists && key.path == (*it)->key.path && ! (key == (*it)->key); });
+
+      if (changed)
+      {
+        PLOG_INFO << "[Image Store] No longer keeping the thumbnail of " << SK_WideCharToUTF8 ((*it)->key.path) << ": the file has changed";
+        Release ((*it)->image);
+        it = m_thumbnails.erase (it);
+      }
+      else
+        ++it;
+    }
 
     // What is no longer wanted: released (the viewer keeps its own references to what it shows)
     for (auto it = m_cache.begin ( ); it != m_cache.end ( ); )
@@ -546,8 +680,8 @@ SKIV_ImageStore::SetNeighbours (const std::wstring& shown, const std::wstring& p
 void
 SKIV_ImageStore::Preload (void)
 {
-  // One at a time, and only while nothing else is decoding
-  if (m_pending != 0 || ! m_inflight.empty ( ))
+  // One at a time, and only while nothing else is decoding (nor a thumbnail being made)
+  if (m_pending != 0 || ! m_inflight.empty ( ) || ! m_thumbnailsComing.empty ( ))
     return;
 
   for (const key_s* candidate : { &m_next, &m_prev })
@@ -566,6 +700,151 @@ SKIV_ImageStore::Preload (void)
     }
 
     Start (key.path, key, m_neighbourAnimated, true);
-    break;
+    return;
   }
+
+  // The full images are kept: the thumbnails next
+  PreloadThumbnail ( );
+}
+
+SKIV_ImageStore::thumb_s*
+SKIV_ImageStore::FindThumbnail (const key_s& key)
+{
+  for (auto& thumbnail : m_thumbnails)
+    if (thumbnail->key == key)
+      return thumbnail.get ( );
+
+  return nullptr;
+}
+
+bool
+SKIV_ImageStore::IsThumbnailWanted (const key_s& key) const
+{
+  return (std::find (m_near.begin ( ), m_near.end ( ), key) != m_near.end ( ) || (m_pending != 0 && key == m_pendingKey));
+}
+
+bool
+SKIV_ImageStore::IsThumbnailComing (const key_s& key) const
+{
+  return std::any_of (m_thumbnailsComing.begin ( ), m_thumbnailsComing.end ( ), [&](const auto& coming) { return coming.second == key; });
+}
+
+bool
+SKIV_ImageStore::KeepThumbnail (const key_s& key, const image_s& image)
+{
+  if (FindThumbnail (key) != nullptr)
+    return true;
+
+  const size_t bytes = Bytes (image);
+
+  if (bytes == 0 || bytes > s_thumbnailBudget)
+    return false;
+
+  auto _Total = [&](void) -> size_t {
+    size_t total = 0;
+    for (const auto& thumbnail : m_thumbnails)
+      total += thumbnail->bytes;
+    return total;
+  };
+
+  // Makes room: the least recently used thumbnails first, never those made ahead
+  while (_Total ( ) + bytes > s_thumbnailBudget)
+  {
+    auto victim = m_thumbnails.end ( );
+
+    for (auto it = m_thumbnails.begin ( ); it != m_thumbnails.end ( ); ++it)
+      if (! IsThumbnailWanted ((*it)->key) && (victim == m_thumbnails.end ( ) || (*it)->used < (*victim)->used))
+        victim = it;
+
+    if (victim == m_thumbnails.end ( ))
+      break;
+
+    PLOG_VERBOSE << "[Image Store] Making room: no longer keeping the thumbnail of " << SK_WideCharToUTF8 ((*victim)->key.path);
+    Release ((*victim)->image);
+    m_thumbnails.erase (victim);
+  }
+
+  if (_Total ( ) + bytes > s_thumbnailBudget)
+  {
+    PLOG_INFO << "[Image Store] Not keeping the thumbnail of " << SK_WideCharToUTF8 (key.path) << ": it does not fit in "
+              << (s_thumbnailBudget / (1024 * 1024)) << " MB with those of the images nearest to the shown one";
+    return false;
+  }
+
+  auto thumbnail = std::make_unique <thumb_s> ( );
+  thumbnail->key   = key;
+  thumbnail->bytes = bytes;
+  thumbnail->used  = ++m_tick;
+  Copy (image, thumbnail->image);
+
+  m_thumbnails.push_back (std::move (thumbnail));
+
+  m_thumbnailsAsked.erase (std::remove (m_thumbnailsAsked.begin ( ), m_thumbnailsAsked.end ( ), key), m_thumbnailsAsked.end ( ));
+
+  PLOG_INFO << "[Image Store] Keeping a thumbnail of " << SK_WideCharToUTF8 (key.path) << " ("
+            << static_cast <int> (image.width) << "x" << static_cast <int> (image.height) << ", " << (bytes / 1024) << " KB; "
+            << m_thumbnails.size ( ) << " thumbnails, " << (_Total ( ) / 1024) << " KB kept)";
+  return true;
+}
+
+bool
+SKIV_ImageStore::PreloadThumbnail (void)
+{
+  if (m_pending != 0 || ! m_inflight.empty ( ) || ! m_thumbnailsComing.empty ( ))
+    return false;
+
+  auto _Due = [&](const key_s& key) -> bool {
+    return key.exists && FindThumbnail (key) == nullptr &&
+           std::find (m_thumbnailsFailed.begin ( ), m_thumbnailsFailed.end ( ), key) == m_thumbnailsFailed.end ( );
+  };
+
+  // The shown image's and those nearest to it, then those asked for (the latest first)
+  for (const auto* keys : { &m_near, &m_thumbnailsAsked })
+  {
+    for (const key_s& key : *keys)
+    {
+      if (_Due (key))
+      {
+        Start (key.path, key, false, true, true);
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+const image_s*
+SKIV_ImageStore::Thumbnail (const std::wstring& path, bool load)
+{
+  if (path.empty ( ))
+    return nullptr;
+
+  for (auto& thumbnail : m_thumbnails)
+  {
+    if (thumbnail->key.path == path)
+    {
+      thumbnail->used = ++m_tick;
+      return &thumbnail->image;
+    }
+  }
+
+  if (load)
+  {
+    auto asked = std::find_if (m_thumbnailsAsked.begin ( ), m_thumbnailsAsked.end ( ), [&](const key_s& key) { return key.path == path; });
+
+    // The latest first
+    if (asked != m_thumbnailsAsked.end ( ))
+      std::rotate (m_thumbnailsAsked.begin ( ), asked, asked + 1);
+
+    else
+    {
+      m_thumbnailsAsked.insert (m_thumbnailsAsked.begin ( ), Key (path));
+
+      if (m_thumbnailsAsked.size ( ) > s_thumbnailsAsked)
+        m_thumbnailsAsked.pop_back ( );
+    }
+  }
+
+  return nullptr;
 }
