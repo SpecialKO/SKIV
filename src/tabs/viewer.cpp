@@ -4215,6 +4215,297 @@ SKIV_Viewer_CycleScalingModes (void)
   return cover.scaling;
 }
 
+#pragma region WheelZoom
+
+// Zoom limits (1.0f = 100%)
+static constexpr float SKIV_ZOOM_MAX = 5.0f;
+static constexpr float SKIV_ZOOM_MIN = 0.05f;
+
+// The image's layout in the previous frame, recorded by SKIF_UI_Tab_DrawViewer for the wheel zoom and image dragging
+static struct {
+  bool         valid     = false;
+  ImGuiWindow* window    = nullptr; // The content frame the image is drawn in
+  ImVec2       imagePos;            // Screen position of the drawn image
+  ImVec2       imageSize;           // Its drawn (floored) size
+  ImVec2       rawSize;             // Its size before flooring
+  float        zoom      = 1.0f;    // The zoom it was drawn at
+  ImVec2       originRel;           // Where an uncentered image starts, relative to DC.CursorStartPos
+  bool         hovered   = false;   // The frame (or one of its children) was hovered, not blocked by a popup
+  bool         imageHovered = false; // The image was hovered (and can be dragged or double-clicked)
+  bool         emptyHovered = false; // The empty space around the image was hovered (not the image, nor e.g. the details)
+} s_viewerLayout;
+
+// Set when the image scaling is changed to show the image at a position of our own (e.g. a double-click to its actual
+//   size): keeps that change of scaling from centering the image (see GetCurrentAspectRatio and resetScrollCenter)
+static bool s_keepPlacementOnRescale = false;
+
+// True while the mouse is over the empty space around the image in the viewer; the window procedure then treats a
+//   double-click there as one on the window's caption (maximizing or restoring the window)
+bool
+SKIV_Viewer_IsEmptySpaceHovered (void)
+{
+  return SKIF_Tab_Selected == UITab_Viewer && s_viewerLayout.emptyHovered;
+}
+
+// After a wheel zoom or dragging the image, the image is placed where that put it (rather than centered, or kept
+//   within the frame). This lasts until the zoom is changed some other way, the image scaling changes, another image
+//   is shown, or the window is maximized or restored.
+static struct {
+  bool   active  = false;
+  void*  image   = nullptr; // The image it applies to
+  float  zoom    = 1.0f;    // The zoom it applies to
+  ImVec2 offset;            // Empty space before the image (content coordinates, from originRel)
+  ImVec2 content;           // The content size, relative to DC.CursorStartPos (includes empty space after the image)
+} s_wheelLayout;
+
+// The image is being dragged with the left mouse button (started by SKIF_UI_Tab_DrawViewer on a click on the image)
+static bool s_imageDragActive = false;
+
+// Places the image's top left corner at the given screen position in the frame about to begin, at the given size.
+//   The scroll position (and the content size it is clamped against) are set for that frame, so the image moves
+//   in the same frame its size or position changes.
+static void
+SKIV_Viewer_PlaceImage (const ImVec2& targetPos, const ImVec2& newSize)
+{
+  ImGuiWindow* window = s_viewerLayout.window;
+
+  // The visible part of the frame, in content units
+  const ImVec2 visible = window->InnerRect.GetSize ( ) - window->WindowPadding * 2.0f;
+
+  ImVec2 offset, scroll, content;
+
+  for (int axis = 0; axis < 2; axis++)
+  {
+    // On screen, the image is drawn at: base + offset - scroll
+    //   (base: where an image without an offset starts at scroll 0; DC.CursorStartPos includes the previous frame's -scroll)
+    const float basePos = window->DC.CursorStartPos [axis] + window->Scroll [axis] + s_viewerLayout.originRel [axis];
+    const float delta   = ImFloor (targetPos [axis] - basePos + 0.5f);
+
+    // Empty space before the image when it should start further in, scrolled past when it should start further out
+    offset  [axis] = ImMax (0.0f,  delta);
+    scroll  [axis] = ImMax (0.0f, -delta);
+
+    // Enough content to reach the image's end, and to scroll as far as needed (empty space after the image)
+    content [axis] = ImMax (s_viewerLayout.originRel [axis] + offset [axis] + newSize [axis], scroll [axis] + visible [axis]);
+  }
+
+  s_wheelLayout.active  = true;
+  s_wheelLayout.image   = cover.pRawTexSRV.p;
+  s_wheelLayout.zoom    = cover.zoom;
+  s_wheelLayout.offset  = offset;
+  s_wheelLayout.content = content;
+
+  // Enough content for this frame, so the new scroll position is not clamped against the old layout: extends what the
+  //   previous frame measured (which Begin turns into the content size and scroll limits). Not SetNextWindowContentSize,
+  //   as an explicit content size would also become the frame's available size, and with it the size "Zoom to fit" fits in.
+  window->DC.CursorMaxPos = ImMax (window->DC.CursorMaxPos, window->DC.CursorStartPos + content);
+  window->DC.IdealMaxPos  = ImMax (window->DC.IdealMaxPos,  window->DC.CursorStartPos + content);
+
+  ImGui::SetNextWindowScroll (scroll);
+}
+
+// Dragging the image: moves it along with the mouse cursor, keeping some of it within the frame
+static bool
+SKIV_Viewer_HandleImageDrag (void)
+{
+  if (! s_imageDragActive)
+    return false;
+
+  if (! ImGui::IsMouseDown (ImGuiMouseButton_Left))
+  {
+    s_imageDragActive = false;
+    return false;
+  }
+
+  const ImVec2 delta = ImGui::GetIO ( ).MouseDelta;
+
+  if (delta.x == 0.0f && delta.y == 0.0f)
+    return false;
+
+  const ImRect inner  = s_viewerLayout.window->InnerRect;
+  const ImVec2 size   = s_viewerLayout.imageSize;
+  const ImVec2 keep   = ImMin (size, ImVec2 (48.0f, 48.0f) * SKIF_ImGui_GlobalDPIScale);
+        ImVec2 target = s_viewerLayout.imagePos + delta;
+
+  target.x = ImClamp (target.x, inner.Min.x + keep.x - size.x, inner.Max.x - keep.x);
+  target.y = ImClamp (target.y, inner.Min.y + keep.y - size.y, inner.Max.y - keep.y);
+
+  SKIV_Viewer_PlaceImage (target, size);
+
+  return true;
+}
+
+// Zooming with the mouse wheel, keeping the pixel of the image under the mouse cursor in place
+static bool
+SKIV_Viewer_HandleWheelZoom (void)
+{
+  ImGuiIO& io = ImGui::GetIO ( );
+
+  if (io.MouseWheel == 0.0f)
+    return false;
+
+  // Plain wheel: over the image viewer only (not menus, popups or other windows), and not while e.g. dragging
+  // Ctrl+wheel:  zooms wherever the mouse is, as it always has
+  const bool bOverViewer = s_viewerLayout.hovered && ImGui::IsMousePosValid ( );
+
+  if (! io.KeyCtrl && (! bOverViewer || ImGui::IsAnyItemActive ( )))
+    return false;
+
+  const float oldZoom = cover.zoom;
+  float       newZoom = std::clamp (oldZoom * powf (1.1f, io.MouseWheel), SKIV_ZOOM_MIN, SKIV_ZOOM_MAX);
+
+  // Stop at 100% on the way past it
+  if ((oldZoom < 1.0f && newZoom > 1.0f) || (oldZoom > 1.0f && newZoom < 1.0f))
+    newZoom = 1.0f;
+
+  if (newZoom == oldZoom)
+    return false;
+
+  cover.zoom = newZoom;
+
+  // The point kept in place: the mouse cursor, or the middle of the frame when Ctrl+wheel is used elsewhere
+  const ImVec2 anchor = bOverViewer ? io.MousePos : s_viewerLayout.window->InnerRect.GetCenter ( );
+
+  // Where in the image (0-1) that point is. While the wheel keeps turning with the mouse in place, the point found
+  //   at its first turn is kept, so rounding to whole pixels at each turn does not add up.
+  static ImVec2 gestureAnchor   (-FLT_MAX, -FLT_MAX);
+  static ImVec2 gestureFraction;
+  static double gestureTime     = 0.0;
+  static void*  gestureImage    = nullptr;
+
+  ImVec2 fraction = (anchor - s_viewerLayout.imagePos) / ImMax (s_viewerLayout.imageSize, ImVec2 (1.0f, 1.0f));
+
+  if (ImLengthSqr (anchor - gestureAnchor) <= 4.0f && ImGui::GetTime ( ) - gestureTime < 1.0 && gestureImage == cover.pRawTexSRV.p)
+    fraction = gestureFraction;
+  else
+  {
+    gestureAnchor   = anchor;
+    gestureFraction = fraction;
+    gestureImage    = cover.pRawTexSRV.p;
+  }
+
+  gestureTime = ImGui::GetTime ( );
+
+  // The image's size in the coming frame (as SKIF_UI_Tab_DrawViewer will calculate it)
+  const ImVec2 newSize = ImFloor (s_viewerLayout.rawSize * (newZoom / s_viewerLayout.zoom));
+
+  // Its top left corner lands at: anchor - fraction * newSize
+  SKIV_Viewer_PlaceImage (anchor - fraction * newSize, newSize);
+
+  return true;
+}
+
+// Double-clicking the image: switches between its actual size (1:1), keeping the pixel under the mouse cursor in
+//   place, and fitting it to the window
+static bool
+SKIV_Viewer_HandleImageDoubleClick (void)
+{
+  if (! ImGui::IsMouseDoubleClicked (ImGuiMouseButton_Left) || ImGui::GetIO ( ).KeyCtrl || ! s_viewerLayout.imageHovered)
+    return false;
+
+  s_imageDragActive = false; // (The second click of the double-click started a drag)
+
+  const ImVec2 actualSize   (cover.width, cover.height);
+  const bool   atActualSize = (ImAbs (s_viewerLayout.imageSize.x - actualSize.x) <= 1.0f &&
+                               ImAbs (s_viewerLayout.imageSize.y - actualSize.y) <= 1.0f);
+
+  cover.zoom = 1.0f;
+
+  // At its actual size: fit it to the window, centered
+  if (atActualSize)
+  {
+    cover.scaling        = ImageScaling_Fit;
+    s_wheelLayout.active = false;
+    resetScrollCenter    = true;
+  }
+
+  // Otherwise its actual size ("View actual size" does not apply the DPI scale)
+  else
+  {
+    const ImVec2 anchor   = ImGui::GetIO ( ).MousePos;
+    const ImVec2 fraction = (anchor - s_viewerLayout.imagePos) / ImMax (s_viewerLayout.imageSize, ImVec2 (1.0f, 1.0f));
+
+    cover.scaling            = ImageScaling_None;
+    s_keepPlacementOnRescale = true;
+
+    SKIV_Viewer_PlaceImage (anchor - fraction * actualSize, actualSize);
+  }
+
+  return true;
+}
+
+// Called each frame before the viewer's content frame begins: the mouse wheel zoom, dragging and double-clicking the
+//   image, and recentering the image when the window is maximized or restored
+void
+SKIV_Viewer_HandleMouseZoomPan (void)
+{
+  // Maximizing or restoring the window (or toggling fullscreen) centers the image: one placed by a zoom or a drag,
+  //   and one larger than the frame (e.g. still zoomed in when the window is restored). The frame gets its new size
+  //   a few frames after the window does, so the image is kept centered for a while, until its size stops changing.
+  static int    lastWindowState = -1;
+  static bool   recenter        = false;
+  static double recenterSince   = 0.0;
+  static int    recenterStable  = 0;
+  static ImVec2 recenterVisible;
+
+  // (Minimizing is not a change: restoring from the taskbar returns the window to the state it had)
+  if (SKIF_ImGui_hWnd != NULL && ! ::IsIconic (SKIF_ImGui_hWnd))
+  {
+    const int windowState = SKIF_ImGui_IsFullscreen (SKIF_ImGui_hWnd) ? 2 :
+                                         ::IsZoomed (SKIF_ImGui_hWnd) ? 1 : 0;
+
+    if (lastWindowState != -1 && windowState != lastWindowState)
+    {
+      s_wheelLayout.active = false; // Back to the image's usual (centered) layout
+      s_imageDragActive    = false;
+      recenter             = true;
+      recenterSince        = ImGui::GetTime ( );
+      recenterStable       = 0;
+      recenterVisible      = ImVec2 (-1.0f, -1.0f);
+    }
+
+    lastWindowState = windowState;
+  }
+
+  // Double-clicking the empty space around the image maximizes or restores the window. Usually the window procedure
+  //   sees that double-click (as the empty space acts as the window's caption, see SKIF_ImGui_CanMouseDragMove);
+  //   this is for when it does not, e.g. on touch devices.
+  if (ImGui::IsMouseDoubleClicked (ImGuiMouseButton_Left) && ! ImGui::GetIO ( ).KeyCtrl && SKIV_Viewer_IsEmptySpaceHovered ( ))
+  {
+    extern bool SKIF_ImGui_CaptionDoubleClicked;
+    SKIF_ImGui_CaptionDoubleClicked = true;
+  }
+
+  if (cover.pRawTexSRV.p == nullptr || ! s_viewerLayout.valid || s_viewerLayout.window == nullptr)
+  {
+    s_imageDragActive = false;
+    recenter          = false;
+    return;
+  }
+
+  // One of these per frame, as each sets the layout of the coming frame; any of them ends a recentering
+  if (SKIV_Viewer_HandleImageDoubleClick ( ) || SKIV_Viewer_HandleImageDrag ( ) || SKIV_Viewer_HandleWheelZoom ( ))
+    recenter = false;
+
+  else if (recenter)
+  {
+    ImGuiWindow* window  = s_viewerLayout.window;
+    const ImVec2 visible = window->InnerRect.GetSize ( ) - window->WindowPadding * 2.0f;
+
+    // An image larger than the frame starts at originRel; one smaller than it is centered by its usual layout (no scroll)
+    ImGui::SetNextWindowScroll (ImMax (ImVec2 (0.0f, 0.0f),
+                                       ImFloor (s_viewerLayout.originRel + (s_viewerLayout.imageSize - visible) * 0.5f)));
+
+    recenterStable  = (visible.x == recenterVisible.x && visible.y == recenterVisible.y) ? recenterStable + 1 : 0;
+    recenterVisible =  visible;
+
+    if (recenterStable >= 3 && ImGui::GetTime ( ) - recenterSince >= 0.5)
+      recenter = false;
+  }
+}
+
+#pragma endregion
+
 // Main UI function
 
 void
@@ -4699,10 +4990,34 @@ SKIF_UI_Tab_DrawViewer (void)
   SKIV_HDR_MaxLuminanceP99 = cover.light_info.p99_nits;
   SKIV_HDR_MaxLuminance    = cover.light_info.max_nits;
 
-  if (sizeCover.x < ImGui::GetContentRegionAvail().x)
-    ImGui::SetCursorPosX (ImFloor ((ImGui::GetContentRegionAvail().x - sizeCover.x) * 0.5f));
-  if (sizeCover.y < ImGui::GetContentRegionAvail().y)
-    ImGui::SetCursorPosY (ImFloor ((ImGui::GetContentRegionAvail().y - sizeCover.y) * 0.5f));
+  // For the wheel zoom (SKIV_Viewer_HandleMouseZoomPan): the image's unscaled size
+  const ImVec2 rawSizeCover = sizeCover;
+
+  // A change of scaling that placed the image itself (by the double-click to its actual size) does not center it
+  if (s_keepPlacementOnRescale)
+  {
+    s_keepPlacementOnRescale = false;
+    resetScrollCenter        = false;
+  }
+
+  // The layout of a wheel zoom ends when the zoom is changed some other way, the scaling changes or another image is shown
+  if (s_wheelLayout.active && (resetScrollCenter                            ||
+                               cover.zoom        != s_wheelLayout.zoom      ||
+                               cover.pRawTexSRV.p != s_wheelLayout.image))
+    s_wheelLayout.active = false;
+
+  // After a wheel zoom or a drag: where that placed the image
+  if (s_wheelLayout.active)
+    ImGui::SetCursorPos (originalPos + s_wheelLayout.offset);
+
+  // Otherwise centered, when smaller than the frame
+  else
+  {
+    if (sizeCover.x < ImGui::GetContentRegionAvail().x)
+      ImGui::SetCursorPosX (ImFloor ((ImGui::GetContentRegionAvail().x - sizeCover.x) * 0.5f));
+    if (sizeCover.y < ImGui::GetContentRegionAvail().y)
+      ImGui::SetCursorPosY (ImFloor ((ImGui::GetContentRegionAvail().y - sizeCover.y) * 0.5f));
+  }
 
   if (_registry._RendererHDREnabled)
     SKIV_HDR_MaxCLL = 1.0f;
@@ -4727,7 +5042,36 @@ SKIF_UI_Tab_DrawViewer (void)
                                                                 ImVec4 (1.f, 1.f, 1.f, 1.f) // Alpha transparency (2024-01-01, removed fGammaCorrectedTint * fAlpha for the light style)
   );
 
-  isImageHovered = ImGui::IsItemHovered();
+  isImageHovered = ImGui::IsItemHovered() || s_imageDragActive; // (Being dragged makes the image item seem not hovered)
+
+  {
+    ImGuiWindow* window = ImGui::GetCurrentWindow ( );
+    const ImVec2 localStart = window->DC.CursorStartPos - window->Pos + window->Scroll;
+
+    // After a wheel zoom or a drag: the empty space after the image that lets it be scrolled to where that put it
+    if (s_wheelLayout.active)
+    {
+      const ImVec2 afterImage = ImGui::GetCursorPos ( );
+
+      ImGui::SetCursorPos (localStart + s_wheelLayout.content);
+      ImGui::Dummy        (ImVec2 (0.0f, 0.0f));
+      ImGui::SetCursorPos (afterImage);
+    }
+
+    // Record the layout for the next frame's wheel zoom and image dragging
+    s_viewerLayout.valid     = (cover.pRawTexSRV.p != nullptr);
+    s_viewerLayout.window    = window;
+    s_viewerLayout.imagePos  = image_pos;
+    s_viewerLayout.imageSize = sizeCover;
+    s_viewerLayout.rawSize   = rawSizeCover;
+    s_viewerLayout.zoom      = cover.zoom;
+    s_viewerLayout.originRel = originalPos - localStart;
+    s_viewerLayout.hovered   = ImGui::IsWindowHovered (ImGuiHoveredFlags_ChildWindows);
+
+    // The empty space: the frame itself (not e.g. the details panel, a child window), outside the image
+    s_viewerLayout.emptyHovered = ImGui::IsWindowHovered ( ) && ! ImGui::IsMouseHoveringRect (image_rect.Min, image_rect.Max);
+    s_viewerLayout.imageHovered = false; // (Set by the image's drag item below)
+  }
 
   // Reset scroll (center-align the scroll)
   if (resetScrollCenter && cover_old.pRawTexSRV.p == nullptr)
@@ -4740,6 +5084,31 @@ SKIF_UI_Tab_DrawViewer (void)
     ImGui::SetScrollHereX ( );
   }
 
+  // Dragging the image: a click on its visible part (not the empty space around it) starts it, and the drag itself is
+  //   handled by SKIV_Viewer_HandleImageDrag before each frame. As an item, the image also keeps the click from moving
+  //   the window (see SKIF_ImGui_CanMouseDragMove). Ctrl+drag stays the selection of a region of the image.
+  //   (After the scroll reset above, which centers on the last item: the whole image, not just its visible part)
+  if (cover.pRawTexSRV.p != nullptr && (! ImGui::GetIO ( ).KeyCtrl || s_imageDragActive))
+  {
+    const ImRect  dragRect (ImMax (image_rect.Min, ImGui::GetCurrentWindow ( )->InnerClipRect.Min),
+                            ImMin (image_rect.Max, ImGui::GetCurrentWindow ( )->InnerClipRect.Max));
+    const ImGuiID dragId = ImGui::GetCurrentWindow ( )->GetID ("###SKIV_ImageDrag");
+
+    if (dragRect.GetWidth ( ) > 0.0f && dragRect.GetHeight ( ) > 0.0f && ImGui::ItemAdd (dragRect, dragId, nullptr, ImGuiItemFlags_NoNav))
+    {
+      bool hovered = false,
+           held    = false;
+
+      if (ImGui::ButtonBehavior (dragRect, dragId, &hovered, &held, ImGuiButtonFlags_PressedOnClick))
+        s_imageDragActive = true;
+
+      s_viewerLayout.imageHovered = hovered;
+
+      if (held)
+        ImGui::SetMouseCursor (ImGuiMouseCursor_ResizeAll);
+    }
+  }
+
   if (cover.pRawTexSRV.p != nullptr)
   {
     auto& io =
@@ -4748,19 +5117,10 @@ SKIF_UI_Tab_DrawViewer (void)
     bool         changed_zoom = false;
     static float last_zoom    = cover.zoom;
 
-    static constexpr float ZOOM_MAX = 4.975f;
-    static constexpr float ZOOM_MIN = 0.075f;
+    static constexpr float ZOOM_MAX = SKIV_ZOOM_MAX;
+    static constexpr float ZOOM_MIN = SKIV_ZOOM_MIN;
 
-    // Using 4.975f and 0.075f to work around some floating point shenanigans
-    if (     io.MouseWheel > 0 && cover.zoom < ZOOM_MAX && io.KeyCtrl)
-    {
-      cover.zoom += 0.05f;
-    }
-
-    else if (io.MouseWheel < 0 && cover.zoom > ZOOM_MIN && io.KeyCtrl)
-    {
-      cover.zoom -= 0.05f;
-    }
+    // The mouse wheel (and Ctrl+wheel) zoom is handled by SKIV_Viewer_HandleMouseZoomPan, before this frame began
 
     if (ImGui::IsKeyDown (ImGuiKey_GamepadL2))
     {

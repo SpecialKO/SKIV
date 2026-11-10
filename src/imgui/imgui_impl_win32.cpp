@@ -2365,14 +2365,17 @@ static LRESULT CALLBACK ImGui_ImplWin32_WndProcHandler_PlatformWindow(HWND hWnd,
 
         case    WM_NCLBUTTONDBLCLK:
         {
-          // Double-clicking the caption area of the main window (the empty space between the tabs and the window buttons)
-          //   is acted on by the main loop on the next frame: it maximizes/restores the window, or leaves mini mode
+          // Double-clicking the caption area of the main window (the empty space between the tabs and the window buttons),
+          //   or the empty space around the image in the viewer (which acts as the caption, see WM_NCHITTEST above),
+          //   is acted on by the main loop on the next frame: it maximizes/restores the window
           extern ImRect SKIF_ImGui_CaptionArea;
           extern bool   SKIF_ImGui_CaptionDoubleClicked;
+          extern bool   SKIV_Viewer_IsEmptySpaceHovered (void);
           if (hWnd   == SKIF_ImGui_hWnd &&
               wParam == HTCAPTION       &&
-              SKIF_ImGui_CaptionArea.Contains (ImVec2 (static_cast<float> (GET_X_LPARAM (lParam)),
-                                                       static_cast<float> (GET_Y_LPARAM (lParam)))))
+            ( SKIF_ImGui_CaptionArea.Contains (ImVec2 (static_cast<float> (GET_X_LPARAM (lParam)),
+                                                       static_cast<float> (GET_Y_LPARAM (lParam)))) ||
+              SKIV_Viewer_IsEmptySpaceHovered ( )))
           {
             SKIF_ImGui_CaptionDoubleClicked = true;
             return 0;
