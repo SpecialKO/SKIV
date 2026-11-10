@@ -6149,6 +6149,7 @@ SKIF_UI_Tab_DrawViewer (void)
             ImGui::PopStyleColor  ( );
         };
 
+        _CreateMenuItem (ImageScaling_Auto,    "Automatic",        nullptr); // Actual size if smaller than the window, otherwise zoom to fit (the default)
         _CreateMenuItem (ImageScaling_None,    "View actual size", "Ctrl+1");
         _CreateMenuItem (ImageScaling_Fit,     "Zoom to fit",      "Ctrl+2");
         _CreateMenuItem (ImageScaling_Fill,    "Fill window",      "Ctrl+3");
