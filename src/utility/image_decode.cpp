@@ -3079,19 +3079,12 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
         texDesc.Width      = 1024;
         texDesc.Height     = 1024;
 
+      // It is cleared on the main thread, as the image is taken (SKIV_ImageStore::TakeResult): not here, as the immediate
+      //   context is not thread-safe, and the main thread renders with it meanwhile
       if (SUCCEEDED (pDevice->CreateTexture2D (&texDesc, nullptr, &pGamutCoverageTex2D.p)))
       {
         pDevice->CreateUnorderedAccessView (pGamutCoverageTex2D.p, nullptr, &image.pGamutCoverageUAV.p);
         pDevice->CreateShaderResourceView  (pGamutCoverageTex2D.p, nullptr, &image.pGamutCoverageSRV.p);
-
-        CComPtr <ID3D11DeviceContext>  pDevCtx;
-        pDevice->GetImmediateContext (&pDevCtx);
-
-        if (pDevCtx.p != nullptr)
-        {
-          FLOAT fClearColor [] = { 0.f, 0.f, 0.f, 0.f };
-          pDevCtx->ClearUnorderedAccessViewFloat (image.pGamutCoverageUAV, fClearColor);
-        }
       }
     }
 

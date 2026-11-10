@@ -81,7 +81,7 @@ private:
     int          request    = 0;
     unsigned int generation = 0;
     bool         success    = false;
-    image_s      image;
+    image_s      image = { };
   };
 
   static unsigned __stdcall Worker (void* job);
