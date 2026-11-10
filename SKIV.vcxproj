@@ -435,6 +435,7 @@
     <ClInclude Include="include\utility\gamepad.h" />
     <ClInclude Include="include\utility\image.h" />
     <ClInclude Include="include\utility\image_decode.h" />
+    <ClInclude Include="include\utility\image_store.h" />
     <ClInclude Include="include\utility\plog_formatter.h" />
     <ClInclude Include="packages_misc\html_coder.hpp" />
     <ClInclude Include="packages_misc\HybridDetect.h" />
@@ -772,6 +773,7 @@
     <ClCompile Include="src\utility\gamepad.cpp" />
     <ClCompile Include="src\utility\image.cpp" />
     <ClCompile Include="src\utility\image_decode.cpp" />
+    <ClCompile Include="src\utility\image_store.cpp" />
     <ClCompile Include="src\utility\registry.cpp" />
     <ClCompile Include="src\utility\skif_imgui.cpp" />
     <ClCompile Include="src\utility\utility.cpp" />
