@@ -230,6 +230,25 @@ SKIV_ImageStore::TakeResult (image_s& image, bool& success)
       image.anim              = std::move (result->image.anim);
       image.color_source      = std::move (result->image.color_source);
 
+      // The gamut coverage chart starts out empty (the renderer clears it each frame once it draws into it). Here, on
+      //   the main thread, as the immediate context is not thread-safe (the worker could not clear it)
+      if (image.pGamutCoverageUAV.p != nullptr)
+      {
+        CComPtr <ID3D11Device>        pDevice;
+        CComPtr <ID3D11DeviceContext> pDevCtx;
+
+        image.pGamutCoverageUAV->GetDevice (&pDevice.p);
+
+        if (pDevice.p != nullptr)
+          pDevice->GetImmediateContext (&pDevCtx.p);
+
+        if (pDevCtx.p != nullptr)
+        {
+          const FLOAT fClearColor [] = { 0.f, 0.f, 0.f, 0.f };
+          pDevCtx->ClearUnorderedAccessViewFloat (image.pGamutCoverageUAV, fClearColor);
+        }
+      }
+
       success   = result->success;
       m_pending = 0;
       taken     = true;

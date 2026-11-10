@@ -157,13 +157,13 @@ struct image_s {
 
   struct gamut_info_s {
     struct pixel_samples_s {
-      uint32_t rec_709;
-      uint32_t rec_2020;
-      uint32_t dci_p3;
-      uint32_t ap1;
-      uint32_t ap0;
-      uint32_t undefined;
-      uint32_t total;
+      uint32_t rec_709   = 0; // (Counted by the decode: they must start at 0)
+      uint32_t rec_2020  = 0;
+      uint32_t dci_p3    = 0;
+      uint32_t ap1       = 0;
+      uint32_t ap0       = 0;
+      uint32_t undefined = 0;
+      uint32_t total     = 0;
 
       float getPercentRec709    (void) const;
       float getPercentRec2020   (void) const;
