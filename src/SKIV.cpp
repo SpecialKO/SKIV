@@ -94,7 +94,7 @@ bool  invalidateFonts           = false;
 DWORD invalidatedFonts          = 0;
 DWORD invalidatedDevice         = 0;
 bool  SKIF_FirstPresentDone     = false; // Set by ImGui_ImplDX11_SwapBuffers ( ) on the first successful Present ( )
-ImRect SKIF_ImGui_CaptionArea;          // Screen coordinates of a title bar area, for double-clicks (SKIV has none, as it would cover the image)
+ImRect SKIF_ImGui_CaptionArea;          // Screen coordinates of the invisible title bar along the top of the window (for dragging and double-clicks)
 bool  SKIF_ImGui_CaptionDoubleClicked = false; // Set by the window procedure when the caption area is double-clicked
 bool  startedMinimized          = false;
 bool  msgDontRedraw             = false;
@@ -2040,6 +2040,32 @@ wWinMain ( _In_     HINSTANCE hInstance,
       ImGui::PopStyleColor (1);
 
       SK_RunOnce (ImGui::GetCurrentWindow()->HiddenFramesCannotSkipItems += 2);
+
+      // An invisible title bar along the top of the window, as tall as a Windows title bar: dragging it moves the window
+      //   and double-clicking it maximizes/restores the window, even over the image (which is drawn there as usual).
+      //   The image's drag item leaves it out (see SKIF_UI_Tab_DrawViewer), while buttons in it work as usual.
+      //   Not in fullscreen or snipping mode, which have no title bar.
+      SKIF_ImGui_CaptionArea = ImRect ( );
+
+      if (SKIF_ImGui_hWnd != NULL && ! _registry._SnippingMode && ! SKIF_ImGui_IsFullscreen (SKIF_ImGui_hWnd))
+      {
+        // The system metrics are for the system DPI; the window may be on a monitor with another one
+        static const float fSystemDpi = [](void) -> float {
+          HDC   hDC = ::GetDC (NULL);
+          float dpi = (hDC != NULL) ? static_cast<float> (::GetDeviceCaps (hDC, LOGPIXELSY)) : 96.0f;
+          if (hDC != NULL) ::ReleaseDC (NULL, hDC);
+          return (dpi > 0.0f) ? dpi : 96.0f;
+        } ( );
+
+        const float fCaptionHeight =
+          static_cast<float> (::GetSystemMetrics (SM_CYCAPTION) + ::GetSystemMetrics (SM_CYSIZEFRAME) + ::GetSystemMetrics (SM_CXPADDEDBORDER))
+            * (ImGui::GetWindowViewport ( )->DpiScale * 96.0f / fSystemDpi);
+
+        const ImVec2 captionPos  = ImGui::GetWindowPos  ( );
+        const float  captionWidth = ImGui::GetWindowSize ( ).x;
+
+        SKIF_ImGui_CaptionArea = ImRect (captionPos, ImVec2 (captionPos.x + captionWidth, captionPos.y + ImFloor (fCaptionHeight)));
+      }
 
       HiddenFramesRemaining         = ImGui::GetCurrentWindowRead()->HiddenFramesCannotSkipItems;
       HiddenFramesContinueProcessing = (HiddenFramesRemaining > 0);

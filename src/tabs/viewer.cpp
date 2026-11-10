@@ -5090,8 +5090,15 @@ SKIF_UI_Tab_DrawViewer (void)
   //   (After the scroll reset above, which centers on the last item: the whole image, not just its visible part)
   if (cover.pRawTexSRV.p != nullptr && (! ImGui::GetIO ( ).KeyCtrl || s_imageDragActive))
   {
-    const ImRect  dragRect (ImMax (image_rect.Min, ImGui::GetCurrentWindow ( )->InnerClipRect.Min),
+          ImRect  dragRect (ImMax (image_rect.Min, ImGui::GetCurrentWindow ( )->InnerClipRect.Min),
                             ImMin (image_rect.Max, ImGui::GetCurrentWindow ( )->InnerClipRect.Max));
+
+    // Not the invisible title bar along the top of the window (see SKIF_ImGui_CaptionArea), which moves the window
+    extern ImRect SKIF_ImGui_CaptionArea;
+    if (SKIF_ImGui_CaptionArea.GetHeight ( ) > 0.0f && dragRect.Overlaps (SKIF_ImGui_CaptionArea))
+      dragRect.Min.y = ImMax (dragRect.Min.y, SKIF_ImGui_CaptionArea.Max.y);
+
+
     const ImGuiID dragId = ImGui::GetCurrentWindow ( )->GetID ("###SKIV_ImageDrag");
 
     if (dragRect.GetWidth ( ) > 0.0f && dragRect.GetHeight ( ) > 0.0f && ImGui::ItemAdd (dragRect, dragId, nullptr, ImGuiItemFlags_NoNav))
