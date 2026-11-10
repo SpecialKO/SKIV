@@ -4233,6 +4233,7 @@ static struct {
   bool         hovered   = false;   // The frame (or one of its children) was hovered, not blocked by a popup
   bool         imageHovered = false; // The image was hovered (and can be dragged or double-clicked)
   bool         emptyHovered = false; // The empty space around the image was hovered (not the image, nor e.g. the details)
+  bool         smallImage   = false; // The image fits in the frame at its actual size (so "Automatic" shows it so)
 } s_viewerLayout;
 
 // Where the image being faded out (cover_old) was last shown, so it fades out there (rather than centered); captured
@@ -4403,8 +4404,9 @@ SKIV_Viewer_HandleWheelZoom (void)
   return true;
 }
 
-// Double-clicking the image: switches between its actual size (1:1), keeping the pixel under the mouse cursor in
-//   place, and fitting it to the window
+// Double-clicking the image switches between "Automatic" (actual size if smaller than the window, otherwise zoom to
+//   fit) and, for an image larger than the window, "View actual size" (1:1), keeping the pixel under the mouse cursor
+//   in place, or, for one smaller than the window (which "Automatic" already shows at 1:1), "Zoom to fit"
 static bool
 SKIV_Viewer_HandleImageDoubleClick (void)
 {
@@ -4413,16 +4415,18 @@ SKIV_Viewer_HandleImageDoubleClick (void)
 
   s_imageDragActive = false; // (The second click of the double-click started a drag)
 
-  const ImVec2 actualSize   (cover.width, cover.height);
-  const bool   atActualSize = (ImAbs (s_viewerLayout.imageSize.x - actualSize.x) <= 1.0f &&
-                               ImAbs (s_viewerLayout.imageSize.y - actualSize.y) <= 1.0f);
+  // By the scaling (not by how the image is shown: "Automatic" shows an image smaller than the window as "View actual
+  //   size" does, and one larger than it as "Zoom to fit" does)
+  const ImVec2       actualSize (cover.width, cover.height);
+  const ImageScaling other    = (s_viewerLayout.smallImage) ? ImageScaling_Fit : ImageScaling_None;
+  const bool         toAuto   = (cover.scaling == other && cover.zoom == 1.0f);
 
   cover.zoom = 1.0f;
 
-  // At its actual size: fit it to the window, centered
-  if (atActualSize)
+  // Back to "Automatic", or a small image fitted to the window: centered
+  if (toAuto || other == ImageScaling_Fit)
   {
-    cover.scaling        = ImageScaling_Fit;
+    cover.scaling        = (toAuto) ? ImageScaling_Auto : ImageScaling_Fit;
     s_wheelLayout.active = false;
     resetScrollCenter    = true;
   }
@@ -4886,6 +4890,13 @@ SKIF_UI_Tab_DrawViewer (void)
   }
 
 #pragma endregion
+
+  // Whether the image fits in the frame at its actual size, so "Automatic" shows it at 1:1 (as in GetCurrentAspectRatio)
+  {
+    const ImVec2 availAuto = ImFloor (ImGui::GetContentRegionAvail ( ) / SKIF_ImGui_GlobalDPIScale);
+
+    s_viewerLayout.smallImage = (availAuto.x > cover.width && availAuto.y > cover.height);
+  }
 
   // This allows images to be DPI-scaled on HiDPI displays up until the user uses "View actual size" to force them to appear as 100%
   ImVec2 sizeCover     = GetCurrentAspectRatio (cover)     * ((cover    .scaling == ImageScaling_None) ? 1 : SKIF_ImGui_GlobalDPIScale) * cover    .zoom;
