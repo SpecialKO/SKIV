@@ -35,7 +35,6 @@
 #include <initializer_list>
 #include <imgui/imgui.h>
 #include <ImGuiNotify.hpp>
-#include <tabs/viewer.h>     // ImageScaling
 #include <utility/utility.h> // FileSignature
 
 // How the file describes its colors (ICC profile, cICP, ...): read by color_source.inl
@@ -125,9 +124,6 @@ struct image_s {
   int          channels    =    0;
   float        width       = 0.0f;
   float        height      = 0.0f;
-  static float zoom;//     = 1.0f; // 1.0f = 100%; max: 5.0f; min: 0.05f
-  static
-  ImageScaling scaling     ;//= ImageScaling_Auto;
   ImVec2       uv0 = ImVec2 (0, 0);
   ImVec2       uv1 = ImVec2 (1, 1);
   ImVec2       avail_size;        // Holds the frame size used (affected by the scaling method)
@@ -186,8 +182,6 @@ struct image_s {
     channels            = other.channels;
     width               = other.width;
     height              = other.height;
-    zoom                = other.zoom;
-    scaling             = other.scaling;
     uv0                 = other.uv0;
     uv1                 = other.uv1;
     avail_size          = other.avail_size;
@@ -213,8 +207,6 @@ struct image_s {
     channels            =    0;
     width               = 0.0f;
     height              = 0.0f;
-  //zoom                = 1.0f;
-  //scaling             = ImageScaling_Auto;
     uv0                 = ImVec2 (0, 0);
     uv1                 = ImVec2 (1, 1);
     avail_size          = { };

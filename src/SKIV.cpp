@@ -4866,6 +4866,11 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
     case WM_SKIF_IMAGE:
       addAdditionalFrames += 3;
 
+      // The image store has decoded an image: it only wakes the main loop, as the viewer takes it (and notes that
+      //   the image has loaded) on the main thread (SKIV_ImageStore::TakeResult)
+      if (wParam == 0x1) // SKIV_IMAGE_STORE_RESULT
+        break;
+
       // Update tryingToLoadCover
       extern bool tryingToLoadImage;
       extern std::atomic<bool> imageLoading;

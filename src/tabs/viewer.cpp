@@ -65,8 +65,9 @@
 
 #include <functional>
 
-// Decoding images (and image_s): utility/image_decode.cpp
+// Decoding images (and image_s): utility/image_decode.cpp; loading them and releasing their textures: utility/image_store.cpp
 #include <utility/image_decode.h>
+#include <utility/image_store.h>
 
 #include <thread>
 
@@ -301,8 +302,11 @@ image_anim_s::step (DWORD now, int count)
 }
 
 
-float        image_s::zoom    = 1.0f;
-ImageScaling image_s::scaling = ImageScaling_Auto;
+// How images are shown (the same for every image): their scaling, and the zoom on top of it (1.0f = 100%; 0.05f to 5.0f)
+static struct {
+  float        zoom    = 1.0f;
+  ImageScaling scaling = ImageScaling_Auto;
+} s_view;
 
 float
 image_s::gamut_info_s::pixel_samples_s::getPercentRec709 (void) const
@@ -362,26 +366,6 @@ extern std::string     SKIF_StatusBarHelp;
 extern std::string     SKIF_StatusBarText;
 extern DWORD           invalidatedDevice;
 extern concurrency::concurrent_queue <IUnknown *> SKIF_ResourcesToFree;
-
-// Drops this reference to an animated image's frames. The last one pushes their textures to be released after the frame
-//   (SKIF_ResourcesToFree), as they may still be drawn in it.
-static void
-SKIV_ReleaseAnimation (std::shared_ptr <image_anim_s>& anim)
-{
-  if (anim == nullptr)
-    return;
-
-  if (anim.use_count ( ) == 1)
-  {
-    for (auto& frame : anim->frames)
-      if (frame.srv.p != nullptr)
-        SKIF_ResourcesToFree.push (frame.srv.Detach ( ));
-
-    PLOG_VERBOSE << "SKIF_ResourcesToFree: Pushed the " << anim->frames.size ( ) << " frames of an animated image to be released";
-  }
-
-  anim.reset ( );
-}
 
 // Animated images, for the main loop (SKIV.cpp): when the frame shown changes, the window is presented again even though
 //   nothing else changed, and while one plays, the loop wakes up when its next frame is due.
@@ -520,15 +504,6 @@ SKIV_CaptureImage (image_s& image, DirectX::ScratchImage& captured, bool scRGB =
 #define _WIDTH   (378.0f * SKIF_ImGui_GlobalDPIScale) - _WIDTH_SCROLLBAR // GameList, GameDetails, Injection_Summary_Frame (prev. 414.0f)
 // 1038px == 415px
 // 1000px == 377px (using 380px)
-
-std::atomic<int>  textureLoadQueueLength{ 1 };
-
-// Notifications of image decodes (SKIV_DecodeImage runs on worker threads), to be shown by the main thread
-static concurrency::concurrent_queue <ImGuiToast> s_decodeNotices;
-
-static int getTextureLoadQueuePos (void) {
-  return textureLoadQueueLength.fetch_add(1) + 1;
-}
 
 // External declaration
 extern void SKIF_Shell_AddJumpList     (std::wstring name, std::wstring path, std::wstring parameters, std::wstring directory, std::wstring icon_path, bool bService);
@@ -689,7 +664,7 @@ GetCurrentAspectRatio (image_s& image)
 
   // Do not recalculate when dealing with an unchanged situation
   if (avail_size   == image.avail_size_cache &&
-      last_scaling == image.scaling)
+      last_scaling == s_view.scaling)
     return image.avail_size;
 
   image.avail_size_cache   = avail_size;
@@ -705,7 +680,7 @@ GetCurrentAspectRatio (image_s& image)
   image.uv0 = ImVec2 (0, 0);
   image.uv1 = ImVec2 (1, 1);
 
-  ImageScaling _appliedScaling = image.scaling;
+  ImageScaling _appliedScaling = s_view.scaling;
 
   // Attempt to find best scaling method on load
   if (_appliedScaling == ImageScaling_Auto)
@@ -764,9 +739,9 @@ GetCurrentAspectRatio (image_s& image)
 #endif
 
   // Cache the current image scaling _and_ reset the scroll center
-  if (last_scaling != image.scaling)
+  if (last_scaling != s_view.scaling)
   {
-    last_scaling    = image.scaling;
+    last_scaling    = s_view.scaling;
     resetScrollCenter = true;
   }
 
@@ -852,17 +827,17 @@ SKIV_Viewer_CycleScalingModes (void)
 {
   static int32_t last_toast_id = -1;
 
-  if (++(uint8_t&)cover.scaling >= ImageScaling_MaxValue)
-                  cover.scaling  = ImageScaling_Auto;
+  if (++(uint8_t&)s_view.scaling >= ImageScaling_MaxValue)
+                  s_view.scaling  = ImageScaling_Auto;
 
   ImGuiToast toast = {
     ImGuiToastType::Info, 2500,
       "Scaling Mode Changed",
       "New Mode:\t%hs",
-        cover.scaling == ImageScaling_Auto ? "Auto"        :
-        cover.scaling == ImageScaling_None ? "Actual Size" :
-        cover.scaling == ImageScaling_Fit  ? "Zoom to Fit" :
-        cover.scaling == ImageScaling_Fill ? "Fill Window" :
+        s_view.scaling == ImageScaling_Auto ? "Auto"        :
+        s_view.scaling == ImageScaling_None ? "Actual Size" :
+        s_view.scaling == ImageScaling_Fit  ? "Zoom to Fit" :
+        s_view.scaling == ImageScaling_Fill ? "Fill Window" :
                                              "Invalid"
   };
 
@@ -875,7 +850,7 @@ SKIV_Viewer_CycleScalingModes (void)
   last_toast_id =
     ImGui::InsertNotification (toast);
 
-  return cover.scaling;
+  return s_view.scaling;
 }
 
 #pragma region WheelZoom
@@ -963,7 +938,7 @@ SKIV_Viewer_PlaceImage (const ImVec2& targetPos, const ImVec2& newSize)
 
   s_wheelLayout.active  = true;
   s_wheelLayout.image   = cover.pRawTexSRV.p;
-  s_wheelLayout.zoom    = cover.zoom;
+  s_wheelLayout.zoom    = s_view.zoom;
   s_wheelLayout.offset  = offset;
   s_wheelLayout.content = content;
 
@@ -1023,7 +998,7 @@ SKIV_Viewer_HandleWheelZoom (void)
   if (! io.KeyCtrl && (! bOverViewer || ImGui::IsAnyItemActive ( )))
     return false;
 
-  const float oldZoom = cover.zoom;
+  const float oldZoom = s_view.zoom;
   float       newZoom = std::clamp (oldZoom * powf (1.1f, io.MouseWheel), SKIV_ZOOM_MIN, SKIV_ZOOM_MAX);
 
   // Stop at 100% on the way past it
@@ -1033,7 +1008,7 @@ SKIV_Viewer_HandleWheelZoom (void)
   if (newZoom == oldZoom)
     return false;
 
-  cover.zoom = newZoom;
+  s_view.zoom = newZoom;
 
   // The point kept in place: the mouse cursor, or the middle of the frame when Ctrl+wheel is used elsewhere
   const ImVec2 anchor = bOverViewer ? io.MousePos : s_viewerLayout.window->InnerRect.GetCenter ( );
@@ -1082,14 +1057,14 @@ SKIV_Viewer_HandleImageDoubleClick (void)
   //   size" does, and one larger than it as "Zoom to fit" does)
   const ImVec2       actualSize (cover.width, cover.height);
   const ImageScaling other    = (s_viewerLayout.smallImage) ? ImageScaling_Fit : ImageScaling_None;
-  const bool         toAuto   = (cover.scaling == other && cover.zoom == 1.0f);
+  const bool         toAuto   = (s_view.scaling == other && s_view.zoom == 1.0f);
 
-  cover.zoom = 1.0f;
+  s_view.zoom = 1.0f;
 
   // Back to "Automatic", or a small image fitted to the window: centered
   if (toAuto || other == ImageScaling_Fit)
   {
-    cover.scaling        = (toAuto) ? ImageScaling_Auto : ImageScaling_Fit;
+    s_view.scaling        = (toAuto) ? ImageScaling_Auto : ImageScaling_Fit;
     s_wheelLayout.active = false;
     resetScrollCenter    = true;
   }
@@ -1100,7 +1075,7 @@ SKIV_Viewer_HandleImageDoubleClick (void)
     const ImVec2 anchor   = ImGui::GetIO ( ).MousePos;
     const ImVec2 fraction = (anchor - s_viewerLayout.imagePos) / ImMax (s_viewerLayout.imageSize, ImVec2 (1.0f, 1.0f));
 
-    cover.scaling            = ImageScaling_None;
+    s_view.scaling            = ImageScaling_None;
     s_keepPlacementOnRescale = true;
 
     SKIV_Viewer_PlaceImage (anchor - fraction * actualSize, actualSize);
@@ -1188,12 +1163,50 @@ SKIF_UI_Tab_DrawViewer (void)
 {
   extern bool imageFadeActive;
 
+  SKIV_ImageStore& _store = SKIV_ImageStore::Get ( );
+
   // Notifications of image decodes (from their worker threads)
   {
     ImGuiToast notice (ImGuiToastType::None);
 
-    while (s_decodeNotices.try_pop (notice))
+    while (_store.TakeNotice (notice))
       ImGui::InsertNotification (notice);
+  }
+
+  // The image being loaded, once it has been decoded: shown from now on
+  {
+    bool success = false;
+
+    if (_store.TakeResult (cover, success))
+    {
+      if (success)
+        _LogColorSource (cover);
+
+      // Parent folder (used for the directory watch)
+      std::filesystem::path path       = SKIF_Util_NormalizeFullPath (cover.file_info.path);
+      cover.file_info.folder_path      = path.parent_path().wstring();
+      cover.file_info.folder_path_utf8 = SK_WideCharToUTF8 (cover.file_info.folder_path);
+      cover.file_info.filename         = path.filename()   .wstring();
+      cover.file_info.filename_utf8    = SK_WideCharToUTF8 (cover.file_info.filename);
+      cover.file_info.size             = SK_File_GetSize   (cover.file_info.path.c_str ());
+
+      extern ImVec2 SKIV_ResizeApp;
+      SKIV_ResizeApp.x = cover.width;
+      SKIV_ResizeApp.y = cover.height;
+
+      // We have stopped loading the image (as WM_SKIF_IMAGE used to note, once the worker had swapped it in)
+      imageLoading.store (false);
+      tryingToLoadImage = false;
+      tryingToDownImage = false;
+
+      // Empty the working set after the image has finished loading
+      SKIF_Util_CompactWorkingSet ( );
+
+      if (success)
+        newImageLoaded = true;
+      else
+        newImageFailed = true;
+    }
   }
 
   // Used to monitor the current image folder
@@ -1304,28 +1317,7 @@ SKIF_UI_Tab_DrawViewer (void)
     if (cover.pRawTexSRV.p != nullptr)
     {
       // If there already is an old cover, we need to push it for release
-      if (cover_old.pRawTexSRV.p != nullptr)
-      {
-        PLOG_VERBOSE << "SKIF_ResourcesToFree: Pushing " << cover_old.pRawTexSRV.p << " to be released";;
-        SKIF_ResourcesToFree.push(cover_old.pRawTexSRV.p);
-        cover_old.pRawTexSRV.p = nullptr;
-      }
-
-      if (cover_old.pGamutCoverageSRV.p != nullptr)
-      {
-        PLOG_VERBOSE << "SKIF_ResourcesToFree: Pushing " << cover_old.pGamutCoverageSRV.p << " to be released";;
-        SKIF_ResourcesToFree.push(cover_old.pGamutCoverageSRV.p);
-        cover_old.pGamutCoverageSRV.p = nullptr;
-      }
-
-      if (cover_old.pGamutCoverageUAV.p != nullptr)
-      {
-        PLOG_VERBOSE << "SKIF_ResourcesToFree: Pushing " << cover_old.pGamutCoverageUAV.p << " to be released";;
-        SKIF_ResourcesToFree.push(cover_old.pGamutCoverageUAV.p);
-        cover_old.pGamutCoverageUAV.p = nullptr;
-      }
-
-      SKIV_ReleaseAnimation (cover_old.anim);
+      SKIV_ImageStore::Release (cover_old);
 
       // Set up the current one to be released
       cover_old = cover;
@@ -1386,30 +1378,7 @@ SKIF_UI_Tab_DrawViewer (void)
 
   // Release old cover after it has faded away, or instantly if we don't fade covers
   if (fAlphaPrev <= 0.0f)
-  {
-    if (cover_old.pRawTexSRV.p != nullptr)
-    {
-      PLOG_VERBOSE << "SKIF_ResourcesToFree: Pushing " << cover_old.pRawTexSRV.p << " to be released";;
-      SKIF_ResourcesToFree.push(cover_old.pRawTexSRV.p);
-      cover_old.pRawTexSRV.p = nullptr;
-    }
-
-    if (cover_old.pGamutCoverageSRV.p != nullptr)
-    {
-      PLOG_VERBOSE << "SKIF_ResourcesToFree: Pushing " << cover_old.pGamutCoverageSRV.p << " to be released";;
-      SKIF_ResourcesToFree.push(cover_old.pGamutCoverageSRV.p);
-      cover_old.pGamutCoverageSRV.p = nullptr;
-    }
-
-    if (cover_old.pGamutCoverageUAV.p != nullptr)
-    {
-      PLOG_VERBOSE << "SKIF_ResourcesToFree: Pushing " << cover_old.pGamutCoverageUAV.p << " to be released";;
-      SKIF_ResourcesToFree.push(cover_old.pGamutCoverageUAV.p);
-      cover_old.pGamutCoverageUAV.p = nullptr;
-    }
-
-    SKIV_ReleaseAnimation (cover_old.anim);
-  }
+    SKIV_ImageStore::Release (cover_old);
 
   // Apply changes when the image changes
   if (loadImage)
@@ -1542,8 +1511,8 @@ SKIF_UI_Tab_DrawViewer (void)
       auto _IsHotKeyClicked = [](ImGuiKey key, ImageScaling image_scaling) {
         if (ImGui::GetKeyData (key)->DownDuration == 0.0f)
         {
-          cover.scaling = (cover.scaling != image_scaling) ? image_scaling : ImageScaling_Auto;
-          cover.zoom    = 1.0f;
+          s_view.scaling = (s_view.scaling != image_scaling) ? image_scaling : ImageScaling_Auto;
+          s_view.zoom    = 1.0f;
         }
       };
 
@@ -1570,8 +1539,8 @@ SKIF_UI_Tab_DrawViewer (void)
   }
 
   // This allows images to be DPI-scaled on HiDPI displays up until the user uses "View actual size" to force them to appear as 100%
-  ImVec2 sizeCover     = GetCurrentAspectRatio (cover)     * ((cover    .scaling == ImageScaling_None) ? 1 : SKIF_ImGui_GlobalDPIScale) * cover    .zoom;
-  ImVec2 sizeCover_old = GetCurrentAspectRatio (cover_old) * ((cover_old.scaling == ImageScaling_None) ? 1 : SKIF_ImGui_GlobalDPIScale) * cover_old.zoom;
+  ImVec2 sizeCover     = GetCurrentAspectRatio (cover)     * ((s_view.scaling == ImageScaling_None) ? 1 : SKIF_ImGui_GlobalDPIScale) * s_view.zoom;
+  ImVec2 sizeCover_old = GetCurrentAspectRatio (cover_old) * ((s_view.scaling == ImageScaling_None) ? 1 : SKIF_ImGui_GlobalDPIScale) * s_view.zoom;
 
   // From now on ImGui UI calls starts being made...
 
@@ -1582,7 +1551,6 @@ SKIF_UI_Tab_DrawViewer (void)
   static const ImVec2 srgb_uv0 (-4096.0f, -4096.0f);
   static const ImVec2 srgb_uv1 (-8192.0f, -8192.0f);
 
-  static int    queuePosGameCover  = 0;
   static char   cstrLabelDowning[] = "Downloading...";
   static char   cstrLabelLoading[] = "...";
   static char   cstrLabelFailed [] = "The image failed to load... :(\n"
@@ -1607,7 +1575,8 @@ SKIF_UI_Tab_DrawViewer (void)
   else if (imageFailWarning)
     pcstrLabel = cstrLabelFailed;
 
-  else if (textureLoadQueueLength.load() == queuePosGameCover && cover.pRawTexSRV.p == nullptr)
+  // (No image is loading, and none is shown: e.g. closed, while the previous one fades out)
+  else if (! _store.IsLoading ( ) && cover.pRawTexSRV.p == nullptr)
     pcstrLabel = cstrLabelMissing;
 
   else if (cover    .pRawTexSRV.p == nullptr &&
@@ -1719,7 +1688,7 @@ SKIF_UI_Tab_DrawViewer (void)
 
   // The layout of a wheel zoom ends when the zoom is changed some other way, the scaling changes or another image is shown
   if (s_wheelLayout.active && (resetScrollCenter                            ||
-                               cover.zoom        != s_wheelLayout.zoom      ||
+                               s_view.zoom        != s_wheelLayout.zoom      ||
                                cover.pRawTexSRV.p != s_wheelLayout.image))
     s_wheelLayout.active = false;
 
@@ -1822,7 +1791,7 @@ SKIF_UI_Tab_DrawViewer (void)
     s_viewerLayout.imagePos  = image_pos;
     s_viewerLayout.imageSize = sizeCover;
     s_viewerLayout.rawSize   = rawSizeCover;
-    s_viewerLayout.zoom      = cover.zoom;
+    s_viewerLayout.zoom      = s_view.zoom;
     s_viewerLayout.originRel = originalPos - localStart;
     s_viewerLayout.hovered   = ImGui::IsWindowHovered (ImGuiHoveredFlags_ChildWindows);
 
@@ -1880,7 +1849,7 @@ SKIF_UI_Tab_DrawViewer (void)
       ImGui::GetIO ();
 
     bool         changed_zoom = false;
-    static float last_zoom    = cover.zoom;
+    static float last_zoom    = s_view.zoom;
 
     static constexpr float ZOOM_MAX = SKIV_ZOOM_MAX;
     static constexpr float ZOOM_MIN = SKIV_ZOOM_MIN;
@@ -1897,15 +1866,15 @@ SKIF_UI_Tab_DrawViewer (void)
 
       if (delta != 0.0f)
       {
-        cover.zoom =
-          std::clamp (cover.zoom + 0.1f * delta, ZOOM_MIN, ZOOM_MAX);
+        s_view.zoom =
+          std::clamp (s_view.zoom + 0.1f * delta, ZOOM_MIN, ZOOM_MAX);
       }
     }
 
-    if (last_zoom != cover.zoom)
+    if (last_zoom != s_view.zoom)
     {
       changed_zoom = true;
-      last_zoom    = cover.zoom;
+      last_zoom    = s_view.zoom;
     }
 
     if (changed_zoom)
@@ -1914,9 +1883,9 @@ SKIF_UI_Tab_DrawViewer (void)
 
       ImGuiToast toast = {
         ImGuiToastType::Info, 500,
-          cover.zoom == 1.0f ? "Zoom Level Reset"
+          s_view.zoom == 1.0f ? "Zoom Level Reset"
                              : "Zoom Level Changed",
-          "New Scale:\t%3.0f%%", cover.zoom * 100.0f
+          "New Scale:\t%3.0f%%", s_view.zoom * 100.0f
       };
 
       if (last_toast_id >= 0)
@@ -2077,7 +2046,7 @@ SKIF_UI_Tab_DrawViewer (void)
                              "%s (%hs @ %d-bpc)\n",
                                       cover.width,
                                       cover.height,
-                                      cover.zoom * 100,
+                                      s_view.zoom * 100,
                                      (cover.is_hdr) ? "HDR" : (cover.is_wcg || (cover.anim != nullptr && cover.anim->wide)) ? "SDR, wide gamut" : "SDR",
                                       cover.channels == 0 ? "Unknown" :
                                       cover.channels == 1 ? "R"       :
@@ -2091,7 +2060,7 @@ SKIF_UI_Tab_DrawViewer (void)
       ImGui::SameLine        (posXvalues);
       ImGui::TextUnformatted (szLabelsData);
 
-      if (cover.zoom != 1.0f)
+      if (s_view.zoom != 1.0f)
       {
         ImGui::SameLine             ();
         ImGui::BeginGroup           ();
@@ -2099,7 +2068,7 @@ SKIF_UI_Tab_DrawViewer (void)
         ImGui::Spacing              ();
         ImGui::Spacing              ();
         if (ImGui::Button (ICON_FA_ROTATE_LEFT "###Zoom_Reset"))
-          cover.zoom = 1.0f;
+          s_view.zoom = 1.0f;
         ImGui::PushFont (fontConsolas, SKIF_ImGui_GetFontConsolasSize ( ));
         ImGui::EndGroup             ();
       }
@@ -2816,15 +2785,15 @@ SKIF_UI_Tab_DrawViewer (void)
       if (SKIF_ImGui_BeginMenuEx2 ("Scaling", 0)) // ICON_FA_PANORAMA
       {
         auto _CreateMenuItem = [&](ImageScaling image_scaling, const char* label, const char* shortcut) {
-          bool bEnabled = (cover.scaling == image_scaling);
+          bool bEnabled = (s_view.scaling == image_scaling);
 
           if (bEnabled)
             ImGui::PushStyleColor (ImGuiCol_Text, ImGui::GetStyleColorVec4 (ImGuiCol_TextDisabled));
 
-          if (ImGui::MenuItem (label, shortcut, (cover.scaling == image_scaling)))
+          if (ImGui::MenuItem (label, shortcut, (s_view.scaling == image_scaling)))
           {
-            cover.scaling = (cover.scaling != image_scaling) ? image_scaling : ImageScaling_Auto;
-            cover.zoom    = 1.0f;
+            s_view.scaling = (s_view.scaling != image_scaling) ? image_scaling : ImageScaling_Auto;
+            s_view.zoom    = 1.0f;
           }
 
           if (bEnabled)
@@ -2973,149 +2942,14 @@ SKIF_UI_Tab_DrawViewer (void)
     // Reset variables used to track whether we're still loading a game cover, or if we're missing one
     imageLoading.store (true);
     tryingToLoadImage = true;
-    queuePosGameCover = textureLoadQueueLength.load() + 1;
 
     // Update the title of the main app window to indicate we're loading...
     if (SKIF_ImGui_hWnd != NULL)
       ::SetWindowText (SKIF_ImGui_hWnd, L"Loading... - " SKIV_WINDOW_TITLE_SHORT_W);
 
-    struct thread_s {
-      SKIV_DecodeRequest request;
-      image_s            image = { };
-    };
-
-    thread_s* data = new thread_s;
-
-    data->request.path           = new_path;
-    data->request.animatedImages = _registry.bAnimatedImages; // Settings, as they are now (the decode runs on its own thread)
+    // Decoded on a worker thread; taken (shown) at the start of a later frame, see TakeResult above
+    _store.Request (new_path, _registry.bAnimatedImages);
     new_path.clear();
-
-    // We're going to stream the cover in asynchronously on this thread
-    HANDLE hWorkerThread = (HANDLE)
-    _beginthreadex (nullptr, 0x0, [](void* var) -> unsigned
-    {
-      SetThreadPriority (GetCurrentThread (), THREAD_PRIORITY_TIME_CRITICAL);
-
-      SKIF_Util_SetThreadDescription (GetCurrentThread (), L"SKIV_ImageWorker");
-
-      thread_s* _data = static_cast<thread_s*>(var);
-
-      CoInitializeEx (nullptr, 0x0);
-
-      PLOG_DEBUG << "SKIV_ImageWorker thread started!";
-
-      PLOG_INFO  << "Streaming game cover asynchronously...";
-
-      int queuePos = getTextureLoadQueuePos();
-      //PLOG_VERBOSE << "queuePos = " << queuePos;
-
-      // Animated images are stopped between frames once another image is to be shown instead
-      _data->request.wanted = [queuePos](void) -> bool { return textureLoadQueueLength.load() == queuePos; };
-
-      std::vector <ImGuiToast> notices;
-      bool success = SKIV_DecodeImage (_data->request, _data->image, notices);
-
-      // Its notifications are shown by the main thread (SKIF_UI_Tab_DrawViewer)
-      for (const auto& notice : notices)
-        s_decodeNotices.push (notice);
-
-      PLOG_VERBOSE << "_pRawTexSRV = "        << _data->image.pRawTexSRV;
-
-      int currentQueueLength = textureLoadQueueLength.load();
-
-      if (currentQueueLength == queuePos)
-      {
-        if (success)
-          PLOG_VERBOSE << "Queue position is live, and texture was successfully loaded!";
-        else
-          PLOG_WARNING << "Queue position is live, but texture failed to load properly...";
-
-        if (success)
-          _LogColorSource (_data->image);
-
-        cover.file_info         = _data->image.file_info;
-        cover.bpc               = _data->image.bpc;
-        cover.channels          = _data->image.channels;
-        cover.width             = _data->image.width;
-        cover.height            = _data->image.height;
-        cover.zoom              = _data->image.zoom;
-        cover.uv0               = _data->image.uv0;
-        cover.uv1               = _data->image.uv1;
-        cover.pRawTexSRV        = _data->image.pRawTexSRV;
-        cover.pGamutCoverageSRV = _data->image.pGamutCoverageSRV;
-        cover.pGamutCoverageUAV = _data->image.pGamutCoverageUAV;
-        cover.light_info        = _data->image.light_info;
-        cover.colorimetry       = _data->image.colorimetry;
-        cover.is_hdr            = _data->image.is_hdr;
-        cover.is_wcg            = _data->image.is_wcg;
-        cover.is_dds            = _data->image.is_dds;
-        cover.anim              = std::move (_data->image.anim);
-        cover.color_source      = std::move (_data->image.color_source);
-
-        // Parent folder (used for the directory watch)
-        std::filesystem::path path       = SKIF_Util_NormalizeFullPath (cover.file_info.path);
-        cover.file_info.folder_path      = path.parent_path().wstring();
-        cover.file_info.folder_path_utf8 = SK_WideCharToUTF8 (cover.file_info.folder_path);
-        cover.file_info.filename         = path.filename()   .wstring();
-        cover.file_info.filename_utf8    = SK_WideCharToUTF8 (cover.file_info.filename);
-        cover.file_info.size             = SK_File_GetSize   (cover.file_info.path.c_str ());
-
-        extern ImVec2 SKIV_ResizeApp;
-        SKIV_ResizeApp.x = cover.width;
-        SKIV_ResizeApp.y = cover.height;
-
-        // Indicate that we have stopped loading the cover
-        imageLoading.store (false);
-
-        // Force a refresh when the cover has been swapped in
-        PostMessage (SKIF_Notify_hWnd, WM_SKIF_IMAGE, 0x0, static_cast<LPARAM> (success));
-      }
-
-      else if (_data->image.pRawTexSRV.p        != nullptr ||
-               _data->image.pGamutCoverageSRV.p != nullptr ||
-               _data->image.pGamutCoverageUAV.p != nullptr ||
-               _data->image.anim                != nullptr)
-      {
-        SKIV_ReleaseAnimation (_data->image.anim);
-
-        if (_data->image.pRawTexSRV.p != nullptr)
-        {
-          PLOG_DEBUG << "Texture is late! (" << queuePos << " vs " << currentQueueLength << ")";
-          PLOG_VERBOSE << "SKIF_ResourcesToFree: Pushing " << _data->image.pRawTexSRV.p << " to be released";;
-          SKIF_ResourcesToFree.push(_data->image.pRawTexSRV.p);
-          _data->image.pRawTexSRV.p = nullptr;
-        }
-
-        if (_data->image.pGamutCoverageSRV.p != nullptr)
-        {
-          PLOG_DEBUG << "Texture is late! (" << queuePos << " vs " << currentQueueLength << ")";
-          PLOG_VERBOSE << "SKIF_ResourcesToFree: Pushing " << _data->image.pGamutCoverageSRV.p << " to be released";;
-          SKIF_ResourcesToFree.push(_data->image.pGamutCoverageSRV.p);
-          _data->image.pGamutCoverageSRV.p = nullptr;
-        }
-
-        if (_data->image.pGamutCoverageUAV.p != nullptr)
-        {
-          PLOG_DEBUG << "Texture is late! (" << queuePos << " vs " << currentQueueLength << ")";
-          PLOG_VERBOSE << "SKIF_ResourcesToFree: Pushing " << _data->image.pGamutCoverageUAV.p << " to be released";;
-          SKIF_ResourcesToFree.push(_data->image.pGamutCoverageUAV.p);
-          _data->image.pGamutCoverageUAV.p = nullptr;
-        }
-      }
-
-      delete _data;
-
-      PLOG_INFO  << "Finished streaming image asynchronously...";
-      PLOG_DEBUG << "SKIV_ImageWorker thread stopped!";
-      return 0;
-    }, data, 0x0, nullptr);
-
-    bool threadCreated = (hWorkerThread != NULL);
-
-    if (threadCreated) // We don't care about how it goes so the handle is unneeded
-      CloseHandle (hWorkerThread);
-    else // Someting went wrong during thread creation, so free up the memory we allocated earlier
-      delete data;
   }
 
 #pragma endregion
@@ -3548,35 +3382,14 @@ SKIF_UI_Tab_DrawViewer (void)
   if (invalidatedDevice == 1)
   {   invalidatedDevice  = 2;
 
-    SKIV_ReleaseAnimation (cover.anim);
-    SKIV_ReleaseAnimation (cover_old.anim);
+    const std::wstring shown = cover.file_info.path;
 
-    if (cover.pRawTexSRV.p != nullptr)
-    {
-      SKIF_ResourcesToFree.push(cover.pRawTexSRV.p);
-      cover.pRawTexSRV.p = nullptr;
-    }
+    SKIV_ImageStore::Release (cover);
+    SKIV_ImageStore::Release (cover_old);
 
-    if (cover_old.pRawTexSRV.p != nullptr)
-    {
-      SKIF_ResourcesToFree.push(cover_old.pRawTexSRV.p);
-      cover_old.pRawTexSRV.p = nullptr;
-
-      if (cover_old.pGamutCoverageSRV.p != nullptr)
-      {
-        SKIF_ResourcesToFree.push(cover_old.pGamutCoverageSRV.p);
-        cover_old.pGamutCoverageSRV.p = nullptr;
-      }
-
-      if (cover_old.pGamutCoverageUAV.p != nullptr)
-      {
-        SKIF_ResourcesToFree.push(cover_old.pGamutCoverageUAV.p);
-        cover_old.pGamutCoverageUAV.p = nullptr;
-      }
-    }
-
-    // Trigger a refresh of the cover
-    loadImage = true;
+    // Load the image shown again, on the new device (unless one was loading: the store makes that request again)
+    if (! _store.OnDeviceReset ( ) && ! shown.empty ( ))
+      new_path = shown;
   }
 
 
