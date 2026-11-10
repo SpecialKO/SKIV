@@ -432,7 +432,13 @@ float4 main (PS_INPUT input) : SV_Target
     out_col.a;
 
      // checkerboard start
-  if (out_col.a < 1.0f && checkerboard_toggle && (font_dims.x + font_dims.y == 0.0f))
+  //   Behind the image's own transparency (its texture's alpha), not the vertex alpha: that is the image fading
+  //     in or out (or being dimmed), which the checkerboard does along with it (the output is premultiplied).
+  //   HDR images ignore the vertex color (input_col is 1), so they keep a fade of 1 here.
+  float image_a = saturate (orig_col.a);
+  float fade_a  = saturate (input_col.a);
+
+  if (image_a < 1.0f && checkerboard_toggle && (font_dims.x + font_dims.y == 0.0f))
   {
     float grid_size = 8.0f;
 
@@ -453,19 +459,19 @@ float4 main (PS_INPUT input) : SV_Target
       //TODO make math correct
       bg_color = pow(max(0.0f, bg_color), 2.2f);
 
-      float hdr_alpha_mask = saturate(1.0f - out_col.a);
+      float hdr_alpha_mask = saturate(1.0f - image_a);
       hdr_alpha_mask = pow(hdr_alpha_mask, 2.0f);
 
-      out_col.rgb = out_col.rgb + bg_color * hdr_alpha_mask;
+      out_col.rgb = out_col.rgb + bg_color * hdr_alpha_mask * fade_a;
     }
     else
     {
     // mix image with grid
-      out_col.rgb = out_col.rgb + bg_color * (1.0f - out_col.a);
+      out_col.rgb = out_col.rgb + bg_color * (1.0f - image_a) * fade_a;
     }
 
-    //just in case, might be excessive
-    out_col.a = 1.0f;
+    // The image and its checkerboard are opaque together, and fade together
+    out_col.a = fade_a;
   }
   //checkerboard end
 
