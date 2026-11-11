@@ -912,6 +912,67 @@ static struct {
 // The image is being dragged with the left mouse button (started by SKIF_UI_Tab_DrawViewer on a click on the image)
 static bool s_imageDragActive = false;
 
+// The image can be dragged only once it has been interacted with: clicked or double-clicked, or zoomed with the wheel
+//   (it is then likely to be looked at closely). Until then, a drag on it moves the window, as one on the empty space
+//   around it does: an image that covers the window would otherwise move at any attempt to move the window. Each image
+//   shown starts out not engaged.
+static void* s_imageEngaged      = nullptr; // The image engaged (cover's texture), if any
+static void* s_imageEngagedShown = nullptr; // The image shown when that was last checked (another one ends it)
+static bool  s_imagePressPending = false;   // A press on the image not engaged: a click (it engages it), or a drag (it
+                                            //   moves the window)
+static bool  s_windowMoveWanted  = false;   // Such a drag: the main loop starts moving the window (SKIV_Viewer_MoveWindowIfWanted)
+static ImVec2 s_windowMoveFrom;             //   ... where it started (screen coordinates)
+
+static bool
+SKIV_Viewer_IsImageEngaged (void)
+{
+  if (s_imageEngagedShown != cover.pRawTexSRV.p)
+  {
+    s_imageEngagedShown = cover.pRawTexSRV.p;
+    s_imageEngaged      = nullptr;
+  }
+
+  return (cover.pRawTexSRV.p != nullptr && s_imageEngaged == cover.pRawTexSRV.p);
+}
+
+static void
+SKIV_Viewer_EngageImage (void)
+{
+  SKIV_Viewer_IsImageEngaged ( ); // (Forgets an image no longer shown)
+  s_imageEngaged = cover.pRawTexSRV.p;
+}
+
+// Called by the main loop between frames (with the messages): a drag on an image not engaged moves the window, by the
+//   window's own move loop (as dragging its caption does), until the mouse button is released. Not in the middle of a
+//   frame, as the move loop runs the message loop (and holds everything else) until then.
+void
+SKIV_Viewer_MoveWindowIfWanted (void)
+{
+  if (! std::exchange (s_windowMoveWanted, false) || SKIF_ImGui_hWnd == NULL)
+    return;
+
+  // Still held (the left button: the primary one, if they are swapped)
+  const int vk = ::GetSystemMetrics (SM_SWAPBUTTON) ? VK_RBUTTON : VK_LBUTTON;
+
+  if (::GetAsyncKeyState (vk) & 0x8000)
+  {
+    // The window catches up with the mouse first: it moved some way before the drag was told apart from a click
+    POINT cursor = { };
+    RECT  rect   = { };
+
+    if (! ::IsZoomed (SKIF_ImGui_hWnd) && ::GetCursorPos (&cursor) && ::GetWindowRect (SKIF_ImGui_hWnd, &rect))
+      ::SetWindowPos (SKIF_ImGui_hWnd, NULL, rect.left + cursor.x - static_cast <LONG> (s_windowMoveFrom.x),
+                                             rect.top  + cursor.y - static_cast <LONG> (s_windowMoveFrom.y), 0, 0,
+                      SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+
+    ::ReleaseCapture ( );
+    ::SendMessage    (SKIF_ImGui_hWnd, WM_SYSCOMMAND, SC_MOVE | HTCAPTION, 0);
+  }
+
+  // The button was released in the move loop, which ImGui does not see
+  ImGui::GetIO ( ).AddMouseButtonEvent (ImGuiMouseButton_Left, false);
+}
+
 // The thumbnails carousel (SKIV_Viewer_DrawCarousel): a strip of the images in the folder along the bottom of the frame
 static struct {
   float  alpha    = 0.0f;       // Its fade (0: hidden)
@@ -981,6 +1042,28 @@ SKIV_Viewer_PlaceImage (const ImVec2& targetPos, const ImVec2& newSize)
 static bool
 SKIV_Viewer_HandleImageDrag (void)
 {
+  // A press on an image not engaged: released where it was, it was a click (which engages the image); moved further
+  //   than a click would, the window is moved
+  if (s_imagePressPending)
+  {
+    if (! ImGui::IsMouseDown (ImGuiMouseButton_Left))
+    {
+      s_imagePressPending = false;
+      SKIV_Viewer_EngageImage ( );
+    }
+
+    else if (ImGui::IsMouseDragging (ImGuiMouseButton_Left))
+    {
+      s_imagePressPending = false;
+
+      extern bool SKIF_MouseDragMoveAllowed; // (Not in fullscreen or snipping mode)
+      s_windowMoveWanted  = SKIF_MouseDragMoveAllowed;
+      s_windowMoveFrom    = ImGui::GetIO ( ).MouseClickedPos [ImGuiMouseButton_Left];
+    }
+
+    return false;
+  }
+
   if (! s_imageDragActive)
     return false;
 
@@ -1040,6 +1123,9 @@ SKIV_Viewer_HandleWheelZoom (void)
 
   s_view.zoom = newZoom;
 
+  // Zoomed: likely to be looked at closely (dragged around)
+  SKIV_Viewer_EngageImage ( );
+
   // The point kept in place: the mouse cursor, or the middle of the frame when Ctrl+wheel is used elsewhere
   const ImVec2 anchor = bOverViewer ? io.MousePos : s_viewerLayout.window->InnerRect.GetCenter ( );
 
@@ -1081,7 +1167,10 @@ SKIV_Viewer_HandleImageDoubleClick (void)
   if (! ImGui::IsMouseDoubleClicked (ImGuiMouseButton_Left) || ImGui::GetIO ( ).KeyCtrl || ! s_viewerLayout.imageHovered)
     return false;
 
-  s_imageDragActive = false; // (The second click of the double-click started a drag)
+  s_imageDragActive   = false; // (The second click of the double-click started a drag)
+  s_imagePressPending = false;
+
+  SKIV_Viewer_EngageImage ( );
 
   // By the scaling (not by how the image is shown: "Automatic" shows an image smaller than the window as "View actual
   //   size" does, and one larger than it as "Zoom to fit" does)
@@ -1158,7 +1247,8 @@ SKIV_Viewer_HandleMouseZoomPan (void)
 
   if (cover.pRawTexSRV.p == nullptr || ! s_viewerLayout.valid || s_viewerLayout.window == nullptr)
   {
-    s_imageDragActive = false;
+    s_imageDragActive   = false;
+    s_imagePressPending = false;
     recenter          = false;
     return;
   }
@@ -2124,12 +2214,18 @@ SKIF_UI_Tab_DrawViewer (void)
       bool hovered = false,
            held    = false;
 
+      // Only once the image has been interacted with (see s_imageEngaged): until then, a drag on it moves the window
       if (ImGui::ButtonBehavior (dragRect, dragId, &hovered, &held, ImGuiButtonFlags_PressedOnClick))
-        s_imageDragActive = true;
+      {
+        if (SKIV_Viewer_IsImageEngaged ( ))
+          s_imageDragActive  = true;
+        else
+          s_imagePressPending = true;
+      }
 
       s_viewerLayout.imageHovered = hovered;
 
-      if (held)
+      if (held && s_imageDragActive)
         ImGui::SetMouseCursor (ImGuiMouseCursor_ResizeAll);
     }
   }

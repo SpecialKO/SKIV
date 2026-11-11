@@ -1535,6 +1535,10 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
     auto _TranslateAndDispatch = [&](void) -> bool
     {
+      // A drag on an image not interacted with yet moves the window (by its move loop, which runs the messages itself)
+      extern void SKIV_Viewer_MoveWindowIfWanted (void);
+      SKIV_Viewer_MoveWindowIfWanted ( );
+
       while (! SKIF_Shutdown.load() && PeekMessage (&msg, 0, 0U, 0U, PM_REMOVE))
       {
         if (msg.message == WM_QUIT)
