@@ -41,7 +41,8 @@
 //   Thumbnails (Thumbnail (path)): small, still versions (for the carousel), kept within a budget of their own, the least
 //     recently used given up first. Those of the shown image and the ones nearest to it (SKIV_THUMBNAIL_REACH each way)
 //     are made ahead; others once asked for. Each full decode makes one too, once its image is handed over. They are
-//     made after the full preloads, a few at once (a JPEG's decoded at about the thumbnail's size).
+//     made after the full preloads, a few at once (a JPEG's decoded at about the thumbnail's size); also while
+//     images to show load (fewer at once), for the previews of the next ones as images are gone through.
 //   A device reset (OnDeviceReset) releases them all, and drops the results made on the old device.
 //
 //   The viewer holds its own references to the images it shows (cover, and cover_old as it fades out).

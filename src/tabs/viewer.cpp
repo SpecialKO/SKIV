@@ -1930,27 +1930,33 @@ SKIF_UI_Tab_DrawViewer (void)
       bNotifyRefresh = false;
     }
 
-    // The image shown and the ones around it in its folder: those next to it kept decoded by the image store (preloaded),
-    //   so switching to them is quick, and the thumbnails of the nearest ones made ahead
+  }
+
+  // The image shown (or while one loads, that one) and the ones around it in its folder: those next to it kept decoded by
+  //   the image store (preloaded, once nothing loads), so switching to them is quick, and the thumbnails of the nearest
+  //   ones made ahead (also while going through images: the next ones' are made meanwhile, for their previews)
+  {
+    const std::wstring& centre =
+      (cover.pRawTexSRV.p == nullptr && tryingToLoadImage && _store.IsLoading ( )) ? _store.LoadingPath ( ) : cover.file_info.path;
+
+    auto*      active = _current_folder.fileList.getActiveFile ( );
+    const bool listed = (active != nullptr && ! centre.empty ( ) && active->path == centre);
+
+    static std::vector <std::wstring> around;
+    around.clear ( );
+
+    // Nearest first: the next one, the previous one, the one after the next, ...
+    if (listed)
     {
-      auto*      active = _current_folder.fileList.getActiveFile ( );
-      const bool listed = (active != nullptr && ! cover.file_info.path.empty ( ) && active->path == cover.file_info.path);
-
-      static std::vector <std::wstring> around;
-      around.clear ( );
-
-      // Nearest first: the next one, the previous one, the one after the next, ...
-      if (listed)
+      for (int distance = 1; distance <= SKIV_THUMBNAIL_REACH; distance++)
       {
-        for (int distance = 1; distance <= SKIV_THUMBNAIL_REACH; distance++)
-        {
-          around.push_back (_current_folder.fileList.peek ( distance));
-          around.push_back (_current_folder.fileList.peek (-distance));
-        }
+        around.push_back (_current_folder.fileList.peek ( distance));
+        around.push_back (_current_folder.fileList.peek (-distance));
       }
-
-      _store.SetNeighbours (cover.file_info.path, around, _registry.bAnimatedImages, _registry.iThumbnailCarousel != 0);
     }
+
+    if (! loadImage)
+      _store.SetNeighbours (centre, around, _registry.bAnimatedImages, _registry.iThumbnailCarousel != 0);
   }
 
   // Only apply changes to the scaling method if we actually have an image loaded
@@ -3773,20 +3779,39 @@ SKIF_UI_Tab_DrawViewer (void)
   }
 
 
-  // The Left and Right arrow keys switch images: owning them keeps ImGui's keyboard navigation from also scrolling the
-  //   viewer with them (as it does in a window without items to navigate to), which would move the image as it is
-  //   being swapped out. Not while a popup (e.g. the context menu) or a text field uses them.
-  if (! ImGui::GetIO ( ).WantTextInput && ! ImGui::IsPopupOpen (nullptr, ImGuiPopupFlags_AnyPopupId))
+  // The Left and Right arrow keys switch images, and Home and End go to the first and last image of the folder: owning
+  //   them keeps ImGui's keyboard navigation from also scrolling the viewer with them (as it does in a window without
+  //   items to navigate to), which would move the image as it is being swapped out. Not while a popup (e.g. the context
+  //   menu) or a text field uses them.
+  const bool navigationKeys = (! ImGui::GetIO ( ).WantTextInput && ! ImGui::IsPopupOpen (nullptr, ImGuiPopupFlags_AnyPopupId));
+
+  if (navigationKeys)
   {
     const ImGuiID arrowKeysOwner = ImGui::GetID ("###SKIV_ImageArrowKeys");
 
     ImGui::SetKeyOwner (ImGuiKey_LeftArrow,  arrowKeysOwner);
     ImGui::SetKeyOwner (ImGuiKey_RightArrow, arrowKeysOwner);
+    ImGui::SetKeyOwner (ImGuiKey_Home,       arrowKeysOwner);
+    ImGui::SetKeyOwner (ImGuiKey_End,        arrowKeysOwner);
   }
 
   // Also while an image is loading: going on replaces it (the image store loads the latest one asked for)
   if (! tryingToDownImage)
   {
+    // The first or last image of the folder (its list may hold a placeholder without a path, if it is empty)
+    auto _GoTo = [&](size_t index)
+    {
+      const auto& files = _current_folder.fileList;
+
+      if (index < files.count ( ) && ! files.at (index).path.empty ( ) && index != files.activeIndex ( ))
+      {
+        const std::wstring path = files.at (index).path;
+
+        _current_folder.fileList.setImage (path);
+        dragDroppedFilePath = path;
+      }
+    };
+
     if (ImGui::IsKeyPressed (ImGuiKey_RightArrow) ||
         ImGui::IsKeyPressed (ImGuiKey_GamepadR1))
     {
@@ -3798,6 +3823,12 @@ SKIF_UI_Tab_DrawViewer (void)
     {
       dragDroppedFilePath = _current_folder.fileList.prevImage ( );
     }
+
+    else if (navigationKeys && ImGui::IsKeyPressed (ImGuiKey_Home, false))
+      _GoTo (0);
+
+    else if (navigationKeys && ImGui::IsKeyPressed (ImGuiKey_End, false) && _current_folder.fileList.count ( ) > 0)
+      _GoTo (_current_folder.fileList.count ( ) - 1);
 
     // Animated images: Space pauses / resumes, and , / . step a frame back / ahead (pausing it)
     else if (cover.anim != nullptr && ! ImGui::GetIO ( ).WantTextInput && ! ImGui::IsPopupOpen (nullptr, ImGuiPopupFlags_AnyPopupId))
