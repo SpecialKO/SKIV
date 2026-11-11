@@ -168,6 +168,7 @@ SKIV_ImageStore::Copy (const image_s& from, image_s& to)
   to.height            = from.height;
   to.uv0               = from.uv0;
   to.uv1               = from.uv1;
+  to.source_size       = from.source_size;
   to.pRawTexSRV        = from.pRawTexSRV;        // (CComPtr: a reference of its own)
   to.pGamutCoverageSRV = from.pGamutCoverageSRV;
   to.pGamutCoverageUAV = from.pGamutCoverageUAV;

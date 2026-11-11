@@ -1204,7 +1204,8 @@ _MakeThumbnail (const DirectX::ScratchImage& from, size_t size, DirectX::Scratch
 //     (IWICBitmapSourceTransform). Its colors are as the decoder gives them (they are converted after, as any image's).
 //       Fails for an image no larger than that (it is decoded as usual).
 static HRESULT
-_LoadScaledFromWICMemory (const void* data, size_t size, size_t maxSize, DirectX::TexMetadata& meta, DirectX::ScratchImage& img)
+_LoadScaledFromWICMemory (const void* data, size_t size, size_t maxSize, DirectX::TexMetadata& meta, DirectX::ScratchImage& img,
+                          ImVec2& sourceSize)
 {
   bool                iswic2  = false;
   IWICImagingFactory* factory = DirectX::GetWICFactory (iswic2);
@@ -1229,6 +1230,8 @@ _LoadScaledFromWICMemory (const void* data, size_t size, size_t maxSize, DirectX
 
   if (FAILED (hr = frame->GetSize (&width, &height)) || width == 0 || height == 0)
     return FAILED (hr) ? hr : E_FAIL;
+
+  sourceSize = ImVec2 (static_cast <float> (width), static_cast <float> (height)); // (The image's own size)
 
   if (std::max (width, height) <= maxSize)
     return E_FAIL;
@@ -1807,7 +1810,7 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
     // A thumbnail only, of a JPEG: decoded at about its size (much quicker), otherwise at its full size
     const bool scaled =
       (request.thumbnailOnly && request.thumbnailSize > 0 && image_sig != nullptr && image_sig->mime_type == L"image/jpeg" &&
-        SUCCEEDED (_LoadScaledFromWICMemory (_scratchMemory.get (), _.getInitialSize (), request.thumbnailSize, meta, img)));
+        SUCCEEDED (_LoadScaledFromWICMemory (_scratchMemory.get (), _.getInitialSize (), request.thumbnailSize, meta, img, image.source_size)));
 
     if (scaled || SUCCEEDED (
         DirectX::LoadFromWICMemory (
@@ -3185,6 +3188,10 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
 
   if (request.thumbnailOnly && request.thumbnailSize > 0)
   {
+    // The size of the image it is of (a JPEG decoded scaled down knows it already)
+    if (image.source_size.x <= 0.0f || image.source_size.y <= 0.0f)
+      image.source_size = ImVec2 (static_cast <float> (meta.width), static_cast <float> (meta.height));
+
     if (! _MakeThumbnail (*pImg, request.thumbnailSize, thumb_img))
     {
       PLOG_ERROR << "[Image Processing] Could not scale the image down to a thumbnail";
@@ -3261,6 +3268,7 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
   if (succeeded && thumbnail != nullptr && request.thumbnailSize > 0 && ! request.thumbnailOnly)
   {
     thumbnail->file_info    = image.file_info;
+    thumbnail->source_size  = ImVec2 (image.width, image.height);
     thumbnail->bpc          = image.bpc;
     thumbnail->channels     = image.channels;
     thumbnail->not_hdr      = image.not_hdr;

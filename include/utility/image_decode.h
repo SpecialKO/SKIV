@@ -128,6 +128,7 @@ struct image_s {
   ImVec2       uv1 = ImVec2 (1, 1);
   ImVec2       avail_size;        // Holds the frame size used (affected by the scaling method)
   ImVec2       avail_size_cache;  // Holds a cached value used to determine if avail_size needs recalculating
+  ImVec2       source_size = ImVec2 (0, 0); // A thumbnail: the size of the image it was made of (0 if unknown)
 
   bool         not_hdr     = false; //just an excessive bool for checks
   bool         is_hdr      = false;
@@ -186,6 +187,7 @@ struct image_s {
     uv1                 = other.uv1;
     avail_size          = other.avail_size;
     avail_size_cache    = other.avail_size_cache;
+    source_size         = other.source_size;
     pRawTexSRV.p        = other.pRawTexSRV.p;
     pGamutCoverageSRV.p = other.pGamutCoverageSRV.p;
     pGamutCoverageUAV.p = other.pGamutCoverageUAV.p;
@@ -211,6 +213,7 @@ struct image_s {
     uv1                 = ImVec2 (1, 1);
     avail_size          = { };
     avail_size_cache    = { };
+    source_size         = { };
     pRawTexSRV.p        = nullptr;
     pGamutCoverageSRV.p = nullptr;
     pGamutCoverageUAV.p = nullptr;
