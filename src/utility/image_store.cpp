@@ -41,7 +41,7 @@ static constexpr size_t s_cacheBudget = 256ull * 1024 * 1024;
 static constexpr size_t s_thumbnailBudget = 64ull * 1024 * 1024;
 
 // How many thumbnails asked for (Thumbnail) are remembered until they are made
-static constexpr size_t s_thumbnailsAsked = 64;
+static constexpr size_t s_thumbnailsAsked = 128;
 
 namespace
 {
@@ -271,7 +271,7 @@ SKIV_ImageStore::Start (const std::wstring& path, const key_s& key, bool animate
   job->wanted                = std::make_shared <std::atomic<bool>> (true);
 
   // A thumbnail: only one, or one made from a full decode, unless there is one (or one is being made)
-  if (thumbnailOnly || (key.exists && FindThumbnail (key) == nullptr && ! IsThumbnailComing (key)))
+  if (thumbnailOnly || (m_thumbnailsOn && key.exists && FindThumbnail (key) == nullptr && ! IsThumbnailComing (key)))
   {
     job->decode.thumbnailSize = SKIV_THUMBNAIL_SIZE;
     job->decode.thumbnailOnly = thumbnailOnly;
@@ -616,9 +616,29 @@ SKIV_ImageStore::TakeResult (image_s& image, bool& success)
 }
 
 void
-SKIV_ImageStore::SetNeighbours (const std::wstring& shown, const std::vector <std::wstring>& around, bool animatedImages)
+SKIV_ImageStore::SetNeighbours (const std::wstring& shown, const std::vector <std::wstring>& around, bool animatedImages, bool thumbnails)
 {
   m_neighbourAnimated = animatedImages;
+
+  // No thumbnails (the carousel is not used): those kept are released
+  if (thumbnails != m_thumbnailsOn)
+  {
+    m_thumbnailsOn = thumbnails;
+
+    if (! thumbnails)
+    {
+      PLOG_INFO_IF (! m_thumbnails.empty ( )) << "[Image Store] No longer keeping the " << m_thumbnails.size ( ) << " thumbnails: they are not used";
+
+      for (auto& thumbnail : m_thumbnails)
+        Release (thumbnail->image);
+
+      m_thumbnails.clear ( );
+      m_thumbnailsAsked.clear ( );
+    }
+
+    m_aroundPaths.clear ( ); // (Takes the neighbours in again below, with or without the thumbnails made ahead)
+    m_shownPath = L"\1";
+  }
 
   if (shown != m_shownPath || around != m_aroundPaths)
   {
@@ -630,10 +650,14 @@ SKIV_ImageStore::SetNeighbours (const std::wstring& shown, const std::vector <st
     m_prev  = Key ((around.size ( ) > 1) ? around [1] : L"");
 
     m_near.clear ( );
-    m_near.push_back (m_shown);
 
-    for (size_t i = 0; i < around.size ( ); i++)
-      m_near.push_back ((i == 0) ? m_next : (i == 1) ? m_prev : Key (around [i]));
+    if (m_thumbnailsOn)
+    {
+      m_near.push_back (m_shown);
+
+      for (size_t i = 0; i < around.size ( ); i++)
+        m_near.push_back ((i == 0) ? m_next : (i == 1) ? m_prev : Key (around [i]));
+    }
 
     m_skip.clear ( );
     m_thumbnailsFailed.clear ( );
@@ -790,7 +814,7 @@ SKIV_ImageStore::KeepThumbnail (const key_s& key, const image_s& image)
 bool
 SKIV_ImageStore::PreloadThumbnail (void)
 {
-  if (m_pending != 0 || ! m_inflight.empty ( ) || ! m_thumbnailsComing.empty ( ))
+  if (! m_thumbnailsOn || m_pending != 0 || ! m_inflight.empty ( ) || ! m_thumbnailsComing.empty ( ))
     return false;
 
   auto _Due = [&](const key_s& key) -> bool {
@@ -829,7 +853,7 @@ SKIV_ImageStore::Thumbnail (const std::wstring& path, bool load)
     }
   }
 
-  if (load)
+  if (load && m_thumbnailsOn)
   {
     auto asked = std::find_if (m_thumbnailsAsked.begin ( ), m_thumbnailsAsked.end ( ), [&](const key_s& key) { return key.path == path; });
 

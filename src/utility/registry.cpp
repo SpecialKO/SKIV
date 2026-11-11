@@ -381,6 +381,9 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
   if (regKVDarkenImages.hasData(&hKey))
     iDarkenImages          =   regKVDarkenImages           .getData (&hKey);
 
+  if (regKVThumbnailCarousel.hasData(&hKey))
+    iThumbnailCarousel     =   std::clamp (regKVThumbnailCarousel.getData (&hKey), 0, 2);
+
   if (regKVCheckForUpdates.hasData(&hKey))
     iCheckForUpdates       =   regKVCheckForUpdates        .getData (&hKey);
 

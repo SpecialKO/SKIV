@@ -373,19 +373,31 @@ static DWORD SKIV_Viewer_AnimNextFrameAt = 0;     // When the next frame is due 
 static int   SKIV_Viewer_AnimDrawnFrame  = -1;    // The last frame (ImGui::GetFrameCount) an animation was drawn in
 static bool  SKIV_Viewer_AnimChanged     = false; // The frame shown changed since the window was last presented
 
-// ms until the next frame of the animation shown is due (0: now); INFINITE if none plays
+// The thumbnails carousel, for the main loop: when it is due to start fading out (once the mouse has left it); 0: none
+static DWORD SKIV_Viewer_CarouselWakeAt  = 0;
+
+// ms until the next frame of the animation shown is due (0: now), or the thumbnails carousel is due to fade out;
+//   INFINITE if neither
 DWORD
 SKIV_Viewer_GetAnimationWakeIn (void)
 {
-  if (SKIV_Viewer_AnimNextFrameAt == 0 || ImGui::GetFrameCount ( ) - SKIV_Viewer_AnimDrawnFrame > 1)
-    return INFINITE;
-
   if (SKIF_ImGui_hWnd == NULL || ::IsIconic (SKIF_ImGui_hWnd))
     return INFINITE;
 
-  const LONG wakeIn = static_cast <LONG> (SKIV_Viewer_AnimNextFrameAt - SKIF_Util_timeGetTime1 ( ));
+  auto _WakeIn = [](DWORD at) -> DWORD {
+    const LONG wakeIn = static_cast <LONG> (at - SKIF_Util_timeGetTime1 ( ));
+    return (wakeIn > 0) ? static_cast <DWORD> (wakeIn) : 0;
+  };
 
-  return (wakeIn > 0) ? static_cast <DWORD> (wakeIn) : 0;
+  DWORD wakeIn = INFINITE;
+
+  if (SKIV_Viewer_AnimNextFrameAt != 0 && ImGui::GetFrameCount ( ) - SKIV_Viewer_AnimDrawnFrame <= 1)
+    wakeIn = _WakeIn (SKIV_Viewer_AnimNextFrameAt);
+
+  if (SKIV_Viewer_CarouselWakeAt != 0)
+    wakeIn = std::min (wakeIn, _WakeIn (SKIV_Viewer_CarouselWakeAt));
+
+  return wakeIn;
 }
 
 // Whether the frame of the animation shown changed since this was last asked (the window must be presented again)
@@ -908,6 +920,19 @@ static struct {
 // The image is being dragged with the left mouse button (started by SKIF_UI_Tab_DrawViewer on a click on the image)
 static bool s_imageDragActive = false;
 
+// The thumbnails carousel (SKIV_Viewer_DrawCarousel): a strip of the images in the folder along the bottom of the frame
+static struct {
+  float  alpha    = 0.0f;       // Its fade (0: hidden)
+  double lastNear = -1.0;       // When the mouse was last near it (ImGui::GetTime)
+  float  scroll   = 0.0f;       // The index of the image in its middle (eases towards target)
+  float  target   = 0.0f;
+  size_t current  = SIZE_MAX;   // The index of the active image, when it was last drawn
+  int    pressed  = -1;         // The tile a click on it started on
+  bool   hovered  = false;      // The mouse is over it: the wheel scrolls it (rather than zooming the image)
+  std::unordered_map <std::wstring, double>
+         seen;                  // When each thumbnail was first drawn (it fades in)
+} s_carousel;
+
 // Places the image's top left corner at the given screen position in the frame about to begin, at the given size.
 //   The scroll position (and the content size it is clamped against) are set for that frame, so the image moves
 //   in the same frame its size or position changes.
@@ -996,6 +1021,10 @@ SKIV_Viewer_HandleWheelZoom (void)
   const bool bOverViewer = s_viewerLayout.hovered && ImGui::IsMousePosValid ( );
 
   if (! io.KeyCtrl && (! bOverViewer || ImGui::IsAnyItemActive ( )))
+    return false;
+
+  // Over the thumbnails carousel, the wheel scrolls it
+  if (! io.KeyCtrl && s_carousel.hovered)
     return false;
 
   const float oldZoom = s_view.zoom;
@@ -1155,6 +1184,246 @@ SKIV_Viewer_HandleMouseZoomPan (void)
 }
 
 #pragma endregion
+
+// The thumbnails carousel: a strip of the images in the folder along the bottom of the frame (the current window), over
+//   the image. The thumbnails are the image store's; those of the tiles in view are asked for (the nearest last, so that
+//   they are made first). Shown always, or while the mouse is near the bottom of the frame (Settings: Thumbnails
+//   carousel). A click on a tile shows its image, the wheel over it scrolls it, and it follows the image shown.
+//   Returns the file of a tile clicked (empty if none).
+static std::wstring
+SKIV_Viewer_DrawCarousel (skiv_image_directory_s::fl_s& files, SKIV_ImageStore& store)
+{
+  ImGuiIO&     io     = ImGui::GetIO ( );
+  ImGuiWindow* frame  = ImGui::GetCurrentWindow ( );
+  const int    mode   = _registry.iThumbnailCarousel; // 0: never, 1: when the mouse is nearby, 2: always
+  const size_t count  = files.count ( );
+  const size_t active = files.activeIndex ( );
+  const double now    = ImGui::GetTime ( );
+
+  SKIV_Viewer_CarouselWakeAt = 0;
+  s_carousel.hovered         = false;
+
+  auto _Hide = [&](void) -> std::wstring
+  {
+    s_carousel.alpha    = 0.0f;
+    s_carousel.lastNear = -1.0;
+    s_carousel.pressed  = -1;
+    return L"";
+  };
+
+  // For an image in a folder of others (the image being loaded is the active one already)
+  if (mode == 0 || count < 2 || active >= count || files.at (active).path.empty ( ) || cover.file_info.path.empty ( ))
+    return _Hide ( );
+
+  // Its size follows the window's height: tiles of 32 px at 720 px (or less), up to the thumbnails' own size
+  const float  height  = ImGui::GetWindowViewport ( )->Size.y;
+  const float  tile    = std::clamp (std::round (height * (32.0f / 720.0f)), 32.0f, static_cast <float> (SKIV_THUMBNAIL_SIZE));
+  const float  gap     = std::round (tile * 0.125f);
+  const float  pad     = std::round (tile * 0.1875f);
+  const float  step    = tile + gap;
+  const ImRect inner   = frame->InnerRect;
+  const ImRect strip (ImVec2 (inner.Min.x, inner.Max.y - tile - pad * 2.0f), inner.Max);
+
+  if (strip.GetWidth ( ) < tile || strip.Min.y < inner.Min.y)
+    return _Hide ( );
+
+  // When it shows: always, or while the mouse is nearby it (and for a moment after), not while the image is dragged
+  bool show = (mode == 2);
+
+  if (mode == 1)
+  {
+    static constexpr double s_linger = 0.6; // s
+
+    const ImRect zone (ImVec2 (strip.Min.x, strip.Min.y - strip.GetHeight ( ) * 0.5f), strip.Max);
+    const bool   nearby = ImGui::IsMousePosValid ( ) && zone.Contains (io.MousePos) && ! s_imageDragActive &&
+                        ImGui::IsWindowHovered (ImGuiHoveredFlags_ChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+
+    if (nearby)
+      s_carousel.lastNear = now;
+
+    show = nearby || (s_carousel.lastNear >= 0.0 && now - s_carousel.lastNear < s_linger);
+
+    // The main loop sleeps while nothing changes: woken to fade it out, and while it shows, now and then to see whether
+    //   the mouse is still near it (the window may get no message once the mouse has left it)
+    if (show && ! nearby)
+      SKIV_Viewer_CarouselWakeAt = SKIF_Util_timeGetTime1 ( ) + static_cast <DWORD> ((s_linger - (now - s_carousel.lastNear)) * 1000.0) + 1;
+    else if (show)
+      SKIV_Viewer_CarouselWakeAt = SKIF_Util_timeGetTime1 ( ) + 250;
+  }
+
+  s_carousel.alpha = (show) ? std::min (1.0f, s_carousel.alpha + io.DeltaTime / 0.15f)
+                            : std::max (0.0f, s_carousel.alpha - io.DeltaTime / 0.25f);
+
+  // It follows the image shown (the wheel may have scrolled it away)
+  const int half = static_cast <int> (std::ceil (strip.GetWidth ( ) * 0.5f / step)) + 1; // Tiles each way from the middle
+
+  if (active != s_carousel.current)
+  {
+    s_carousel.target  = static_cast <float> (active);
+    s_carousel.current = active;
+
+    // Far away (another folder, or hidden meanwhile): there right away
+    if (std::abs (s_carousel.scroll - s_carousel.target) > half || s_carousel.alpha <= 0.0f)
+      s_carousel.scroll = s_carousel.target;
+  }
+
+  if (s_carousel.alpha <= 0.0f)
+  {
+    s_carousel.scroll  = s_carousel.target = static_cast <float> (active);
+    s_carousel.pressed = -1;
+    return L"";
+  }
+
+  // Easing towards where it is scrolled to
+  if (s_carousel.scroll != s_carousel.target)
+  {
+    s_carousel.scroll += (s_carousel.target - s_carousel.scroll) * (1.0f - std::exp (-io.DeltaTime * 14.0f));
+
+    if (std::abs (s_carousel.target - s_carousel.scroll) < 0.002f)
+      s_carousel.scroll = s_carousel.target;
+  }
+
+  std::wstring clicked;
+
+  // A child window over the image (and the details): its items do not reach the image's drag, double-click and wheel.
+  //   It is not content of the frame: the frame's content size is kept as it was (it would hold the frame's scrolling).
+  const ImVec2 parentPos  = ImGui::GetCursorPos ( );
+  const ImVec2 savedMax   = frame->DC.CursorMaxPos;
+  const ImVec2 savedIdeal = frame->DC.IdealMaxPos;
+
+  ImGui::SetCursorScreenPos (strip.Min);
+  ImGui::PushStyleVar       (ImGuiStyleVar_WindowPadding, ImVec2 (0.0f, 0.0f));
+  ImGui::PushStyleVar       (ImGuiStyleVar_Alpha, ImGui::GetStyle ( ).Alpha * s_carousel.alpha);
+
+  if (ImGui::BeginChild ("###SKIV_Carousel", strip.GetSize ( ), ImGuiChildFlags_None,
+                         ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBackground |
+                         ImGuiWindowFlags_NoNav       | ImGuiWindowFlags_NoSavedSettings))
+  {
+    ImDrawList*  dl       = ImGui::GetWindowDrawList ( );
+    const float  centerX  = std::floor (strip.GetCenter ( ).x);
+    const float  top      = strip.Min.y + pad;
+    const float  rounding = std::max (2.0f, std::round (tile * 0.06f));
+    const float  border   = std::max (1.0f, std::round (tile / 24.0f));
+
+    dl->AddRectFilled (strip.Min, strip.Max, ImGui::GetColorU32 (ImGuiCol_WindowBg, 0.8f));
+
+    // The tile at a position on the screen (-1 if none)
+    auto _TileAt = [&](const ImVec2& pos) -> int
+    {
+      if (pos.y < top || pos.y >= top + tile)
+        return -1;
+
+      const int   i  = static_cast <int> (std::round (s_carousel.scroll + (pos.x - centerX) / step));
+      const float x0 = std::floor (centerX + (i - s_carousel.scroll) * step - tile * 0.5f);
+
+      return (i >= 0 && i < static_cast <int> (count) && pos.x >= x0 && pos.x < x0 + tile) ? i : -1;
+    };
+
+    // The strip is one item: a click on it does not move the window (SKIF_ImGui_CanMouseDragMove) or reach the image
+    const ImGuiID id      = ImGui::GetID ("###SKIV_CarouselStrip");
+    bool          hovered = false,
+                  held    = false,
+                  pressed = false;
+
+    if (ImGui::ItemAdd (strip, id, nullptr, ImGuiItemFlags_NoNav))
+      pressed = ImGui::ButtonBehavior (strip, id, &hovered, &held);
+
+    s_carousel.hovered = hovered || held;
+
+    const int hoveredTile = (hovered) ? _TileAt (io.MousePos) : -1;
+
+    if (ImGui::IsItemActivated ( ))
+      s_carousel.pressed = hoveredTile;
+
+    // A click (released on the tile it started on) shows its image
+    if (pressed && hoveredTile >= 0 && hoveredTile == s_carousel.pressed && hoveredTile != static_cast <int> (active))
+      clicked = files.at (hoveredTile).path;
+
+    if (! held)
+      s_carousel.pressed = -1;
+
+    // The wheel scrolls it (either wheel; > 0: towards the first image)
+    if (hovered && (io.MouseWheel != 0.0f || io.MouseWheelH != 0.0f))
+      s_carousel.target = std::clamp (s_carousel.target - io.MouseWheel - io.MouseWheelH, 0.0f, static_cast <float> (count - 1));
+
+    // The tiles in view: the outermost first, so that the nearest are asked for last (their thumbnails are made first)
+    static std::vector <int> tiles;
+    tiles.clear ( );
+
+    for (int i = std::max (0, static_cast <int> (std::floor (s_carousel.scroll)) - half);
+             i <= std::min (static_cast <int> (count) - 1, static_cast <int> (std::ceil (s_carousel.scroll)) + half); i++)
+      tiles.push_back (i);
+
+    std::sort (tiles.begin ( ), tiles.end ( ), [&](int a, int b) {
+      return std::abs (a - s_carousel.scroll) > std::abs (b - s_carousel.scroll); });
+
+    // The reserved texture coordinates the shaders take for HDR content and sRGB (DDS) content (see GameCover)
+    static const ImVec2 hdr_uv0  (-1024.0f, -1024.0f), hdr_uv1  (-2048.0f, -2048.0f),
+                        srgb_uv0 (-4096.0f, -4096.0f), srgb_uv1 (-8192.0f, -8192.0f);
+
+    if (s_carousel.seen.size ( ) > 1024)
+      s_carousel.seen.clear ( );
+
+    for (const int i : tiles)
+    {
+      const float  x0 = std::floor (centerX + (i - s_carousel.scroll) * step - tile * 0.5f);
+      const ImRect r  (ImVec2 (x0, top), ImVec2 (x0 + tile, top + tile));
+
+      if (r.Max.x <= strip.Min.x || r.Min.x >= strip.Max.x)
+        continue;
+
+      const std::wstring& path = files.at (i).path;
+
+      dl->AddRectFilled (r.Min, r.Max, ImGui::GetColorU32 (ImGuiCol_FrameBg), rounding);
+
+      if (const image_s* thumbnail = store.Thumbnail (path, true);
+          thumbnail != nullptr && thumbnail->pRawTexSRV.p != nullptr && thumbnail->width > 0.0f && thumbnail->height > 0.0f)
+      {
+        const double since  = s_carousel.seen.try_emplace (path, now).first->second;
+        const float  fadeIn = std::clamp (static_cast <float> ((now - since) / 0.15), 0.0f, 1.0f);
+
+        // Fitted to the tile
+        const float  scale = std::min (tile / thumbnail->width, tile / thumbnail->height);
+        const ImVec2 size  = ImMax (ImFloor (ImVec2 (thumbnail->width, thumbnail->height) * scale), ImVec2 (1.0f, 1.0f));
+        const ImVec2 pos   = r.Min + ImFloor ((ImVec2 (tile, tile) - size) * 0.5f);
+
+        // HDR ones by the shaders' HDR path (tone mapped as the image shown is) while the image shown is drawn by it too
+        //   (its light levels set up that path), and no visualization is shown (it would apply to them too, and the
+        //   gamut coverage of the image shown would take in theirs)
+        const bool hdr  = thumbnail->light_info.isHDR && SKIV_Viewer_DrawAsHDR (cover) &&
+                          SKIV_HDR_VisualizationId == SKIV_HDR_VISUALIZTION_NONE;
+        const bool srgb = ! hdr && thumbnail->is_dds;
+
+        dl->AddImage ((ImTextureID)(intptr_t)thumbnail->pRawTexSRV.p, pos, pos + size,
+                      hdr ? hdr_uv0 : srgb ? srgb_uv0 : ImVec2 (0.0f, 0.0f),
+                      hdr ? hdr_uv1 : srgb ? srgb_uv1 : ImVec2 (1.0f, 1.0f),
+                      ImGui::GetColorU32 (ImVec4 (1.0f, 1.0f, 1.0f, fadeIn)));
+
+        // Fading in: drawn again until it has
+        if (fadeIn < 1.0f)
+          SKIV_Viewer_CarouselWakeAt = SKIF_Util_timeGetTime1 ( );
+      }
+
+      if (i == static_cast <int> (active))
+        dl->AddRect (r.Min - ImVec2 (border, border), r.Max + ImVec2 (border, border), ImGui::GetColorU32 (ImGuiCol_SKIF_GridActive),  rounding, border * 2.0f);
+      else if (i == hoveredTile)
+        dl->AddRect (r.Min - ImVec2 (border, border), r.Max + ImVec2 (border, border), ImGui::GetColorU32 (ImGuiCol_SKIF_GridHovered), rounding, border * 1.5f);
+    }
+
+    // The file name of the tile hovered
+    if (hoveredTile >= 0)
+      SKIF_ImGui_SetHoverTip (SK_WideCharToUTF8 (files.at (hoveredTile).filename), false, false, true);
+  }
+
+  ImGui::EndChild     ( );
+  ImGui::PopStyleVar  (2);
+  ImGui::SetCursorPos (parentPos);
+
+  frame->DC.CursorMaxPos = savedMax;
+  frame->DC.IdealMaxPos  = savedIdeal;
+
+  return clicked;
+}
 
 // Main UI function
 
@@ -1516,7 +1785,7 @@ SKIF_UI_Tab_DrawViewer (void)
         }
       }
 
-      _store.SetNeighbours (cover.file_info.path, around, _registry.bAnimatedImages);
+      _store.SetNeighbours (cover.file_info.path, around, _registry.bAnimatedImages, _registry.iThumbnailCarousel != 0);
     }
   }
 
@@ -2605,6 +2874,18 @@ SKIF_UI_Tab_DrawViewer (void)
     ImGui::PopFont      ( ); // fontConsolas
     ImGui::EndChild     ( ); // ###ImageDetails
     ImGui::SetCursorPos (parent_pos);
+  }
+
+#pragma endregion
+
+#pragma region Carousel
+
+  // The thumbnails carousel, over the image and the details: a tile clicked shows its image, as the arrow keys do
+  if (const std::wstring clicked = SKIV_Viewer_DrawCarousel (_current_folder.fileList, _store);
+      ! clicked.empty ( ) && ! tryingToLoadImage && ! tryingToDownImage)
+  {
+    _current_folder.fileList.setImage (clicked);
+    dragDroppedFilePath = clicked;
   }
 
 #pragma endregion
