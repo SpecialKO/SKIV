@@ -641,6 +641,11 @@ SKIV_ImageStore::TakeResult (image_s& image, bool& success)
 
   while (m_results.try_pop (result))
   {
+    // The textures its worker made: D3D11 keeps their initial data until the device next works, which the main loop
+    //   sees to after this frame (see SKIV.cpp, where it releases resources)
+    extern bool SKIV_DeviceCleanupWanted;
+    SKIV_DeviceCleanupWanted = true;
+
     // A thumbnail: kept (if it fits), or remembered as one that cannot be made
     if (result->thumbnail)
     {
