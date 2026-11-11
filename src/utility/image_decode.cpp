@@ -1256,6 +1256,17 @@ _LoadScaledFromWICMemory (const void* data, size_t size, size_t maxSize, DirectX
   return S_OK;
 }
 
+// A thumbnail's mipmaps (into mipmapped, false if they could not be made): it is drawn at a fraction of its size (the
+//   carousel's tiles, with a sampler that takes them), which they keep from aliasing. DirectXTex's own linear filter if
+//     WIC's cannot do the format (sRGB ones).
+static bool
+_MipmapThumbnail (const DirectX::ScratchImage& img, DirectX::ScratchImage& mipmapped)
+{
+  return (img.GetMetadata ( ).mipLevels == 1 && img.GetImage (0, 0, 0) != nullptr &&
+          (SUCCEEDED (DirectX::GenerateMipMaps (*img.GetImage (0, 0, 0), DirectX::TEX_FILTER_DEFAULT, 0, mipmapped)) ||
+           SUCCEEDED (DirectX::GenerateMipMaps (*img.GetImage (0, 0, 0), DirectX::TEX_FILTER_LINEAR | DirectX::TEX_FILTER_FORCE_NON_WIC, 0, mipmapped))));
+}
+
 // The thumbnail's texture (and its view), into image (pRawTexSRV, width, height). With mipmaps: it is drawn at a fraction
 //   of its size (the carousel's tiles, with a sampler that takes them), which they keep from aliasing.
 static bool
@@ -1263,14 +1274,8 @@ _CreateThumbnailTexture (ID3D11Device* pDevice, const DirectX::ScratchImage& img
 {
   CComPtr <ID3D11Texture2D> pTex2D;
 
-  // (DirectXTex's own linear filter if WIC's cannot do the format: sRGB ones; none at all if neither can)
   DirectX::ScratchImage        mipmapped;
-  const DirectX::ScratchImage* pImg = &img;
-
-  if (img.GetMetadata ( ).mipLevels == 1 && img.GetImage (0, 0, 0) != nullptr &&
-      (SUCCEEDED (DirectX::GenerateMipMaps (*img.GetImage (0, 0, 0), DirectX::TEX_FILTER_DEFAULT, 0, mipmapped)) ||
-       SUCCEEDED (DirectX::GenerateMipMaps (*img.GetImage (0, 0, 0), DirectX::TEX_FILTER_LINEAR | DirectX::TEX_FILTER_FORCE_NON_WIC, 0, mipmapped))))
-    pImg = &mipmapped;
+  const DirectX::ScratchImage* pImg = (_MipmapThumbnail (img, mipmapped)) ? &mipmapped : &img;
 
   if (FAILED (DirectX::CreateTexture (pDevice, pImg->GetImages ( ), pImg->GetImageCount ( ), pImg->GetMetadata ( ),
                                       (ID3D11Resource **)&pTex2D.p)) || pTex2D.p == nullptr)
@@ -2945,20 +2950,7 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
   }
 #endif
 
-  // A thumbnail only: scaled down here, so that its light levels are measured on the thumbnail (close enough, and quicker)
-  DirectX::ScratchImage thumb_img;
-
-  if (request.thumbnailOnly && request.thumbnailSize > 0)
-  {
-    if (! _MakeThumbnail (*pImg, request.thumbnailSize, thumb_img))
-    {
-      PLOG_ERROR << "[Image Processing] Could not scale the image down to a thumbnail";
-      return false;
-    }
-
-    pImg = &thumb_img;
-    meta =  thumb_img.GetMetadata ();
-  }
+  DirectX::ScratchImage thumb_img; // (A thumbnail: see below)
 
   auto pDevice =
     SKIF_D3D11_GetDevice ();
@@ -3185,6 +3177,22 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
     // We use the sum of averages per-scanline to help avoid overflow
     image.light_info.avg_nits     = static_cast <float> (80.0 *
       (dLumAccum / static_cast <double> (meta.height)));
+  }
+
+  // A thumbnail only: scaled down (with its mipmaps) once its light levels were measured, on the image at its full size,
+  //   as those of a full decode's thumbnail are (they set its tone mapping: the scaled down image's peaks are lower)
+  DirectX::ScratchImage thumb_mips;
+
+  if (request.thumbnailOnly && request.thumbnailSize > 0)
+  {
+    if (! _MakeThumbnail (*pImg, request.thumbnailSize, thumb_img))
+    {
+      PLOG_ERROR << "[Image Processing] Could not scale the image down to a thumbnail";
+      return false;
+    }
+
+    pImg = (_MipmapThumbnail (thumb_img, thumb_mips)) ? &thumb_mips : &thumb_img;
+    meta =  pImg->GetMetadata ();
   }
 
   HRESULT hr =

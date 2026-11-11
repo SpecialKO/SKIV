@@ -1490,17 +1490,31 @@ SKIV_Viewer_DrawCarousel (skiv_image_directory_s::fl_s& files, SKIV_ImageStore& 
         const ImVec2 size  = ImMax (ImFloor (ImVec2 (thumbnail->width, thumbnail->height) * scale), ImVec2 (1.0f, 1.0f));
         const ImVec2 pos   = r.Min + ImFloor ((ImVec2 (tile, tile) - size) * 0.5f);
 
-        // HDR ones by the shaders' HDR path (tone mapped as the image shown is) while the image shown is drawn by it too
-        //   (its light levels set up that path), and no visualization is shown (it would apply to them too, and the
-        //   gamut coverage of the image shown would take in theirs)
-        const bool hdr  = thumbnail->light_info.isHDR && SKIV_Viewer_DrawAsHDR (cover) &&
-                          SKIV_HDR_VisualizationId == SKIV_HDR_VISUALIZTION_NONE;
+        // HDR ones by the shaders' HDR path, tone mapped by their own light levels (the image shown's are set back after
+        //   each), and without the visualization shown (it is the image shown's)
+        const bool hdr  = thumbnail->light_info.isHDR;
         const bool srgb = ! hdr && thumbnail->is_dds;
+
+        if (hdr)
+        {
+          extern void SKIV_ImplDX11_DrawCallback_SetHDRThumbnail (const ImDrawList*, const ImDrawCmd*);
+
+          // Its brightest, as the image shown's is taken (the 99.94th percentile, or the maximum)
+          float maxNits = std::max (1.0f, (_registry.b99thPercentileMaxCLL) ? thumbnail->light_info.p99_nits
+                                                                             : thumbnail->light_info.max_nits);
+          dl->AddCallback (SKIV_ImplDX11_DrawCallback_SetHDRThumbnail, &maxNits, sizeof (maxNits));
+        }
 
         dl->AddImage ((ImTextureID)(intptr_t)thumbnail->pRawTexSRV.p, pos, pos + size,
                       hdr ? hdr_uv0 : srgb ? srgb_uv0 : ImVec2 (0.0f, 0.0f),
                       hdr ? hdr_uv1 : srgb ? srgb_uv1 : ImVec2 (1.0f, 1.0f),
                       ImGui::GetColorU32 (ImVec4 (1.0f, 1.0f, 1.0f, fadeIn)));
+
+        if (hdr)
+        {
+          extern void SKIV_ImplDX11_DrawCallback_RestoreImageConstants (const ImDrawList*, const ImDrawCmd*);
+          dl->AddCallback (SKIV_ImplDX11_DrawCallback_RestoreImageConstants, nullptr);
+        }
 
         // Fading in: drawn again until it has
         if (fadeIn < 1.0f)
