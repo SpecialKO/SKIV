@@ -32,6 +32,8 @@
 //   shown and next to it, and releases the rest.
 //
 //   Request (path) -> from the cache, or a worker decodes it -> WM_SKIF_IMAGE wakes the main loop -> TakeResult (cover).
+//     A request replaces the one before it, if that is still loading. At most two images to show are decoded at once
+//     (a still image cannot be stopped): a request beyond that waits until one is done.
 //   SetNeighbours (shown, around): once nothing is loading, the viewer says what it shows and what is around it.
 //     The shown image and the two next to it are kept (within a budget of video memory), and those two are preloaded,
 //     one at a time, while nothing else is decoding. Animated images are neither preloaded nor kept: their frames take
@@ -166,6 +168,7 @@ private:
   entry_s*
          Find      (const key_s& key);
   void   Preload   (void);                                 // Starts one, if nothing is decoding and one is due
+  void   StartDeferred (void);                             // Starts the request waiting for a decode to finish, if it can now
   thumb_s*
          FindThumbnail      (const key_s& key);
   bool   IsThumbnailWanted  (const key_s& key) const;      // Of the shown image or the ones nearest to it, or asked for
@@ -188,6 +191,9 @@ private:
 
   int          m_pending         = 0;             // The request to show: the job decoding it (or a number of its own, from the cache)
   bool         m_pendingCached   = false;         //   ... it is in the cache
+  bool         m_pendingDeferred = false;         //   ... it waits for a decode to finish (s_maxDecodes), m_pending then
+                                                  //       being a number of its own
+  bool         m_pendingWaited   = false;         //   ... it had to (logged once it starts)
   key_s        m_pendingKey;
   std::wstring m_pendingPath;
   bool         m_pendingAnimated = true;
