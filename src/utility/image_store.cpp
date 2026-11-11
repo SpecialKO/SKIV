@@ -48,6 +48,14 @@ static constexpr size_t s_thumbnailsAsked = 128;
 //   the latest of them is kept.
 static constexpr std::ptrdiff_t s_maxDecodes = 2;
 
+// How many thumbnails (alone, not those of full decodes) may be made at once. Each decodes its image (most at their full
+//   size, a JPEG at about the thumbnail's), at a low priority.
+#ifdef _WIN64
+static constexpr std::ptrdiff_t s_maxThumbnailJobs = 3;
+#else
+static constexpr std::ptrdiff_t s_maxThumbnailJobs = 2;
+#endif
+
 namespace
 {
   // A request, handed to its worker thread
@@ -787,8 +795,8 @@ SKIV_ImageStore::SetNeighbours (const std::wstring& shown, const std::vector <st
 void
 SKIV_ImageStore::Preload (void)
 {
-  // One at a time, and only while nothing else is decoding (nor a thumbnail being made)
-  if (m_pending != 0 || ! m_inflight.empty ( ) || ! m_thumbnailsComing.empty ( ))
+  // One at a time, and only while no other image is decoding (thumbnails may be made meanwhile)
+  if (m_pending != 0 || std::any_of (m_inflight.begin ( ), m_inflight.end ( ), [](const inflight_s& inflight) { return ! inflight.thumbnail; }))
     return;
 
   for (const key_s* candidate : { &m_next, &m_prev })
@@ -897,28 +905,38 @@ SKIV_ImageStore::KeepThumbnail (const key_s& key, const image_s& image)
 bool
 SKIV_ImageStore::PreloadThumbnail (void)
 {
-  if (! m_thumbnailsOn || m_pending != 0 || ! m_inflight.empty ( ) || ! m_thumbnailsComing.empty ( ))
+  if (! m_thumbnailsOn || m_pending != 0)
     return false;
 
+  // A few at once (s_maxThumbnailJobs), each on a thread of its own
+  auto running =
+    std::count_if (m_inflight.begin ( ), m_inflight.end ( ), [](const inflight_s& inflight) { return inflight.thumbnail; });
+
   auto _Due = [&](const key_s& key) -> bool {
-    return key.exists && FindThumbnail (key) == nullptr &&
+    return key.exists && FindThumbnail (key) == nullptr && ! IsThumbnailComing (key) &&
            std::find (m_thumbnailsFailed.begin ( ), m_thumbnailsFailed.end ( ), key) == m_thumbnailsFailed.end ( );
   };
+
+  bool started = false;
 
   // The shown image's and those nearest to it, then those asked for (the latest first)
   for (const auto* keys : { &m_near, &m_thumbnailsAsked })
   {
     for (const key_s& key : *keys)
     {
+      if (running >= s_maxThumbnailJobs)
+        return started;
+
       if (_Due (key))
       {
         Start (key.path, key, false, true, true);
-        return true;
+        running++;
+        started = true;
       }
     }
   }
 
-  return false;
+  return started;
 }
 
 const image_s*
