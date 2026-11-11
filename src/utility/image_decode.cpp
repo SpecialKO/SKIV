@@ -1199,6 +1199,63 @@ _MakeThumbnail (const DirectX::ScratchImage& from, size_t size, DirectX::Scratch
   return SUCCEEDED (DirectX::Resize (*src, width, height, DirectX::TEX_FILTER_TRIANGLE | DirectX::TEX_FILTER_FORCE_NON_WIC, to));
 }
 
+// A thumbnail of an image WIC decodes (a JPEG): decoded scaled down to fit size pixels each way, as RGBA (8 bpc). Much
+//   quicker than decoding it at its full size: WIC's scaler has the JPEG decoder decode it at a fraction of its size
+//     (IWICBitmapSourceTransform). Its colors are as the decoder gives them (they are converted after, as any image's).
+//       Fails for an image no larger than that (it is decoded as usual).
+static HRESULT
+_LoadScaledFromWICMemory (const void* data, size_t size, size_t maxSize, DirectX::TexMetadata& meta, DirectX::ScratchImage& img)
+{
+  bool                iswic2  = false;
+  IWICImagingFactory* factory = DirectX::GetWICFactory (iswic2);
+
+  if (factory == nullptr || data == nullptr || size == 0 || size > MAXDWORD || maxSize == 0)
+    return E_INVALIDARG;
+
+  CComPtr <IWICStream>            stream;
+  CComPtr <IWICBitmapDecoder>     decoder;
+  CComPtr <IWICBitmapFrameDecode> frame;
+  CComPtr <IWICBitmapScaler>      scaler;
+  CComPtr <IWICFormatConverter>   converter;
+  HRESULT                         hr;
+
+  if (FAILED (hr = factory->CreateStream (&stream.p)) ||
+      FAILED (hr = stream->InitializeFromMemory (static_cast <BYTE*> (const_cast <void*> (data)), static_cast <DWORD> (size))) ||
+      FAILED (hr = factory->CreateDecoderFromStream (stream, nullptr, WICDecodeMetadataCacheOnDemand, &decoder.p)) ||
+      FAILED (hr = decoder->GetFrame (0, &frame.p)))
+    return hr;
+
+  UINT width = 0, height = 0;
+
+  if (FAILED (hr = frame->GetSize (&width, &height)) || width == 0 || height == 0)
+    return FAILED (hr) ? hr : E_FAIL;
+
+  if (std::max (width, height) <= maxSize)
+    return E_FAIL;
+
+  const double scale     = static_cast <double> (maxSize) / static_cast <double> (std::max (width, height));
+  const UINT   outWidth  = std::max (static_cast <UINT> (std::round (width  * scale)), 1u),
+               outHeight = std::max (static_cast <UINT> (std::round (height * scale)), 1u);
+
+  if (FAILED (hr = factory->CreateBitmapScaler (&scaler.p)) ||
+      FAILED (hr = scaler->Initialize (frame, outWidth, outHeight, WICBitmapInterpolationModeFant)) ||
+      FAILED (hr = factory->CreateFormatConverter (&converter.p)) ||
+      FAILED (hr = converter->Initialize (scaler, GUID_WICPixelFormat32bppRGBA, WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeMedianCut)) ||
+      FAILED (hr = img.Initialize2D (DXGI_FORMAT_R8G8B8A8_UNORM, outWidth, outHeight, 1, 1)))
+    return hr;
+
+  const DirectX::Image* out = img.GetImage (0, 0, 0);
+
+  if (FAILED (hr = converter->CopyPixels (nullptr, static_cast <UINT> (out->rowPitch), static_cast <UINT> (out->slicePitch), out->pixels)))
+  {
+    img.Release ( );
+    return hr;
+  }
+
+  meta = img.GetMetadata ( );
+  return S_OK;
+}
+
 // The thumbnail's texture (and its view), into image (pRawTexSRV, width, height)
 static bool
 _CreateThumbnailTexture (ID3D11Device* pDevice, const DirectX::ScratchImage& img, image_s& image)
@@ -1732,7 +1789,12 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
     fread  (_scratchMemory.get (), _.getInitialSize (), 1, pImageFile);
     rewind (pImageFile);
 
-    if (SUCCEEDED (
+    // A thumbnail only, of a JPEG: decoded at about its size (much quicker), otherwise at its full size
+    const bool scaled =
+      (request.thumbnailOnly && request.thumbnailSize > 0 && image_sig != nullptr && image_sig->mime_type == L"image/jpeg" &&
+        SUCCEEDED (_LoadScaledFromWICMemory (_scratchMemory.get (), _.getInitialSize (), request.thumbnailSize, meta, img)));
+
+    if (scaled || SUCCEEDED (
         DirectX::LoadFromWICMemory (
           _scratchMemory.get (), _.getInitialSize (),
             DirectX::WIC_FLAGS_FILTER_POINT | DirectX::WIC_FLAGS_IGNORE_SRGB, // sRGB or not: decided below
