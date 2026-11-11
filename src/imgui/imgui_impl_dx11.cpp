@@ -335,6 +335,101 @@ static void ImGui_ImplDX11_DrawCallback_ResetRenderState(const ImDrawList*, cons
 static void ImGui_ImplDX11_DrawCallback_SetSamplerLinear(const ImDrawList*, const ImDrawCmd*)       { ImGui_ImplDX11_Data* bd = ImGui_ImplDX11_GetBackendData(); bd->RenderState->DeviceContext->PSSetSamplers(0, 1, &bd->pTexSamplerLinear); }
 static void ImGui_ImplDX11_DrawCallback_SetSamplerNearest(const ImDrawList*, const ImDrawCmd*)      { ImGui_ImplDX11_Data* bd = ImGui_ImplDX11_GetBackendData(); bd->RenderState->DeviceContext->PSSetSamplers(0, 1, &bd->pTexSamplerNearest); }
 #ifdef SKIF_D3D11
+// SKIV: the pixel shader constants of images (pPixelConstantBuffer, which every draw binds unless it draws text or the
+//   gamut chart): for content whose brightest is maxContentLuminance (nits), shown with this visualization. Of the image
+//     shown, for the frame (RenderDrawData); of a thumbnail, while it is drawn (SKIV_ImplDX11_DrawCallback_SetHDRThumbnail).
+static float s_imageDisplayMaxLuminance = 203.0f; // The frame's (the viewport being rendered), nits
+static float s_imageMaxContentLuminance =  80.0f; // The image shown's, nits
+
+static bool
+SKIV_ImplDX11_WriteImageConstants (ID3D11DeviceContext* ctx, float maxContentLuminance, uint32_t visualization)
+{
+  static SKIF_RegistrySettings& _registry = SKIF_RegistrySettings::GetInstance ( );
+
+  ImGui_ImplDX11_Data* bd = ImGui_ImplDX11_GetBackendData();
+
+  extern float    SKIV_HDR_SDRWhite;
+  extern float    SKIV_HDR_BrightnessScale;
+  extern uint32_t SKIV_HDR_VisualizationFlagsSDR;
+  extern float    SKIV_HDR_GamutHue_Rec709    [4];
+  extern float    SKIV_HDR_GamutHue_DciP3     [4];
+  extern float    SKIV_HDR_GamutHue_Rec2020   [4];
+  extern float    SKIV_HDR_GamutHue_Ap1       [4];
+  extern float    SKIV_HDR_GamutHue_Ap0       [4];
+  extern float    SKIV_HDR_GamutHue_Undefined [4];
+
+  D3D11_MAPPED_SUBRESOURCE
+        mapped_resource = { };
+
+  if (bd == nullptr || bd->pPixelConstantBuffer == nullptr ||
+      FAILED (ctx->Map (bd->pPixelConstantBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_resource)))
+    return false;
+
+  PIXEL_CONSTANT_BUFFER_DX11* pix_constant_buffer =
+    static_cast <PIXEL_CONSTANT_BUFFER_DX11 *> (
+      mapped_resource.pData
+    );
+
+  // Assert that the constant buffer remains 16-byte aligned.
+  static_assert((sizeof(PIXEL_CONSTANT_BUFFER_DX11) % 16) == 0, "Constant Buffer size must be 16-byte aligned");
+
+  const float display_max_luminance = s_imageDisplayMaxLuminance;
+
+  *pix_constant_buffer = PIXEL_CONSTANT_BUFFER_DX11 ();
+  pix_constant_buffer->font_dims [0]               = 0.0f;
+  pix_constant_buffer->font_dims [1]               = 0.0f;
+  pix_constant_buffer->hdr_max_luminance           = maxContentLuminance      /  80.0f;
+  pix_constant_buffer->display_max_luminance       = display_max_luminance    /  80.0f;
+  pix_constant_buffer->brightness                  = SKIV_HDR_BrightnessScale / 100.0f;
+  if ((SKIV_HDR_BrightnessScale / 100.0f) * maxContentLuminance > display_max_luminance)
+    pix_constant_buffer->tonemap_type              = _registry.iHDRToneMapType;
+  else
+    pix_constant_buffer->tonemap_type              = SKIV_HDR_TonemapType::SKIV_TONEMAP_TYPE_NONE;
+  //pix_constant_buffer->hdr_max_cll               = SKIV_HDR_MaxCLL;
+  pix_constant_buffer->hdr_visualization           = visualization;
+  pix_constant_buffer->sdr_reference_white         = SKIV_HDR_SDRWhite;
+  pix_constant_buffer->hdr_visualization_flags [3] = SKIV_HDR_VisualizationFlagsSDR;
+
+  memcpy (pix_constant_buffer->rec709_gamut_hue,    SKIV_HDR_GamutHue_Rec709,    sizeof (float) * 4);
+  memcpy (pix_constant_buffer->dcip3_gamut_hue,     SKIV_HDR_GamutHue_DciP3,     sizeof (float) * 4);
+  memcpy (pix_constant_buffer->rec2020_gamut_hue,   SKIV_HDR_GamutHue_Rec2020,   sizeof (float) * 4);
+  memcpy (pix_constant_buffer->ap1_gamut_hue,       SKIV_HDR_GamutHue_Ap1,       sizeof (float) * 4);
+  memcpy (pix_constant_buffer->ap0_gamut_hue,       SKIV_HDR_GamutHue_Ap0,       sizeof (float) * 4);
+  memcpy (pix_constant_buffer->undefined_gamut_hue, SKIV_HDR_GamutHue_Undefined, sizeof (float) * 4);
+
+  //alpha handling
+  pix_constant_buffer->alpha_toggle        = _registry.bAlpha        ? 1.0f : 0.0f;
+  pix_constant_buffer->checkerboard_toggle = _registry.bCheckerboard ? 1.0f : 0.0f;
+
+  // TODO: Move over to using HMONITOR for the current viewport
+  if (! (_registry.iHDRMode > 0 && SKIF_Util_IsHDRActive (NULL)))
+  {
+    pix_constant_buffer->tonemap_type = SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY;
+  }
+
+  ctx->Unmap ( bd->pPixelConstantBuffer, 0 );
+  return true;
+}
+
+// SKIV: the image constants of an HDR thumbnail, for the draws after it: its own brightest (nits, a float in the callback's
+//   data, see ImDrawList::AddCallback), without a visualization. SKIV_ImplDX11_DrawCallback_RestoreImageConstants sets
+//     back those of the image shown.
+void SKIV_ImplDX11_DrawCallback_SetHDRThumbnail(const ImDrawList*, const ImDrawCmd* cmd)
+{
+  ImGui_ImplDX11_Data* bd = ImGui_ImplDX11_GetBackendData();
+
+  if (cmd->UserCallbackData != nullptr && cmd->UserCallbackDataSize >= static_cast <int> (sizeof (float)))
+    SKIV_ImplDX11_WriteImageConstants (bd->RenderState->DeviceContext, *static_cast <const float*> (cmd->UserCallbackData), 0 /* SKIV_HDR_VISUALIZTION_NONE */);
+}
+
+void SKIV_ImplDX11_DrawCallback_RestoreImageConstants(const ImDrawList*, const ImDrawCmd*)
+{
+  ImGui_ImplDX11_Data* bd = ImGui_ImplDX11_GetBackendData();
+  extern uint32_t SKIV_HDR_VisualizationId;
+
+  SKIV_ImplDX11_WriteImageConstants (bd->RenderState->DeviceContext, s_imageMaxContentLuminance, SKIV_HDR_VisualizationId);
+}
+
 // SKIV: linear, from all the mip levels (the other samplers take the top one only): for the thumbnails carousel, whose
 //   thumbnails have mipmaps (they are drawn at a fraction of their size). Set back with DrawCallback_SetSamplerLinear.
 void SKIV_ImplDX11_DrawCallback_SetSamplerMipmapped(const ImDrawList*, const ImDrawCmd*)            { ImGui_ImplDX11_Data* bd = ImGui_ImplDX11_GetBackendData(); bd->RenderState->DeviceContext->PSSetSamplers(0, 1, &bd->pTexSamplerMipmapped); }
@@ -685,50 +780,12 @@ void ImGui_ImplDX11_RenderDrawData (ImDrawData *draw_data)
 
     ctx->Unmap ( bd->pFontConstantBuffer, 0 );
 
-    if (FAILED (ctx->Map (bd->pPixelConstantBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_resource)))
+    // The images' (the image shown, as the frame's; a thumbnail's set its own, see SKIV_ImplDX11_DrawCallback_SetHDRThumbnail)
+    s_imageDisplayMaxLuminance = display_max_luminance;
+    s_imageMaxContentLuminance = MaxContentLuminance;
+
+    if (! SKIV_ImplDX11_WriteImageConstants (ctx, MaxContentLuminance, SKIV_HDR_VisualizationId))
       return;
-
-    pix_constant_buffer =
-      static_cast <PIXEL_CONSTANT_BUFFER_DX11 *> (
-        mapped_resource.pData
-      );
-
-    // Assert that the constant buffer remains 16-byte aligned.
-    static_assert((sizeof(PIXEL_CONSTANT_BUFFER_DX11) % 16) == 0, "Constant Buffer size must be 16-byte aligned");
-
-    *pix_constant_buffer = PIXEL_CONSTANT_BUFFER_DX11 ();
-    pix_constant_buffer->font_dims [0]               = 0.0f;
-    pix_constant_buffer->font_dims [1]               = 0.0f;
-    pix_constant_buffer->hdr_max_luminance           = MaxContentLuminance      /  80.0f;
-    pix_constant_buffer->display_max_luminance       = display_max_luminance    /  80.0f;
-    pix_constant_buffer->brightness                  = SKIV_HDR_BrightnessScale / 100.0f;
-    if ((SKIV_HDR_BrightnessScale / 100.0f) * MaxContentLuminance > display_max_luminance)
-      pix_constant_buffer->tonemap_type              = _registry.iHDRToneMapType;
-    else
-      pix_constant_buffer->tonemap_type              = SKIV_HDR_TonemapType::SKIV_TONEMAP_TYPE_NONE;
-    //pix_constant_buffer->hdr_max_cll               = SKIV_HDR_MaxCLL;
-    pix_constant_buffer->hdr_visualization           = SKIV_HDR_VisualizationId;
-    pix_constant_buffer->sdr_reference_white         = SKIV_HDR_SDRWhite;
-    pix_constant_buffer->hdr_visualization_flags [3] = SKIV_HDR_VisualizationFlagsSDR;
-
-    memcpy (pix_constant_buffer->rec709_gamut_hue,    SKIV_HDR_GamutHue_Rec709,    sizeof (float) * 4);
-    memcpy (pix_constant_buffer->dcip3_gamut_hue,     SKIV_HDR_GamutHue_DciP3,     sizeof (float) * 4);
-    memcpy (pix_constant_buffer->rec2020_gamut_hue,   SKIV_HDR_GamutHue_Rec2020,   sizeof (float) * 4);
-    memcpy (pix_constant_buffer->ap1_gamut_hue,       SKIV_HDR_GamutHue_Ap1,       sizeof (float) * 4);
-    memcpy (pix_constant_buffer->ap0_gamut_hue,       SKIV_HDR_GamutHue_Ap0,       sizeof (float) * 4);
-    memcpy (pix_constant_buffer->undefined_gamut_hue, SKIV_HDR_GamutHue_Undefined, sizeof (float) * 4);
-
-    //alpha handling
-    pix_constant_buffer->alpha_toggle        = _registry.bAlpha        ? 1.0f : 0.0f;
-    pix_constant_buffer->checkerboard_toggle = _registry.bCheckerboard ? 1.0f : 0.0f;
-
-    // TODO: Move over to using HMONITOR for the current viewport
-    if (! (_registry.iHDRMode > 0 && SKIF_Util_IsHDRActive (NULL)))
-    {
-      pix_constant_buffer->tonemap_type = SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY;
-    }
-
-    ctx->Unmap ( bd->pPixelConstantBuffer, 0 );
 
     if (FAILED (ctx->Map (bd->pGamutConstantBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_resource)))
       return;
