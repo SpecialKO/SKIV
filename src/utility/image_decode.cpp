@@ -84,6 +84,7 @@
 #define CMS_NO_REGISTER_KEYWORD 1 // C++17 has no register keyword
 #include <lcms2/include/lcms2.h>
 #include "../utility/color_convert.inl"
+#include "../utility/psd.inl"
 
 #include <utility/image.h>
 
@@ -103,7 +104,7 @@ const std::initializer_list<FileSignature> supported_formats =
                                                                         { 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF } }, // mask
   FileSignature { L"image/bmp",                 { L".bmp"  },           { 0x42, 0x4D } },
   FileSignature { L"image/vnd.ms-photo",        { L".jxr", L".hdp"  },  { 0x49, 0x49, 0xBC } },
-  FileSignature { L"image/vnd.adobe.photoshop", { L".psd"  },           { 0x38, 0x42, 0x50, 0x53 } },
+  FileSignature { L"image/vnd.adobe.photoshop", { L".psd", L".psb", L".pdd" }, { 0x38, 0x42, 0x50, 0x53 } },
   FileSignature { L"image/tiff",                { L".tiff", L".tif" },  { 0x49, 0x49, 0x2A, 0x00 } }, // TIFF: little-endian
   FileSignature { L"image/tiff",                { L".tiff", L".tif" },  { 0x4D, 0x4D, 0x00, 0x2A } }, // TIFF: big-endian
   FileSignature { L"image/gif",                 { L".gif"  },           { 0x47, 0x49, 0x46, 0x38, 0x37, 0x61 } }, // GIF87a
@@ -287,7 +288,8 @@ enum ImageDecoder {
   ImageDecoder_HDR,
   ImageDecoder_UHDR,
   ImageDecoder_AVIF,
-  ImageDecoder_WebP
+  ImageDecoder_WebP,
+  ImageDecoder_PSD   // SKIV's own (psd.inl): WIC has no PSD codec
 };
 
 class SK_AutoFile {
@@ -1377,7 +1379,7 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
              (type.mime_type == L"image/png"                 ) ? ImageDecoder_stbi :
              //(type.mime_type == L"image/png"                 ) ? ImageDecoder_WIC  : // Use WIC for proper color correction and for decoding many PNG images that stbi cannot
              (type.mime_type == L"image/bmp"                 ) ? SKIV_DEFAULT_GENERAL_PURPOSE_DECODER :
-             (type.mime_type == L"image/vnd.adobe.photoshop" ) ? ImageDecoder_stbi : // Consider gamma broken, since stbi doesn't handle it correctly
+             (type.mime_type == L"image/vnd.adobe.photoshop" ) ? ImageDecoder_PSD  : // SKIV's own reader (psd.inl), see ImageDecoder_PSD below
              (type.mime_type == L"image/gif"                 ) ? SKIV_DEFAULT_GENERAL_PURPOSE_DECODER :
              (type.mime_type == L"image/vnd.radiance"        ) ? ImageDecoder_HDR  :
            //(type.mime_type == L"image/x-targa"             ) ? ImageDecoder_stbi : // TGA has no real unique header identifier, so just use the file extension on those
@@ -1468,6 +1470,52 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
 
     converted = true;
     succeeded = true;
+  }
+
+  // Photoshop documents (PSD, PSB, PDD): their composite image, by SKIV's own reader (psd.inl), of every color mode and
+  //   bit depth. WIC has no PSD codec, and stb_image reads only RGB ones (8 and 16 bpc) of PSDs (not PSBs). Their colors:
+  //     those of their ICC profile (RGB ones are converted below, as other images' are), or sRGB, which 8 bpc ones are
+  //       drawn as (an _SRGB format) and 16 bpc ones made linear from (half floats, as WIC's are). CMYK and Lab ones
+  //         come converted to scRGB already, 32 bpc ones as linear light (HDR).
+  if (decoder == ImageDecoder_PSD)
+  {
+    fseek  (pImageFile,                                 0, SEEK_SET  );
+    fread  (_scratchMemory.get (), _.getInitialSize (), 1, pImageFile);
+    rewind (pImageFile);
+
+    std::string failure;
+
+    if (! _DecodePSD (_scratchMemory.get ( ), _.getInitialSize ( ), image, img, failure))
+    {
+      PLOG_ERROR << "[Image Processing] Could not read the Photoshop document: " << failure;
+
+      notices.push_back (ImGuiToast { ImGuiToastType::Error, 10000, "Could not read the Photoshop document", "%s", failure.c_str ( ) });
+    }
+
+    else
+    {
+      meta = img.GetMetadata ( );
+
+      if (! _NeedsColorConversion (image.color_source))
+      {
+        if (meta.format == DXGI_FORMAT_R8G8B8A8_UNORM && img.OverrideFormat (DXGI_FORMAT_R8G8B8A8_UNORM_SRGB))
+          meta.format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+
+        else if (meta.format == DXGI_FORMAT_R16G16B16A16_UNORM)
+        {
+          DirectX::ScratchImage linear;
+
+          if (SUCCEEDED (DirectX::Convert (*img.GetImage (0, 0, 0), DXGI_FORMAT_R16G16B16A16_FLOAT,
+                                           DirectX::TEX_FILTER_SRGB_IN | DirectX::TEX_FILTER_FORCE_NON_WIC, 0.0f, linear)))
+          {
+            std::swap (img, linear);
+            meta = img.GetMetadata ( );
+          }
+        }
+      }
+
+      succeeded = true;
+    }
   }
 
   if (decoder == ImageDecoder_stbi)
@@ -2863,7 +2911,7 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
   //       Only the decoders that leave the colors as they are in the file: JPEG XL converts them itself, and the others
   //         are HDR or of fixed colors.
   if (! image.is_hdr && (decoder == ImageDecoder_WIC  || decoder == ImageDecoder_stbi ||
-                         decoder == ImageDecoder_WebP || decoder == ImageDecoder_AVIF) &&
+                         decoder == ImageDecoder_WebP || decoder == ImageDecoder_AVIF || decoder == ImageDecoder_PSD) &&
       DirectX::FormatDataType (img.GetMetadata ().format) == DirectX::FORMAT_TYPE_UNORM) // Not ones already converted (AVIF of 10+ bpc)
   {
     if (cmsHPROFILE source = _CreateSourceProfile (image.color_source))
