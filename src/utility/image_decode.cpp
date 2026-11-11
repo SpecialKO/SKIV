@@ -320,30 +320,6 @@ private:
   FILE*  file_;
 };
 
-class SKIV_ScopedThreadPriority_Viewer
-{
-public:
-  SKIV_ScopedThreadPriority_Viewer (int prio = THREAD_PRIORITY_TIME_CRITICAL) {
-    orig_prio_ =
-      GetThreadPriority (GetCurrentThread ());
-
-    orig_process_class_ =
-      GetPriorityClass (GetCurrentProcess ());
-
-    SetPriorityClass  (GetCurrentProcess (), HIGH_PRIORITY_CLASS);
-    SetThreadPriority (GetCurrentThread  (), prio);
-  };
-
-  ~SKIV_ScopedThreadPriority_Viewer (void) {
-    SetPriorityClass  (GetCurrentProcess (), orig_process_class_);
-    SetThreadPriority (GetCurrentThread  (), orig_prio_);
-  }
-
-private:
-  int orig_prio_;
-  int orig_process_class_;
-};
-
 int
 SKIV_DXGI_NumberOfChannels (DXGI_FORMAT format)
 {
@@ -1253,7 +1229,7 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
 {
   const std::function <bool (void)>& wanted = request.wanted;
 
-  SKIV_ScopedThreadPriority_Viewer _scoped_thread_prio;
+  // (The thread's priority is the caller's: the image store sets its workers', by whether their images are waited for)
 
 
   CComPtr <ID3D11Texture2D> pRawTex2D;

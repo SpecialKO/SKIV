@@ -122,6 +122,16 @@ SKIV_ImageStore::Release (image_s& image)
   }
 }
 
+// A worker's priority: above normal while its image is waited for (shown once decoded), below normal otherwise (preloads,
+//   thumbnails, and decodes no longer wanted), so that they give way to it and to the main thread. Only the thread's own
+//   priority: never the process's (efficiency mode sets that, see SKIV.cpp).
+void
+SKIV_ImageStore::Prioritize (const inflight_s& inflight, bool waitedFor)
+{
+  if (inflight.thread != nullptr)
+    SetThreadPriority (inflight.thread.get ( ), (waitedFor) ? THREAD_PRIORITY_ABOVE_NORMAL : THREAD_PRIORITY_BELOW_NORMAL);
+}
+
 SKIV_ImageStore::key_s
 SKIV_ImageStore::Key (const std::wstring& path)
 {
@@ -288,14 +298,6 @@ SKIV_ImageStore::Start (const std::wstring& path, const key_s& key, bool animate
   std::shared_ptr <std::atomic<bool>> wanted = job->wanted;
   job->decode.wanted = [wanted](void) -> bool { return wanted->load ( ); };
 
-  inflight_s inflight;
-  inflight.job     = job->job;
-  inflight.key     = key;
-  inflight.preload   = preload;
-  inflight.thumbnail = thumbnailOnly;
-  inflight.wanted    = job->wanted;
-  m_inflight.push_back (inflight);
-
   if (thumbnailOnly)
     PLOG_INFO << "[Image Store] Making a thumbnail of " << SK_WideCharToUTF8 (path);
   else if (preload)
@@ -303,12 +305,26 @@ SKIV_ImageStore::Start (const std::wstring& path, const key_s& key, bool animate
 
   const int id = job->job;
 
+  // Started once its priority is set (Prioritize)
   HANDLE hWorkerThread = reinterpret_cast <HANDLE> (
-    _beginthreadex (nullptr, 0x0, &SKIV_ImageStore::Worker, job, 0x0, nullptr)
+    _beginthreadex (nullptr, 0x0, &SKIV_ImageStore::Worker, job, CREATE_SUSPENDED, nullptr)
   );
 
-  if (hWorkerThread != NULL) // We don't care about how it goes so the handle is unneeded
-    CloseHandle (hWorkerThread);
+  if (hWorkerThread != NULL)
+  {
+    inflight_s inflight;
+    inflight.job       = id;
+    inflight.key       = key;
+    inflight.preload   = preload;
+    inflight.thumbnail = thumbnailOnly;
+    inflight.wanted    = job->wanted;
+    inflight.thread    = std::shared_ptr <void> (hWorkerThread, &CloseHandle);
+
+    Prioritize (inflight, ! preload);
+    m_inflight.push_back (inflight);
+
+    ResumeThread (hWorkerThread);
+  }
 
   else
   {
@@ -368,8 +384,13 @@ SKIV_ImageStore::Request (const std::wstring& path, bool animatedImages)
 
     if (inflight.key == key)
       decoding = &inflight;
+
+    // (Which also gives way to the decode of the image now wanted)
     else
+    {
       inflight.wanted->store (false);
+      Prioritize (inflight, false);
+    }
   }
 
   // From the cache: taken (shown) in the next frame
@@ -390,6 +411,7 @@ SKIV_ImageStore::Request (const std::wstring& path, bool animatedImages)
 
     decoding->wanted->store (true);
     decoding->preload = false;
+    Prioritize (*decoding, true);
     m_pending         = decoding->job;
   }
 
@@ -441,6 +463,7 @@ SKIV_ImageStore::StartDeferred (void)
 
       inflight.wanted->store (true);
       inflight.preload = false;
+      Prioritize (inflight, true);
       m_pending        = inflight.job;
       return;
     }
@@ -454,16 +477,12 @@ SKIV_ImageStore::StartDeferred (void)
 unsigned __stdcall
 SKIV_ImageStore::Worker (void* var)
 {
-  SetThreadPriority (GetCurrentThread (), THREAD_PRIORITY_TIME_CRITICAL);
-
   SKIF_Util_SetThreadDescription (GetCurrentThread (), L"SKIV_ImageWorker");
 
   job_s*           job   = static_cast <job_s*> (var);
   SKIV_ImageStore& store = SKIV_ImageStore::Get ( );
 
-  // Preloads give way to the decodes of images to show
-  if (job->preload)
-    SetThreadPriority (GetCurrentThread (), THREAD_PRIORITY_BELOW_NORMAL);
+  // (Its priority was set by Start, which started it: see Prioritize)
 
   CoInitializeEx (nullptr, 0x0);
 
