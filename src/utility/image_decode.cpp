@@ -3276,6 +3276,7 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
     thumbnail->is_wcg       = image.is_wcg;
     thumbnail->is_dds       = image.is_dds;
     thumbnail->light_info   = image.light_info;
+    thumbnail->colorimetry  = image.colorimetry; // (Its gamut coverage, for the details of an image loading)
     thumbnail->color_source = image.color_source;
 
     if (request.decoded)

@@ -2482,7 +2482,65 @@ SKIF_UI_Tab_DrawViewer (void)
 
 #pragma region ImageDetails
 
-  if (cover.pRawTexSRV.p != nullptr && _registry.bImageDetails)
+  // The image described: the one shown, or while one loads (none is shown meanwhile), that one, so that the details stay
+  //   up as images are gone through. Of the image loading, what is known before it is: its file, and if it has a
+  //     thumbnail (see SKIV_ImageStore::Thumbnail), what that knows of it (its size, colors, light levels and gamut
+  //       coverage). The rest ("...", and the gamut chart) once it is loaded; its buttons wait for it too.
+  static image_s s_loadingDetails;
+  static std::wstring s_loadingDetailsPath;
+
+  const bool describesLoading =
+    (cover.pRawTexSRV.p == nullptr && tryingToLoadImage && ! tryingToDownImage && _store.IsLoading ( ) && ! _store.LoadingPath ( ).empty ( ));
+
+  if (describesLoading)
+  {
+    const std::wstring& path = _store.LoadingPath ( );
+
+    // Its file (once per image: its size is read from the disk)
+    if (path != s_loadingDetailsPath)
+    {
+      s_loadingDetailsPath = path;
+      s_loadingDetails.reset ( );
+
+      const std::filesystem::path p (path);
+      s_loadingDetails.file_info.path             = path;
+      s_loadingDetails.file_info.path_utf8        = SK_WideCharToUTF8 (path);
+      s_loadingDetails.file_info.filename         = p.filename    ( ).wstring ( );
+      s_loadingDetails.file_info.filename_utf8    = SK_WideCharToUTF8 (s_loadingDetails.file_info.filename);
+      s_loadingDetails.file_info.folder_path      = p.parent_path ( ).wstring ( );
+      s_loadingDetails.file_info.folder_path_utf8 = SK_WideCharToUTF8 (s_loadingDetails.file_info.folder_path);
+      s_loadingDetails.file_info.size             = SK_File_GetSize   (path.c_str ( ));
+    }
+
+    // What its thumbnail knows (it may come meanwhile). No textures: those are the thumbnail's.
+    if (const image_s* thumbnail = _store.Thumbnail (path, false); thumbnail != nullptr)
+    {
+      s_loadingDetails.width        = thumbnail->source_size.x;
+      s_loadingDetails.height       = thumbnail->source_size.y;
+      s_loadingDetails.bpc          = thumbnail->bpc;
+      s_loadingDetails.channels     = thumbnail->channels;
+      s_loadingDetails.is_hdr       = thumbnail->is_hdr;
+      s_loadingDetails.is_wcg       = thumbnail->is_wcg;
+      s_loadingDetails.is_dds       = thumbnail->is_dds;
+      s_loadingDetails.color_source = thumbnail->color_source;
+      s_loadingDetails.light_info   = thumbnail->light_info;
+      s_loadingDetails.colorimetry  = thumbnail->colorimetry;
+    }
+  }
+
+  else if (! s_loadingDetailsPath.empty ( ))
+  {
+    s_loadingDetailsPath.clear ( );
+    s_loadingDetails.reset     ( );
+  }
+
+  // (Not a reference to a copy: image_s's copies take its texture pointers without references of their own)
+  image_s& described = (describesLoading) ? s_loadingDetails : cover;
+
+  // Whether what is known of it includes its size, colors and dynamic range (it has a thumbnail, or is loaded)
+  const bool knownImage = (! describesLoading || described.width > 0.0f);
+
+  if ((cover.pRawTexSRV.p != nullptr || describesLoading) && _registry.bImageDetails)
   {
     auto parent_pos =
       ImGui::GetCursorPos ();
@@ -2511,15 +2569,15 @@ SKIF_UI_Tab_DrawViewer (void)
                                "File Size:");
         sprintf (szLabelsData, "%s\n"
                                "%s\n"
-                               "%4.2f %s", cover.file_info.filename_utf8.c_str(),
-                                           cover.file_info.folder_path_utf8.c_str(),
-                                           cover.file_info.size > 1024             ?
-                                           cover.file_info.size > 1024*1024        ?
-                      static_cast <float> (cover.file_info.size)/(1024.0f*1024.0f) :
-                      static_cast <float> (cover.file_info.size)/(1024.0f)         :
-                      static_cast <float> (cover.file_info.size),
-                                           cover.file_info.size > 1024             ?
-                                           cover.file_info.size > 1024*1024        ?
+                               "%4.2f %s", described.file_info.filename_utf8.c_str(),
+                                           described.file_info.folder_path_utf8.c_str(),
+                                           described.file_info.size > 1024             ?
+                                           described.file_info.size > 1024*1024        ?
+                      static_cast <float> (described.file_info.size)/(1024.0f*1024.0f) :
+                      static_cast <float> (described.file_info.size)/(1024.0f)         :
+                      static_cast <float> (described.file_info.size),
+                                           described.file_info.size > 1024             ?
+                                           described.file_info.size > 1024*1024        ?
                                                                              "MiB" :
                                                                              "KiB" :
                                                                              "Bytes");
@@ -2530,14 +2588,14 @@ SKIF_UI_Tab_DrawViewer (void)
         sprintf (szLabels,     "Image:\n"
                                "File Size:");
         sprintf (szLabelsData, "%s\n"
-                               "%4.2f %s", cover.file_info.filename_utf8.c_str(),
-                                           cover.file_info.size > 1024             ?
-                                           cover.file_info.size > 1024*1024        ?
-                      static_cast <float> (cover.file_info.size)/(1024.0f*1024.0f) :
-                      static_cast <float> (cover.file_info.size)/(1024.0f)         :
-                      static_cast <float> (cover.file_info.size),
-                                           cover.file_info.size > 1024             ?
-                                           cover.file_info.size > 1024*1024        ?
+                               "%4.2f %s", described.file_info.filename_utf8.c_str(),
+                                           described.file_info.size > 1024             ?
+                                           described.file_info.size > 1024*1024        ?
+                      static_cast <float> (described.file_info.size)/(1024.0f*1024.0f) :
+                      static_cast <float> (described.file_info.size)/(1024.0f)         :
+                      static_cast <float> (described.file_info.size),
+                                           described.file_info.size > 1024             ?
+                                           described.file_info.size > 1024*1024        ?
                                                                              "MiB" :
                                                                              "KiB" :
                                                                              "Bytes");
@@ -2563,8 +2621,8 @@ SKIF_UI_Tab_DrawViewer (void)
                              "%.0fx%.0f\n",
                               ImGui::GetMainViewport ( )->Size.x,
                               ImGui::GetMainViewport ( )->Size.y,
-                              cover.avail_size.x,
-                              cover.avail_size.y);
+                              described.avail_size.x,
+                              described.avail_size.y);
 
       ImGui::TextUnformatted (szLabels);
       ImGui::SameLine        (posXvalues);
@@ -2579,20 +2637,27 @@ SKIF_UI_Tab_DrawViewer (void)
 
       char     szLabelsData  [512] = { };
 
+      // (Of an image loading without a thumbnail, only its zoom: the rest once it is loaded)
+      if (! knownImage)
+        sprintf (szLabelsData, "...\n"
+                               "%3.0f %%\n"
+                               "...\n", s_view.zoom * 100);
+
+      else
       sprintf (szLabelsData, "%.0fx%.0f\n"
                              "%3.0f %%\n"
                              "%s (%hs @ %d-bpc)\n",
-                                      cover.width,
-                                      cover.height,
+                                      described.width,
+                                      described.height,
                                       s_view.zoom * 100,
-                                     (cover.is_hdr) ? "HDR" : (cover.is_wcg || (cover.anim != nullptr && cover.anim->wide)) ? "SDR, wide gamut" : "SDR",
-                                      cover.channels == 0 ? "Unknown" :
-                                      cover.channels == 1 ? "R"       :
-                                      cover.channels == 2 ? "RG"      :
-                                      cover.channels == 3 ? "RGB"     :
-                                      cover.channels == 4 ? "RGBA"    :
+                                     (described.is_hdr) ? "HDR" : (described.is_wcg || (described.anim != nullptr && described.anim->wide)) ? "SDR, wide gamut" : "SDR",
+                                      described.channels == 0 ? "Unknown" :
+                                      described.channels == 1 ? "R"       :
+                                      described.channels == 2 ? "RG"      :
+                                      described.channels == 3 ? "RGB"     :
+                                      described.channels == 4 ? "RGBA"    :
                                                             "Unknown",
-                                      std::min (cover.bpc, 32));
+                                      std::min (described.bpc, 32));
 
       ImGui::TextUnformatted (szLabels);
       ImGui::SameLine        (posXvalues);
@@ -2614,18 +2679,19 @@ SKIF_UI_Tab_DrawViewer (void)
 
     // How the file describes its colors; everything it has, on hover
     {
-      const std::string colorSpace = SKIV_DescribeColorSource (cover.color_source);
+      const std::string colorSpace = (knownImage) ? SKIV_DescribeColorSource (described.color_source) : "...";
 
       ImGui::TextUnformatted ("Color Space:");
       ImGui::SameLine        (posXvalues);
       ImGui::TextUnformatted (colorSpace.c_str ());
-      SKIF_ImGui_SetHoverTip (SKIV_DescribeColorSourceInDetail (cover.color_source));
+      if (knownImage)
+        SKIF_ImGui_SetHoverTip (SKIV_DescribeColorSourceInDetail (described.color_source));
     }
 
     // Animated images
-    if (cover.anim != nullptr && ! cover.anim->frames.empty ())
+    if (described.anim != nullptr && ! described.anim->frames.empty ())
     {
-      const image_anim_s& anim  = *cover.anim;
+      const image_anim_s& anim  = *described.anim;
       const size_t        frame = anim.current;
 
       char szAnimLabels [128] = { };
@@ -2639,7 +2705,7 @@ SKIF_UI_Tab_DrawViewer (void)
                               anim.frameEnds [frame] - anim.getFrameStart (frame),
                               anim.paused ? ", paused" : "",
                               static_cast <float> (anim.duration) / 1000.0f,
-                              (anim.resolution.x != cover.width) ? " (scaled down to fit)" : "");
+                              (anim.resolution.x != described.width) ? " (scaled down to fit)" : "");
 
       ImGui::TextUnformatted (szAnimLabels);
       ImGui::SameLine        (posXvalues);
@@ -2647,7 +2713,7 @@ SKIF_UI_Tab_DrawViewer (void)
     }
 
     // HDR Light Levels
-    if (cover.light_info.isHDR)
+    if (described.light_info.isHDR)
     {
       ImGui::TextUnformatted ("\n");
 
@@ -2662,14 +2728,14 @@ SKIF_UI_Tab_DrawViewer (void)
                            u8"(%c)\n"
                            u8"cd / m\u00b2\n" // Unicode: Superscript Two
                            u8"cd / m\u00b2\n"
-                           u8"cd / m\u00b2", cover.light_info.max_cll_name);
+                           u8"cd / m\u00b2", described.light_info.max_cll_name);
       sprintf (szLightLevels, "%.3f \n"
                               "%.3f \n"
                               "%.3f \n"
-                              "%.3f ",  cover.light_info.max_cll,
-                                        cover.light_info.max_nits,
-                                        cover.light_info.avg_nits,
-                                        cover.light_info.min_nits);
+                              "%.3f ",  described.light_info.max_cll,
+                                        described.light_info.max_nits,
+                                        described.light_info.avg_nits,
+                                        described.light_info.min_nits);
 
       auto orig_pos =
         ImGui::GetCursorPos ();
@@ -2686,12 +2752,12 @@ SKIF_UI_Tab_DrawViewer (void)
 
       ImGui::SetCursorPos    (orig_pos);
 
-      const float fPercent709       = cover.colorimetry.pixel_counts.getPercentRec709    ();
-      const float fPercentP3        = cover.colorimetry.pixel_counts.getPercentDCIP3     ();
-      const float fPercent2020      = cover.colorimetry.pixel_counts.getPercentRec2020   ();
-      const float fPercentAP1       = cover.colorimetry.pixel_counts.getPercentAP1       ();
-      const float fPercentAP0       = cover.colorimetry.pixel_counts.getPercentAP0       ();
-      const float fPercentUndefined = cover.colorimetry.pixel_counts.getPercentUndefined ();
+      const float fPercent709       = described.colorimetry.pixel_counts.getPercentRec709    ();
+      const float fPercentP3        = described.colorimetry.pixel_counts.getPercentDCIP3     ();
+      const float fPercent2020      = described.colorimetry.pixel_counts.getPercentRec2020   ();
+      const float fPercentAP1       = described.colorimetry.pixel_counts.getPercentAP1       ();
+      const float fPercentAP0       = described.colorimetry.pixel_counts.getPercentAP0       ();
+      const float fPercentUndefined = described.colorimetry.pixel_counts.getPercentUndefined ();
 
       ImGui::SetCursorPos    (ImVec2 (orig_pos.x, light_pos.y));
       ImGui::TextUnformatted ("\n");
@@ -2746,10 +2812,10 @@ SKIF_UI_Tab_DrawViewer (void)
 
       ImGui::Spacing ();
 
-      SKIF_ImGui_OptImage  ( cover.pGamutCoverageSRV,
+      SKIF_ImGui_OptImage  ( described.pGamutCoverageSRV,
                              ImVec2 (256.0f, 256.0f),
-                             cover.uv0, // Top Left coordinates
-                             cover.uv1, // Bottom Right coordinates
+                             described.uv0, // Top Left coordinates
+                             described.uv1, // Bottom Right coordinates
                              ImVec4 (1.0f, 1.0f, 1.0f, 1.0f)
       );
 
@@ -2809,6 +2875,9 @@ SKIF_UI_Tab_DrawViewer (void)
       ImGui::Spacing (); ImGui::Spacing (); ImGui::Spacing (); ImGui::Spacing ();
       //ImGui::TextUnformatted ("");
 
+      // (They act on the image shown: an image loading has to be loaded first)
+      ImGui::BeginDisabled (describesLoading);
+
       if (ImGui::Button (ICON_FA_FLOPPY_DISK "  Save As..."))
         SaveFileDialog  = PopupState_Open;
       if (ImGui::Button (ICON_FA_FILE_EXPORT " Export to SDR"))
@@ -2821,6 +2890,8 @@ SKIF_UI_Tab_DrawViewer (void)
       {
         wantCopyToClipboard = true;
       }
+
+      ImGui::EndDisabled ( );
 
       //static int clipboard_type = 0;
       //ImGui::RadioButton ("HDR (.png)", &clipboard_type, 0); ImGui::SameLine ();
@@ -3074,14 +3145,14 @@ SKIF_UI_Tab_DrawViewer (void)
     }
 
     // Wide gamut SDR images: their gamut coverage, as HDR images show it above (without their light levels). The rows
-    //   take the colors of the Gamut Coverage visualization while it is shown.
-    if (cover.is_wcg && ! cover.light_info.isHDR)
+    //   take the colors of the Gamut Coverage visualization while it is described.
+    if (described.is_wcg && ! described.light_info.isHDR)
     {
       ImGui::TextUnformatted ("\n");
 
       struct gamut_row_s { const char* label; float percent; const float* hue; };
 
-      const auto&       counts = cover.colorimetry.pixel_counts;
+      const auto&       counts = described.colorimetry.pixel_counts;
       const gamut_row_s rows [] = {
         { "Rec. 709:",  counts.getPercentRec709    (), SKIV_HDR_GamutHue_Rec709    },
         { "DCI-P3:",    counts.getPercentDCIP3     (), SKIV_HDR_GamutHue_DciP3     },
@@ -3107,10 +3178,10 @@ SKIF_UI_Tab_DrawViewer (void)
 
       ImGui::Spacing ();
 
-      SKIF_ImGui_OptImage ( cover.pGamutCoverageSRV,
+      SKIF_ImGui_OptImage ( described.pGamutCoverageSRV,
                             ImVec2 (256.0f, 256.0f),
-                            cover.uv0, // Top Left coordinates
-                            cover.uv1, // Bottom Right coordinates
+                            described.uv0, // Top Left coordinates
+                            described.uv1, // Bottom Right coordinates
                             ImVec4 (1.0f, 1.0f, 1.0f, 1.0f)
       );
 
