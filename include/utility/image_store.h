@@ -93,7 +93,8 @@ public:
   //   next call into the store; the textures are released after the frame they were last drawn in (SKIF_ResourcesToFree).
   const image_s* Thumbnail (const std::wstring& path, bool load = true);
 
-  // The notifications of the decodes (made on their worker threads), to be shown by the main thread
+  // The notifications of the decodes (made on their worker threads), to be shown by the main thread: those of the images
+  //   shown, as they are (not those of thumbnails, nor of images decoded ahead until they are shown)
   bool TakeNotice (ImGuiToast& notice) { return m_notices.try_pop (notice); }
 
   // Pushes the image's textures (and an animated image's frames, once nothing else holds them) to be released after the
@@ -132,6 +133,7 @@ private:
     bool         thumbnail  = false;  // A thumbnail
     bool         byproduct  = false;  //   ... of a full decode (none if it was animated: not a failure)
     image_s      image = { };
+    std::vector <ImGuiToast> notices;  // What its decode had to say: shown if it is (TakeResult), with it if it is kept
   };
 
   // A decode in flight (main thread)
@@ -149,6 +151,7 @@ private:
     key_s   key;
     image_s image = { };
     size_t  bytes = 0;
+    std::vector <ImGuiToast> notices; // Its decode's, shown whenever it is
   };
 
   // A kept thumbnail (main thread)
@@ -166,7 +169,8 @@ private:
                     bool thumbnailOnly = false);
   bool   IsWanted  (const key_s& key) const;               // Shown, next to it, or requested
   int    Priority  (const key_s& key) const;               // 3: shown or requested, 2: the next image, 1: the previous one, 0: not wanted
-  bool   Keep      (const key_s& key, const image_s& image); // Into the cache (false if it does not fit the budget)
+  bool   Keep      (const key_s& key, const image_s& image,  // Into the cache (false if it does not fit the budget)
+                    const std::vector <ImGuiToast>& notices);
   entry_s*
          Find      (const key_s& key);
   void   Preload   (void);                                 // Starts one, if nothing is decoding and one is due

@@ -212,7 +212,7 @@ SKIV_ImageStore::Priority (const key_s& key) const
 }
 
 bool
-SKIV_ImageStore::Keep (const key_s& key, const image_s& image)
+SKIV_ImageStore::Keep (const key_s& key, const image_s& image, const std::vector <ImGuiToast>& notices)
 {
   if (Find (key) != nullptr)
     return true;
@@ -271,7 +271,8 @@ SKIV_ImageStore::Keep (const key_s& key, const image_s& image)
 
   auto entry = std::make_unique <entry_s> ( );
   entry->key   = key;
-  entry->bytes = bytes;
+  entry->bytes   = bytes;
+  entry->notices = notices; // (Shown with it, whenever it is)
   Copy (image, entry->image);
 
   m_cache.push_back (std::move (entry));
@@ -523,12 +524,12 @@ SKIV_ImageStore::Worker (void* var)
 
   std::vector <ImGuiToast> notices;
 
-  // The main thread decides what becomes of it (TakeResult): the notices first, so that they are shown with it. Wakes
-  //   the main loop (and refreshes the window) to take it.
+  // The main thread decides what becomes of it (TakeResult), and wakes up (and refreshes the window) to take it. Its
+  //   notices go with it: shown only if it is (a thumbnail's never are).
   auto _Hand = [&](result_s* handed)
   {
-    for (const auto& notice : notices)
-      store.m_notices.push (notice);
+    if (! handed->thumbnail)
+      handed->notices.insert (handed->notices.end ( ), notices.begin ( ), notices.end ( ));
 
     notices.clear ( );
 
@@ -602,10 +603,14 @@ SKIV_ImageStore::TakeResult (image_s& image, bool& success)
 {
   bool taken = false;
 
-  auto _Show = [&](const image_s& from, bool decoded)
+  auto _Show = [&](const image_s& from, bool decoded, const std::vector <ImGuiToast>& notices)
   {
     Release (image);
     Copy    (from, image);
+
+    // What its decode had to say (e.g. colors the file left unspecified), now that it is shown
+    for (const auto& notice : notices)
+      m_notices.push (notice);
 
     // The gamut coverage chart starts out empty (the renderer clears it each frame once it draws into it). Here, on
     //   the main thread, as the immediate context is not thread-safe (the worker could not clear it)
@@ -671,7 +676,7 @@ SKIV_ImageStore::TakeResult (image_s& image, bool& success)
       // Kept, if it is wanted (animated images are not: their frames take much more memory)
       if (result->success && result->image.anim == nullptr && (show || IsWanted (result->key)))
       {
-        if (! Keep (result->key, result->image) && result->preload)
+        if (! Keep (result->key, result->image, result->notices) && result->preload)
           m_skip.push_back (result->key);
       }
 
@@ -679,7 +684,7 @@ SKIV_ImageStore::TakeResult (image_s& image, bool& success)
         m_skip.push_back (result->key);
 
       if (show)
-        _Show (result->image, result->success);
+        _Show (result->image, result->success, result->notices);
     }
 
     Release (result->image);
@@ -690,7 +695,7 @@ SKIV_ImageStore::TakeResult (image_s& image, bool& success)
   if (m_pending != 0 && m_pendingCached)
   {
     if (entry_s* entry = Find (m_pendingKey))
-      _Show (entry->image, true);
+      _Show (entry->image, true, entry->notices);
 
     // (No longer kept: decoded after all)
     else
