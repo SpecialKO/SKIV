@@ -1431,6 +1431,10 @@ SKIV_Viewer_DrawCarousel (skiv_image_directory_s::fl_s& files, SKIV_ImageStore& 
     if (s_carousel.seen.size ( ) > 1024)
       s_carousel.seen.clear ( );
 
+    // The thumbnails are drawn smaller than they are: sampled from their mipmaps (set back to the usual sampler below)
+    extern void SKIV_ImplDX11_DrawCallback_SetSamplerMipmapped (const ImDrawList*, const ImDrawCmd*);
+    dl->AddCallback (SKIV_ImplDX11_DrawCallback_SetSamplerMipmapped, nullptr);
+
     for (const int i : tiles)
     {
       const float  x0 = std::floor (centerX + (i - s_carousel.scroll) * step - tile * 0.5f);
@@ -1503,6 +1507,8 @@ SKIV_Viewer_DrawCarousel (skiv_image_directory_s::fl_s& files, SKIV_ImageStore& 
           SKIV_Viewer_CarouselWakeAt = SKIF_Util_timeGetTime1 ( );
       }
     }
+
+    dl->AddCallback (ImGui::GetPlatformIO ( ).DrawCallback_SetSamplerLinear, nullptr);
 
     // Its background (no tile), not while something else is held (e.g. the image, dragged over it)
     s_carousel.backgroundHovered = stripHovered && hoveredTile < 0 && ! ImGui::IsAnyItemActive ( );

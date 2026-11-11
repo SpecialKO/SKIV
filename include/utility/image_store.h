@@ -51,7 +51,7 @@ constexpr WPARAM SKIV_IMAGE_STORE_RESULT = 0x1;
 
 // Thumbnails: scaled down to fit this many pixels each way. Made ahead: of the shown image and this many images each way
 //   (the 5 nearest images)
-constexpr size_t SKIV_THUMBNAIL_SIZE  = 256;
+constexpr size_t SKIV_THUMBNAIL_SIZE  = 128; // (The largest tiles: those of windows 2880 px tall; smaller ones use its mipmaps)
 constexpr int    SKIV_THUMBNAIL_REACH = 2;
 
 #include <atomic>

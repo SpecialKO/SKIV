@@ -37,7 +37,7 @@ static constexpr size_t s_cacheBudget = 512ull * 1024 * 1024;
 static constexpr size_t s_cacheBudget = 256ull * 1024 * 1024;
 #endif
 
-// What the kept thumbnails may take (a 256x256 one takes 256 KB, or 512 KB as half floats)
+// What the kept thumbnails may take (a 128x128 one takes 85 KB with its mipmaps, or 171 KB as half floats)
 static constexpr size_t s_thumbnailBudget = 64ull * 1024 * 1024;
 
 // How many thumbnails asked for (Thumbnail) are remembered until they are made

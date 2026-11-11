@@ -1256,13 +1256,23 @@ _LoadScaledFromWICMemory (const void* data, size_t size, size_t maxSize, DirectX
   return S_OK;
 }
 
-// The thumbnail's texture (and its view), into image (pRawTexSRV, width, height)
+// The thumbnail's texture (and its view), into image (pRawTexSRV, width, height). With mipmaps: it is drawn at a fraction
+//   of its size (the carousel's tiles, with a sampler that takes them), which they keep from aliasing.
 static bool
 _CreateThumbnailTexture (ID3D11Device* pDevice, const DirectX::ScratchImage& img, image_s& image)
 {
   CComPtr <ID3D11Texture2D> pTex2D;
 
-  if (FAILED (DirectX::CreateTexture (pDevice, img.GetImages ( ), img.GetImageCount ( ), img.GetMetadata ( ),
+  // (DirectXTex's own linear filter if WIC's cannot do the format: sRGB ones; none at all if neither can)
+  DirectX::ScratchImage        mipmapped;
+  const DirectX::ScratchImage* pImg = &img;
+
+  if (img.GetMetadata ( ).mipLevels == 1 && img.GetImage (0, 0, 0) != nullptr &&
+      (SUCCEEDED (DirectX::GenerateMipMaps (*img.GetImage (0, 0, 0), DirectX::TEX_FILTER_DEFAULT, 0, mipmapped)) ||
+       SUCCEEDED (DirectX::GenerateMipMaps (*img.GetImage (0, 0, 0), DirectX::TEX_FILTER_LINEAR | DirectX::TEX_FILTER_FORCE_NON_WIC, 0, mipmapped))))
+    pImg = &mipmapped;
+
+  if (FAILED (DirectX::CreateTexture (pDevice, pImg->GetImages ( ), pImg->GetImageCount ( ), pImg->GetMetadata ( ),
                                       (ID3D11Resource **)&pTex2D.p)) || pTex2D.p == nullptr)
     return false;
 

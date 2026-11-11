@@ -128,6 +128,9 @@ struct ImGui_ImplDX11_Data
     ID3D11PixelShader*          pPixelShader;
     ID3D11SamplerState*         pTexSamplerLinear;
     ID3D11SamplerState*         pTexSamplerNearest;
+#ifdef SKIF_D3D11
+    ID3D11SamplerState*         pTexSamplerMipmapped; // SKIV: see SKIV_ImplDX11_DrawCallback_SetSamplerMipmapped
+#endif
     ID3D11RasterizerState*      pRasterizerState;
     ID3D11BlendState*           pBlendState;
     ID3D11DepthStencilState*    pDepthStencilState;
@@ -331,6 +334,11 @@ static void ImGui_ImplDX11_SetupRenderState(const ImDrawData* draw_data, ID3D11D
 static void ImGui_ImplDX11_DrawCallback_ResetRenderState(const ImDrawList*, const ImDrawCmd*)       {} // Intentionally empty. Used as an identifier for rendering loop to call its code. Simpler to implement this way.
 static void ImGui_ImplDX11_DrawCallback_SetSamplerLinear(const ImDrawList*, const ImDrawCmd*)       { ImGui_ImplDX11_Data* bd = ImGui_ImplDX11_GetBackendData(); bd->RenderState->DeviceContext->PSSetSamplers(0, 1, &bd->pTexSamplerLinear); }
 static void ImGui_ImplDX11_DrawCallback_SetSamplerNearest(const ImDrawList*, const ImDrawCmd*)      { ImGui_ImplDX11_Data* bd = ImGui_ImplDX11_GetBackendData(); bd->RenderState->DeviceContext->PSSetSamplers(0, 1, &bd->pTexSamplerNearest); }
+#ifdef SKIF_D3D11
+// SKIV: linear, from all the mip levels (the other samplers take the top one only): for the thumbnails carousel, whose
+//   thumbnails have mipmaps (they are drawn at a fraction of their size). Set back with DrawCallback_SetSamplerLinear.
+void SKIV_ImplDX11_DrawCallback_SetSamplerMipmapped(const ImDrawList*, const ImDrawCmd*)            { ImGui_ImplDX11_Data* bd = ImGui_ImplDX11_GetBackendData(); bd->RenderState->DeviceContext->PSSetSamplers(0, 1, &bd->pTexSamplerMipmapped); }
+#endif
 
 // Render function
 #ifndef SKIF_D3D11
@@ -1293,6 +1301,13 @@ bool ImGui_ImplDX11_CreateDeviceObjects (void)
   if (FAILED (bd->pd3dDevice->CreateSamplerState (&sampler_desc, &bd->pTexSamplerNearest)))
     return false;
 
+  // SKIV: the linear one, from all the mip levels (the thumbnails carousel)
+  sampler_desc.Filter               = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+  sampler_desc.MaxLOD               = D3D11_FLOAT32_MAX;
+
+  if (FAILED (bd->pd3dDevice->CreateSamplerState (&sampler_desc, &bd->pTexSamplerMipmapped)))
+    return false;
+
   // The font atlas texture is created by ImGui_ImplDX11_UpdateTexture ( ) on request
 
   return true;
@@ -1313,6 +1328,7 @@ void    ImGui_ImplDX11_InvalidateDeviceObjects()
     if (bd->pTexSamplerLinear)      { bd->pTexSamplerLinear->Release(); bd->pTexSamplerLinear = nullptr; }
     if (bd->pTexSamplerNearest)     { bd->pTexSamplerNearest->Release(); bd->pTexSamplerNearest = nullptr; }
 #ifdef SKIF_D3D11
+    if (bd->pTexSamplerMipmapped)   { bd->pTexSamplerMipmapped->Release(); bd->pTexSamplerMipmapped = nullptr; } // SKIV CUSTOM
     if (bd->pFontConstantBuffer)    { bd->pFontConstantBuffer->Release(); bd->pFontConstantBuffer = nullptr; }   // SKIF CUSTOM
     if (bd->pPixelConstantBuffer)   { bd->pPixelConstantBuffer->Release(); bd->pPixelConstantBuffer = nullptr; } // SKIF CUSTOM
     if (bd->pGamutConstantBuffer)   { bd->pGamutConstantBuffer->Release(); bd->pGamutConstantBuffer = nullptr; } // SKIF CUSTOM (left behind, it kept a recreated device alive)
