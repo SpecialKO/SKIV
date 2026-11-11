@@ -1369,6 +1369,17 @@ SKIV_Viewer_DrawCarousel (skiv_image_directory_s::fl_s& files, SKIV_ImageStore& 
 
       ImGui::PopID ( );
 
+      // The border of the active tile (and of the one hovered): a filled shape around the tile, which the tile is drawn
+      //   over. Not an outline, as ImGui draws thick outlines wrongly at corners rounded by less than their thickness.
+      if (i == static_cast <int> (active) || i == hoveredTile)
+      {
+        const float width = (i == static_cast <int> (active)) ? border * 2.0f : std::round (border * 1.5f);
+
+        dl->AddRectFilled (r.Min - ImVec2 (width, width), r.Max + ImVec2 (width, width),
+                           ImGui::GetColorU32 ((i == static_cast <int> (active)) ? ImGuiCol_SKIF_GridActive : ImGuiCol_SKIF_GridHovered),
+                           rounding + width);
+      }
+
       dl->AddRectFilled (r.Min, r.Max, ImGui::GetColorU32 (ImGuiCol_FrameBg), rounding);
 
       if (const image_s* thumbnail = store.Thumbnail (path, true);
@@ -1398,11 +1409,6 @@ SKIV_Viewer_DrawCarousel (skiv_image_directory_s::fl_s& files, SKIV_ImageStore& 
         if (fadeIn < 1.0f)
           SKIV_Viewer_CarouselWakeAt = SKIF_Util_timeGetTime1 ( );
       }
-
-      if (i == static_cast <int> (active))
-        dl->AddRect (r.Min - ImVec2 (border, border), r.Max + ImVec2 (border, border), ImGui::GetColorU32 (ImGuiCol_SKIF_GridActive),  rounding, border * 2.0f);
-      else if (i == hoveredTile)
-        dl->AddRect (r.Min - ImVec2 (border, border), r.Max + ImVec2 (border, border), ImGui::GetColorU32 (ImGuiCol_SKIF_GridHovered), rounding, border * 1.5f);
     }
 
     // Its background (no tile), not while something else is held (e.g. the image, dragged over it)
