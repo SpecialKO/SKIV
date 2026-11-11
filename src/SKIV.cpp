@@ -105,6 +105,8 @@ int   SKIF_ExitCode             = 0;
 int   SKIF_nCmdShow             = -1;
 std::atomic<int>  SKIF_FrameCount = 0;
 int   addAdditionalFrames       = 0;
+DWORD SKIV_ResourcesReleasedWakeAt = 0;  // When a frame is drawn after resources were released (SKIF_ResourcesToFree), for D3D11 to destroy them; 0: none
+bool  SKIV_DeviceCleanupWanted     = false; // Set when textures were made off the main loop (the image store's workers): the same, at the end of the frame
 DWORD dwDwmPeriod               = 16; // Assume 60 Hz by default
 bool  SteamOverlayDisabled      = false;
 bool  allowShortcutCtrlA        = true; // Used to disable the Ctrl+A when interacting with text input
@@ -3792,8 +3794,14 @@ wWinMain ( _In_     HINSTANCE hInstance,
         RepositionSKIF = true;
     }
 
-    // Release any leftover resources from last frame
+    // Release any leftover resources from last frame. The immediate context first lets go of what it still has bound
+    //   (the textures last drawn with, e.g. the image that faded out): it would keep them alive past their release, as long
+    //     as nothing else is drawn (the main loop sleeps). The renderer sets its state up again for each frame.
+    if (! SKIF_ResourcesToFree.empty ( ) && SKIF_pd3dDeviceContext != nullptr)
+      SKIF_pd3dDeviceContext->ClearState ( );
+
     IUnknown* pResource = nullptr;
+    bool      released  = false;
     while (! SKIF_ResourcesToFree.empty ())
     {
       if (SKIF_ResourcesToFree.try_pop (pResource))
@@ -3801,10 +3809,38 @@ wWinMain ( _In_     HINSTANCE hInstance,
         CComPtr <IUnknown> ptr = pResource;
         PLOG_VERBOSE << "SKIF_ResourcesToFree: Releasing " << ptr.p;
         ptr.p->Release();
+        released = true;
       }
 
       if (invalidatedDevice == 2)
         invalidatedDevice = 0;
+    }
+
+    // D3D11 destroys released resources lazily: once the GPU is done with them, as the device next works. The main loop
+    //   may well sleep from here on (as once images gone through are released), which would keep their video memory taken
+    //     until something is drawn again: after a flush, a frame is drawn a moment later (the GPU done by then), see
+    //       SKIV_Viewer_GetAnimationWakeIn.
+    extern DWORD SKIV_ResourcesReleasedWakeAt;
+
+    // (Textures made meanwhile too, e.g. by the image store's workers: their initial data is kept until then as well)
+    extern bool SKIV_DeviceCleanupWanted;
+    released |= std::exchange (SKIV_DeviceCleanupWanted, false);
+
+    if (released)
+    {
+      if (SKIF_pd3dDeviceContext != nullptr)
+        SKIF_pd3dDeviceContext->Flush ( );
+
+      SKIV_ResourcesReleasedWakeAt = SKIF_Util_timeGetTime1 ( ) + 300;
+    }
+
+    // (This frame was it: flushed again, as it may present nothing, the window being unchanged)
+    else if (SKIV_ResourcesReleasedWakeAt != 0 && static_cast <LONG> (SKIF_Util_timeGetTime1 ( ) - SKIV_ResourcesReleasedWakeAt) >= 0)
+    {
+      if (SKIF_pd3dDeviceContext != nullptr)
+        SKIF_pd3dDeviceContext->Flush ( );
+
+      SKIV_ResourcesReleasedWakeAt = 0;
     }
 
     // If process should stop, post WM_QUIT

@@ -404,6 +404,11 @@ SKIV_Viewer_GetAnimationWakeIn (void)
   if (SKIV_Viewer_PreviewWakeAt != 0)
     wakeIn = std::min (wakeIn, _WakeIn (SKIV_Viewer_PreviewWakeAt));
 
+  // A frame after resources were released, for D3D11 to destroy them (see SKIV.cpp, after the frame is presented)
+  extern DWORD SKIV_ResourcesReleasedWakeAt;
+  if (SKIV_ResourcesReleasedWakeAt != 0)
+    wakeIn = std::min (wakeIn, _WakeIn (SKIV_ResourcesReleasedWakeAt));
+
   return wakeIn;
 }
 
