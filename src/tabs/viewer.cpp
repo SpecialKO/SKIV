@@ -2980,8 +2980,9 @@ SKIF_UI_Tab_DrawViewer (void)
 #pragma region Carousel
 
   // The thumbnails carousel, over the image and the details: a tile clicked shows its image, as the arrow keys do
+  //   (also while one is loading)
   if (const std::wstring clicked = SKIV_Viewer_DrawCarousel (_current_folder.fileList, _store);
-      ! clicked.empty ( ) && ! tryingToLoadImage && ! tryingToDownImage)
+      ! clicked.empty ( ) && ! tryingToDownImage)
   {
     _current_folder.fileList.setImage (clicked);
     dragDroppedFilePath = clicked;
@@ -3559,7 +3560,8 @@ SKIF_UI_Tab_DrawViewer (void)
     ImGui::SetKeyOwner (ImGuiKey_RightArrow, arrowKeysOwner);
   }
 
-  if (! tryingToLoadImage && ! tryingToDownImage)
+  // Also while an image is loading: going on replaces it (the image store loads the latest one asked for)
+  if (! tryingToDownImage)
   {
     if (ImGui::IsKeyPressed (ImGuiKey_RightArrow) ||
         ImGui::IsKeyPressed (ImGuiKey_GamepadR1))

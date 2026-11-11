@@ -43,6 +43,11 @@ static constexpr size_t s_thumbnailBudget = 64ull * 1024 * 1024;
 // How many thumbnails asked for (Thumbnail) are remembered until they are made
 static constexpr size_t s_thumbnailsAsked = 128;
 
+// How many images to show may be decoded at once: a still image cannot be stopped once it is no longer wanted (e.g.
+//   going through a folder quickly), and each takes a thread and memory of its own. Requests beyond that wait, and only
+//   the latest of them is kept.
+static constexpr std::ptrdiff_t s_maxDecodes = 2;
+
 namespace
 {
   // A request, handed to its worker thread
@@ -350,6 +355,8 @@ SKIV_ImageStore::Request (const std::wstring& path, bool animatedImages)
   m_pendingPath     = path;
   m_pendingAnimated = animatedImages;
   m_pendingCached   = false;
+  m_pendingDeferred = false;
+  m_pendingWaited   = false;
 
   // Decodes in flight for other files are no longer wanted (their results are still kept, if they turn out to be)
   inflight_s* decoding = nullptr;
@@ -386,8 +393,62 @@ SKIV_ImageStore::Request (const std::wstring& path, bool animatedImages)
     m_pending         = decoding->job;
   }
 
+  // Decoded: now, unless too many images to show are being decoded already (it then starts once one is done)
   else
-    m_pending = Start (path, key, animatedImages, false);
+  {
+    m_pending         = ++m_jobs; // (Its job, once it starts)
+    m_pendingDeferred = true;
+
+    StartDeferred ( );
+  }
+}
+
+void
+SKIV_ImageStore::StartDeferred (void)
+{
+  if (! m_pendingDeferred || m_pending == 0)
+    return;
+
+  // Decodes of images to show (including those no longer wanted: a still image cannot be stopped)
+  const auto decoding =
+    std::count_if (m_inflight.begin ( ), m_inflight.end ( ), [](const inflight_s& inflight) {
+      return ! inflight.preload && ! inflight.thumbnail; });
+
+  if (decoding >= s_maxDecodes)
+  {
+    m_pendingWaited = true;
+    return;
+  }
+
+  const bool waited = std::exchange (m_pendingWaited, false);
+  m_pendingDeferred = false;
+
+  // Kept meanwhile (preloaded), or being preloaded
+  if (Find (m_pendingKey) != nullptr)
+  {
+    PLOG_INFO << "[Image Store] Showing " << SK_WideCharToUTF8 (m_pendingPath) << " (kept)";
+
+    m_pendingCached = true;
+    PostMessage (SKIF_Notify_hWnd, WM_SKIF_IMAGE, SKIV_IMAGE_STORE_RESULT, 0);
+    return;
+  }
+
+  for (auto& inflight : m_inflight)
+  {
+    if (! inflight.thumbnail && inflight.key == m_pendingKey)
+    {
+      PLOG_INFO << "[Image Store] Showing " << SK_WideCharToUTF8 (m_pendingPath) << " (being preloaded)";
+
+      inflight.wanted->store (true);
+      inflight.preload = false;
+      m_pending        = inflight.job;
+      return;
+    }
+  }
+
+  PLOG_INFO_IF (waited) << "[Image Store] Loading " << SK_WideCharToUTF8 (m_pendingPath) << " (once an image no longer wanted was decoded)";
+
+  m_pending = Start (m_pendingPath, m_pendingKey, m_pendingAnimated, false);
 }
 
 unsigned __stdcall
@@ -607,10 +668,13 @@ SKIV_ImageStore::TakeResult (image_s& image, bool& success)
     // (No longer kept: decoded after all)
     else
     {
-      m_pendingCached = false;
-      m_pending       = Start (m_pendingPath, m_pendingKey, m_pendingAnimated, false);
+      m_pendingCached   = false;
+      m_pendingDeferred = true;
     }
   }
+
+  // A request waiting for a decode to finish: started, if one has
+  StartDeferred ( );
 
   return taken;
 }
