@@ -1315,6 +1315,7 @@ void    ImGui_ImplDX11_InvalidateDeviceObjects()
 #ifdef SKIF_D3D11
     if (bd->pFontConstantBuffer)    { bd->pFontConstantBuffer->Release(); bd->pFontConstantBuffer = nullptr; }   // SKIF CUSTOM
     if (bd->pPixelConstantBuffer)   { bd->pPixelConstantBuffer->Release(); bd->pPixelConstantBuffer = nullptr; } // SKIF CUSTOM
+    if (bd->pGamutConstantBuffer)   { bd->pGamutConstantBuffer->Release(); bd->pGamutConstantBuffer = nullptr; } // SKIF CUSTOM (left behind, it kept a recreated device alive)
 #endif
     if (bd->pIB)                    { bd->pIB->Release(); bd->pIB = nullptr; }
     if (bd->pVB)                    { bd->pVB->Release(); bd->pVB = nullptr; }
