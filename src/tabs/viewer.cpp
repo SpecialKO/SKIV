@@ -898,14 +898,6 @@ static struct {
 //   size): keeps that change of scaling from centering the image (see GetCurrentAspectRatio and resetScrollCenter)
 static bool s_keepPlacementOnRescale = false;
 
-// True while the mouse is over the empty space around the image in the viewer; the window procedure then treats a
-//   double-click there as one on the window's caption (maximizing or restoring the window)
-bool
-SKIV_Viewer_IsEmptySpaceHovered (void)
-{
-  return SKIF_Tab_Selected == UITab_Viewer && s_viewerLayout.emptyHovered;
-}
-
 // After a wheel zoom or dragging the image, the image is placed where that put it (rather than centered, or kept
 //   within the frame). This lasts until the zoom is changed some other way, the image scaling changes, another image
 //   is shown, or the window is maximized or restored.
@@ -927,11 +919,20 @@ static struct {
   float  scroll   = 0.0f;       // The index of the image in its middle (eases towards target)
   float  target   = 0.0f;
   size_t current  = SIZE_MAX;   // The index of the active image, when it was last drawn
-  int    pressed  = -1;         // The tile a click on it started on
+  bool   backgroundHovered = false; // Its background (no tile) is hovered: acts as the window's caption (dragging, double-clicks)
   bool   hovered  = false;      // The mouse is over it: the wheel scrolls it (rather than zooming the image)
   std::unordered_map <std::wstring, double>
          seen;                  // When each thumbnail was first drawn (it fades in)
 } s_carousel;
+
+// True while the mouse is over the empty space around the image in the viewer, or the background of the thumbnails
+//   carousel; the window procedure then treats a double-click there as one on the window's caption (maximizing or
+//   restoring the window)
+bool
+SKIV_Viewer_IsEmptySpaceHovered (void)
+{
+  return SKIF_Tab_Selected == UITab_Viewer && (s_viewerLayout.emptyHovered || s_carousel.backgroundHovered);
+}
 
 // Places the image's top left corner at the given screen position in the frame about to begin, at the given size.
 //   The scroll position (and the content size it is clamped against) are set for that frame, so the image moves
@@ -1201,13 +1202,13 @@ SKIV_Viewer_DrawCarousel (skiv_image_directory_s::fl_s& files, SKIV_ImageStore& 
   const double now    = ImGui::GetTime ( );
 
   SKIV_Viewer_CarouselWakeAt = 0;
-  s_carousel.hovered         = false;
+  s_carousel.hovered           = false;
+  s_carousel.backgroundHovered = false;
 
   auto _Hide = [&](void) -> std::wstring
   {
     s_carousel.alpha    = 0.0f;
     s_carousel.lastNear = -1.0;
-    s_carousel.pressed  = -1;
     return L"";
   };
 
@@ -1270,7 +1271,6 @@ SKIV_Viewer_DrawCarousel (skiv_image_directory_s::fl_s& files, SKIV_ImageStore& 
   if (s_carousel.alpha <= 0.0f)
   {
     s_carousel.scroll  = s_carousel.target = static_cast <float> (active);
-    s_carousel.pressed = -1;
     return L"";
   }
 
@@ -1307,43 +1307,17 @@ SKIV_Viewer_DrawCarousel (skiv_image_directory_s::fl_s& files, SKIV_ImageStore& 
 
     dl->AddRectFilled (strip.Min, strip.Max, ImGui::GetColorU32 (ImGuiCol_WindowBg, 0.8f));
 
-    // The tile at a position on the screen (-1 if none)
-    auto _TileAt = [&](const ImVec2& pos) -> int
-    {
-      if (pos.y < top || pos.y >= top + tile)
-        return -1;
+    // Each tile is an item of its own: a click on one (released on it) shows its image, and does not reach the image or
+    //   move the window. The background around them is no item, so that, as the invisible title bar along the top of
+    //   the window does, dragging it moves the window (SKIF_ImGui_CanMouseDragMove) and double-clicking it maximizes or
+    //   restores the window (SKIV_Viewer_IsEmptySpaceHovered).
+    const bool stripHovered = ImGui::IsWindowHovered (ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+    int        hoveredTile  = -1;
 
-      const int   i  = static_cast <int> (std::round (s_carousel.scroll + (pos.x - centerX) / step));
-      const float x0 = std::floor (centerX + (i - s_carousel.scroll) * step - tile * 0.5f);
-
-      return (i >= 0 && i < static_cast <int> (count) && pos.x >= x0 && pos.x < x0 + tile) ? i : -1;
-    };
-
-    // The strip is one item: a click on it does not move the window (SKIF_ImGui_CanMouseDragMove) or reach the image
-    const ImGuiID id      = ImGui::GetID ("###SKIV_CarouselStrip");
-    bool          hovered = false,
-                  held    = false,
-                  pressed = false;
-
-    if (ImGui::ItemAdd (strip, id, nullptr, ImGuiItemFlags_NoNav))
-      pressed = ImGui::ButtonBehavior (strip, id, &hovered, &held);
-
-    s_carousel.hovered = hovered || held;
-
-    const int hoveredTile = (hovered) ? _TileAt (io.MousePos) : -1;
-
-    if (ImGui::IsItemActivated ( ))
-      s_carousel.pressed = hoveredTile;
-
-    // A click (released on the tile it started on) shows its image
-    if (pressed && hoveredTile >= 0 && hoveredTile == s_carousel.pressed && hoveredTile != static_cast <int> (active))
-      clicked = files.at (hoveredTile).path;
-
-    if (! held)
-      s_carousel.pressed = -1;
+    s_carousel.hovered = stripHovered;
 
     // The wheel scrolls it (either wheel; > 0: towards the first image)
-    if (hovered && (io.MouseWheel != 0.0f || io.MouseWheelH != 0.0f))
+    if (stripHovered && (io.MouseWheel != 0.0f || io.MouseWheelH != 0.0f))
       s_carousel.target = std::clamp (s_carousel.target - io.MouseWheel - io.MouseWheelH, 0.0f, static_cast <float> (count - 1));
 
     // The tiles in view: the outermost first, so that the nearest are asked for last (their thumbnails are made first)
@@ -1373,6 +1347,27 @@ SKIV_Viewer_DrawCarousel (skiv_image_directory_s::fl_s& files, SKIV_ImageStore& 
         continue;
 
       const std::wstring& path = files.at (i).path;
+
+      ImGui::PushID (i);
+
+      const ImGuiID id          = ImGui::GetID ("###SKIV_CarouselTile");
+      bool          tileHovered = false,
+                    tileHeld    = false;
+
+      if (ImGui::ItemAdd (r, id, nullptr, ImGuiItemFlags_NoNav))
+      {
+        if (ImGui::ButtonBehavior (r, id, &tileHovered, &tileHeld) && i != static_cast <int> (active))
+          clicked = path;
+
+        // Its file name
+        if (tileHovered)
+        {
+          hoveredTile = i;
+          SKIF_ImGui_SetHoverTip (SK_WideCharToUTF8 (files.at (i).filename), false, false, true);
+        }
+      }
+
+      ImGui::PopID ( );
 
       dl->AddRectFilled (r.Min, r.Max, ImGui::GetColorU32 (ImGuiCol_FrameBg), rounding);
 
@@ -1410,9 +1405,8 @@ SKIV_Viewer_DrawCarousel (skiv_image_directory_s::fl_s& files, SKIV_ImageStore& 
         dl->AddRect (r.Min - ImVec2 (border, border), r.Max + ImVec2 (border, border), ImGui::GetColorU32 (ImGuiCol_SKIF_GridHovered), rounding, border * 1.5f);
     }
 
-    // The file name of the tile hovered
-    if (hoveredTile >= 0)
-      SKIF_ImGui_SetHoverTip (SK_WideCharToUTF8 (files.at (hoveredTile).filename), false, false, true);
+    // Its background (no tile), not while something else is held (e.g. the image, dragged over it)
+    s_carousel.backgroundHovered = stripHovered && hoveredTile < 0 && ! ImGui::IsAnyItemActive ( );
   }
 
   ImGui::EndChild     ( );
