@@ -74,6 +74,8 @@ public:
   //   animatedImages: the setting (bAnimatedImages), as it is now.
   void Request    (const std::wstring& path, bool animatedImages);
   bool IsLoading  (void) const { return m_pending != 0; } // The latest request has not been taken yet
+  const std::wstring&
+       LoadingPath (void) const { return m_pendingPath; } // ... its file (while IsLoading)
 
   // Main thread, once per frame: once the latest request is ready, puts it in image (its textures and what is known
   //   about it, as SKIV_DecodeImage gives them; anything image held is released first), and returns true. success:

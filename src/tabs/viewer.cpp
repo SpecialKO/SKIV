@@ -376,6 +376,10 @@ static bool  SKIV_Viewer_AnimChanged     = false; // The frame shown changed sin
 // The thumbnails carousel, for the main loop: when it is due to start fading out (once the mouse has left it); 0: none
 static DWORD SKIV_Viewer_CarouselWakeAt  = 0;
 
+// The preview of an image loading (its thumbnail, see SKIF_UI_Tab_DrawViewer): when it is due to show, or to be drawn
+//   again as it fades in; 0: none
+static DWORD SKIV_Viewer_PreviewWakeAt   = 0;
+
 // ms until the next frame of the animation shown is due (0: now), or the thumbnails carousel is due to fade out;
 //   INFINITE if neither
 DWORD
@@ -396,6 +400,9 @@ SKIV_Viewer_GetAnimationWakeIn (void)
 
   if (SKIV_Viewer_CarouselWakeAt != 0)
     wakeIn = std::min (wakeIn, _WakeIn (SKIV_Viewer_CarouselWakeAt));
+
+  if (SKIV_Viewer_PreviewWakeAt != 0)
+    wakeIn = std::min (wakeIn, _WakeIn (SKIV_Viewer_PreviewWakeAt));
 
   return wakeIn;
 }
@@ -1276,6 +1283,45 @@ SKIV_Viewer_HandleMouseZoomPan (void)
 
 #pragma endregion
 
+// The size an image of this size is shown at in the frame (the current window, its cursor at the start of its content):
+//   as GetCurrentAspectRatio (and the DPI scale and zoom after it) works it out, for the image shown. For the preview of
+//   an image loading, which is not loaded yet (GetCurrentAspectRatio works on a loaded image, and keeps its own state)
+static ImVec2
+SKIV_Viewer_ShownSize (ImVec2 imageSize)
+{
+  const ImVec2 avail = ImFloor (ImGui::GetContentRegionAvail ( ) / SKIF_ImGui_GlobalDPIScale);
+
+  if (imageSize.x <= 0.0f || imageSize.y <= 0.0f || avail.x <= 0.0f || avail.y <= 0.0f)
+    return ImVec2 (0.0f, 0.0f);
+
+  ImageScaling scaling = s_view.scaling;
+
+  // "Automatic": its actual size if it fits in the frame, otherwise fitted to it
+  if (scaling == ImageScaling_Auto)
+    scaling = (avail.x > imageSize.x && avail.y > imageSize.y) ? ImageScaling_None : ImageScaling_Fit;
+
+  const float frameAspect = avail.x / avail.y;
+  const float imageAspect = imageSize.x / imageSize.y;
+  ImVec2      size        = avail;
+
+  if (scaling == ImageScaling_None)
+    size = imageSize;
+
+  else if (scaling == ImageScaling_Fit)
+  {
+    if (imageAspect > frameAspect) size.y = size.x / imageAspect;
+    else                           size.x = size.y * imageAspect;
+  }
+
+  else if (scaling == ImageScaling_Fill)
+  {
+    if (imageAspect > frameAspect) size.x = size.y * imageAspect;
+    else                           size.y = size.x / imageAspect;
+  }
+
+  return ImFloor (size) * ((s_view.scaling == ImageScaling_None) ? 1.0f : SKIF_ImGui_GlobalDPIScale) * s_view.zoom;
+}
+
 // The thumbnails carousel: a strip of the images in the folder along the bottom of the frame (the current window), over
 //   the image. The thumbnails are the image store's; those of the tiles in view are asked for (the nearest last, so that
 //   they are made first). Shown always, or while the mouse is near the bottom of the frame (Settings: Thumbnails
@@ -1987,6 +2033,48 @@ SKIF_UI_Tab_DrawViewer (void)
            cover_old.pRawTexSRV.p == nullptr)
     pcstrLabel = cstrLabelMissing;
 
+  // While an image loads (none is shown meanwhile): its thumbnail, if there is one, enlarged where the image will be
+  //   shown, so that what comes is seen at once (in place of the loading label). After a moment, so that an image that
+  //   loads quickly is shown without it, fading in.
+  static constexpr double s_previewDelay = 0.10, // s
+                          s_previewFade  = 0.15;
+  static std::wstring     s_previewPath;
+  static double           s_previewSince = 0.0;
+
+  const image_s* preview      = nullptr;
+  float          previewAlpha = 0.0f;
+
+  SKIV_Viewer_PreviewWakeAt = 0;
+
+  {
+    const bool          waiting = (tryingToLoadImage && ! tryingToDownImage && cover.pRawTexSRV.p == nullptr && _store.IsLoading ( ));
+    const std::wstring& path    = (waiting) ? _store.LoadingPath ( ) : std::wstring ( );
+
+    if (path != s_previewPath)
+    {
+      s_previewPath  = path;
+      s_previewSince = ImGui::GetTime ( );
+    }
+
+    if (waiting && ! path.empty ( ))
+    {
+      const double shownFor = ImGui::GetTime ( ) - s_previewSince;
+
+      if (const image_s* thumbnail = _store.Thumbnail (path, false); thumbnail != nullptr && thumbnail->pRawTexSRV.p != nullptr)
+      {
+        previewAlpha = std::clamp (static_cast <float> ((shownFor - s_previewDelay) / s_previewFade), 0.0f, 1.0f);
+        preview      = (previewAlpha > 0.0f) ? thumbnail : nullptr;
+      }
+
+      // The main loop sleeps while nothing changes: woken for it to show, and while it fades in
+      if (shownFor < s_previewDelay + s_previewFade)
+        SKIV_Viewer_PreviewWakeAt = SKIF_Util_timeGetTime1 ( ) + ((shownFor < s_previewDelay) ? static_cast <DWORD> ((s_previewDelay - shownFor) * 1000.0) + 1 : 0);
+    }
+  }
+
+  if (preview != nullptr && pcstrLabel == cstrLabelLoading)
+    pcstrLabel = nullptr;
+
   if (pcstrLabel != nullptr)
   {
     ImVec2 labelSize = ImGui::CalcTextSize (pcstrLabel);
@@ -2065,6 +2153,46 @@ SKIF_UI_Tab_DrawViewer (void)
     ImGui::SetCursorPos (originalPos);
 
     fading = true;
+  }
+
+  // The preview of the image loading (see above), centered in the frame (as the image will be, smaller than the frame or
+  //   scrolled to its middle), at the size it will be shown at. Not an item: it is not part of the content.
+  if (preview != nullptr)
+  {
+    ImGuiWindow* window = ImGui::GetCurrentWindow ( );
+    ImDrawList*  dl     = window->DrawList;
+
+    const ImVec2 source = (preview->source_size.x > 0.0f && preview->source_size.y > 0.0f) ? preview->source_size
+                                                                                          : ImVec2 (preview->width, preview->height);
+    const ImVec2 size   = ImFloor (SKIV_Viewer_ShownSize (source));
+    const ImVec2 pos    = ImFloor (window->InnerRect.GetCenter ( ) - size * 0.5f);
+
+    if (size.x > 0.0f && size.y > 0.0f)
+    {
+      // HDR ones by the shaders' HDR path, tone mapped by their own light levels (as in the carousel)
+      const bool hdr  = preview->light_info.isHDR;
+      const bool srgb = ! hdr && preview->is_dds;
+
+      if (hdr)
+      {
+        extern void SKIV_ImplDX11_DrawCallback_SetHDRThumbnail (const ImDrawList*, const ImDrawCmd*);
+
+        float maxNits = std::max (1.0f, (_registry.b99thPercentileMaxCLL) ? preview->light_info.p99_nits
+                                                                           : preview->light_info.max_nits);
+        dl->AddCallback (SKIV_ImplDX11_DrawCallback_SetHDRThumbnail, &maxNits, sizeof (maxNits));
+      }
+
+      dl->AddImage ((ImTextureID)(intptr_t)preview->pRawTexSRV.p, pos, pos + size,
+                    hdr ? hdr_uv0 : srgb ? srgb_uv0 : ImVec2 (0.0f, 0.0f),
+                    hdr ? hdr_uv1 : srgb ? srgb_uv1 : ImVec2 (1.0f, 1.0f),
+                    ImGui::GetColorU32 (ImVec4 (fTint, fTint, fTint, previewAlpha)));
+
+      if (hdr)
+      {
+        extern void SKIV_ImplDX11_DrawCallback_RestoreImageConstants (const ImDrawList*, const ImDrawCmd*);
+        dl->AddCallback (SKIV_ImplDX11_DrawCallback_RestoreImageConstants, nullptr);
+      }
+    }
   }
 
   bIsHDR =
