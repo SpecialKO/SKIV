@@ -1384,6 +1384,8 @@ using namespace DirectX;
   return false;
 }
 
+// Raises the current thread's priority for a while (it is restored after). Only the thread's: never the process's,
+//   which efficiency mode sets (see SKIV.cpp), and which another thread changing it meanwhile would leave wrong.
 class SKIV_ScopedThreadPriority
 {
 public:
@@ -1391,21 +1393,15 @@ public:
     orig_prio_ =
       GetThreadPriority (GetCurrentThread ());
 
-    orig_process_class_ =
-      GetPriorityClass (GetCurrentProcess ());
-
-    SetPriorityClass  (GetCurrentProcess (), HIGH_PRIORITY_CLASS);
     SetThreadPriority (GetCurrentThread  (), prio);
   };
 
   ~SKIV_ScopedThreadPriority (void) {
-    SetPriorityClass  (GetCurrentProcess (), orig_process_class_);
     SetThreadPriority (GetCurrentThread  (), orig_prio_);
   }
 
 private:
   int orig_prio_;
-  int orig_process_class_;
 };
 
 #include <iostream>

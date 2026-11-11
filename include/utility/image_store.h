@@ -141,6 +141,7 @@ private:
     bool                                preload = false;
     bool                                thumbnail = false; // A thumbnail only
     std::shared_ptr <std::atomic<bool>> wanted;            // Read by its worker (an animated image stops once false)
+    std::shared_ptr <void>              thread;            // Its worker thread (its handle, closed with the last copy)
   };
 
   // A kept image (main thread): the store's references
@@ -159,6 +160,7 @@ private:
   };
 
   static unsigned __stdcall Worker (void* job);
+  static void Prioritize (const inflight_s& inflight, bool waitedFor); // Its worker's priority (see image_store.cpp)
 
   int    Start     (const std::wstring& path, const key_s& key, bool animatedImages, bool preload,  // Returns its job
                     bool thumbnailOnly = false);
