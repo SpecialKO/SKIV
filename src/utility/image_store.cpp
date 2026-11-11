@@ -50,10 +50,14 @@ static constexpr std::ptrdiff_t s_maxDecodes = 2;
 
 // How many thumbnails (alone, not those of full decodes) may be made at once. Each decodes its image (most at their full
 //   size, a JPEG at about the thumbnail's), at a low priority.
+//   While images to show are decoded (going through images), fewer: they decode their images at their full size too (most
+//   formats), and Win32's address space is short.
 #ifdef _WIN64
-static constexpr std::ptrdiff_t s_maxThumbnailJobs = 3;
+static constexpr std::ptrdiff_t s_maxThumbnailJobs        = 3;
+static constexpr std::ptrdiff_t s_maxThumbnailJobsLoading = 2;
 #else
-static constexpr std::ptrdiff_t s_maxThumbnailJobs = 2;
+static constexpr std::ptrdiff_t s_maxThumbnailJobs        = 2;
+static constexpr std::ptrdiff_t s_maxThumbnailJobsLoading = 1;
 #endif
 
 namespace
@@ -806,9 +810,13 @@ SKIV_ImageStore::SetNeighbours (const std::wstring& shown, const std::vector <st
 void
 SKIV_ImageStore::Preload (void)
 {
-  // One at a time, and only while no other image is decoding (thumbnails may be made meanwhile)
+  // One at a time, and only while no other image is decoding (thumbnails may be made meanwhile). While one is to be shown
+  //   (going through images), only the thumbnails: for the previews of the next ones.
   if (m_pending != 0 || std::any_of (m_inflight.begin ( ), m_inflight.end ( ), [](const inflight_s& inflight) { return ! inflight.thumbnail; }))
+  {
+    PreloadThumbnail ( );
     return;
+  }
 
   for (const key_s* candidate : { &m_next, &m_prev })
   {
@@ -916,10 +924,12 @@ SKIV_ImageStore::KeepThumbnail (const key_s& key, const image_s& image)
 bool
 SKIV_ImageStore::PreloadThumbnail (void)
 {
-  if (! m_thumbnailsOn || m_pending != 0)
+  if (! m_thumbnailsOn)
     return false;
 
-  // A few at once (s_maxThumbnailJobs), each on a thread of its own
+  // A few at once (s_maxThumbnailJobs), each on a thread of its own; fewer while images to show are decoded too
+  const std::ptrdiff_t limit = (m_pending != 0) ? s_maxThumbnailJobsLoading : s_maxThumbnailJobs;
+
   auto running =
     std::count_if (m_inflight.begin ( ), m_inflight.end ( ), [](const inflight_s& inflight) { return inflight.thumbnail; });
 
@@ -935,7 +945,7 @@ SKIV_ImageStore::PreloadThumbnail (void)
   {
     for (const key_s& key : *keys)
     {
-      if (running >= s_maxThumbnailJobs)
+      if (running >= limit)
         return started;
 
       if (_Due (key))
