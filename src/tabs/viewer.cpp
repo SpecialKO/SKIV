@@ -1302,8 +1302,11 @@ SKIV_Viewer_DrawCarousel (skiv_image_directory_s::fl_s& files, SKIV_ImageStore& 
     return L"";
   };
 
-  // For an image in a folder of others (the image being loaded is the active one already)
-  if (mode == 0 || count < 2 || active >= count || files.at (active).path.empty ( ) || cover.file_info.path.empty ( ))
+  // For an image in a folder of others (the image being loaded is the active one already). It stays while the next one
+  //   loads, when none is shown (the one shown was swapped out, and may be fading out meanwhile).
+  const bool loading = loadImage || tryingToLoadImage || store.IsLoading ( ) || cover_old.pRawTexSRV.p != nullptr;
+
+  if (mode == 0 || count < 2 || active >= count || files.at (active).path.empty ( ) || (cover.file_info.path.empty ( ) && ! loading))
     return _Hide ( );
 
   // Its size follows the window's height: tiles of 32 px at 720 px (or less), up to the thumbnails' own size
