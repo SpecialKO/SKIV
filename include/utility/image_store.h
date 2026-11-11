@@ -81,8 +81,10 @@ public:
   // Main thread, once per frame while nothing is loading: the image shown (its path, empty if none) and the ones around it
   //   in its folder, nearest first: the next one, the previous one, the one after the next, ... (empty where there is
   //   none). Keeps the shown one and the two next to it, releases the rest, and preloads those two; then the thumbnails
-  //   of the shown one and the rest of around.
-  void SetNeighbours (const std::wstring& shown, const std::vector <std::wstring>& around, bool animatedImages);
+  //   of the shown one and the rest of around. thumbnails: whether thumbnails are made at all (the carousel is used);
+  //   once not, the kept ones are released.
+  void SetNeighbours (const std::wstring& shown, const std::vector <std::wstring>& around, bool animatedImages,
+                      bool thumbnails = true);
 
   // Main thread: the file's thumbnail (pRawTexSRV, its size, and what is known about it; no gamut coverage texture), or
   //   nullptr if there is none yet. load: made if it is not kept, after the thumbnails due ahead of it. Valid until the
@@ -196,6 +198,7 @@ private:
   key_s        m_shown,     m_prev,     m_next;
   std::vector <key_s>       m_near;               // The thumbnails made ahead: the shown image's, then around, nearest first
   bool         m_neighbourAnimated = true;
+  bool         m_thumbnailsOn      = true;  // Thumbnails are made (SetNeighbours)
 
   std::vector <std::unique_ptr <thumb_s>>
                             m_thumbnails;         // (By pointer, as m_cache)

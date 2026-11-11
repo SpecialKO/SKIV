@@ -401,6 +401,22 @@ struct skiv_image_directory_s {
       return _list.empty();
     }
 
+    // The files by their index (the carousel): how many, one of them, and the index of the active one (count ( ) if none)
+    size_t count (void) const
+    {
+      return _list.size ( );
+    }
+
+    const fd_s& at (size_t index) const
+    {
+      return _list [index];
+    }
+
+    size_t activeIndex (void) const
+    {
+      return (_it == _list.end ( )) ? _list.size ( ) : static_cast <size_t> (std::distance (_list.cbegin ( ), std::vector <fd_s>::const_iterator (_it)));
+    }
+
     void         setImage    (const std::wstring& path);
     std::wstring nextImage   (void);
     std::wstring prevImage   (void);

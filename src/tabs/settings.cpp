@@ -395,6 +395,42 @@ SKIF_UI_Tab_DrawSettings (void)
       _registry.regKVDarkenImages.putData (                        _registry.iDarkenImages);
     ImGui::TreePop         ( );
 
+    ImGui::Spacing         ( );
+
+    ImGui::TextColored     (ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info), ICON_FA_LIGHTBULB);
+    SKIF_ImGui_SetHoverTip ("A strip of the images in the folder along the bottom of the window. Click one to show it.");
+    ImGui::SameLine        ( );
+    ImGui::TextColored (
+      ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextCaption),
+        "Thumbnails carousel:"
+    );
+    ImGui::TreePush        ("ThumbnailCarousel");
+
+    static const char* CarouselItems [] = { "Never", "When mouse is nearby", "Always" };
+
+    if (ImGui::GetContentRegionAvail().x > 725.0f)
+      ImGui::SetNextItemWidth (500.0f);
+
+    if (ImGui::BeginCombo ("###_registry.iThumbnailCarousel", CarouselItems [std::clamp (_registry.iThumbnailCarousel, 0, 2)]))
+    {
+      for (int n = 0; n < IM_ARRAYSIZE (CarouselItems); n++)
+      {
+        const bool is_selected = (_registry.iThumbnailCarousel == n);
+
+        if (ImGui::Selectable (CarouselItems [n], is_selected))
+        {
+          _registry.iThumbnailCarousel = n;
+          _registry.regKVThumbnailCarousel.putData (_registry.iThumbnailCarousel);
+        }
+
+        if (is_selected)
+          ImGui::SetItemDefaultFocus ( );
+      }
+      ImGui::EndCombo  ( );
+    }
+
+    ImGui::TreePop         ( );
+
     // nb:  Prefernece needs implementation
     //
 #if 0

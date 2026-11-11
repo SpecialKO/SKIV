@@ -299,6 +299,10 @@ struct SKIF_RegistrySettings {
     SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(Darken)" );
 
+  KeyValue <int> regKVThumbnailCarousel =
+    SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(Thumbnail Carousel)" );
+
   KeyValue <int> regKVCheckForUpdates =
     SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(Check For Updates)" );
@@ -467,6 +471,7 @@ struct SKIF_RegistrySettings {
   int iStyle                   =   0;   // 0 = Dynamic,                     1 = SKIF Dark,              2 = SKIF Light,                  3 = ImGui Classic,                  4 = ImGui Dark
   int iStyleTemp               =   0;   // Used to temporary hold changes in the style during the current session
   int iDarkenImages            =   0;   // 0 = Never,                       1 = Always,                 2 = On mouse hover
+  int iThumbnailCarousel       =   1;   // 0 = Never (no thumbnails),       1 = When mouse is nearby,   2 = Always
   int iCheckForUpdates         =   1;   // 0 = Never,                       1 = Weekly,                 2 = On each launch
   int iLogging                 =   4;   // 0 = None,                        1 = Fatal,                  2 = Error,                       3 = Warning,                        4 = Info,       5 = Debug,       6 = Verbose
   int iSDRMode                 =   0;   // 0 = 8 bpc,                       1 = 10 bpc,                 2 = 16 bpc
