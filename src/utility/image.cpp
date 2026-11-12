@@ -4315,6 +4315,19 @@ skiv_image_directory_s::fl_s::deleteImage (void)
   // 1) If pos refers to the last element, then the end() iterator is returned.
   _it = _list.erase (_it);
 
+  // It was the folder's only image: no image, as an empty folder has (its placeholder entry). Otherwise _it would point
+  //   at nothing (end ( ) of an empty list, or before its start), which crashed as soon as it was used (its path here, then
+  //     getActiveFile ( ), activeIndex ( ) for the carousel, ...): e.g. deleting an image pasted from the clipboard (the
+  //       only one in SKIV's temp folder).
+  if (_list.empty ( ))
+  {
+    clear ( );
+
+    PLOG_DEBUG << "Deleted file. It was the folder's only image";
+
+    return L"";
+  }
+
   if (_it == _list.end())
   {
     if (_registry.bLoopImages)
