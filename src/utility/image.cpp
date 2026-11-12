@@ -32,7 +32,8 @@
 
 #include <DirectXPackedVector.h>
 
-skiv_image_desktop_s SKIV_DesktopImage;
+skiv_image_desktop_s              SKIV_DesktopImage;  // The display at the point captured (under the cursor)
+std::vector <skiv_image_desktop_s> SKIV_DesktopImages; // The displays captured (all of them for region snips)
 
 extern std::wstring defaultHDRFileExt;
 extern std::wstring defaultSDRFileExt;
@@ -3351,81 +3352,24 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
                       wszImplicitFileName, nullptr, SK_WIC_SetMaximumQuality);
 }
 
-HRESULT
-SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
+// Duplicates a display (Desktop Duplication) into desktop: a copy of its image (as the display has it: before its rotation,
+//   which is kept), where it is on the desktop, and its light levels
+static HRESULT
+_SKIV_DuplicateOutput (ID3D11Device* pDevice, ID3D11DeviceContext* pDevCtx, IDXGIOutput* pOutput, skiv_image_desktop_s& desktop)
 {
-  SKIV_DesktopImage.clear ();
+  desktop.clear ();
 
-  std::ignore = image;
-  std::ignore = flags;
+  DXGI_OUTPUT_DESC  out_desc  = { };
+  DXGI_OUTPUT_DESC1 out_desc1 = { };
 
-  HRESULT res = E_NOT_VALID_STATE;
+  pOutput->GetDesc (&out_desc);
 
-  auto pDevice =
-    SKIF_D3D11_GetDevice ();
+  CComQIPtr <IDXGIOutput6> pOutput6 (pOutput);
 
-  if (! pDevice)
-  {
-    PLOG_ERROR << "No D3D11 device is available for Desktop Duplication.";
-    return res;
-  }
+  if (pOutput6.p != nullptr)
+    pOutput6->GetDesc1 (&out_desc1);
 
-  extern HRESULT SKIF_DXGI_CreateDXGIFactory1 (REFIID riid, void **ppFactory);
-
-  CComPtr <IDXGIFactory> pFactory;
-  SKIF_DXGI_CreateDXGIFactory1 (__uuidof (IDXGIFactory1), (void **)&pFactory.p);
-
-  if (! pFactory)
-  {
-    PLOG_ERROR << "DXGI Factory creation failed.";
-    return E_NOTIMPL;
-  }
-
-  CComPtr <IDXGIAdapter> pAdapter;
-  UINT                  uiAdapter = 0;
-
-  CComPtr <IDXGIOutput> pCursorOutput;
-  DXGI_OUTPUT_DESC      out_desc = {};
-  DXGI_OUTPUT_DESC1     out_desc1= {};
-
-  while (SUCCEEDED (pFactory->EnumAdapters (uiAdapter++, &pAdapter.p)))
-  {
-    CComPtr <IDXGIOutput> pOutput;
-    UINT                 uiOutput = 0;
-
-    while (SUCCEEDED (pAdapter->EnumOutputs (uiOutput++, &pOutput)))
-    {
-      pOutput->GetDesc (&out_desc);
-
-      CComQIPtr <IDXGIOutput6>
-          pOutput6 (pOutput);
-      if (pOutput6.p != nullptr)
-      {
-        pOutput6->GetDesc1 (&out_desc1);
-      }
-
-      if (out_desc.AttachedToDesktop && PtInRect (&out_desc.DesktopCoordinates, point))
-      {
-        pCursorOutput = pOutput;
-        break;
-      }
-
-      pOutput = nullptr;
-    }
-
-    if (pCursorOutput != nullptr)
-      break;
-
-    pAdapter = nullptr;
-  }
-
-  if (! pCursorOutput)
-  {
-    PLOG_ERROR << "Unable to find an attached desktop output under the cursor.";
-    return E_UNEXPECTED;
-  }
-
-  CComQIPtr <IDXGIOutput5> pOutput5 (pCursorOutput);
+  CComQIPtr <IDXGIOutput5> pOutput5 (pOutput);
   CComQIPtr <IDXGIOutput1> pOutput1; // Always DXGI_FORMAT_B8G8R8A8_UNORM
 
   // Down-level interfaces support duplication, but for HDR we want Output5
@@ -3433,7 +3377,7 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
   {
     PLOG_VERBOSE << "IDXGIOutput5 is unavailable, falling back to using IDXGIOutput1.";
 
-    pOutput1 = pCursorOutput;
+    pOutput1 = pOutput;
 
     if (! pOutput1)
     {
@@ -3463,12 +3407,8 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
   static constexpr int num_sdr_formats = 4;
   static constexpr int num_all_formats = 7;
 
-  HMONITOR hMon = MonitorFromPoint (point, MONITOR_DEFAULTTONEAREST);
-
-  SKIF_Util_UpdateMonitors ();
-
   extern bool SKIF_Util_IsHDRActive (HMONITOR hMonitor);
-  bool bHDR = SKIF_Util_IsHDRActive (hMon);
+  bool bHDR = SKIF_Util_IsHDRActive (out_desc.Monitor);
 
   CComPtr <IDXGIOutputDuplication> pDuplicator;
 
@@ -3513,6 +3453,9 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
                                                          capture_formats, &pDuplicator.p);
       else if (pOutput1)
         pOutput1->DuplicateOutput  (pDevice, &pDuplicator.p);
+
+      if (! pDuplicator)
+        break;
     }
 
     else if (FAILED (hr))
@@ -3532,7 +3475,7 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
   }
 
   // This means the timeout was reached without a successful capture
-  if (! frame_info.LastPresentTime.QuadPart)
+  if (! frame_info.LastPresentTime.QuadPart || ! pDuplicator)
   {
     PLOG_ERROR << "Capture timeout encountered.";
     return E_UNEXPECTED;
@@ -3541,6 +3484,7 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
   if (! pDuplicatedResource)
   {
     PLOG_ERROR << "No resource captured.";
+    pDuplicator->ReleaseFrame ();
     return E_UNEXPECTED;
   }
 
@@ -3550,13 +3494,13 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
   if (! pDuplicatedTex)
   {
     PLOG_ERROR << "Failed to get a D3D11 texture for the duplicated DXGI surface.";
+    pDuplicator->ReleaseFrame ();
     return E_NOINTERFACE;
   }
 
   DXGI_SURFACE_DESC   surfDesc;
   pSurface->GetDesc (&surfDesc);
 
-  CComPtr <ID3D11Texture2D> pStagingTex;
   CComPtr <ID3D11Texture2D> pDesktopImage; // For rendering during snipping
 
   // DXGI_FORMAT_B8G8R8A8_UNORM (Windows 8.1 fallback code)
@@ -3565,27 +3509,15 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
 
   D3D11_TEXTURE2D_DESC
     texDesc                = { };
-    texDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-    texDesc.Usage          = D3D11_USAGE_STAGING;
+    texDesc.CPUAccessFlags = 0x0;
+    texDesc.Usage          = D3D11_USAGE_DEFAULT;
+    texDesc.BindFlags      = D3D11_BIND_SHADER_RESOURCE;
     texDesc.ArraySize      = 1;
     texDesc.MipLevels      = 1;
     texDesc.SampleDesc     = { .Count = 1, .Quality = 0 };
     texDesc.Format         = surfDesc.Format;
     texDesc.Width          = surfDesc.Width;
     texDesc.Height         = surfDesc.Height;
-
-  CComPtr <ID3D11DeviceContext>  pDevCtx;
-  pDevice->GetImmediateContext (&pDevCtx);
-
-  if (pDevCtx == nullptr)
-  {
-    PLOG_ERROR << "No D3D11 Immediate Device Context.";
-    return E_UNEXPECTED;
-  }
-
-  texDesc.CPUAccessFlags = 0x0;
-  texDesc.Usage          = D3D11_USAGE_DEFAULT;
-  texDesc.BindFlags      = D3D11_BIND_SHADER_RESOURCE;
 
   if (FAILED (pDevice->CreateTexture2D (&texDesc, nullptr, &pDesktopImage.p)))
   {
@@ -3602,23 +3534,24 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
     srvDesc.Texture2D.MostDetailedMip = 0;
 
   pDevCtx->CopyResource             (pDesktopImage, pDuplicatedTex);
-  pDevice->CreateShaderResourceView (pDesktopImage, &srvDesc, &SKIV_DesktopImage._srv);
+  pDevice->CreateShaderResourceView (pDesktopImage, &srvDesc, &desktop._srv);
 
-  SKIV_DesktopImage._rotation    = dup_desc.Rotation;
-  SKIV_DesktopImage._desktop_pos =
+  desktop._rotation    = dup_desc.Rotation;
+  desktop._desktop_pos =
     ImVec2 (static_cast <float> (out_desc.DesktopCoordinates.left),
             static_cast <float> (out_desc.DesktopCoordinates.top));
-  SKIV_DesktopImage._max_display_nits = out_desc1.MaxLuminance;
-  SKIV_DesktopImage._sdr_display_nits = SKIF_Util_GetSDRWhiteLevel (out_desc1.Monitor);
+  desktop._max_display_nits = out_desc1.MaxLuminance;
+  desktop._sdr_display_nits = SKIF_Util_GetSDRWhiteLevel (out_desc.Monitor);
 
-  PLOG_VERBOSE << "Max Display Nits : " << SKIV_DesktopImage._max_display_nits;
-  PLOG_VERBOSE << "SDR Display Nits : " << SKIV_DesktopImage._sdr_display_nits;
+  PLOG_VERBOSE << "Captured the display at " << out_desc.DesktopCoordinates.left << "," << out_desc.DesktopCoordinates.top
+               << " (" << surfDesc.Width << "x" << surfDesc.Height << ", rotation " << static_cast <int> (dup_desc.Rotation)
+               << "); max display nits: " << desktop._max_display_nits << ", SDR display nits: " << desktop._sdr_display_nits;
 
   pDevCtx->Flush ();
 
   pDuplicator->ReleaseFrame ();
 
-  if (! SKIV_DesktopImage.process ())
+  if (! desktop.process ())
   {
     PLOG_ERROR << "Failed to process desktop image.";
     return E_FAIL;
@@ -3627,151 +3560,426 @@ SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
   return S_OK;
 }
 
+HRESULT
+SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
+{
+  SKIV_DesktopImage.clear ();
+  SKIV_DesktopImages.clear ();
+
+  std::ignore = image;
+
+  const bool allDisplays = (flags & SKIV_CaptureDesktop_AllDisplays);
+
+  HRESULT res = E_NOT_VALID_STATE;
+
+  auto pDevice =
+    SKIF_D3D11_GetDevice ();
+
+  if (! pDevice)
+  {
+    PLOG_ERROR << "No D3D11 device is available for Desktop Duplication.";
+    return res;
+  }
+
+  CComPtr <ID3D11DeviceContext>  pDevCtx;
+  pDevice->GetImmediateContext (&pDevCtx);
+
+  if (pDevCtx == nullptr)
+  {
+    PLOG_ERROR << "No D3D11 Immediate Device Context.";
+    return E_UNEXPECTED;
+  }
+
+  extern HRESULT SKIF_DXGI_CreateDXGIFactory1 (REFIID riid, void **ppFactory);
+
+  CComPtr <IDXGIFactory> pFactory;
+  SKIF_DXGI_CreateDXGIFactory1 (__uuidof (IDXGIFactory1), (void **)&pFactory.p);
+
+  if (! pFactory)
+  {
+    PLOG_ERROR << "DXGI Factory creation failed.";
+    return E_NOTIMPL;
+  }
+
+  SKIF_Util_UpdateMonitors ();
+
+  // The displays: the one at the point (under the cursor), and the others too if asked for
+  CComPtr <IDXGIAdapter> pAdapter;
+  UINT                   uiAdapter    = 0;
+  bool                   pointCovered = false;
+  HRESULT                pointResult  = E_UNEXPECTED;
+
+  while (SUCCEEDED (pFactory->EnumAdapters (uiAdapter++, &pAdapter.p)))
+  {
+    CComPtr <IDXGIOutput> pOutput;
+    UINT                  uiOutput = 0;
+
+    while (SUCCEEDED (pAdapter->EnumOutputs (uiOutput++, &pOutput.p)))
+    {
+      DXGI_OUTPUT_DESC   out_desc = { };
+      pOutput->GetDesc (&out_desc);
+
+      const bool atPoint = (PtInRect (&out_desc.DesktopCoordinates, point) != FALSE);
+
+      if (out_desc.AttachedToDesktop && (atPoint || allDisplays))
+      {
+        skiv_image_desktop_s desktop;
+        const HRESULT hr = _SKIV_DuplicateOutput (pDevice, pDevCtx, pOutput, desktop);
+
+        if (atPoint)
+        {
+          pointCovered = true;
+          pointResult  = hr;
+        }
+
+        if (SUCCEEDED (hr))
+        {
+          if (atPoint)
+            SKIV_DesktopImage = desktop;
+
+          SKIV_DesktopImages.push_back (desktop);
+        }
+
+        else
+          PLOG_WARNING << "Could not capture the display at " << out_desc.DesktopCoordinates.left << "," << out_desc.DesktopCoordinates.top;
+      }
+
+      pOutput = nullptr;
+    }
+
+    pAdapter = nullptr;
+  }
+
+  if (! pointCovered)
+  {
+    PLOG_ERROR << "Unable to find an attached desktop output under the cursor.";
+    SKIV_DesktopImages.clear ();
+    return E_UNEXPECTED;
+  }
+
+  // The display at the point is needed (window and screen captures, and the snipping toolbar)
+  if (FAILED (pointResult))
+  {
+    SKIV_DesktopImage.clear ();
+    SKIV_DesktopImages.clear ();
+    return pointResult;
+  }
+
+  PLOG_VERBOSE << "Captured " << SKIV_DesktopImages.size ( ) << " display(s)";
+
+
+  return S_OK;
+}
+
+// The size of a captured display on the desktop: its image's, turned by its rotation
+ImVec2
+skiv_image_desktop_s::desktopSize (void) const
+{
+  return (_rotation == DXGI_MODE_ROTATION_ROTATE90 ||
+          _rotation == DXGI_MODE_ROTATION_ROTATE270) ? ImVec2 (_resolution.y, _resolution.x)
+                                                     : _resolution;
+}
+
 void
 SKIV_Image_CaptureRegion (SKIV_CaptureData capture_data)
 {
-  HMONITOR hMonCaptured =
-    MonitorFromPoint ({ static_cast <long> (capture_data._rect.Min.x),
-                        static_cast <long> (capture_data._rect.Min.y) }, MONITOR_DEFAULTTONEAREST);
+  // The region, in whole pixels of the desktop
+  const ImRect region (ImFloor (capture_data._rect.Min), ImFloor (capture_data._rect.Max + ImVec2 (0.5f, 0.5f)));
 
-  MONITORINFO                    minfo = { .cbSize = sizeof (MONITORINFO) };
-  GetMonitorInfo (hMonCaptured, &minfo);
-
-  // Fixes snipping rectangles on non-primary (origin != 0,0) displays
-  auto _AdjustCaptureAreaRelativeToDisplayOrigin = [&](void)
-  {
-    capture_data._rect.Min.x -= minfo.rcMonitor.left;
-    capture_data._rect.Max.x -= minfo.rcMonitor.left;
-
-    capture_data._rect.Min.y -= minfo.rcMonitor.top;
-    capture_data._rect.Max.y -= minfo.rcMonitor.top;
-  };
-
-  _AdjustCaptureAreaRelativeToDisplayOrigin ();
-
-  if (SKIV_DesktopImage._rotation == DXGI_MODE_ROTATION_ROTATE90 ||
-      SKIV_DesktopImage._rotation == DXGI_MODE_ROTATION_ROTATE270)
-  {
-    const float height =
-      static_cast <float> (minfo.rcMonitor.right  - minfo.rcMonitor.left),
-                width  =
-      static_cast <float> (minfo.rcMonitor.bottom - minfo.rcMonitor.top);
-
-    std::swap (capture_data._rect.Min.x, capture_data._rect.Min.y);
-    std::swap (capture_data._rect.Max.x, capture_data._rect.Max.y);
-
-    const float capture_height =
-      static_cast <float> (capture_data._rect.Max.y - capture_data._rect.Min.y),
-                capture_width  =
-      static_cast <float> (capture_data._rect.Max.x - capture_data._rect.Min.x);
-
-    if (SKIV_DesktopImage._rotation == DXGI_MODE_ROTATION_ROTATE90)
-    {
-      capture_data._rect.Min.y = height - capture_data._rect.Max.y;
-      capture_data._rect.Max.y = height - capture_data._rect.Max.y + capture_height;
-    }
-
-    else
-    {
-      std::ignore = capture_width;
-      std::ignore = width;
-      //capture_data.Min.x = width - capture_width;
-      //capture_data.Max.x = width;
-    }
-  }
-
-  const size_t
-    x      = static_cast <size_t> (std::max (0.0f, capture_data._rect.Min.x)),
-    y      = static_cast <size_t> (std::max (0.0f, capture_data._rect.Min.y)),
-    width  = static_cast <size_t> (std::max (0.0f, capture_data._rect.GetWidth  ())),
-    height = static_cast <size_t> (std::max (0.0f, capture_data._rect.GetHeight ()));
-
-  const DirectX::Rect
-    src_rect (x,y, width,height);
+  if (region.GetWidth ( ) < 1.0f || region.GetHeight ( ) < 1.0f)
+    return;
 
   extern CComPtr <ID3D11Device>
     SKIF_D3D11_GetDevice (bool bWait);
 
   auto pDevice = SKIF_D3D11_GetDevice (false);
 
+  if (pDevice == nullptr)
+    return;
+
   CComPtr <ID3D11DeviceContext>  pDevCtx;
   pDevice->GetImmediateContext (&pDevCtx.p);
 
-  DirectX::ScratchImage captured_img;
-  if (SUCCEEDED (DirectX::CaptureTexture (pDevice, pDevCtx, SKIV_DesktopImage._res, captured_img)))
+  // Its parts on each display captured: cropped out of that display's image (which is as the display has it, before its
+  //   rotation: the part of it there is turned to the desktop's orientation)
+  struct piece_s {
+    DirectX::ScratchImage       image;
+    ImRect                      rect;    // On the desktop
+    const skiv_image_desktop_s* display;
+  };
+
+  std::vector <piece_s> pieces;
+
+  for (const auto& display : SKIV_DesktopImages)
   {
-    PLOG_VERBOSE << "DirectX::CaptureTexture    ( ): SUCCEEDED";
-    DirectX::ScratchImage subrect;
+    if (display._res == nullptr)
+      continue;
 
-    if (SUCCEEDED (subrect.Initialize2D   ( captured_img.GetMetadata ().format, width, height, 1, 1)))
+    const ImVec2 size    = display.desktopSize ( );
+    const ImRect on_desk (display._desktop_pos, display._desktop_pos + size);
+
+    ImRect part = region;
+    part.ClipWithFull (on_desk);
+
+    if (part.GetWidth ( ) < 1.0f || part.GetHeight ( ) < 1.0f)
+      continue;
+
+    // The part relative to the display, and where it is in its image
+    const ImVec2 r0 = part.Min - display._desktop_pos,
+                 r1 = part.Max - display._desktop_pos;
+
+    ImVec2 t0, t1;
+
+    switch (display._rotation)
     {
-      PLOG_VERBOSE << "subrect.Initialize2D       ( ): SUCCEEDED";
+      case DXGI_MODE_ROTATION_ROTATE90:  // Its image is turned 90 degrees clockwise onto the desktop
+        t0 = ImVec2 (r0.y,          size.x - r1.x);
+        t1 = ImVec2 (r1.y,          size.x - r0.x);
+        break;
+      case DXGI_MODE_ROTATION_ROTATE180:
+        t0 = ImVec2 (size.x - r1.x, size.y - r1.y);
+        t1 = ImVec2 (size.x - r0.x, size.y - r0.y);
+        break;
+      case DXGI_MODE_ROTATION_ROTATE270: // ... 90 degrees counter-clockwise
+        t0 = ImVec2 (size.y - r1.y, r0.x);
+        t1 = ImVec2 (size.y - r0.y, r1.x);
+        break;
+      default:
+        t0 = r0;
+        t1 = r1;
+        break;
+    }
 
-      if (SUCCEEDED (DirectX::CopyRectangle (*captured_img.GetImages (), src_rect,
-                                                  *subrect.GetImages (), DirectX::TEX_FILTER_DEFAULT, 0, 0)))
+    DirectX::ScratchImage whole;
+
+    if (FAILED (DirectX::CaptureTexture (pDevice, pDevCtx, display._res, whole)))
+    {
+      PLOG_WARNING << "DirectX::CaptureTexture    ( ): FAILED";
+      continue;
+    }
+
+    const size_t tx = static_cast <size_t> (t0.x),             ty = static_cast <size_t> (t0.y),
+                 tw = static_cast <size_t> (t1.x - t0.x),      th = static_cast <size_t> (t1.y - t0.y);
+
+    piece_s piece;
+    piece.rect    = part;
+    piece.display = &display;
+
+    DirectX::ScratchImage cropped;
+
+    if (FAILED (cropped.Initialize2D (whole.GetMetadata ( ).format, tw, th, 1, 1)) ||
+        FAILED (DirectX::CopyRectangle (*whole.GetImages ( ), DirectX::Rect (tx, ty, tw, th), *cropped.GetImages ( ), DirectX::TEX_FILTER_DEFAULT, 0, 0)))
+    {
+      PLOG_WARNING << "DirectX::CopyRectangle     ( ): FAILED";
+      continue;
+    }
+
+    const DirectX::TEX_FR_FLAGS rotate =
+      (display._rotation == DXGI_MODE_ROTATION_ROTATE90)  ? DirectX::TEX_FR_ROTATE90  :
+      (display._rotation == DXGI_MODE_ROTATION_ROTATE180) ? DirectX::TEX_FR_ROTATE180 :
+      (display._rotation == DXGI_MODE_ROTATION_ROTATE270) ? DirectX::TEX_FR_ROTATE270 : DirectX::TEX_FR_ROTATE0;
+
+    if (rotate != DirectX::TEX_FR_ROTATE0)
+    {
+      if (FAILED (DirectX::FlipRotate (*cropped.GetImages ( ), rotate, piece.image)))
       {
-        PLOG_VERBOSE << "DirectX::CopyRectangle     ( ): SUCCEEDED";
+        PLOG_WARNING << "DirectX::FlipRotate        ( ): FAILED";
+        continue;
+      }
+    }
 
-        DirectX::ScratchImage rotated;
-        const DirectX::Image* final = subrect.GetImages ();
+    else
+      piece.image = std::move (cropped);
 
-        if (SKIV_DesktopImage._rotation > DXGI_MODE_ROTATION_IDENTITY)
-        {
-          DirectX::TEX_FR_FLAGS rotate_flags = DirectX::TEX_FR_ROTATE0;
+    pieces.push_back (std::move (piece));
+  }
 
-          switch (SKIV_DesktopImage._rotation)
-          {
-            case DXGI_MODE_ROTATION_ROTATE90:
-              rotate_flags = DirectX::TEX_FR_ROTATE90;
-              break;
+  if (pieces.empty ( ))
+  {
+    PLOG_WARNING << "The region is on none of the displays captured";
+    return;
+  }
 
-            case DXGI_MODE_ROTATION_ROTATE180:
-              rotate_flags = DirectX::TEX_FR_ROTATE180;
-              break;
+  // One display (or several of the same format): as they are. Displays of different formats (HDR and SDR): made scRGB,
+  //   SDR ones at the HDR ones' SDR white level (as an HDR display shows SDR content). HDR10 (PQ) captures do not mix:
+  //     only the largest part is kept then.
+  bool  hdr     = false,
+        same    = true;
+  float sdrNits = 80.0f, maxNits = 0.0f;
+  const piece_s* largest = &pieces.front ( );
 
-            case DXGI_MODE_ROTATION_ROTATE270:
-              rotate_flags = DirectX::TEX_FR_ROTATE270;
-              break;
-          }
+  for (const auto& piece : pieces)
+  {
+    same &= (piece.image.GetMetadata ( ).format == pieces.front ( ).image.GetMetadata ( ).format);
 
-          if (SUCCEEDED (DirectX::FlipRotate (*subrect.GetImages (), DirectX::TEX_FR_ROTATE90, rotated)))
-          {
-            PLOG_VERBOSE << "DirectX::FlipRotate        ( ): SUCCEEDED";
+    if (piece.display->_hdr_image)
+    {
+      hdr     = true;
+      sdrNits = std::max (sdrNits, piece.display->_sdr_display_nits);
+      maxNits = std::max (maxNits, piece.display->_max_display_nits);
+    }
 
-            final = rotated.GetImages ();
-          } else
-            PLOG_VERBOSE << "DirectX::FlipRotate        ( ): FAILED";
-        }
+    if (piece.rect.GetArea ( ) > largest->rect.GetArea ( ))
+      largest = &piece;
+  }
 
-        if (SKIV_Image_CopyToClipboard (final, SKIV_DesktopImage._hdr_image, capture_data))
-        {
-          PLOG_VERBOSE << "SKIV_Image_CopyToClipboard ( ): SUCCEEDED";
+  if (! same)
+  {
+    for (const auto& piece : pieces)
+    {
+      if (piece.image.GetMetadata ( ).format == DXGI_FORMAT_R10G10B10A2_UNORM)
+      {
+        PLOG_WARNING << "The region spans displays of different formats, one of them HDR10: only its largest part is captured";
 
-          ImGui::InsertNotification (
-            {
-              ImGuiToastType::Success,
-              3000,
-              "Copied image to clipboard", ""
-            }
-          );
-        }
+        piece_s kept;
+        kept.rect    = largest->rect;
+        kept.display = largest->display;
 
-        else {
-          ImGui::InsertNotification (
-            {
-              ImGuiToastType::Error,
-              3000,
-              "Failed to copy image to clipboard", ""
-            }
-          );
-          PLOG_WARNING << "SKIV_Image_CopyToClipboard ( ): FAILED";
-        }
-      } else
+        if (FAILED (kept.image.InitializeFromImage (*largest->image.GetImages ( ))))
+          return;
+
+        pieces.clear ( );
+        pieces.push_back (std::move (kept));
+        same = true;
+        hdr  = pieces.front ( ).display->_hdr_image;
+        break;
+      }
+    }
+  }
+
+  const ImRect  bounds = (pieces.size ( ) == 1) ? pieces.front ( ).rect : region;
+  DXGI_FORMAT   format = pieces.front ( ).image.GetMetadata ( ).format;
+
+  if (! same)
+  {
+    format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+
+    for (auto& piece : pieces)
+    {
+      const DXGI_FORMAT from = piece.image.GetMetadata ( ).format;
+
+      if (from == format)
+        continue;
+
+      // SDR: its values are sRGB encoded (whether its format says so or not): made linear, at the SDR white level
+      const bool sdr = (DirectX::BitsPerColor (from) <= 8);
+
+      if (sdr && DirectX::MakeSRGB (from) != from)
+        piece.image.OverrideFormat (DirectX::MakeSRGB (from));
+
+      DirectX::ScratchImage converted;
+
+      if (FAILED (DirectX::Convert (*piece.image.GetImages ( ), format, DirectX::TEX_FILTER_DEFAULT, 0.0f, converted)))
+      {
+        PLOG_WARNING << "DirectX::Convert           ( ): FAILED";
+        return;
+      }
+
+      if (sdr)
+      {
+        const float scale = sdrNits / 80.0f;
+
+        DirectX::ScratchImage scaled;
+
+        if (SUCCEEDED (DirectX::TransformImage (*converted.GetImages ( ),
+              [&](DirectX::XMVECTOR* out, const DirectX::XMVECTOR* in, size_t width, size_t)
+              {
+                for (size_t i = 0; i < width; i++)
+                  out [i] = DirectX::XMVectorSelect (in [i], DirectX::XMVectorScale (in [i], scale), DirectX::g_XMSelect1110);
+              }, scaled)))
+          converted = std::move (scaled);
+      }
+
+      piece.image = std::move (converted);
+    }
+  }
+
+  // The image of the region: its parts where they are in it (opaque black where it is on no display: between displays
+  //   of different sizes)
+  DirectX::ScratchImage composed;
+  const DirectX::Image* final = nullptr;
+
+  if (pieces.size ( ) == 1)
+    final = pieces.front ( ).image.GetImages ( );
+
+  else
+  {
+    const size_t width  = static_cast <size_t> (bounds.GetWidth  ( )),
+                 height = static_cast <size_t> (bounds.GetHeight ( ));
+
+    if (FAILED (composed.Initialize2D (format, width, height, 1, 1)))
+    {
+      PLOG_WARNING << "composed.Initialize2D      ( ): FAILED";
+      return;
+    }
+
+    DirectX::ScratchImage black;
+
+    if (SUCCEEDED (black.Initialize2D (DXGI_FORMAT_R32G32B32A32_FLOAT, width, height, 1, 1)))
+    {
+      float* px = reinterpret_cast <float*> (black.GetPixels ( ));
+
+      for (size_t i = 0; i < width * height; i++)
+      {
+        px [i * 4 + 0] = px [i * 4 + 1] = px [i * 4 + 2] = 0.0f;
+        px [i * 4 + 3] = 1.0f;
+      }
+
+      DirectX::ScratchImage converted;
+
+      if (SUCCEEDED (DirectX::Convert (*black.GetImages ( ), format, DirectX::TEX_FILTER_DEFAULT, 0.0f, converted)))
+        memcpy (composed.GetPixels ( ), converted.GetPixels ( ), std::min (composed.GetPixelsSize ( ), converted.GetPixelsSize ( )));
+    }
+
+    for (const auto& piece : pieces)
+    {
+      const DirectX::Image* src = piece.image.GetImages ( );
+
+      if (FAILED (DirectX::CopyRectangle (*src, DirectX::Rect (0, 0, src->width, src->height), *composed.GetImages ( ),
+                                          DirectX::TEX_FILTER_DEFAULT, static_cast <size_t> (piece.rect.Min.x - bounds.Min.x),
+                                                                       static_cast <size_t> (piece.rect.Min.y - bounds.Min.y))))
+      {
         PLOG_WARNING << "DirectX::CopyRectangle     ( ): FAILED";
-    } else
-      PLOG_WARNING << "subrect.Initialize2D       ( ): FAILED";
-  } else
-    PLOG_WARNING << "DirectX::CaptureTexture    ( ): FAILED";
+        return;
+      }
+    }
+
+    final = composed.GetImages ( );
+  }
+
+  PLOG_VERBOSE << "Captured a region of " << static_cast <int> (bounds.GetWidth ( )) << "x" << static_cast <int> (bounds.GetHeight ( ))
+               << " from " << pieces.size ( ) << " display(s)" << ((hdr) ? " (HDR)" : "");
+
+  // The light levels it is tone mapped by (to SDR, if asked to be): the HDR displays'
+  if (hdr && maxNits > 0.0f)
+  {
+    SKIV_DesktopImage._max_display_nits = maxNits;
+    SKIV_DesktopImage._sdr_display_nits = sdrNits;
+  }
+
+  if (SKIV_Image_CopyToClipboard (final, hdr, capture_data))
+  {
+    PLOG_VERBOSE << "SKIV_Image_CopyToClipboard ( ): SUCCEEDED";
+
+    ImGui::InsertNotification (
+      {
+        ImGuiToastType::Success,
+        3000,
+        "Copied image to clipboard", ""
+      }
+    );
+  }
+
+  else {
+    ImGui::InsertNotification (
+      {
+        ImGuiToastType::Error,
+        3000,
+        "Failed to copy image to clipboard", ""
+      }
+    );
+    PLOG_WARNING << "SKIV_Image_CopyToClipboard ( ): FAILED";
+  }
 }
 
 

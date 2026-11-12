@@ -172,7 +172,10 @@ DirectX::XMVECTOR SKIV_Image_ICtCptoRec709 (DirectX::XMVECTOR N);
 bool    SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool isHDR, SKIV_CaptureData capture_data);
 HRESULT SKIV_Image_SaveToDisk_HDR  (const DirectX::Image& image, const wchar_t* wszFileName);
 HRESULT SKIV_Image_SaveToDisk_SDR  (const DirectX::Image& image, const wchar_t* wszFileName, bool force_sRGB);
+// Captures the display at pos (SKIV_DesktopImage), or every display (SKIV_DesktopImages; flags: SKIV_CaptureDesktop_AllDisplays)
+constexpr int SKIV_CaptureDesktop_AllDisplays = 0x1;
 HRESULT SKIV_Image_CaptureDesktop  (DirectX::ScratchImage& image, POINT pos, int flags = 0x0);
+// Copies a region of the desktop (in its coordinates) from the displays captured: also one spanning several of them
 void    SKIV_Image_CaptureRegion   (SKIV_CaptureData capture_data);
 HRESULT SKIV_Image_TonemapToSDR    (const DirectX::Image& image, DirectX::ScratchImage& final_sdr, float mastering_max_nits, float mastering_sdr_nits);
 
@@ -247,6 +250,8 @@ struct skiv_image_desktop_s {
   float                              _max_display_nits = 1000.0f;
   float                              _sdr_display_nits = 240.0f;
 
+  ImVec2 desktopSize (void) const; // Its size on the desktop: _resolution, turned by _rotation
+
   bool process (void)
   {
     if (_srv != nullptr)
@@ -299,6 +304,11 @@ struct skiv_image_desktop_s {
     _rotation         = DXGI_MODE_ROTATION_UNSPECIFIED;
   }
 };
+
+// The displays captured by SKIV_Image_CaptureDesktop: the one at its point (SKIV_DesktopImage), and all of them for
+//   region snips (SKIV_CaptureDesktop_AllDisplays), which may span several
+extern skiv_image_desktop_s              SKIV_DesktopImage;
+extern std::vector <skiv_image_desktop_s> SKIV_DesktopImages;
 
 // Image Directory
 
