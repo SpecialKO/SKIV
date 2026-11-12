@@ -1995,10 +1995,16 @@ SKIF_UI_Tab_DrawViewer (void)
     {
       const double shownFor = ImGui::GetTime ( ) - s_previewSince;
 
-      if (const image_s* thumbnail = _store.Thumbnail (path, false); thumbnail != nullptr && thumbnail->pRawTexSRV.p != nullptr)
+      // A large image's own preview (of a progressive JPEG: its first scans), sharper than its thumbnail
+      const image_s* quick = _store.Preview (path);
+
+      if (quick == nullptr)
+        quick = _store.Thumbnail (path, false);
+
+      if (quick != nullptr && quick->pRawTexSRV.p != nullptr)
       {
         previewAlpha = std::clamp (static_cast <float> ((shownFor - s_previewDelay) / s_previewFade), 0.0f, 1.0f);
-        preview      = (previewAlpha > 0.0f) ? thumbnail : nullptr;
+        preview      = (previewAlpha > 0.0f) ? quick : nullptr;
       }
 
       // The main loop sleeps while nothing changes: woken for it to show, and while it fades in
@@ -2447,8 +2453,13 @@ SKIF_UI_Tab_DrawViewer (void)
       s_loadingDetails.file_info.size             = SK_File_GetSize   (path.c_str ( ));
     }
 
-    // What its thumbnail knows (it may come meanwhile). No textures: those are the thumbnail's.
-    if (const image_s* thumbnail = _store.Thumbnail (path, false); thumbnail != nullptr)
+    // What its preview or thumbnail knows (they may come meanwhile). No textures: those are theirs.
+    const image_s* thumbnail = _store.Preview (path);
+
+    if (thumbnail == nullptr)
+      thumbnail = _store.Thumbnail (path, false);
+
+    if (thumbnail != nullptr)
     {
       s_loadingDetails.width        = thumbnail->source_size.x;
       s_loadingDetails.height       = thumbnail->source_size.y;

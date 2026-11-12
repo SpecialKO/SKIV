@@ -43,6 +43,8 @@
 //     are made ahead; others once asked for. Each full decode makes one too, once its image is handed over. They are
 //     made after the full preloads, a few at once (a JPEG's decoded at about the thumbnail's size); also while
 //     images to show load (fewer at once), for the previews of the next ones as images are gone through.
+//   Previews (Preview (path)): of a large image loading that can be previewed quickly (a progressive JPEG), larger than
+//     its thumbnail, made alongside its full decode; given up once it is shown.
 //   A device reset (OnDeviceReset) releases them all, and drops the results made on the old device.
 //
 //   The viewer holds its own references to the images it shows (cover, and cover_old as it fades out).
@@ -54,6 +56,10 @@ constexpr WPARAM SKIV_IMAGE_STORE_RESULT = 0x1;
 //   (the 5 nearest images)
 constexpr size_t SKIV_THUMBNAIL_SIZE  = 128; // (The largest tiles: those of windows 2880 px tall; smaller ones use its mipmaps)
 constexpr int    SKIV_THUMBNAIL_REACH = 2;
+
+// Previews of large images while they load (Preview): scaled down to fit this many pixels each way (a progressive JPEG's
+//   is an eighth of its size, which is mostly smaller)
+constexpr size_t SKIV_PREVIEW_SIZE    = 4096;
 
 #include <atomic>
 #include <memory>
@@ -96,6 +102,11 @@ public:
   //   next call into the store; the textures are released after the frame they were last drawn in (SKIF_ResourcesToFree).
   const image_s* Thumbnail (const std::wstring& path, bool load = true);
 
+  // Main thread: the preview of the image loading (made alongside its full decode, of a large image that can be previewed
+  //   quickly: see SKIV_DecodeRequest::previewOnly), or nullptr if there is none (yet). Larger than its thumbnail; released
+  //   once the image is shown (or another one requested). Valid until the next call into the store.
+  const image_s* Preview (const std::wstring& path) const;
+
   // The notifications of the decodes (made on their worker threads), to be shown by the main thread: those of the images
   //   shown, as they are (not those of thumbnails, nor of images decoded ahead until they are shown)
   bool TakeNotice (ImGuiToast& notice) { return m_notices.try_pop (notice); }
@@ -135,6 +146,7 @@ private:
     bool         success    = false;
     bool         thumbnail  = false;  // A thumbnail
     bool         byproduct  = false;  //   ... of a full decode (none if it was animated: not a failure)
+    bool         preview    = false;  // A preview (of the image loading)
     image_s      image = { };
     std::vector <ImGuiToast> notices;  // What its decode had to say: shown if it is (TakeResult), with it if it is kept
   };
@@ -144,7 +156,8 @@ private:
     int                                 job     = 0;
     key_s                               key;
     bool                                preload = false;
-    bool                                thumbnail = false; // A thumbnail only
+    bool                                thumbnail = false; // A thumbnail only (or a preview)
+    bool                                preview   = false; // A preview
     std::shared_ptr <std::atomic<bool>> wanted;            // Read by its worker (an animated image stops once false)
     std::shared_ptr <void>              thread;            // Its worker thread (its handle, closed with the last copy)
   };
@@ -169,7 +182,9 @@ private:
   static void Prioritize (const inflight_s& inflight, bool waitedFor); // Its worker's priority (see image_store.cpp)
 
   int    Start     (const std::wstring& path, const key_s& key, bool animatedImages, bool preload,  // Returns its job
-                    bool thumbnailOnly = false);
+                    bool thumbnailOnly = false, bool previewOnly = false);
+  void   StartPreview  (void);                             // Of the request loading, unless there is one (or it is cached)
+  void   ReleasePreview (void);
   bool   IsWanted  (const key_s& key) const;               // Shown, next to it, or requested
   int    Priority  (const key_s& key) const;               // 3: shown or requested, 2: the next image, 1: the previous one, 0: not wanted
   bool   Keep      (const key_s& key, const image_s& image,  // Into the cache (false if it does not fit the budget)
@@ -222,4 +237,8 @@ private:
                             m_thumbnailsComing;   // Being made, by their jobs (thumbnails only, and those of full decodes)
   std::vector <key_s>       m_thumbnailsFailed;   // Could not be made (until the neighbours change)
   uint64_t                  m_tick = 0;           // Counts the thumbnails asked for (least recently used)
+
+  key_s                     m_previewKey;         // The preview of the request loading: its file (made, or being made),
+  image_s                   m_preview = { };      //   ... and it (once made)
+  int                       m_previewJob = 0;     //   ... its job (while it is made)
 };

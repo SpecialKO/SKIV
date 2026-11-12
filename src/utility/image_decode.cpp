@@ -85,6 +85,7 @@
 #include <lcms2/include/lcms2.h>
 #include "../utility/color_convert.inl"
 #include "../utility/psd.inl"
+#include "../utility/jpeg_preview.inl"
 
 #include <utility/image.h>
 
@@ -93,6 +94,7 @@ thread_local bool                  SKIV_STBI_srgb;
 thread_local stbi__context::cicp_s SKIV_STBI_CICP;
 thread_local stbi__context::sbit_s SKIV_STBI_SBIT;
 thread_local stbi__result_info     SKIV_STBI_ResultInfo;
+thread_local bool                  SKIV_STBI_RawCMYK = false; // JPEGs: CMYK and YCCK as they are (see _LoadProgressiveJPEG)
 
 // Identify file type by reading the file signature
 const std::initializer_list<FileSignature> supported_formats =
@@ -1548,6 +1550,174 @@ _LoadScaledFromWICMemory (const void* data, size_t size, size_t maxSize, DirectX
   return S_OK;
 }
 
+// Converts CMYK pixels (4 bytes each, inverted as Adobe stores them) into sRGB (RGBA, 8 bpc, opaque) by the file's CMYK
+//   profile (icc), or else Windows' default one (RSWOP.icm, U.S. Web Coated SWOP), as WIC does; the simple way if neither
+//     can be used. out may be in.
+static void
+_ConvertCMYKToSRGB (const std::vector <uint8_t>& icc, const uint8_t* in, uint8_t* out, size_t pixels)
+{
+  cmsHPROFILE source = nullptr;
+
+  if (icc.size ( ) >= 132)
+  {
+    source = cmsOpenProfileFromMem (icc.data ( ), static_cast <cmsUInt32Number> (icc.size ( )));
+
+    if (source != nullptr && cmsGetColorSpace (source) != cmsSigCmykData)
+    {
+      cmsCloseProfile (source);
+      source = nullptr;
+    }
+  }
+
+  if (source == nullptr)
+  {
+    wchar_t wszProfile [MAX_PATH] = { };
+
+    if (GetSystemDirectoryW (wszProfile, MAX_PATH) != 0 && wcscat_s (wszProfile, L"\\spool\\drivers\\color\\RSWOP.icm") == 0)
+      source = cmsOpenProfileFromFile (SK_WideCharToUTF8 (wszProfile).c_str ( ), "r");
+  }
+
+  cmsHPROFILE   srgb      = (source != nullptr) ? cmsCreate_sRGBProfile ( ) : nullptr;
+  cmsHTRANSFORM transform = (srgb   != nullptr) ? cmsCreateTransform (source, TYPE_CMYK_8_REV, srgb, TYPE_RGBA_8, INTENT_PERCEPTUAL, cmsFLAGS_NOCACHE)
+                                                : nullptr;
+
+  if (srgb   != nullptr) cmsCloseProfile (srgb);
+  if (source != nullptr) cmsCloseProfile (source);
+
+  // In rows of 4096 pixels, spread over the CPU's threads. Each row converted into a buffer of its own first, as the
+  //   transform may not work in place.
+  const size_t   chunk  = 4096;
+  const uint32_t chunks = static_cast <uint32_t> ((pixels + chunk - 1) / chunk);
+
+  _ForRows (chunks, [&] (uint32_t first, uint32_t last)
+  {
+    std::vector <uint8_t> rgba (chunk * 4);
+
+    for (uint32_t c = first; c < last; c++)
+    {
+      const size_t   start = static_cast <size_t> (c) * chunk,
+                     count = std::min (chunk, pixels - start);
+      const uint8_t* src   = in + start * 4;
+
+      if (transform != nullptr)
+        cmsDoTransform (transform, src, rgba.data ( ), static_cast <cmsUInt32Number> (count));
+
+      else for (size_t i = 0; i < count; i++)
+      {
+        // Ink amounts are 255 less these: as stb_image does it
+        auto _Blinn = [](int x, int y) -> uint8_t { const int t = x * y + 128; return static_cast <uint8_t> ((t + (t >> 8)) >> 8); };
+
+        rgba [i * 4 + 0] = _Blinn (src [i * 4 + 0], src [i * 4 + 3]);
+        rgba [i * 4 + 1] = _Blinn (src [i * 4 + 1], src [i * 4 + 3]);
+        rgba [i * 4 + 2] = _Blinn (src [i * 4 + 2], src [i * 4 + 3]);
+      }
+
+      for (size_t i = 0; i < count; i++)
+        rgba [i * 4 + 3] = 255;
+
+      memcpy (out + start * 4, rgba.data ( ), count * 4);
+    }
+  });
+
+  if (transform != nullptr)
+    cmsDeleteTransform (transform);
+}
+
+// Previews (SKIV_DecodeRequest::previewOnly) are made of images at least this large: smaller ones load quickly enough
+static constexpr size_t s_previewMinPixels = 8 * 1000 * 1000;
+
+// A progressive JPEG at an eighth of its size, quickly: its first scans (_DecodeJPEGDC), as RGBA (8 bpc; its colors as
+//   the file has them, converted after as any image's). minSize: a thumbnail's size, which it must be at least (larger
+//     ones are scaled down after); 0: a preview, of an image of at least s_previewMinPixels.
+static HRESULT
+_LoadJPEGPreview (const uint8_t* data, size_t size, size_t minSize, const color_source_s& colors, DirectX::TexMetadata& meta,
+                  DirectX::ScratchImage& img, ImVec2& sourceSize)
+{
+  std::vector <uint8_t> rgba;
+  uint32_t width = 0, height = 0, outWidth = 0, outHeight = 0;
+  bool     cmyk  = true;
+
+  if (! _DecodeJPEGDC (data, size, rgba, width, height, outWidth, outHeight, cmyk))
+    return E_FAIL;
+
+  if ((minSize != 0 && std::max (outWidth, outHeight) < minSize) ||
+      (minSize == 0 && static_cast <size_t> (width) * height < s_previewMinPixels))
+    return E_FAIL;
+
+  // CMYK: as the image will be (see _LoadProgressiveJPEG)
+  if (cmyk)
+    _ConvertCMYKToSRGB (colors.icc, rgba.data ( ), rgba.data ( ), static_cast <size_t> (outWidth) * outHeight);
+
+  HRESULT hr;
+
+  if (FAILED (hr = img.Initialize2D (DXGI_FORMAT_R8G8B8A8_UNORM, outWidth, outHeight, 1, 1)))
+    return hr;
+
+  const DirectX::Image* out = img.GetImage (0, 0, 0);
+
+  for (uint32_t y = 0; y < outHeight; y++)
+    memcpy (out->pixels + y * out->rowPitch, rgba.data ( ) + static_cast <size_t> (y) * outWidth * 4, static_cast <size_t> (outWidth) * 4);
+
+  sourceSize = ImVec2 (static_cast <float> (width), static_cast <float> (height));
+  meta       = img.GetMetadata ( );
+  return S_OK;
+}
+
+// A progressive JPEG in full, by stb_image (as RGBA, 8 bpc; CMYK and YCCK by their profile, as WIC does: see
+//   _ConvertCMYKToSRGB). In 32-bit builds (large address aware: 4 GB), only if what it takes meanwhile (its coefficients,
+//     and the image twice) is at most 1.5 GB, about what WIC takes for it (which decodes it otherwise).
+static HRESULT
+_LoadProgressiveJPEG (const uint8_t* data, size_t size, const color_source_s& colors, DirectX::TexMetadata& meta,
+                      DirectX::ScratchImage& img)
+{
+  if (size > INT_MAX)
+    return E_INVALIDARG;
+
+  int width = 0, height = 0, channels = 0;
+
+  if (! stbi_info_from_memory (data, static_cast <int> (size), &width, &height, &channels))
+    return E_FAIL;
+
+#ifndef _WIN64
+  if (static_cast <double> (width) * height * (channels * 2 + 8) > 1536.0 * 1024 * 1024)
+    return E_OUTOFMEMORY;
+#endif
+
+  const DWORD start = SKIF_Util_timeGetTime1 ( );
+
+  SKIV_STBI_RawCMYK = true;
+
+  stbi_uc*   pixels = stbi_load_from_memory (data, static_cast <int> (size), &width, &height, &channels, 4);
+  const bool cmyk   = std::exchange (SKIV_STBI_RawCMYK, false);
+
+  if (pixels == nullptr)
+  {
+    PLOG_INFO << "[Image Processing] stb_image could not decode the progressive JPEG (" << stbi_failure_reason ( ) << "): WIC decodes it";
+    return E_FAIL;
+  }
+
+  if (cmyk)
+    _ConvertCMYKToSRGB (colors.icc, pixels, pixels, static_cast <size_t> (width) * height);
+
+  HRESULT hr = img.Initialize2D (DXGI_FORMAT_R8G8B8A8_UNORM, width, height, 1, 1);
+
+  if (SUCCEEDED (hr))
+  {
+    const DirectX::Image* out = img.GetImage (0, 0, 0);
+
+    for (int y = 0; y < height; y++)
+      memcpy (out->pixels + y * out->rowPitch, pixels + static_cast <size_t> (y) * width * 4, static_cast <size_t> (width) * 4);
+
+    meta = img.GetMetadata ( );
+
+    PLOG_INFO << "[Image Processing] Decoded a progressive JPEG (" << width << "x" << height << ((cmyk) ? ", CMYK" : "")
+              << ") with stb_image in " << (SKIF_Util_timeGetTime1 ( ) - start) << " ms";
+  }
+
+  stbi_image_free (pixels);
+  return hr;
+}
+
 // A thumbnail's mipmaps (into mipmapped, false if they could not be made): it is drawn at a fraction of its size (the
 //   carousel's tiles, with a sampler that takes them), which they keep from aliasing. DirectXTex's own linear filter if
 //     WIC's cannot do the format (sRGB ones).
@@ -1722,6 +1892,10 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
     if (wanted && ! wanted ( ))
       return false;
   }
+
+  // A preview: only of a JPEG (see the general purpose decoder), as only those (progressive ones) can be made quickly
+  if (request.previewOnly && (decoder != ImageDecoder_WIC || image_sig == nullptr || image_sig->mime_type != L"image/jpeg"))
+    return false;
 
   auto _scratchMemory =
     std::make_unique <unsigned char []> (_.getInitialSize ());
@@ -2142,12 +2316,34 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
     fread  (_scratchMemory.get (), _.getInitialSize (), 1, pImageFile);
     rewind (pImageFile);
 
-    // A thumbnail only, of a JPEG: decoded at about its size (much quicker), otherwise at its full size
-    const bool scaled =
-      (request.thumbnailOnly && request.thumbnailSize > 0 && image_sig != nullptr && image_sig->mime_type == L"image/jpeg" &&
-        SUCCEEDED (_LoadScaledFromWICMemory (_scratchMemory.get (), _.getInitialSize (), request.thumbnailSize, meta, img, image.source_size)));
+    const bool jpeg        = (image_sig != nullptr && image_sig->mime_type == L"image/jpeg");
+    const bool progressive = (jpeg && _IsProgressiveJPEG (_scratchMemory.get (), _.getInitialSize ()));
 
-    if (scaled || SUCCEEDED (
+    // A thumbnail (or preview) only, of a JPEG: decoded at about its size (much quicker), otherwise at its full size.
+    //   A progressive one: its first scans, at an eighth of its size (WIC decodes all of its scans even when it scales it);
+    //     a preview of anything else is not made (it would take as long as the image).
+    bool scaled = false;
+
+    if (request.thumbnailOnly && request.thumbnailSize > 0 && jpeg)
+    {
+      scaled =
+        (progressive && SUCCEEDED (_LoadJPEGPreview (_scratchMemory.get (), _.getInitialSize (), (request.previewOnly) ? 0 : request.thumbnailSize, image.color_source,
+                                                     meta, img, image.source_size)));
+
+      if (request.previewOnly && ! scaled)
+        return false;
+
+      if (! scaled)
+        scaled =
+          SUCCEEDED (_LoadScaledFromWICMemory (_scratchMemory.get (), _.getInitialSize (), request.thumbnailSize, meta, img, image.source_size));
+    }
+
+    // A progressive JPEG in full: by stb_image, which decodes them several times quicker than WIC (whose decoder works
+    //   on one thread, and converts CMYK slowly), unless it cannot (WIC then decodes it)
+    const bool stbi = (! scaled && progressive && ! request.thumbnailOnly &&
+                       SUCCEEDED (_LoadProgressiveJPEG (_scratchMemory.get (), _.getInitialSize (), image.color_source, meta, img)));
+
+    if (scaled || stbi || SUCCEEDED (
         DirectX::LoadFromWICMemory (
           _scratchMemory.get (), _.getInitialSize (),
             DirectX::WIC_FLAGS_FILTER_POINT | DirectX::WIC_FLAGS_IGNORE_SRGB, // sRGB or not: decided below
@@ -2171,7 +2367,8 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
       image.bpc      =
         (int)DirectX::BitsPerColor (meta.format);
       image.channels =
-        DirectX::HasAlpha          (meta.format) ? 4 : 3; // 2 and 1 channel images are unsupported for now
+        (DirectX::HasAlpha (meta.format) && ! jpeg) ? 4 : 3; // 2 and 1 channel images are unsupported for now
+                                                             //   (JPEGs: none have alpha, though stb_image's are RGBA)
 
       // HDR10 (TIFF, JPEG XR...): only when the file says so, not every 16-bit image without a PNG sRGB chunk
       if (image.bpc >= 16 &&
