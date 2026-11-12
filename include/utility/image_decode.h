@@ -261,6 +261,10 @@ struct SKIV_DecodeRequest {
                                                       //   as with animatedImages off)
   std::function <void (void)> decoded;                // Optional, with a thumbnail of a full decode: called once image is
                                                       //   ready, before the thumbnail is made (image is not touched again)
+
+  // A preview of a large image (with thumbnailOnly, thumbnailSize its size): only if it can be made quickly, without
+  //   decoding the image in full (a progressive JPEG's first scans); the decode fails otherwise
+  bool                        previewOnly    = false;
 };
 
 // Decodes the file into image: its texture(s) (pRawTexSRV, the gamut coverage texture, an animated image's frames), what

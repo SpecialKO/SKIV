@@ -67,6 +67,7 @@ namespace
     int                                 job        = 0;
     unsigned int                        generation = 0;
     bool                                preload    = false;
+    bool                                preview    = false;
     SKIV_DecodeRequest                  decode;
     std::shared_ptr <std::atomic<bool>> wanted;
   };
@@ -286,19 +287,32 @@ SKIV_ImageStore::Keep (const key_s& key, const image_s& image, const std::vector
 }
 
 int
-SKIV_ImageStore::Start (const std::wstring& path, const key_s& key, bool animatedImages, bool preload, bool thumbnailOnly)
+SKIV_ImageStore::Start (const std::wstring& path, const key_s& key, bool animatedImages, bool preload, bool thumbnailOnly,
+                        bool previewOnly)
 {
   job_s* job = new job_s;
+
+  if (previewOnly)
+    thumbnailOnly = true;
 
   job->job                   = ++m_jobs;
   job->generation            = m_generation.load ( );
   job->preload               = preload;
+  job->preview               = previewOnly;
   job->decode.path           = path;
   job->decode.animatedImages = animatedImages && ! thumbnailOnly;
   job->wanted                = std::make_shared <std::atomic<bool>> (true);
 
+  // A preview: a thumbnail of its own size, made only if it can be quickly
+  if (previewOnly)
+  {
+    job->decode.thumbnailSize = SKIV_PREVIEW_SIZE;
+    job->decode.thumbnailOnly = true;
+    job->decode.previewOnly   = true;
+  }
+
   // A thumbnail: only one, or one made from a full decode, unless there is one (or one is being made)
-  if (thumbnailOnly || (m_thumbnailsOn && key.exists && FindThumbnail (key) == nullptr && ! IsThumbnailComing (key)))
+  else if (thumbnailOnly || (m_thumbnailsOn && key.exists && FindThumbnail (key) == nullptr && ! IsThumbnailComing (key)))
   {
     job->decode.thumbnailSize = SKIV_THUMBNAIL_SIZE;
     job->decode.thumbnailOnly = thumbnailOnly;
@@ -310,7 +324,9 @@ SKIV_ImageStore::Start (const std::wstring& path, const key_s& key, bool animate
   std::shared_ptr <std::atomic<bool>> wanted = job->wanted;
   job->decode.wanted = [wanted](void) -> bool { return wanted->load ( ); };
 
-  if (thumbnailOnly)
+  if (previewOnly)
+    PLOG_INFO << "[Image Store] Making a preview of " << SK_WideCharToUTF8 (path) << " (if it can be quickly)";
+  else if (thumbnailOnly)
     PLOG_INFO << "[Image Store] Making a thumbnail of " << SK_WideCharToUTF8 (path);
   else if (preload)
     PLOG_INFO << "[Image Store] Preloading " << SK_WideCharToUTF8 (path);
@@ -329,10 +345,11 @@ SKIV_ImageStore::Start (const std::wstring& path, const key_s& key, bool animate
     inflight.key       = key;
     inflight.preload   = preload;
     inflight.thumbnail = thumbnailOnly;
+    inflight.preview   = previewOnly;
     inflight.wanted    = job->wanted;
     inflight.thread    = std::shared_ptr <void> (hWorkerThread, &CloseHandle);
 
-    Prioritize (inflight, ! preload);
+    Prioritize (inflight, ! preload); // (A preview is waited for)
     m_inflight.push_back (inflight);
 
     ResumeThread (hWorkerThread);
@@ -349,7 +366,8 @@ SKIV_ImageStore::Start (const std::wstring& path, const key_s& key, bool animate
     result->generation = job->generation;
     result->key        = key;
     result->preload    = preload;
-    result->thumbnail  = thumbnailOnly;
+    result->thumbnail  = thumbnailOnly && ! previewOnly;
+    result->preview    = previewOnly;
 
     m_results.push (result);
 
@@ -435,6 +453,44 @@ SKIV_ImageStore::Request (const std::wstring& path, bool animatedImages)
 
     StartDeferred ( );
   }
+
+  // Its preview, while it loads (the previous request's is no longer needed)
+  if (! m_pendingCached)
+    StartPreview ( );
+  else
+    ReleasePreview ( );
+}
+
+void
+SKIV_ImageStore::StartPreview (void)
+{
+  if (m_pending == 0 || m_pendingCached || ! m_pendingKey.exists)
+    return;
+
+  // Made, or being made
+  if (m_previewKey == m_pendingKey && (m_preview.pRawTexSRV.p != nullptr || m_previewJob != 0))
+    return;
+
+  ReleasePreview ( );
+
+  m_previewKey = m_pendingKey;
+  m_previewJob = Start (m_pendingPath, m_pendingKey, false, false, true, true);
+}
+
+void
+SKIV_ImageStore::ReleasePreview (void)
+{
+  Release (m_preview);
+  m_preview.reset ( );
+
+  m_previewKey = { };
+  m_previewJob = 0; // (Its result is released once it comes)
+}
+
+const image_s*
+SKIV_ImageStore::Preview (const std::wstring& path) const
+{
+  return (m_preview.pRawTexSRV.p != nullptr && m_previewKey.path == path) ? &m_preview : nullptr;
 }
 
 void
@@ -508,7 +564,8 @@ SKIV_ImageStore::Worker (void* var)
   result->generation = job->generation;
   result->key        = Key (job->decode.path);
   result->preload    = job->preload;
-  result->thumbnail  = job->decode.thumbnailOnly;
+  result->thumbnail  = job->decode.thumbnailOnly && ! job->preview;
+  result->preview    = job->preview;
 
   // A full decode's thumbnail: a result of its own, made once the image is handed over
   result_s* thumbnail = nullptr;
@@ -592,6 +649,8 @@ SKIV_ImageStore::OnDeviceReset (void)
   m_thumbnailsComing.clear ( );
   m_thumbnailsFailed.clear ( );
 
+  ReleasePreview ( );
+
   if (m_pending == 0)
     return false;
 
@@ -637,6 +696,9 @@ SKIV_ImageStore::TakeResult (image_s& image, bool& success)
     success   = decoded;
     m_pending = 0;
     taken     = true;
+
+    // Its preview is no longer needed
+    ReleasePreview ( );
   };
 
   result_s* result = nullptr;
@@ -647,6 +709,31 @@ SKIV_ImageStore::TakeResult (image_s& image, bool& success)
     //   sees to after this frame (see SKIV.cpp, where it releases resources)
     extern bool SKIV_DeviceCleanupWanted;
     SKIV_DeviceCleanupWanted = true;
+
+    // A preview: kept while its image loads (none could be made of most images: no failure)
+    if (result->preview)
+    {
+      m_inflight.erase (std::remove_if (m_inflight.begin ( ), m_inflight.end ( ),
+                          [&](const inflight_s& inflight) { return inflight.job == result->job; }), m_inflight.end ( ));
+
+      if (result->job == m_previewJob)
+      {
+        m_previewJob = 0;
+
+        if (result->success && result->generation == m_generation.load ( ) && m_pending != 0 && result->key == m_pendingKey)
+        {
+          Release (m_preview);
+          Copy    (result->image, m_preview);
+
+          PLOG_INFO << "[Image Store] Showing a preview of " << SK_WideCharToUTF8 (result->key.path) << " ("
+                    << static_cast <int> (m_preview.width) << "x" << static_cast <int> (m_preview.height) << ") while it loads";
+        }
+      }
+
+      Release (result->image);
+      delete result;
+      continue;
+    }
 
     // A thumbnail: kept (if it fits), or remembered as one that cannot be made
     if (result->thumbnail)
@@ -929,7 +1016,7 @@ SKIV_ImageStore::PreloadThumbnail (void)
   const std::ptrdiff_t limit = (m_pending != 0) ? s_maxThumbnailJobsLoading : s_maxThumbnailJobs;
 
   auto running =
-    std::count_if (m_inflight.begin ( ), m_inflight.end ( ), [](const inflight_s& inflight) { return inflight.thumbnail; });
+    std::count_if (m_inflight.begin ( ), m_inflight.end ( ), [](const inflight_s& inflight) { return inflight.thumbnail && ! inflight.preview; });
 
   auto _Due = [&](const key_s& key) -> bool {
     return key.exists && FindThumbnail (key) == nullptr && ! IsThumbnailComing (key) &&
