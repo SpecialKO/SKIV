@@ -1419,28 +1419,27 @@ _ReadColorSourceWIC (const std::wstring& path, color_source_s& out)
 
 // How the file describes its colors: read from the file itself (AVIF and JPEG XL: by their decoders, below). Shown in the
 //   details panel; nothing uses it to convert colors yet.
+//   readFile: the file in memory (read once, and decoded from after), fileSize long.
 static void
-_ReadColorSource (image_s& image, const FileSignature* image_sig, FILE* pImageFile, size_t fileSize)
+_ReadColorSource (image_s& image, const FileSignature* image_sig, const std::function <const uint8_t* (void)>& readFile, size_t fileSize)
 {
   image.color_source = { };
 
-  if (image_sig == nullptr || pImageFile == nullptr)
+  if (image_sig == nullptr)
     return;
 
   const std::wstring& mime = image_sig->mime_type;
 
   if (mime == L"image/png" || mime == L"image/jpeg" || mime == L"image/webp")
   {
-    // Their color information comes before the image data (but for the EXIF chunk of a WebP), so the start of the file will do
-    std::vector <uint8_t> head (std::min <size_t> (fileSize, 64 * 1024 * 1024));
+    const uint8_t* file = readFile ( );
 
-    fseek (pImageFile, 0, SEEK_SET);
-    head.resize (fread (head.data (), 1, head.size (), pImageFile));
-    rewind (pImageFile);
+    if (file == nullptr)
+      return;
 
-    if      (mime == L"image/png")  _ReadColorSourcePNG  (head.data (), head.size (), image.color_source);
-    else if (mime == L"image/jpeg") _ReadColorSourceJPEG (head.data (), head.size (), image.color_source);
-    else                            _ReadColorSourceWebP (head.data (), head.size (), image.color_source);
+    if      (mime == L"image/png")  _ReadColorSourcePNG  (file, fileSize, image.color_source);
+    else if (mime == L"image/jpeg") _ReadColorSourceJPEG (file, fileSize, image.color_source);
+    else                            _ReadColorSourceWebP (file, fileSize, image.color_source);
   }
 
   else if (mime == L"image/tiff" || mime == L"image/heif" || mime == L"image/heic" || mime == L"image/vnd.ms-photo")
@@ -1873,7 +1872,29 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
 
   SK_AutoFile _(pImageFile);
 
-  _ReadColorSource (image, image_sig, pImageFile, _.getInitialSize ());
+  // A preview: only of a JPEG (see the general purpose decoder), as only those (progressive ones) can be made quickly
+  if (request.previewOnly && (decoder != ImageDecoder_WIC || image_sig == nullptr || image_sig->mime_type != L"image/jpeg"))
+    return false;
+
+  // The file, read into memory once, by whichever needs it first: the colors of PNGs, JPEGs and WebPs are read from it,
+  //   then the decoders decode it (stb_image, and WIC if stb_image cannot)
+  std::unique_ptr <unsigned char []> _scratchMemory;
+
+  auto _ReadFile = [&](void) -> const uint8_t*
+  {
+    if (_scratchMemory == nullptr && pImageFile != nullptr)
+    {
+      _scratchMemory = std::make_unique <unsigned char []> (_.getInitialSize ());
+
+      fseek  (pImageFile,                                 0, SEEK_SET  );
+      fread  (_scratchMemory.get (), _.getInitialSize (), 1, pImageFile);
+      rewind (pImageFile);
+    }
+
+    return _scratchMemory.get ( );
+  };
+
+  _ReadColorSource (image, image_sig, [&](void) { return _ReadFile ( ); }, _.getInitialSize ());
 
   // Animated images (APNG, GIF, WebP, AVIF): all their frames, which the viewer plays. One that cannot be played (too large,
   //   or malformed) is loaded as a still image below: its first frame (an APNG: its default image).
@@ -1893,13 +1914,6 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
       return false;
   }
 
-  // A preview: only of a JPEG (see the general purpose decoder), as only those (progressive ones) can be made quickly
-  if (request.previewOnly && (decoder != ImageDecoder_WIC || image_sig == nullptr || image_sig->mime_type != L"image/jpeg"))
-    return false;
-
-  auto _scratchMemory =
-    std::make_unique <unsigned char []> (_.getInitialSize ());
-
   PLOG_ERROR_IF(decoder == ImageDecoder_None) << "Failed to detect file type!";
   PLOG_DEBUG_IF(decoder == ImageDecoder_stbi) << "Using stbi decoder...";
   PLOG_DEBUG_IF(decoder == ImageDecoder_WIC ) << "Using WIC decoder...";
@@ -1917,9 +1931,7 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
 
   if (decoder == ImageDecoder_UHDR)
   {
-    fseek  (pImageFile,                                 0, SEEK_SET  );
-    fread  (_scratchMemory.get (), _.getInitialSize (), 1, pImageFile);
-    rewind (pImageFile);
+    _ReadFile ( );
 
     image.light_info.isHDR = true;
     image.is_hdr           = true;
@@ -1940,9 +1952,7 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
   //         come converted to scRGB already, 32 bpc ones as linear light (HDR).
   if (decoder == ImageDecoder_PSD)
   {
-    fseek  (pImageFile,                                 0, SEEK_SET  );
-    fread  (_scratchMemory.get (), _.getInitialSize (), 1, pImageFile);
-    rewind (pImageFile);
+    _ReadFile ( );
 
     std::string failure;
 
@@ -2001,13 +2011,9 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
 #define STBI_FLOAT
 #if defined (STBI_FLOAT) || !defined(HAS_WORKING_STB_GAMMA)
     // Check whether the image is a HDR image or not
-    image.light_info.isHDR = stbi_is_hdr_from_file (pImageFile);
+    image.light_info.isHDR = stbi_is_hdr_from_memory (_ReadFile ( ), static_cast <int> (_.getInitialSize ()));
 
     PLOG_VERBOSE << "STBI thinks the image is... " << ((image.light_info.isHDR) ? "HDR" : "SDR");
-
-    fseek  (pImageFile,                                 0, SEEK_SET  );
-    fread  (_scratchMemory.get (), _.getInitialSize (), 1, pImageFile);
-    rewind (pImageFile);
 
     // HDR10 PNGs (Rec. 2020 primaries, PQ): by their cICP chunk, or the cICP of their ICC profile (as SKIV and Special K
     //   write them), see _IsHDR10ColorSource. Decoded by WIC below, then converted to scRGB. Every other PNG is SDR.
@@ -2053,13 +2059,13 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
     if (pixels == NULL && SKIV_STBI_CICP.primaries == 0)
     {
       decoder = ImageDecoder_WIC;
-      PLOG_ERROR << "Using WIC decoder due to STB failing with: " << stbi_failure_reason();
+      PLOG_INFO << "[Image Processing] Decoding it with WIC: stb_image cannot (its last error: " << stbi_failure_reason ( ) << ")";
     }
 
     else if (pixels != nullptr && SKIV_STBI_srgb && !cicp && !SKIV_STBI_ICCP.iCCP)
     {
       decoder = ImageDecoder_WIC;
-      PLOG_ERROR << "Using WIC decoder due to STB incorrectly handling sRGB";
+      PLOG_INFO << "[Image Processing] Decoding it with WIC: it is sRGB, which stb_image does not decode correctly (no sRGB curve)";
     }
 #endif
 
@@ -2114,7 +2120,7 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
                 dxgi_format == DXGI_FORMAT_R16G16B16A16_FLOAT) && image.is_hdr))
         {
           decoder = ImageDecoder_WIC;
-          PLOG_ERROR << "Using WIC decoder due to STB incorrectly handling sRGB";
+          PLOG_INFO << "[Image Processing] Decoding it with WIC: it is SDR, which stb_image does not decode correctly (no sRGB curve)";
         }
 #endif
         // Good grief this is inefficient, let's convert it to something reasonable...
@@ -2281,9 +2287,7 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
   // WebP still images (and an animated one's first frame): libwebp, or WIC if it cannot decode it
   if (decoder == ImageDecoder_WebP)
   {
-    fseek  (pImageFile,                                 0, SEEK_SET  );
-    fread  (_scratchMemory.get (), _.getInitialSize (), 1, pImageFile);
-    rewind (pImageFile);
+    _ReadFile ( );
 
     uint32_t              width    = 0,
                           height   = 0;
@@ -2312,9 +2316,7 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
 
   if (decoder == ImageDecoder_WIC)
   {
-    fseek  (pImageFile,                                 0, SEEK_SET  );
-    fread  (_scratchMemory.get (), _.getInitialSize (), 1, pImageFile);
-    rewind (pImageFile);
+    _ReadFile ( );
 
     const bool jpeg        = (image_sig != nullptr && image_sig->mime_type == L"image/jpeg");
     const bool progressive = (jpeg && _IsProgressiveJPEG (_scratchMemory.get (), _.getInitialSize ()));
@@ -2493,9 +2495,7 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
 
   if (decoder == ImageDecoder_DDS)
   {
-    fseek  (pImageFile,                                 0, SEEK_SET  );
-    fread  (_scratchMemory.get (), _.getInitialSize (), 1, pImageFile);
-    rewind (pImageFile);
+    _ReadFile ( );
 
     if (SUCCEEDED (
         DirectX::LoadFromDDSMemory (
@@ -2553,9 +2553,7 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
 
   if (decoder == ImageDecoder_HDR)
   {
-    fseek  (pImageFile,                                 0, SEEK_SET  );
-    fread  (_scratchMemory.get (), _.getInitialSize (), 1, pImageFile);
-    rewind (pImageFile);
+    _ReadFile ( );
 
     using namespace DirectX;
 
@@ -2608,9 +2606,7 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
         std::min (32U, std::min ((UINT)si.dwNumberOfProcessors, (UINT)__popcnt   (si.dwActiveProcessorMask)));
 #endif
 
-      fseek  (pImageFile,                                 0, SEEK_SET  );
-      fread  (_scratchMemory.get (), _.getInitialSize (), 1, pImageFile);
-      rewind (pImageFile);
+      _ReadFile ( );
 
       SK_avifDecoderSetIOMemory (avif_decoder, _scratchMemory.get (), _.getInitialSize ());
 
@@ -3068,9 +3064,7 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
         (format.data_type == JXL_TYPE_FLOAT16) ? (sizeof (float)/2) * format.num_channels  :
                                                   sizeof (uint8_t)  * format.num_channels;
 
-      fseek  (pImageFile,                                 0, SEEK_SET  );
-      fread  (_scratchMemory.get (), _.getInitialSize (), 1, pImageFile);
-      rewind (pImageFile);
+      _ReadFile ( );
 
       jxlDecoderSetInput   (jxl_decoder, _scratchMemory.get (), _.getInitialSize ());
       jxlDecoderCloseInput (jxl_decoder);
