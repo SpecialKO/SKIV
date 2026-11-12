@@ -636,7 +636,8 @@ _DecodeAVIF (const uint8_t* data, size_t size, const std::function <bool (const 
 
     frames++;
 
-    const uint32_t delay = static_cast <uint32_t> (std::lround (std::max (decoder->imageTiming.duration, 0.0) * 1000.0));
+    // (Microseconds: 1/60 s is not a whole number of milliseconds)
+    const uint32_t delay = static_cast <uint32_t> (std::clamp (std::llround (decoder->imageTiming.duration * 1000000.0), 1LL, static_cast <long long> (UINT32_MAX)));
 
     if (! onFrame (decoder->image, delay))
       break;
@@ -1022,7 +1023,7 @@ struct image_anim_stream_s
   std::mutex                                       lock;
   std::condition_variable                          cv;          // Signaled when a frame is decoded, or playback moves on
   std::vector <CComPtr <ID3D11ShaderResourceView>> frames;      // Their textures (null: not decoded, or released)
-  std::vector <DWORD>                              delays;      // How long each shows (ms), 0 while not known yet
+  std::vector <uint32_t>                           delays;      // How long each shows (microseconds), 0 while not known yet
   size_t                                           count   = 0; // How many frames it has (fewer than scanned if the file breaks off)
   size_t                                           current = 0; // The frame shown (image_anim_s::current)
   size_t                                           ahead   = 0, // Streamed: how many frames are kept after it,
@@ -1349,7 +1350,22 @@ image_anim_s::getCount (void) const
   return stream->count;
 }
 
-DWORD
+// The clock animations play by: microseconds (frames may last fractions of a millisecond: 1/60 s), never 0
+static uint64_t
+_AnimationClock (void)
+{
+  static const LARGE_INTEGER frequency = [](void) { LARGE_INTEGER f = { }; QueryPerformanceFrequency (&f); return f; } ( );
+
+  LARGE_INTEGER counter = { };
+  QueryPerformanceCounter (&counter);
+
+  const uint64_t ticks = static_cast <uint64_t> (counter.QuadPart),
+                 freq  = static_cast <uint64_t> (frequency.QuadPart);
+
+  return 1 + (ticks / freq) * 1000000 + ((ticks % freq) * 1000000) / freq;
+}
+
+uint32_t
 image_anim_s::getDelay (size_t frame) const
 {
   if (stream == nullptr)
@@ -1359,7 +1375,7 @@ image_anim_s::getDelay (size_t frame) const
   return (frame < stream->count) ? stream->delays [frame] : 0;
 }
 
-DWORD
+uint64_t
 image_anim_s::getDuration (void) const
 {
   if (stream == nullptr)
@@ -1367,7 +1383,7 @@ image_anim_s::getDuration (void) const
 
   std::lock_guard <std::mutex> lock (stream->lock);
 
-  DWORD duration = 0;
+  uint64_t duration = 0;
 
   for (size_t i = 0; i < stream->count; i++)
   {
@@ -1381,29 +1397,29 @@ image_anim_s::getDuration (void) const
 }
 
 void
-image_anim_s::play (DWORD now)
+image_anim_s::play (void)
 {
   if (! paused)
     return;
 
   paused  = false;
-  shownAt = (shownAt != 0) ? now - pausedIn : 0;
+  shownAt = (shownAt != 0) ? _AnimationClock ( ) - pausedIn : 0;
 }
 
 void
-image_anim_s::pause (DWORD now)
+image_anim_s::pause (void)
 {
   if (paused)
     return;
 
   paused   = true;
-  pausedIn = (shownAt != 0) ? now - shownAt : 0;
+  pausedIn = (shownAt != 0) ? _AnimationClock ( ) - shownAt : 0;
 }
 
 void
-image_anim_s::step (DWORD now, int frames)
+image_anim_s::step (int frames)
 {
-  pause (now);
+  pause ( );
 
   if (stream == nullptr)
     return;
@@ -1416,7 +1432,7 @@ image_anim_s::step (DWORD now, int frames)
     return;
 
   current  = static_cast <size_t> (((static_cast <long long> (current) + frames) % count + count) % count);
-  shownAt  = now;
+  shownAt  = _AnimationClock ( );
   pausedIn = 0;
 
   stream->current = current;
@@ -1424,8 +1440,9 @@ image_anim_s::step (DWORD now, int frames)
   stream->cv.notify_all ( );
 }
 
+
 ID3D11ShaderResourceView*
-image_anim_s::update (DWORD now, DWORD& nextAt, bool& changed)
+image_anim_s::update (DWORD& nextAt, bool& changed)
 {
   nextAt  = 0;
   changed = false;
@@ -1444,7 +1461,8 @@ image_anim_s::update (DWORD now, DWORD& nextAt, bool& changed)
   if (count == 0)
     return shown.p;
 
-  bool moved = false;
+  const uint64_t now   = _AnimationClock ( );
+  bool           moved = false;
 
   // It has fewer frames than it was scanned to have
   if (current >= count)
@@ -1461,9 +1479,9 @@ image_anim_s::update (DWORD now, DWORD& nextAt, bool& changed)
 
     else for (size_t i = 0; i < count; i++)
     {
-      const DWORD due = shownAt + s.delays [current];
+      const uint64_t due = shownAt + s.delays [current];
 
-      if (static_cast <LONG> (now - due) < 0)
+      if (now < due)
         break;
 
       // Not decoded yet: this one stays until it is
@@ -1475,8 +1493,9 @@ image_anim_s::update (DWORD now, DWORD& nextAt, bool& changed)
       current = next;
       moved   = true;
 
-      // Late, as it waited for it: on from now, rather than catching up
-      shownAt = (static_cast <LONG> (now - due) > 100) ? now : due;
+      // On time: from when it was due, so that frames of fractions of a millisecond keep their pace (1/60 s: 16.67 ms).
+      //   Late, as it waited for it: on from now, rather than catching up.
+      shownAt = (now - due > 100000) ? now : due;
     }
   }
 
@@ -1503,11 +1522,20 @@ image_anim_s::update (DWORD now, DWORD& nextAt, bool& changed)
   if (! ready && ! s.ended)
     s.waiting = true;
 
+  // When the next frame is due, on the main loop's clock (milliseconds, rounded up: never early)
   if (! paused)
   {
-    const DWORD due = (s.frames [current] != nullptr) ? shownAt + s.delays [current] : now;
+    uint64_t due = (s.frames [current] != nullptr) ? shownAt + s.delays [current] : now;
 
-    nextAt = (ready || static_cast <LONG> (due - (now + 100)) > 0) ? due : now + 100;
+    if (! ready)
+      due = std::max (due, now + 100000);
+
+    const uint64_t in = (due > now) ? due - now : 0;
+
+    nextAt = SKIF_Util_timeGetTime1 ( ) + static_cast <DWORD> ((in + 999) / 1000);
+
+    if (nextAt == 0)
+      nextAt = 1;
   }
 
   return shown.p;
