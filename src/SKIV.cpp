@@ -2156,10 +2156,14 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
       ImGui::BeginGroup ();
 
-      static bool last_snip_state = false;
+      // Region snips are made in a window of their own (the snipping overlay, below): a Dear ImGui window with a platform
+      //   window (viewport) of its own, borderless and topmost over the display captured, so that the main window is left
+      //     as it is. Its platform window, once Dear ImGui has made it, and whether it has had the focus yet.
+      static HWND hWndSnip    = NULL;
+      static bool snipFocused = false;
 
-      // Implicitly cancel snipping if focus changes during snipping
-      if (_registry._SnippingMode && last_snip_state && GetFocus () != SKIF_ImGui_hWnd)
+      // Implicitly cancel snipping if the focus moves away from its window during snipping
+      if (_registry._SnippingMode && snipFocused && GetForegroundWindow () != hWndSnip)
       {
         _registry._SnippingMode     = false;
         _registry._SnippingModeExit =  true;
@@ -2171,57 +2175,21 @@ wWinMain ( _In_     HINSTANCE hInstance,
         _registry._SnippingModeExit   = false;
         _registry._SnippingModeInit   =  true;
 
+        // The overlay, hidden at once (Dear ImGui destroys its window once it is no longer drawn, a frame or so later)
+        if (hWndSnip != NULL && IsWindow (hWndSnip))
+          ShowWindow (hWndSnip, SW_HIDE);
+
+        hWndSnip    = NULL;
+        snipFocused = false;
+
+        // The focus back to the window that had it before
         extern HWND hwndBeforeSnip;
-        extern HWND hwndTopBeforeSnip;
-        extern bool iconicBeforeSnip;
-        extern bool trayedBeforeSnip;
 
-        SetForegroundWindow (hwndBeforeSnip);
-
-        // Clear the SwapChain backbuffer to black before restoring, otherwise
-        //   old garbage from a previous snip will briefly appear on screen...
-        if (ImGuiViewport *vp = ImGui::FindViewportByPlatformHandle ((void *)SKIF_ImGui_hWnd))
-        {
-          extern void SKIF_ImplDX11_ViewPort_ClearAndPresent (ImGuiViewport*);
-          SKIF_ImplDX11_ViewPort_ClearAndPresent (vp);
-        }
-
-        if (iconicBeforeSnip || trayedBeforeSnip)
-        {
-          // Hide the window while we do this so that it doesn't
-          //   briefly appear in the wrong place...
-          ShowWindow (SKIF_ImGui_hWnd, SW_HIDE);
-        }
-
-        SKIF_ImGui_SetFullscreen (SKIF_ImGui_hWnd, false);
-
-        // Put SKIV back in the correct Z-order
-        DWORD exStyle  = (DWORD)GetWindowLongPtrW (SKIF_ImGui_hWnd, GWL_EXSTYLE);
-              exStyle &= ~(WS_EX_NOACTIVATE | WS_EX_TOPMOST);
-        SetWindowLongPtrW (SKIF_ImGui_hWnd, GWL_EXSTYLE, exStyle);
-
-        SetWindowPos (SKIF_ImGui_hWnd, HWND_BOTTOM, 0,0,0,0, SWP_NOSIZE|SWP_NOMOVE|SWP_NOACTIVATE|SWP_ASYNCWINDOWPOS);
-
-        if (iconicBeforeSnip)
-          ShowWindowAsync (SKIF_ImGui_hWnd, SW_SHOWMINNOACTIVE);
-
-        if (trayedBeforeSnip)
-        {
-          ShowWindowAsync (SKIF_ImGui_hWnd, SW_SHOWMINNOACTIVE);
-          SKIF_isTrayed = true;
-        }
-
-        else
-        {
-          ShowWindowAsync (SKIF_ImGui_hWnd, SW_SHOWNOACTIVATE);
-          SetWindowPos    (SKIF_ImGui_hWnd, hwndTopBeforeSnip != SKIF_ImGui_hWnd ?
-                                            hwndTopBeforeSnip                    : HWND_TOP, 0,0,0,0, SWP_NOSIZE|SWP_NOMOVE|SWP_NOACTIVATE|SWP_ASYNCWINDOWPOS);
-        }
+        if (hwndBeforeSnip != NULL && IsWindow (hwndBeforeSnip))
+          SetForegroundWindow (hwndBeforeSnip);
 
         ImGui::GetIO ().MouseDown         [0] = false;
         ImGui::GetIO ().MouseDownDuration [0] = -1.0f;
-
-        last_snip_state = false;
       };
 
       // Begin Snipping Mode
@@ -2244,11 +2212,43 @@ wWinMain ( _In_     HINSTANCE hInstance,
                           SKIV_DesktopImage._desktop_pos + resolution);
         SKIV_CaptureData capture_data = SKIV_CaptureData (ImRect(), L"", CaptureMode_None);
 
+        // The snipping overlay: over the display captured (Dear ImGui's positions are the desktop's), in a platform window
+        //   of its own (no frame, no taskbar button, topmost), which shows the capture of the display and the selection
+        static ImGuiWindowClass SKIV_SnippingOverlay = [](void) {
+          ImGuiWindowClass wc;
+          wc.ViewportFlagsOverrideSet = ImGuiViewportFlags_NoAutoMerge | ImGuiViewportFlags_NoDecoration |
+                                        ImGuiViewportFlags_NoTaskBarIcon | ImGuiViewportFlags_TopMost;
+          return wc;
+        } ( );
+
+        ImGui::SetNextWindowClass (&SKIV_SnippingOverlay);
+        ImGui::SetNextWindowPos   (allowable.Min);
+        ImGui::SetNextWindowSize  (allowable.GetSize ( ));
+
+        ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding,    ImVec2 (0.0f, 0.0f));
+        ImGui::PushStyleVar (ImGuiStyleVar_WindowBorderSize, 0.0f);
+        ImGui::PushStyleVar (ImGuiStyleVar_WindowRounding,   0.0f);
+
+        ImGui::Begin ("###SKIV_SnippingOverlay", nullptr,
+                        ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove      | ImGuiWindowFlags_NoResize          |
+                        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoScrollWithMouse |
+                        ImGuiWindowFlags_NoNav);
+
+        ImGui::PopStyleVar (3);
+
+        // Its platform window (none until Dear ImGui has made it, at the end of its first frame)
+        {
+          ImGuiViewport* vp = ImGui::GetWindowViewport ( );
+
+          hWndSnip = (vp != nullptr && vp->PlatformWindowCreated && vp->PlatformHandle != SKIF_ImGui_hWnd)
+                   ? static_cast <HWND> (vp->PlatformHandle) : NULL;
+        }
+
         bool HDR_Image = SKIV_DesktopImage._hdr_image;
-        bool SKIV_HDR  = (HDR_Image ? SKIF_ImGui_IsViewportHDR (SKIF_ImGui_hWnd) : false);
+        bool SKIV_HDR  = (HDR_Image && hWndSnip != NULL) ? SKIF_ImGui_IsViewportHDR (hWndSnip) : false;
 
         // Temporarily engage HDR mode for SKIV during snipping mode
-        if (HDR_Image && ! SKIV_HDR && SKIF_ImGui_IsViewportHDRCapable (SKIF_ImGui_hWnd))
+        if (HDR_Image && ! SKIV_HDR && hWndSnip != NULL && SKIF_ImGui_IsViewportHDRCapable (hWndSnip))
         {
           _registry._SnippingModeTempHDR = true;
           _registry.iHDRMode = 2;
@@ -2278,8 +2278,14 @@ wWinMain ( _In_     HINSTANCE hInstance,
         static SKIV_CaptureData selection      = SKIV_CaptureData (ImRect(), L"Desktop_Region", CaptureMode_Region);
         static SKIV_CaptureData selection_auto = SKIV_CaptureData (ImRect(), L"Desktop_Auto",   CaptureMode_Region);
 
-        if (GetForegroundWindow () != SKIF_ImGui_hWnd)
-            SetForegroundWindow (     SKIF_ImGui_hWnd);
+        // The overlay has the focus (keyboard: Escape, Ctrl+S, Ctrl+E), once its window is there
+        if (hWndSnip != NULL)
+        {
+          if (GetForegroundWindow () != hWndSnip)
+            SetForegroundWindow (hWndSnip);
+          else
+            snipFocused = true;
+        }
 
         // Let us store all ignored windows in a hash set for quick reuse
         static std::unordered_set <HWND> ignoredWindows = { };
@@ -2302,7 +2308,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
           // Ignore windows of various characteristics
           if (
-               SKIF_ImGui_hWnd  ==   hWnd
+               hWndSnip         ==   hWnd   // (The overlay; the main window is one to capture as any other)
             ||    ! IsWindowVisible (hWnd)
             || (RealGetWindowClassW (hWnd, wszWindowTextBuffer, 64) && ignoreClassNames.count (wszWindowTextBuffer))
             ||     ! GetWindowTextW (hWnd, wszWindowTextBuffer, 64)
@@ -2657,18 +2663,31 @@ wWinMain ( _In_     HINSTANCE hInstance,
             SKIV_Image_CaptureRegion (capture_data);
           }
         }
+
+        // The input of this frame is the snip's: the viewer, drawn after it (in the main window, which stays as it is),
+        //   must not act on it (e.g. a right click opening its menu, Delete deleting the image, Ctrl+wheel zooming)
+        {
+          const ImGuiID owner = ImGui::GetID ("###SKIV_SnippingOverlayInput");
+
+          for (int key = ImGuiKey_NamedKey_BEGIN; key < ImGuiKey_NamedKey_END; key++)
+            ImGui::SetKeyOwner (static_cast <ImGuiKey> (key), owner, ImGuiInputFlags_LockThisFrame);
+
+          ImGui::GetIO ( ).MouseWheel  = 0.0f;
+          ImGui::GetIO ( ).MouseWheelH = 0.0f;
+        }
+
+        ImGui::End ( );
 #pragma endregion
       }
 
       if (_registry._SnippingModeExit)
         _RestoreWindow ();
 
-      // Begin Large Mode
-      if (! _registry._SnippingMode)
+      // Begin Large Mode: also while snipping (in the main window, as it is: the snipping overlay is a window of its own)
       {
 #pragma region UI: Large Mode
 
-        if (_registry._SnippingModeTempHDR)
+        if (_registry._SnippingModeTempHDR && ! _registry._SnippingMode)
         {
           _registry._SnippingModeTempHDR = false;
           _registry.iHDRMode = 0;
@@ -2799,7 +2818,6 @@ wWinMain ( _In_     HINSTANCE hInstance,
 #pragma endregion
       }
 
-      last_snip_state = _registry._SnippingMode;
 
       ImGui::EndGroup             ( );
 
@@ -4599,12 +4617,6 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
       {
         PLOG_VERBOSE << "Capture was successful!";
 
-        extern HWND hwndTopBeforeSnip;
-        extern bool iconicBeforeSnip;
-        extern bool trayedBeforeSnip;
-
-      //extern ImRect selection_rect;
-
         if (mode == CaptureMode_Window)
         {
           const SKIV_CaptureData region =
@@ -4641,34 +4653,10 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
           _registry._SnippingMode = false;
         }
 
-        // CaptureMode_Region
+        // CaptureMode_Region: in a window of its own over the display captured (the snipping overlay, see the main loop),
+        //   which leaves the main window as it is (shown, minimized or in the tray, wherever it is)
         else
         {
-          hwndTopBeforeSnip = GetWindow (SKIF_ImGui_hWnd, GW_HWNDPREV);
-
-          trayedBeforeSnip = SKIF_isTrayed;
-          iconicBeforeSnip =
-            IsIconic (SKIF_ImGui_hWnd);
-
-          if (SKIF_isTrayed)
-          {   SKIF_isTrayed = false;
-            ShowWindow (SKIF_ImGui_hWnd, SW_SHOWNORMAL);
-          }
-
-          if (iconicBeforeSnip)
-            ShowWindow (SKIF_ImGui_hWnd, SW_RESTORE);
-
-          SetWindowPos (SKIF_ImGui_hWnd, HWND_TOPMOST, 0,0,0,0, SWP_NOSIZE|SWP_NOMOVE|SWP_NOACTIVATE);
-
-          HMONITOR monitor =
-            MonitorFromPoint (capture_point, MONITOR_DEFAULTTONEAREST);
-
-          SKIF_ImGui_SetFullscreen (SKIF_ImGui_hWnd, true, monitor);
-          UpdateWindow             (SKIF_ImGui_hWnd);
-
-        //selection_rect.Min = ImVec2 (0.0f, 0.0f);
-        //selection_rect.Max = ImVec2 (0.0f, 0.0f);
-
           ImGui::GetIO ().MouseDown         [0] = false;
           ImGui::GetIO ().MouseDownDuration [0] = -1.0f;
         }
