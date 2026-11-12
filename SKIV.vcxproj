@@ -828,6 +828,16 @@
       <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
       </ObjectFileOutput>
     </FxCompile>
+    <FxCompile Include="resources\shaders\avif_yuv_cs.hlsl">
+      <ShaderType>Compute</ShaderType>
+      <ShaderModel>5.0</ShaderModel>
+      <EntryPointName>main</EntryPointName>
+      <EnableDebuggingInformation>false</EnableDebuggingInformation>
+      <VariableName>avif_yuv_cs_bytecode</VariableName>
+      <HeaderFileOutput>%(DefiningProjectDirectory)\resources\shaders\avif_yuv_cs.h</HeaderFileOutput>
+      <ObjectFileOutput>
+      </ObjectFileOutput>
+    </FxCompile>
     <FxCompile Include="resources\shaders\imgui_vtx_shader.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Vertex</ShaderType>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Vertex</ShaderType>

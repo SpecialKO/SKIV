@@ -440,6 +440,16 @@ SKIV_CaptureImage (image_s& image, DirectX::ScratchImage& captured, bool scRGB =
   if (FAILED (hr))
     return hr;
 
+  // A typeless texture (an AVIF's frame made RGBA on the GPU): as its view has it (sRGB)
+  if (DirectX::IsTypeless (texture.GetMetadata ( ).format))
+  {
+    D3D11_SHADER_RESOURCE_VIEW_DESC desc = { };
+    pSRV->GetDesc (&desc);
+
+    if (! texture.OverrideFormat (desc.Format))
+      return E_FAIL;
+  }
+
   // Wide gamut SDR (scRGB): as sRGB of 8 bpc, the colors outside of it clipped, unless asked for as it is
   if (wideSDR && ! scRGB)
     return DirectX::Convert (*texture.GetImages ( ), DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, DirectX::TEX_FILTER_DEFAULT, 0.0f, captured);

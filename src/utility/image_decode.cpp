@@ -581,20 +581,52 @@ _ScanAVIF (const uint8_t* data, size_t size, uint32_t& width, uint32_t& height, 
   return ! hdr;
 }
 
-// Decodes the frames of an AVIF image sequence, as RGBA (8 bpc), handing each over to onFrame with how long it is shown
-//   (in milliseconds), until it returns false. How many frames were decoded, or -1 if none could be.
+// A frame of an AVIF image sequence (as libavif decodes it: YUV) as RGBA (8 bpc), width x height, into canvas: by libavif,
+//   on the CPU (see _CreateYUVFrame for the GPU's way). False if it could not be converted.
+static bool
+_AVIFFrameToRGBA (const avifImage* frame, int threads, std::vector <uint8_t>& canvas)
+{
+  const uint32_t width  = frame->width,
+                 height = frame->height;
+
+  avifRGBImage rgb;
+  SK_avifRGBImageSetDefaults (&rgb, frame);
+  rgb.format      = AVIF_RGB_FORMAT_RGBA;
+  rgb.depth       = 8;
+  rgb.ignoreAlpha = AVIF_FALSE;
+  rgb.maxThreads  = threads;
+
+  if (SK_avifRGBImageAllocatePixels (&rgb) != AVIF_RESULT_OK)
+    return false;
+
+  const bool converted = (SK_avifImageYUVToRGB (frame, &rgb) == AVIF_RESULT_OK);
+
+  if (converted)
+  {
+    canvas.resize (static_cast <size_t> (width) * height * 4);
+
+    for (uint32_t y = 0; y < height; y++)
+      memcpy (&canvas [static_cast <size_t> (y) * width * 4], rgb.pixels + static_cast <size_t> (y) * rgb.rowBytes, static_cast <size_t> (width) * 4);
+  }
+
+  SK_avifRGBImageFreePixels (&rgb);
+  return converted;
+}
+
+// Decodes the frames of an AVIF image sequence, handing each over to onFrame as libavif decodes it (YUV: made RGBA by the
+//   caller, if it wants it at all, see _AVIFFrameToRGBA), with how long it is shown (in milliseconds), until it returns
+//     false. How many frames were decoded, or -1 if none could be.
 static int
-_DecodeAVIF (const uint8_t* data, size_t size, const std::function <bool (const uint8_t*, uint32_t)>& onFrame)
+_DecodeAVIF (const uint8_t* data, size_t size, const std::function <bool (const avifImage*, uint32_t)>& onFrame)
 {
   avifDecoder* decoder = _OpenAVIF (data, size);
 
   if (decoder == nullptr)
     return -1;
 
-  const uint32_t        width  = decoder->image->width,
-                        height = decoder->image->height;
-  std::vector <uint8_t> canvas (static_cast <size_t> (width) * height * 4);
-  int                   frames = 0;
+  const uint32_t width  = decoder->image->width,
+                 height = decoder->image->height;
+  int            frames = 0;
 
   while (SK_avifDecoderNextImage (decoder) == AVIF_RESULT_OK)
   {
@@ -602,34 +634,11 @@ _DecodeAVIF (const uint8_t* data, size_t size, const std::function <bool (const 
     if (decoder->image->width != width || decoder->image->height != height)
       break;
 
-    avifRGBImage rgb;
-    SK_avifRGBImageSetDefaults (&rgb, decoder->image);
-    rgb.format      = AVIF_RGB_FORMAT_RGBA;
-    rgb.depth       = 8;
-    rgb.ignoreAlpha = AVIF_FALSE;
-    rgb.maxThreads  = decoder->maxThreads;
-
-    bool converted = false;
-
-    if (SK_avifRGBImageAllocatePixels (&rgb) == AVIF_RESULT_OK)
-    {
-      converted = (SK_avifImageYUVToRGB (decoder->image, &rgb) == AVIF_RESULT_OK);
-
-      if (converted)
-        for (uint32_t y = 0; y < height; y++)
-          memcpy (&canvas [static_cast <size_t> (y) * width * 4], rgb.pixels + static_cast <size_t> (y) * rgb.rowBytes, static_cast <size_t> (width) * 4);
-
-      SK_avifRGBImageFreePixels (&rgb);
-    }
-
-    if (! converted)
-      break;
-
     frames++;
 
     const uint32_t delay = static_cast <uint32_t> (std::lround (std::max (decoder->imageTiming.duration, 0.0) * 1000.0));
 
-    if (! onFrame (canvas.data ( ), delay))
+    if (! onFrame (decoder->image, delay))
       break;
   }
 
@@ -640,7 +649,8 @@ _DecodeAVIF (const uint8_t* data, size_t size, const std::function <bool (const 
 #pragma endregion
 
 // An animated image (APNG, GIF, WebP, AVIF), read and parsed: its canvas, and how many frames it has. Decode ( ) hands
-//   over its frames (the canvas as it is at each, RGBA, and how long it is shown).
+//   over its frames, and how long each is shown: the canvas as it is at each (RGBA), or an AVIF's frame as libavif decodes
+//     it (YUV, canvas then being null: each of its frames is whole).
 struct animated_image_s
 {
   std::vector <uint8_t> file;
@@ -653,12 +663,16 @@ struct animated_image_s
                         height = 0,
                         count  = 0;
 
-  int Decode (const std::function <bool (const uint8_t*, uint32_t)>& onFrame) const
+  using on_frame_fn = std::function <bool (const uint8_t* canvas, const avifImage* yuv, uint32_t delay)>;
+
+  int Decode (const on_frame_fn& onFrame) const
   {
-    return (isAVIF) ? _DecodeAVIF (file.data ( ), file.size ( ), onFrame) :
-           (isWebP) ? _DecodeWebP (file.data ( ), file.size ( ), onFrame) :
-           (isGIF)  ? _DecodeGIF  (file.data ( ), file.size ( ), onFrame)
-                    : _DecodeAPNG (apng, onFrame);
+    auto _Canvas = [&](const uint8_t* canvas, uint32_t delay) { return onFrame (canvas, nullptr, delay); };
+
+    return (isAVIF) ? _DecodeAVIF (file.data ( ), file.size ( ), [&](const avifImage* yuv, uint32_t delay) { return onFrame (nullptr, yuv, delay); }) :
+           (isWebP) ? _DecodeWebP (file.data ( ), file.size ( ), _Canvas) :
+           (isGIF)  ? _DecodeGIF  (file.data ( ), file.size ( ), _Canvas)
+                    : _DecodeAPNG (apng, _Canvas);
   }
 };
 
@@ -738,6 +752,269 @@ _OpenAnimatedImage (const std::wstring& path, animated_image_s& image)
 
 extern concurrency::concurrent_queue <IUnknown *> SKIF_ResourcesToFree;
 
+// A frame of an AVIF image sequence to be made RGBA on the GPU (avif_yuv_cs.hlsl), as libavif's own conversion (on the
+//   CPU) takes about four times as long as decoding it: its planes as libavif decoded them (YUV), uploaded as they are by
+//     the thread decoding them (_CreateYUVFrame), and the texture they are made into (by the main thread, as only it may
+//       use the immediate context: _ConvertYUVFrames, from image_anim_s::update)
+struct anim_yuv_s
+{
+  CComPtr <ID3D11ShaderResourceView>  planes [4]; // Y, U, V, alpha (null: none)
+  CComPtr <ID3D11Buffer>              constants;  // (See the shader)
+  CComPtr <ID3D11UnorderedAccessView> output;
+  UINT                                width  = 0,
+                                      height = 0;
+
+  // Pushes its textures to be released
+  void Release (void)
+  {
+    for (auto& plane : planes)
+      if (plane.p != nullptr)
+        SKIF_ResourcesToFree.push (plane.Detach ( ));
+
+    if (constants.p != nullptr) SKIF_ResourcesToFree.push (constants.Detach ( ));
+    if (output.p    != nullptr) SKIF_ResourcesToFree.push (output.Detach    ( ));
+  }
+};
+
+// The constants of avif_yuv_cs.hlsl for a frame (as libavif converts it: avifImageYUVToRGB). False if the frame is not
+//   one the shader makes RGBA (libavif does then): identity, YCgCo, constant luminance and chroma derived matrices, other
+//     bit depths, and premultiplied alpha.
+struct avif_yuv_constants_s
+{
+  float    range  [4];
+  float    matrix [4];
+  float    alpha  [4];
+  uint32_t size   [4];
+};
+
+static bool
+_AVIFYUVConstants (const avifImage* frame, avif_yuv_constants_s& c)
+{
+  if ((frame->depth != 8 && frame->depth != 10 && frame->depth != 12) || frame->alphaPremultiplied ||
+      (frame->yuvFormat != AVIF_PIXEL_FORMAT_YUV444 && frame->yuvFormat != AVIF_PIXEL_FORMAT_YUV422 &&
+       frame->yuvFormat != AVIF_PIXEL_FORMAT_YUV420 && frame->yuvFormat != AVIF_PIXEL_FORMAT_YUV400))
+    return false;
+
+  // Kr, Kb: as libavif's table has them (BT.601's when the file leaves them unspecified)
+  float kr = 0.299f, kb = 0.114f;
+
+  switch (frame->matrixCoefficients)
+  {
+    case AVIF_MATRIX_COEFFICIENTS_BT709:      kr = 0.2126f; kb = 0.0722f; break;
+    case AVIF_MATRIX_COEFFICIENTS_FCC:        kr = 0.30f;   kb = 0.11f;   break;
+    case AVIF_MATRIX_COEFFICIENTS_BT470BG:
+    case AVIF_MATRIX_COEFFICIENTS_BT601:      kr = 0.299f;  kb = 0.114f;  break;
+    case AVIF_MATRIX_COEFFICIENTS_SMPTE240:   kr = 0.212f;  kb = 0.087f;  break;
+    case AVIF_MATRIX_COEFFICIENTS_BT2020_NCL: kr = 0.2627f; kb = 0.0593f; break;
+    case AVIF_MATRIX_COEFFICIENTS_UNSPECIFIED:
+    case 3: /* (reserved) */                                              break;
+    default:
+      return false;
+  }
+
+  const float kg = 1.0f - kr - kb;
+
+  // The sampled values (0 to 1 of the texture's 8 or 16 bits) as code values of the frame's depth, and those made 0 to 1
+  //   (chroma: -0.5 to 0.5) by its range
+  const float texMax = (frame->depth == 8) ? 255.0f : 65535.0f,
+              maxV   = static_cast <float> ((1 << frame->depth) - 1),
+              unit   = static_cast <float> (1 << (frame->depth - 8)); // (Limited range: 16 to 235, 16 to 240, times this)
+
+  if (frame->yuvRange == AVIF_RANGE_LIMITED)
+  {
+    c.range [0] = texMax / (219.0f * unit);  c.range [1] =  -16.0f / 219.0f;
+    c.range [2] = texMax / (224.0f * unit);  c.range [3] = -128.0f / 224.0f;
+  }
+
+  else
+  {
+    c.range [0] = texMax / maxV;             c.range [1] = 0.0f;
+    c.range [2] = texMax / maxV;             c.range [3] = -static_cast <float> (1 << (frame->depth - 1)) / maxV;
+  }
+
+  c.matrix [0] = 2.0f * (1.0f - kr);
+  c.matrix [1] = -2.0f * kb * (1.0f - kb) / kg;
+  c.matrix [2] = -2.0f * kr * (1.0f - kr) / kg;
+  c.matrix [3] = 2.0f * (1.0f - kb);
+
+  // Alpha is full range
+  c.alpha [0] = texMax / maxV;
+  c.alpha [1] = 0.0f;
+  c.alpha [2] = (frame->alphaPlane != nullptr) ? 1.0f : 0.0f;
+  c.alpha [3] = (frame->yuvFormat == AVIF_PIXEL_FORMAT_YUV400) ? 1.0f : 0.0f;
+
+  c.size [0] = frame->width;
+  c.size [1] = frame->height;
+  c.size [2] = 0;
+  c.size [3] = 0;
+
+  return true;
+}
+
+// Uploads a frame of an AVIF image sequence as libavif decoded it (its planes, as they are), and creates the texture the
+//   main thread makes it RGBA in (srv: as sRGB, as _CreateFrameTexture's). Any thread. False if it cannot be done this way
+//     (see _AVIFYUVConstants), or the textures could not be made: libavif makes it RGBA then.
+static bool
+_CreateYUVFrame (ID3D11Device* pDevice, const avifImage* frame, anim_yuv_s& yuv, CComPtr <ID3D11ShaderResourceView>& srv)
+{
+  avif_yuv_constants_s constants = { };
+
+  if (! _AVIFYUVConstants (frame, constants))
+    return false;
+
+  const DXGI_FORMAT planeFormat = (frame->depth == 8) ? DXGI_FORMAT_R8_UNORM : DXGI_FORMAT_R16_UNORM;
+  const UINT        width       = frame->width,
+                    height      = frame->height;
+
+  // Chroma: half as wide (4:2:0, 4:2:2), and half as tall (4:2:0), rounded up
+  const UINT chromaWidth  = (frame->yuvFormat == AVIF_PIXEL_FORMAT_YUV444) ? width  : (width  + 1) / 2,
+             chromaHeight = (frame->yuvFormat == AVIF_PIXEL_FORMAT_YUV420) ? (height + 1) / 2 : height;
+
+  auto _Plane = [&](const uint8_t* pixels, uint32_t rowBytes, UINT w, UINT h, CComPtr <ID3D11ShaderResourceView>& view) -> bool
+  {
+    D3D11_TEXTURE2D_DESC desc = { };
+    desc.Width            = w;
+    desc.Height           = h;
+    desc.MipLevels        = 1;
+    desc.ArraySize        = 1;
+    desc.Format           = planeFormat;
+    desc.SampleDesc.Count = 1;
+    desc.Usage            = D3D11_USAGE_IMMUTABLE;
+    desc.BindFlags        = D3D11_BIND_SHADER_RESOURCE;
+
+    const D3D11_SUBRESOURCE_DATA data = { pixels, rowBytes, 0 };
+
+    CComPtr <ID3D11Texture2D> pTex;
+
+    return (pixels != nullptr && SUCCEEDED (pDevice->CreateTexture2D (&desc, &data, &pTex.p)) &&
+            SUCCEEDED (pDevice->CreateShaderResourceView (pTex.p, nullptr, &view.p)));
+  };
+
+  if (! _Plane (frame->yuvPlanes [AVIF_CHAN_Y], frame->yuvRowBytes [AVIF_CHAN_Y], width, height, yuv.planes [0]))
+    return false;
+
+  if (frame->yuvFormat != AVIF_PIXEL_FORMAT_YUV400 &&
+    (! _Plane (frame->yuvPlanes [AVIF_CHAN_U], frame->yuvRowBytes [AVIF_CHAN_U], chromaWidth, chromaHeight, yuv.planes [1]) ||
+     ! _Plane (frame->yuvPlanes [AVIF_CHAN_V], frame->yuvRowBytes [AVIF_CHAN_V], chromaWidth, chromaHeight, yuv.planes [2])))
+    return false;
+
+  if (frame->alphaPlane != nullptr && ! _Plane (frame->alphaPlane, frame->alphaRowBytes, width, height, yuv.planes [3]))
+    return false;
+
+  // Its constants
+  {
+    D3D11_BUFFER_DESC desc = { };
+    desc.ByteWidth = sizeof (constants);
+    desc.Usage     = D3D11_USAGE_IMMUTABLE;
+    desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+
+    const D3D11_SUBRESOURCE_DATA data = { &constants, 0, 0 };
+
+    if (FAILED (pDevice->CreateBuffer (&desc, &data, &yuv.constants.p)))
+      return false;
+  }
+
+  // The texture it is made into: written as 8-bit values, read as sRGB (typeless, for its two views)
+  D3D11_TEXTURE2D_DESC desc = { };
+  desc.Width            = width;
+  desc.Height           = height;
+  desc.MipLevels        = 1;
+  desc.ArraySize        = 1;
+  desc.Format           = DXGI_FORMAT_R8G8B8A8_TYPELESS;
+  desc.SampleDesc.Count = 1;
+  desc.Usage            = D3D11_USAGE_DEFAULT;
+  desc.BindFlags        = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+
+  CComPtr <ID3D11Texture2D> pTex;
+
+  D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = { };
+  srvDesc.Format              = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+  srvDesc.ViewDimension       = D3D11_SRV_DIMENSION_TEXTURE2D;
+  srvDesc.Texture2D.MipLevels = 1;
+
+  D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = { };
+  uavDesc.Format              = DXGI_FORMAT_R8G8B8A8_UNORM;
+  uavDesc.ViewDimension       = D3D11_UAV_DIMENSION_TEXTURE2D;
+
+  if (FAILED (pDevice->CreateTexture2D            (&desc, nullptr, &pTex.p))        ||
+      FAILED (pDevice->CreateShaderResourceView   (pTex.p, &srvDesc, &srv.p))       ||
+      FAILED (pDevice->CreateUnorderedAccessView  (pTex.p, &uavDesc, &yuv.output.p)))
+    return false;
+
+  yuv.width  = width;
+  yuv.height = height;
+  return true;
+}
+
+// Makes the frames waiting for it RGBA (avif_yuv_cs.hlsl), on the immediate context: main thread only. Their textures are
+//   drawn after (in the frame being made).
+#include <shaders/avif_yuv_cs.h>
+
+static void
+_ConvertYUVFrames (std::vector <anim_yuv_s>& pending)
+{
+  if (pending.empty ( ))
+    return;
+
+  // The shader and its sampler: made for the device the frames were made on (made again after a device reset)
+  static CComPtr <ID3D11Device>        s_device;
+  static CComPtr <ID3D11ComputeShader> s_shader;
+  static CComPtr <ID3D11SamplerState>  s_sampler;
+
+  CComPtr <ID3D11Device> pDevice;
+  pending.front ( ).output->GetDevice (&pDevice.p);
+
+  if (pDevice.p != s_device.p)
+  {
+    s_device  = pDevice;
+    s_shader  = nullptr;
+    s_sampler = nullptr;
+
+    D3D11_SAMPLER_DESC sampler = { };
+    sampler.Filter   = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+    sampler.AddressU = sampler.AddressV = sampler.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+    sampler.MaxLOD   = D3D11_FLOAT32_MAX;
+
+    if (FAILED (pDevice->CreateComputeShader (avif_yuv_cs_bytecode, sizeof (avif_yuv_cs_bytecode), nullptr, &s_shader.p)) ||
+        FAILED (pDevice->CreateSamplerState  (&sampler, &s_sampler.p)))
+      PLOG_ERROR << "[Image Processing] Could not create the shader making AVIF frames RGBA";
+  }
+
+  CComPtr <ID3D11DeviceContext> pDevCtx;
+  pDevice->GetImmediateContext (&pDevCtx.p);
+
+  if (s_shader.p != nullptr && pDevCtx.p != nullptr)
+  {
+    pDevCtx->CSSetShader  (s_shader, nullptr, 0);
+    pDevCtx->CSSetSamplers (0, 1, &s_sampler.p);
+
+    for (auto& yuv : pending)
+    {
+      ID3D11ShaderResourceView* planes [4] = { yuv.planes [0].p, yuv.planes [1].p, yuv.planes [2].p, yuv.planes [3].p };
+
+      pDevCtx->CSSetShaderResources      (0, 4, planes);
+      pDevCtx->CSSetConstantBuffers      (0, 1, &yuv.constants.p);
+      pDevCtx->CSSetUnorderedAccessViews (0, 1, &yuv.output.p, nullptr);
+      pDevCtx->Dispatch                  ((yuv.width + 7) / 8, (yuv.height + 7) / 8, 1);
+    }
+
+    // Unbound again: the textures written are drawn next
+    ID3D11ShaderResourceView*  noViews [4] = { };
+    ID3D11UnorderedAccessView* noUAV       = nullptr;
+    ID3D11Buffer*              noBuffer    = nullptr;
+
+    pDevCtx->CSSetShaderResources      (0, 4, noViews);
+    pDevCtx->CSSetUnorderedAccessViews (0, 1, &noUAV, nullptr);
+    pDevCtx->CSSetConstantBuffers      (0, 1, &noBuffer);
+    pDevCtx->CSSetShader               (nullptr, nullptr, 0);
+  }
+
+  for (auto& yuv : pending)
+    yuv.Release ( );
+
+  pending.clear ( );
+}
+
 // The frames of an animated image, decoded by a thread of its own (_StreamAnimation) as they are played (image_anim_s,
 //   on the main thread). Everything here is shared by the two, under lock.
 struct image_anim_stream_s
@@ -754,6 +1031,8 @@ struct image_anim_stream_s
   bool                                             stop    = false; // No longer wanted: the thread ends
   bool                                             ended   = false; // The thread has ended
   bool                                             waiting = false; // The main thread waits for a frame: woken once one is decoded
+  std::vector <anim_yuv_s>                         pending;         // AVIF frames to be made RGBA on the GPU (by the main
+                                                                    //   thread: their textures are in frames already)
 
   // Whether a frame is kept: streamed, those around the one shown
   bool Keeps (size_t frame) const
@@ -792,6 +1071,7 @@ struct anim_source_s
   animated_image_s        image;
   std::shared_ptr <void>  profile;   // Wide gamut: the colors of the file (its frames are made scRGB); null: sRGB
   CComPtr <ID3D11Device>  device;
+  bool                    gpuYUV  = false; // AVIF: its frames are made RGBA on the GPU (anim_yuv_s), where they can be
 };
 
 // Creates a texture (and its view) of a frame (RGBA, 8 bpc). sRGB, as the general purpose decoder (WIC) loads 8-bpc
@@ -861,7 +1141,8 @@ _StreamAnimation (std::shared_ptr <image_anim_stream_s> s, std::shared_ptr <anim
 
   const uint32_t        width  = source->image.width,
                         height = source->image.height;
-  std::vector <uint8_t> scratch;
+  std::vector <uint8_t> scratch,
+                        avifCanvas; // An AVIF's frame, made RGBA on the CPU
 
   auto _WakeMainThread = [](void) {
     PostMessage (SKIF_Notify_hWnd, WM_SKIF_IMAGE, SKIV_IMAGE_ANIMATION_FRAME, 0);
@@ -873,7 +1154,7 @@ _StreamAnimation (std::shared_ptr <image_anim_stream_s> s, std::shared_ptr <anim
     bool   restart = false; // A frame before it is wanted
     bool   failed  = false; // A frame's texture could not be made
 
-    const int decoded = source->image.Decode ([&](const uint8_t* canvas, uint32_t delay) -> bool
+    const int decoded = source->image.Decode ([&](const uint8_t* canvas, const avifImage* yuv, uint32_t delay) -> bool
     {
       const size_t frame = index++;
 
@@ -921,8 +1202,25 @@ _StreamAnimation (std::shared_ptr <image_anim_stream_s> s, std::shared_ptr <anim
       lock.unlock ( );
 
       CComPtr <ID3D11ShaderResourceView> srv;
-      const bool made =
-        _CreateFrameTexture (source->device, canvas, width, height, static_cast <cmsHPROFILE> (source->profile.get ( )), scratch, srv);
+      anim_yuv_s                         gpu;
+
+      // An AVIF's frame: made RGBA on the GPU (by the main thread), but for the first one (shown as soon as it is made:
+      //   pRawTexSRV), and those the GPU's way does not apply to; otherwise by libavif, on the CPU
+      bool made = (yuv != nullptr && source->gpuYUV && ! (pass == 0 && frame == 0) &&
+                   _CreateYUVFrame (source->device, yuv, gpu, srv));
+
+      if (! made)
+      {
+        gpu.Release ( );
+        srv = nullptr;
+
+        if (yuv != nullptr)
+          canvas = (_AVIFFrameToRGBA (yuv, static_cast <int> (std::clamp (std::thread::hardware_concurrency ( ), 1u, 64u)), avifCanvas))
+                 ? avifCanvas.data ( ) : nullptr;
+
+        made = (canvas != nullptr &&
+          _CreateFrameTexture (source->device, canvas, width, height, static_cast <cmsHPROFILE> (source->profile.get ( )), scratch, srv));
+      }
 
       lock.lock ( );
 
@@ -934,9 +1232,18 @@ _StreamAnimation (std::shared_ptr <image_anim_stream_s> s, std::shared_ptr <anim
 
       // No longer kept, if playback moved on meanwhile
       if (s->stop || ! s->Keeps (frame))
+      {
         SKIF_ResourcesToFree.push (srv.Detach ( ));
+        gpu.Release ( );
+      }
+
       else
+      {
         s->frames [frame] = srv;
+
+        if (gpu.output.p != nullptr)
+          s->pending.push_back (std::move (gpu));
+      }
 
       s->cv.notify_all ( );
 
@@ -1021,6 +1328,11 @@ image_anim_s::release (void)
     for (auto& frame : stream->frames)
       if (frame.p != nullptr)
         SKIF_ResourcesToFree.push (frame.Detach ( ));
+
+    for (auto& yuv : stream->pending)
+      yuv.Release ( );
+
+    stream->pending.clear ( );
   }
 
   if (shown.p != nullptr)
@@ -1123,6 +1435,9 @@ image_anim_s::update (DWORD now, DWORD& nextAt, bool& changed)
 
   image_anim_stream_s&         s = *stream;
   std::lock_guard <std::mutex> lock (s.lock);
+
+  // AVIF frames decoded since: made RGBA (on the GPU), before any of them is shown
+  _ConvertYUVFrames (s.pending);
 
   const size_t count = s.count;
 
@@ -1251,6 +1566,10 @@ _LoadAnimatedImage (image_s& image, const std::function <bool (void)>& wanted)
   const size_t frameBytes = // Textures take whole pages of 64 KB
     ((static_cast <size_t> (width) * height * ((wide) ? 8 : 4)) + 0xFFFF) & ~static_cast <size_t> (0xFFFF);
 
+  // AVIF frames of sRGB (or Rec. 709) colors: made RGBA on the GPU (anim_yuv_s), by a compute shader writing 8-bit RGBA
+  //   (Direct3D 11 hardware); wide gamut ones are converted on the CPU, as before
+  source->gpuYUV = (source->image.isAVIF && ! wide && source->device->GetFeatureLevel ( ) >= D3D_FEATURE_LEVEL_11_0);
+
   auto stream = std::make_shared <image_anim_stream_s> ( );
   stream->count   = count;
   stream->keepAll = (static_cast <double> (frameBytes) * count <= std::min (s_animKeepBudget, available * 0.5));
@@ -1347,7 +1666,8 @@ _LoadAnimatedImage (image_s& image, const std::function <bool (void)>& wanted)
   DWORD post = SKIF_Util_timeGetTime1 ( );
   PLOG_INFO << "[Image Processing] Loaded an animated image (" << count << " frames, " << width << "x" << height << ") in " << (post - pre)
             << " ms: " << ((anim->streamed) ? "streamed, at most " : "all ") << window << " frames ("
-            << ((frameBytes * window) / (1024 * 1024)) << " MB) are kept at a time";
+            << ((frameBytes * window) / (1024 * 1024)) << " MB) are kept at a time"
+            << ((source->gpuYUV) ? "; its frames are made RGBA on the GPU" : "");
 
   return true;
 }
