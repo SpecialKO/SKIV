@@ -660,18 +660,20 @@ struct animated_image_s
   }
 };
 
-// All the frames of an animated image together are kept below this much video memory (they are scaled down to fit), and
-//   there can be no more frames than this. Below a quarter of the size (each way) it would look too poor: it is shown as
-//     a still image then.
+// The frames of an animated image are decoded as it plays (_StreamAnimation). All of them are kept once decoded if
+//   together they take no more than s_animKeepBudget of video memory (and half of what Windows says is left for SKIV);
+//     otherwise they are streamed: a window of a few frames around the one shown is kept, of up to s_animStreamBudget
+//       (and from s_animMinWindow to s_animMaxWindow frames), and the file is decoded again each time it loops.
 #ifdef _WIN64
-static constexpr double   s_animBudget       = 2048.0 * 1024 * 1024;
+static constexpr double   s_animKeepBudget   = 512.0 * 1024 * 1024;
+static constexpr double   s_animStreamBudget = 256.0 * 1024 * 1024;
 #else
-static constexpr double   s_animBudget       =  512.0 * 1024 * 1024;
+static constexpr double   s_animKeepBudget   = 128.0 * 1024 * 1024;
+static constexpr double   s_animStreamBudget =  64.0 * 1024 * 1024;
 #endif
 static constexpr uint32_t s_animMaxFrames    = 10000;
-static constexpr double   s_animMinScale     = 0.25;
-static constexpr size_t   s_animPageSize     = 4096; // The shared textures (pages) are at most this large (each way)
-static constexpr size_t   s_animMaxCellSize  = 2048; // Frames larger than this (each way, with their border) get a texture each
+static constexpr size_t   s_animMinWindow    = 4;
+static constexpr size_t   s_animMaxWindow    = 24;
 
 // Reads and parses an animated image. False if it is not one (fewer than two frames), is malformed, or is too large.
 static bool
@@ -732,15 +734,108 @@ _OpenAnimatedImage (const std::wstring& path, animated_image_s& image)
   return true;
 }
 
-// Creates a texture (and its view) of the image (RGBA), as sRGB: as the general purpose decoder (WIC) loads 8-bpc images
-static bool
-_CreateAnimationTexture (ID3D11Device* pDevice, const DirectX::ScratchImage& img, CComPtr <ID3D11ShaderResourceView>& srv)
+extern concurrency::concurrent_queue <IUnknown *> SKIF_ResourcesToFree;
+
+// The frames of an animated image, decoded by a thread of its own (_StreamAnimation) as they are played (image_anim_s,
+//   on the main thread). Everything here is shared by the two, under lock.
+struct image_anim_stream_s
 {
+  std::mutex                                       lock;
+  std::condition_variable                          cv;          // Signaled when a frame is decoded, or playback moves on
+  std::vector <CComPtr <ID3D11ShaderResourceView>> frames;      // Their textures (null: not decoded, or released)
+  std::vector <DWORD>                              delays;      // How long each shows (ms), 0 while not known yet
+  size_t                                           count   = 0; // How many frames it has (fewer than scanned if the file breaks off)
+  size_t                                           current = 0; // The frame shown (image_anim_s::current)
+  size_t                                           ahead   = 0, // Streamed: how many frames are kept after it,
+                                                   behind  = 0; //   ... and before it
+  bool                                             keepAll = false; // All the frames are kept (not streamed)
+  bool                                             stop    = false; // No longer wanted: the thread ends
+  bool                                             ended   = false; // The thread has ended
+  bool                                             waiting = false; // The main thread waits for a frame: woken once one is decoded
+
+  // Whether a frame is kept: streamed, those around the one shown
+  bool Keeps (size_t frame) const
+  {
+    if (keepAll)
+      return true;
+
+    const size_t after = (frame + count - current) % count; // How far after the one shown
+
+    return (after <= ahead || after + behind >= count);
+  }
+
+  // The frame to decode next (streamed): the first one from the one shown on that is not decoded; SIZE_MAX if all of
+  //   those kept after it are
+  size_t Wanted (void) const
+  {
+    for (size_t i = 0; i <= ahead && i < count; i++)
+      if (frames [(current + i) % count] == nullptr)
+        return (current + i) % count;
+
+    return SIZE_MAX;
+  }
+
+  // Pushes the frames no longer kept (once the frame shown moved on) to be released
+  void Trim (void)
+  {
+    for (size_t i = 0; i < frames.size ( ); i++)
+      if (frames [i] != nullptr && (i >= count || ! Keeps (i)))
+        SKIF_ResourcesToFree.push (frames [i].Detach ( ));
+  }
+};
+
+// What the thread decoding an animated image's frames works with: the file, and its colors
+struct anim_source_s
+{
+  animated_image_s        image;
+  std::shared_ptr <void>  profile;   // Wide gamut: the colors of the file (its frames are made scRGB); null: sRGB
+  CComPtr <ID3D11Device>  device;
+};
+
+// Creates a texture (and its view) of a frame (RGBA, 8 bpc). sRGB, as the general purpose decoder (WIC) loads 8-bpc
+//   images; wide gamut ones (profile): converted to scRGB (half floats), in scratch.
+static bool
+_CreateFrameTexture (ID3D11Device* pDevice, const uint8_t* canvas, uint32_t width, uint32_t height, cmsHPROFILE profile,
+                     std::vector <uint8_t>& scratch, CComPtr <ID3D11ShaderResourceView>& srv)
+{
+  DirectX::Image img = { };
+  img.width          = width;
+  img.height         = height;
+
+  if (profile != nullptr)
+  {
+    img.format   = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    img.rowPitch = static_cast <size_t> (width) * 8;
+    scratch.resize (img.rowPitch * height);
+
+    if (! _ConvertToScRGB (profile, TYPE_RGBA_8, canvas, static_cast <size_t> (width) * 4, scratch.data ( ), img.rowPitch, width, height))
+      return false;
+
+    img.pixels = scratch.data ( );
+  }
+
+  else
+  {
+    img.format   = DXGI_FORMAT_R8G8B8A8_UNORM;
+    img.rowPitch = static_cast <size_t> (width) * 4;
+    img.pixels   = const_cast <uint8_t*> (canvas);
+  }
+
+  img.slicePitch = img.rowPitch * height;
+
+  DirectX::TexMetadata meta = { };
+  meta.width     = width;
+  meta.height    = height;
+  meta.depth     = 1;
+  meta.arraySize = 1;
+  meta.mipLevels = 1;
+  meta.format    = img.format;
+  meta.dimension = DirectX::TEX_DIMENSION_TEXTURE2D;
+
   CComPtr <ID3D11Texture2D> pTex2D;
 
-  if (FAILED (DirectX::CreateTextureEx (pDevice, img.GetImages ( ), img.GetImageCount ( ), img.GetMetadata ( ),
-                                        D3D11_USAGE_DEFAULT, D3D11_BIND_SHADER_RESOURCE, 0, 0, DirectX::CREATETEX_FORCE_SRGB,
-                                        (ID3D11Resource **)&pTex2D.p)) || pTex2D.p == nullptr)
+  if (FAILED (DirectX::CreateTextureEx (pDevice, &img, 1, meta, D3D11_USAGE_IMMUTABLE, D3D11_BIND_SHADER_RESOURCE, 0, 0,
+                                        DirectX::CREATETEX_FORCE_SRGB, (ID3D11Resource **)&pTex2D.p)) || pTex2D.p == nullptr)
     return false;
 
   D3D11_SHADER_RESOURCE_VIEW_DESC
@@ -753,38 +848,386 @@ _CreateAnimationTexture (ID3D11Device* pDevice, const DirectX::ScratchImage& img
   return SUCCEEDED (pDevice->CreateShaderResourceView (pTex2D.p, &srv_desc, &srv.p)) && srv.p != nullptr;
 }
 
-// Loads all the frames of an animated image (APNG, GIF, WebP) into image (anim, and pRawTexSRV: its first frame). Each
-//   frame is the canvas as it is at that point, at its full size unless all of them would not fit s_animBudget.
-//     wanted (if set) is asked between frames, and stops the load once it returns false. False if it is not animated,
-//       cannot be decoded, is too large, or was stopped: it is then loaded as a still image.
+// The thread decoding an animated image's frames, as long as it is wanted: all of them once (keepAll), or (streamed) the
+//   ones after the frame shown, waiting while enough of them are; from the start of the file again each time it loops, or
+//     when a frame before the one being decoded is wanted (stepping back). The frames in between are decoded only, as the
+//       later ones are drawn onto them.
+static void
+_StreamAnimation (std::shared_ptr <image_anim_stream_s> s, std::shared_ptr <anim_source_s> source)
+{
+  SetThreadDescription (GetCurrentThread ( ), L"SKIV_AnimationStream");
+
+  const uint32_t        width  = source->image.width,
+                        height = source->image.height;
+  std::vector <uint8_t> scratch;
+
+  auto _WakeMainThread = [](void) {
+    PostMessage (SKIF_Notify_hWnd, WM_SKIF_IMAGE, SKIV_IMAGE_ANIMATION_FRAME, 0);
+  };
+
+  for (size_t pass = 0; ; pass++)
+  {
+    size_t index   = 0;     // The frame being decoded
+    bool   restart = false; // A frame before it is wanted
+    bool   failed  = false; // A frame's texture could not be made
+
+    const int decoded = source->image.Decode ([&](const uint8_t* canvas, uint32_t delay) -> bool
+    {
+      const size_t frame = index++;
+
+      std::unique_lock <std::mutex> lock (s->lock);
+
+      // More frames than it was scanned to have
+      if (s->stop || frame >= s->count)
+        return false;
+
+      s->delays [frame] = delay;
+
+      for (;;)
+      {
+        if (s->stop)
+          return false;
+
+        // Kept from before
+        if (s->frames [frame] != nullptr)
+          return true;
+
+        if (s->keepAll)
+          break;
+
+        const size_t wanted = s->Wanted ( );
+
+        if (wanted == frame)
+          break;
+
+        // Enough frames are ready: until playback moves on
+        if (wanted == SIZE_MAX)
+        {
+          s->cv.wait (lock);
+          continue;
+        }
+
+        // A later one: this one is decoded only
+        if (wanted > frame)
+          return true;
+
+        // An earlier one: from the start again
+        restart = true;
+        return false;
+      }
+
+      lock.unlock ( );
+
+      CComPtr <ID3D11ShaderResourceView> srv;
+      const bool made =
+        _CreateFrameTexture (source->device, canvas, width, height, static_cast <cmsHPROFILE> (source->profile.get ( )), scratch, srv);
+
+      lock.lock ( );
+
+      if (! made)
+      {
+        failed = true;
+        return false;
+      }
+
+      // No longer kept, if playback moved on meanwhile
+      if (s->stop || ! s->Keeps (frame))
+        SKIF_ResourcesToFree.push (srv.Detach ( ));
+      else
+        s->frames [frame] = srv;
+
+      s->cv.notify_all ( );
+
+      const bool wake = std::exchange (s->waiting, false);
+
+      lock.unlock ( );
+
+      if (wake)
+        _WakeMainThread ( );
+
+      return true;
+    });
+
+    std::unique_lock <std::mutex> lock (s->lock);
+
+    if (s->stop)
+      break;
+
+    if (failed || decoded < 0)
+    {
+      PLOG_WARNING << "Animated image: could not " << ((failed) ? "create the texture of frame " : "decode frame ") << index
+                   << " (out of video memory?): its frames are no longer decoded";
+      break;
+    }
+
+    // Fewer frames than it was scanned to have (a GIF that breaks off): those it has
+    if (! restart && index < s->count)
+    {
+      PLOG_INFO << "Animated image has " << index << " frames, not the " << s->count << " it was scanned to have";
+
+      if (index < 2)
+        break;
+
+      s->count = index;
+
+      if (s->current >= s->count)
+        s->current = 0;
+
+      if (! s->keepAll && s->ahead + s->behind + 1 >= s->count)
+        s->keepAll = true;
+
+      s->Trim ( );
+    }
+
+    // Everything is decoded
+    if (s->keepAll && std::all_of (s->frames.begin ( ), s->frames.begin ( ) + s->count, [](const auto& frame) { return frame != nullptr; }))
+      break;
+  }
+
+  std::lock_guard <std::mutex> lock (s->lock);
+
+  s->ended = true;
+  s->cv.notify_all ( );
+
+  if (std::exchange (s->waiting, false))
+    _WakeMainThread ( );
+}
+
+#pragma region image_anim_s
+
+image_anim_s::~image_anim_s (void)
+{
+  if (stream != nullptr)
+  {
+    std::lock_guard <std::mutex> lock (stream->lock);
+
+    stream->stop = true;
+    stream->cv.notify_all ( );
+  }
+}
+
+void
+image_anim_s::release (void)
+{
+  if (stream != nullptr)
+  {
+    std::lock_guard <std::mutex> lock (stream->lock);
+
+    stream->stop = true;
+    stream->cv.notify_all ( );
+
+    for (auto& frame : stream->frames)
+      if (frame.p != nullptr)
+        SKIF_ResourcesToFree.push (frame.Detach ( ));
+  }
+
+  if (shown.p != nullptr)
+    SKIF_ResourcesToFree.push (shown.Detach ( ));
+}
+
+size_t
+image_anim_s::getCount (void) const
+{
+  if (stream == nullptr)
+    return 0;
+
+  std::lock_guard <std::mutex> lock (stream->lock);
+  return stream->count;
+}
+
+DWORD
+image_anim_s::getDelay (size_t frame) const
+{
+  if (stream == nullptr)
+    return 0;
+
+  std::lock_guard <std::mutex> lock (stream->lock);
+  return (frame < stream->count) ? stream->delays [frame] : 0;
+}
+
+DWORD
+image_anim_s::getDuration (void) const
+{
+  if (stream == nullptr)
+    return 0;
+
+  std::lock_guard <std::mutex> lock (stream->lock);
+
+  DWORD duration = 0;
+
+  for (size_t i = 0; i < stream->count; i++)
+  {
+    if (stream->delays [i] == 0)
+      return 0;
+
+    duration += stream->delays [i];
+  }
+
+  return duration;
+}
+
+void
+image_anim_s::play (DWORD now)
+{
+  if (! paused)
+    return;
+
+  paused  = false;
+  shownAt = (shownAt != 0) ? now - pausedIn : 0;
+}
+
+void
+image_anim_s::pause (DWORD now)
+{
+  if (paused)
+    return;
+
+  paused   = true;
+  pausedIn = (shownAt != 0) ? now - shownAt : 0;
+}
+
+void
+image_anim_s::step (DWORD now, int frames)
+{
+  pause (now);
+
+  if (stream == nullptr)
+    return;
+
+  std::lock_guard <std::mutex> lock (stream->lock);
+
+  const long long count = static_cast <long long> (stream->count);
+
+  if (count == 0)
+    return;
+
+  current  = static_cast <size_t> (((static_cast <long long> (current) + frames) % count + count) % count);
+  shownAt  = now;
+  pausedIn = 0;
+
+  stream->current = current;
+  stream->Trim ( );
+  stream->cv.notify_all ( );
+}
+
+ID3D11ShaderResourceView*
+image_anim_s::update (DWORD now, DWORD& nextAt, bool& changed)
+{
+  nextAt  = 0;
+  changed = false;
+
+  if (stream == nullptr)
+    return shown.p;
+
+  image_anim_stream_s&         s = *stream;
+  std::lock_guard <std::mutex> lock (s.lock);
+
+  const size_t count = s.count;
+
+  if (count == 0)
+    return shown.p;
+
+  bool moved = false;
+
+  // It has fewer frames than it was scanned to have
+  if (current >= count)
+  {
+    current = 0;
+    moved   = true;
+  }
+
+  if (! paused)
+  {
+    // Starts (or waits for its frame)
+    if (shownAt == 0 || s.frames [current] == nullptr)
+      shownAt = now;
+
+    else for (size_t i = 0; i < count; i++)
+    {
+      const DWORD due = shownAt + s.delays [current];
+
+      if (static_cast <LONG> (now - due) < 0)
+        break;
+
+      // Not decoded yet: this one stays until it is
+      const size_t next = (current + 1) % count;
+
+      if (s.frames [next] == nullptr)
+        break;
+
+      current = next;
+      moved   = true;
+
+      // Late, as it waited for it: on from now, rather than catching up
+      shownAt = (static_cast <LONG> (now - due) > 100) ? now : due;
+    }
+  }
+
+  if (moved)
+  {
+    s.current = current;
+    s.Trim ( );
+    s.cv.notify_all ( );
+  }
+
+  // Its texture (the one shown stays until it is decoded). The one shown before may be drawn in this frame still.
+  if (s.frames [current] != nullptr && s.frames [current].p != shown.p)
+  {
+    if (shown.p != nullptr)
+      SKIF_ResourcesToFree.push (shown.Detach ( ));
+
+    shown   = s.frames [current];
+    changed = true;
+  }
+
+  // Woken once the frame waited for is decoded (WM_SKIF_IMAGE)
+  const bool ready = (s.frames [current] != nullptr && s.frames [(current + 1) % count] != nullptr);
+
+  if (! ready && ! s.ended)
+    s.waiting = true;
+
+  if (! paused)
+  {
+    const DWORD due = (s.frames [current] != nullptr) ? shownAt + s.delays [current] : now;
+
+    nextAt = (ready || static_cast <LONG> (due - (now + 100)) > 0) ? due : now + 100;
+  }
+
+  return shown.p;
+}
+
+#pragma endregion
+
+// Loads an animated image (APNG, GIF, WebP, AVIF) into image: starts the thread decoding its frames (_StreamAnimation),
+//   and waits for the first one (pRawTexSRV). wanted (if set) is asked while it waits, and stops it once it returns
+//     false. False if it is not animated, cannot be decoded, is too large, or was stopped: it is then loaded as a still image.
 static bool
 _LoadAnimatedImage (image_s& image, const std::function <bool (void)>& wanted)
 {
-  DWORD pre = SKIF_Util_timeGetTime1 ( );
+  const DWORD pre = SKIF_Util_timeGetTime1 ( );
 
-  animated_image_s source;
+  auto source = std::make_shared <anim_source_s> ( );
 
-  if (! _OpenAnimatedImage (image.file_info.path, source))
+  if (! _OpenAnimatedImage (image.file_info.path, source->image))
     return false;
 
   // AVIF: its colors come from libavif (the other formats' were read from the file by _ReadColorSource)
-  if (source.isAVIF)
-    image.color_source = source.color;
+  if (source->image.isAVIF)
+    image.color_source = source->image.color;
 
-  const uint32_t width  = source.width,
-                 height = source.height,
-                 count  = source.count;
+  const uint32_t width  = source->image.width,
+                 height = source->image.height,
+                 count  = source->image.count;
 
-  auto pDevice =
-    SKIF_D3D11_GetDevice ();
+  source->device = SKIF_D3D11_GetDevice ( );
 
-  if (! pDevice)
+  if (source->device == nullptr)
     return false;
 
-  // The budget: s_animBudget, or three quarters of the video memory Windows says is left for SKIV, if that is less
-  double budget = s_animBudget;
+  // The video memory Windows says is left for SKIV
+  double available = DBL_MAX;
 
-  if (CComQIPtr <IDXGIDevice> pDXGIDevice (pDevice.p); pDXGIDevice.p != nullptr)
+  if (CComQIPtr <IDXGIDevice> pDXGIDevice (source->device.p); pDXGIDevice.p != nullptr)
   {
     CComPtr <IDXGIAdapter> pAdapter;
 
@@ -794,271 +1237,115 @@ _LoadAnimatedImage (image_s& image, const std::function <bool (void)>& wanted)
 
       if (CComQIPtr <IDXGIAdapter3> pAdapter3 (pAdapter.p);
           pAdapter3.p != nullptr && SUCCEEDED (pAdapter3->QueryVideoMemoryInfo (0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &info)) && info.Budget > 0)
-      {
-        const double available = (info.Budget > info.CurrentUsage) ? static_cast <double> (info.Budget - info.CurrentUsage) : 0.0;
-        budget = std::min (budget, available * 0.75);
-      }
+        available = (info.Budget > info.CurrentUsage) ? static_cast <double> (info.Budget - info.CurrentUsage) : 0.0;
     }
   }
 
-  // Colors that are not sRGB (wide gamut, see color_convert.inl): frames of scRGB (half floats), which keeps the colors
-  //   outside of sRGB, if they fit the budget at their full size (they take twice the memory); otherwise they are made
-  //     sRGB (8 bpc), the colors outside of it clipped
-  std::unique_ptr <void, decltype (&cmsCloseProfile)> sourceProfile (_CreateSourceProfile (image.color_source), &cmsCloseProfile);
+  // Colors that are not sRGB (wide gamut, see color_convert.inl): frames of scRGB (half floats)
+  if (cmsHPROFILE profile = _CreateSourceProfile (image.color_source); profile != nullptr)
+    source->profile.reset (profile, &cmsCloseProfile);
 
-  const bool wide =
-    (sourceProfile != nullptr && static_cast <double> (width) * height * 8.0 * count <= budget);
+  const bool   wide       = (source->profile != nullptr);
+  const size_t frameBytes = // Textures take whole pages of 64 KB
+    ((static_cast <size_t> (width) * height * ((wide) ? 8 : 4)) + 0xFFFF) & ~static_cast <size_t> (0xFFFF);
 
-  const size_t bpp = (wide) ? 8 : 4; // Bytes per pixel
+  auto stream = std::make_shared <image_anim_stream_s> ( );
+  stream->count   = count;
+  stream->keepAll = (static_cast <double> (frameBytes) * count <= std::min (s_animKeepBudget, available * 0.5));
+  stream->frames.resize (count);
+  stream->delays.resize (count, 0);
 
-  // The size the frames are made at: as they are, unless all of them would take more than the budget
-  double scale = 1.0;
+  size_t window = count;
 
-  if (const double bytes = static_cast <double> (width) * height * static_cast <double> (bpp) * count; bytes > budget)
+  if (! stream->keepAll)
   {
-    scale = std::sqrt (budget / bytes);
+    window = std::clamp (static_cast <size_t> (s_animStreamBudget / frameBytes), s_animMinWindow, s_animMaxWindow);
 
-    if (scale < s_animMinScale)
+    if (window >= count)
     {
-      PLOG_WARNING << "Animated image is too large to play (" << width << "x" << height << ", " << count << " frames, "
-                   << static_cast <int> (budget / (1024 * 1024)) << " MB of video memory to spare): showing its first frame";
+      stream->keepAll = true;
+      window          = count;
+    }
+
+    else if (static_cast <double> (frameBytes) * window > available * 0.75)
+    {
+      PLOG_WARNING << "Animated image is too large to play (" << width << "x" << height << ", " << static_cast <int> (available / (1024 * 1024))
+                   << " MB of video memory to spare): showing its first frame";
       return false;
     }
 
-    PLOG_INFO << "Animated image is scaled down to " << static_cast <int> (scale * 100.0) << "% to fit in " << static_cast <int> (budget / (1024 * 1024)) << " MB of video memory";
-  }
-
-  const size_t outWidth  = std::max (static_cast <size_t> (width  * scale), size_t (1)),
-               outHeight = std::max (static_cast <size_t> (height * scale), size_t (1));
-  const bool   resize    = (outWidth != width || outHeight != height);
-
-  // The frames are made (and scaled, as browsers do) as plain RGBA, as DirectX::Resize cannot scale sRGB images with
-  //   WIC's filters; their textures are sRGB (_CreateAnimationTexture). Wide gamut ones: scRGB, as half floats.
-  const DXGI_FORMAT format = (wide) ? DXGI_FORMAT_R16G16B16A16_FLOAT
-                                    : DXGI_FORMAT_R8G8B8A8_UNORM;
-
-  // The pages: as many frames side by side as fit in s_animPageSize, each in a cell with a one-pixel border
-  const size_t cellWidth  = outWidth  + 2,
-               cellHeight = outHeight + 2;
-  const bool   shared     = (cellWidth <= s_animMaxCellSize && cellHeight <= s_animMaxCellSize);
-  const size_t cols       = (shared) ? std::clamp (s_animPageSize / cellWidth, size_t (1), static_cast <size_t> (count)) : 1,
-               perPage    = (shared) ? cols * std::max (s_animPageSize / cellHeight, size_t (1))                       : 1;
-
-  auto anim = std::make_shared <image_anim_s> ( );
-  anim->resolution = ImVec2 (static_cast <float> (outWidth), static_cast <float> (outHeight));
-  anim->frames   .reserve (count);
-  anim->frameEnds.reserve (count);
-
-  DirectX::ScratchImage page;            // The page being filled
-  size_t                pageStart = 0,   // Its first frame
-                        pageCols  = 0,
-                        pageCount = 0;   // How many frames it is for
-  const char*           failure   = nullptr; // Why it could not be loaded (logged)
-
-  // Makes the page being filled a texture, which its frames share
-  auto _FinishPage = [&](void) -> bool
-  {
-    CComPtr <ID3D11ShaderResourceView> srv;
-
-    if (! _CreateAnimationTexture (pDevice, page, srv))
-      return false;
-
-    const DirectX::TexMetadata& meta = page.GetMetadata ( );
-
-    for (size_t i = pageStart; i < anim->frames.size ( ); i++)
-      anim->frames [i].srv = srv; // Its own reference
-
-    anim->textures++;
-    anim->bytes += page.GetPixelsSize ( );
-
-    // The texture coordinates were set relative to the page's size
-    for (size_t i = pageStart; i < anim->frames.size ( ); i++)
+    else
     {
-      auto& frame = anim->frames [i];
-      frame.uv0 = ImVec2 ( frame.offset.x                               / meta.width,  frame.offset.y                                / meta.height);
-      frame.uv1 = ImVec2 ((frame.offset.x + static_cast <float> (outWidth)) / meta.width, (frame.offset.y + static_cast <float> (outHeight)) / meta.height);
+      stream->behind = std::max (window / 4, size_t (1));
+      stream->ahead  = window - stream->behind - 1;
     }
-
-    page.Release ( );
-    return true;
-  };
-
-  DWORD elapsed = 0;
-
-  // Wide gamut frames that did not fit the budget as scRGB: made sRGB, the colors outside of it clipped
-  std::unique_ptr <void, decltype (&cmsDeleteTransform)> toSRGB (nullptr, &cmsDeleteTransform);
-
-  if (sourceProfile != nullptr && ! wide)
-  {
-    toSRGB.reset (_CreateSRGBTransform (sourceProfile.get ( )));
-
-    PLOG_INFO_IF (toSRGB != nullptr) << "[Image Processing] The animated image's colors (" << _DescribeColorSource (image.color_source)
-                                     << ") are converted to sRGB, clipped: as scRGB, its frames would not fit in video memory";
   }
 
   PLOG_INFO_IF (wide) << "[Image Processing] The animated image's colors (" << _DescribeColorSource (image.color_source)
                       << ") are converted to scRGB";
 
-  auto _OnFrame = [&](const uint8_t* canvas, uint32_t delay) -> bool
+  std::thread (_StreamAnimation, stream, source).detach ( );
+
+  // Its first frame
+  CComPtr <ID3D11ShaderResourceView> first;
   {
-    if (wanted && ! wanted ( ))
+    std::unique_lock <std::mutex> lock (stream->lock);
+
+    while (stream->frames [0] == nullptr && ! stream->ended)
     {
-      failure = "it is no longer wanted";
-      return false;
-    }
+      stream->cv.wait_for (lock, std::chrono::milliseconds (50));
 
-    // More frames than it was scanned to have (its pages are laid out for those)
-    if (anim->frames.size ( ) >= count)
-      return false;
-
-    // The canvas at this point, scaled if need be
-    DirectX::ScratchImage  img;
-    DirectX::ScratchImage  resized;
-    DirectX::ScratchImage* pImg = &img;
-
-    if (FAILED (img.Initialize2D (format, width, height, 1, 1)))
-    {
-      failure = "out of memory (canvas)";
-      return false;
-    }
-
-    if (wide)
-    {
-      if (! _ConvertToScRGB (sourceProfile.get ( ), TYPE_RGBA_8, canvas, static_cast <size_t> (width) * 4,
-                             img.GetImage (0, 0, 0)->pixels, img.GetImage (0, 0, 0)->rowPitch, width, height))
+      if (wanted && stream->frames [0] == nullptr && ! stream->ended)
       {
-        failure = "a frame's colors could not be converted";
-        return false;
-      }
-    }
+        lock.unlock ( );
+        const bool stillWanted = wanted ( );
+        lock.lock ( );
 
-    else
-      memcpy (img.GetImage (0, 0, 0)->pixels, canvas, static_cast <size_t> (width) * height * 4);
-
-    if (toSRGB != nullptr)
-      for (uint32_t y = 0; y < height; y++)
-        cmsDoTransform (toSRGB.get (), img.GetImage (0, 0, 0)->pixels + y * img.GetImage (0, 0, 0)->rowPitch,
-                                       img.GetImage (0, 0, 0)->pixels + y * img.GetImage (0, 0, 0)->rowPitch, width);
-
-    if (resize)
-    {
-      if (FAILED (DirectX::Resize (img.GetImages ( ), img.GetImageCount ( ), img.GetMetadata ( ),
-                                   outWidth, outHeight, DirectX::TEX_FILTER_FANT, resized)))
-      {
-        failure = "a frame could not be scaled";
-        return false;
-      }
-
-      pImg = &resized;
-    }
-
-    const DirectX::Image* src = pImg->GetImage (0, 0, 0);
-
-    image_anim_s::frame_s frame;
-
-    if (! shared)
-    {
-      if (! _CreateAnimationTexture (pDevice, *pImg, frame.srv))
-      {
-        failure = "a frame's texture could not be created (out of video memory?)";
-        return false;
-      }
-
-      anim->textures++;
-      anim->bytes += pImg->GetPixelsSize ( );
-    }
-
-    else
-    {
-      const size_t index = anim->frames.size ( );
-
-      // A new page: for the frames left, up to as many as fit
-      if (page.GetImageCount ( ) == 0)
-      {
-        pageStart = index;
-        pageCount = std::min (perPage, static_cast <size_t> (count) - index);
-        pageCols  = std::min (cols,    pageCount);
-
-        const size_t pageRows = (pageCount + pageCols - 1) / pageCols;
-
-        if (FAILED (page.Initialize2D (format, pageCols * cellWidth, pageRows * cellHeight, 1, 1)))
+        if (! stillWanted)
         {
-          failure = "out of memory (page)";
+          stream->stop = true;
+          stream->cv.notify_all ( );
           return false;
         }
-
-        memset (page.GetPixels ( ), 0, page.GetPixelsSize ( )); // The cells no frame uses (the last row)
       }
-
-      // Into its cell, with the border repeating its edges
-      const DirectX::Image* dst  = page.GetImage (0, 0, 0);
-      const size_t          slot = index - pageStart,
-                            x    = (slot % pageCols) * cellWidth,
-                            y    = (slot / pageCols) * cellHeight;
-
-      for (size_t row = 0; row < cellHeight; row++)
-      {
-        const size_t   srcRow = (row == 0) ? 0 : std::min (row - 1, outHeight - 1);
-        const uint8_t* s      = src->pixels + srcRow * src->rowPitch;
-        uint8_t*       d      = dst->pixels + (y + row) * dst->rowPitch + x * bpp;
-
-        memcpy (d,                        s,                          bpp);
-        memcpy (d + bpp,                  s,                          outWidth * bpp);
-        memcpy (d + bpp + outWidth * bpp, s + (outWidth - 1) * bpp,   bpp);
-      }
-
-      frame.offset = ImVec2 (static_cast <float> (x + 1), static_cast <float> (y + 1));
     }
 
-    elapsed += delay;
-
-    anim->frames   .push_back (std::move (frame));
-    anim->frameEnds.push_back (elapsed);
-
-    // The page is full
-    if (shared && anim->frames.size ( ) == pageStart + pageCount && ! _FinishPage ( ))
+    if (stream->frames [0] == nullptr)
     {
-      failure = "a page's texture could not be created (out of video memory?)";
+      stream->stop = true;
+      PLOG_WARNING << "Could not load the animated image, as its first frame could not be decoded: loading it as a still image";
       return false;
     }
 
-    return true;
-  };
-
-  const int decoded = source.Decode (_OnFrame);
-
-  // A GIF that broke off early: its page is not full
-  if (failure == nullptr && shared && page.GetImageCount ( ) != 0 && ! _FinishPage ( ))
-    failure = "a page's texture could not be created (out of video memory?)";
-
-  if (failure == nullptr && (decoded < 2 || anim->frames.size ( ) < 2))
-    failure = "it could not be decoded";
-
-  if (failure != nullptr)
-  {
-    PLOG_WARNING << "Could not load the animated image, as " << failure << " (" << anim->frames.size ( ) << " of " << count << " frames): showing its first frame";
-    return false; // Released right away: nothing else has seen them
+    first = stream->frames [0];
   }
 
-  anim->duration = elapsed;
-  anim->wide     = wide;
+  auto anim = std::make_shared <image_anim_s> ( );
+  anim->resolution = ImVec2 (static_cast <float> (width), static_cast <float> (height));
+  anim->wide       = wide;
+  anim->streamed   = ! stream->keepAll;
+  anim->window     = window;
+  anim->frameBytes = frameBytes;
+  anim->shown      = first;
+  anim->stream     = stream;
 
   image.anim         = anim;
-  image.pRawTexSRV   = anim->frames [0].srv; // A reference of its own
-  image.uv0          = anim->frames [0].uv0;
-  image.uv1          = anim->frames [0].uv1;
+  image.pRawTexSRV   = first; // A reference of its own
+  image.uv0          = ImVec2 (0, 0);
+  image.uv1          = ImVec2 (1, 1);
   image.width        = static_cast <float> (width);
   image.height       = static_cast <float> (height);
   image.bpc          = 8;
   image.channels     = 4;
   image.is_hdr       = false;
-  image.is_wcg       = false; // Wide gamut frames (anim->wide) have no gamut coverage: they are parts of shared textures
+  image.is_wcg       = false; // Wide gamut frames (anim->wide) have no gamut coverage
   image.light_info   = { };
   image.colorimetry  = { };
 
   DWORD post = SKIF_Util_timeGetTime1 ( );
-  PLOG_INFO << "[Image Processing] Loaded an animated image (" << anim->frames.size ( ) << " frames, " << outWidth << "x" << outHeight << ", "
-            << anim->duration << " ms) into " << anim->textures << " texture(s), " << (anim->bytes / (1024 * 1024)) << " MB, in " << (post - pre) << " ms.";
+  PLOG_INFO << "[Image Processing] Loaded an animated image (" << count << " frames, " << width << "x" << height << ") in " << (post - pre)
+            << " ms: " << ((anim->streamed) ? "streamed, at most " : "all ") << window << " frames ("
+            << ((frameBytes * window) / (1024 * 1024)) << " MB) are kept at a time";
 
   return true;
 }
