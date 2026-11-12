@@ -2156,14 +2156,20 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
       ImGui::BeginGroup ();
 
-      // Region snips are made in a window of their own (the snipping overlay, below): a Dear ImGui window with a platform
-      //   window (viewport) of its own, borderless and topmost over the display captured, so that the main window is left
-      //     as it is. Its platform window, once Dear ImGui has made it, and whether it has had the focus yet.
-      static HWND hWndSnip    = NULL;
-      static bool snipFocused = false;
+      // Region snips are made in windows of their own (the snipping overlays, below): one for each display captured, a
+      //   Dear ImGui window with a platform window (viewport) of its own, borderless and topmost over its display, so that
+      //     the main window is left as it is, and a region can be selected across all the displays. Their platform windows
+      //       (once Dear ImGui has made them; the first is the display under the cursor's, which has the toolbar and the
+      //         focus), and whether one of them has had the focus yet.
+      static std::vector <HWND> snipWindows;
+      static bool               snipFocused = false;
 
-      // Implicitly cancel snipping if the focus moves away from its window during snipping
-      if (_registry._SnippingMode && snipFocused && GetForegroundWindow () != hWndSnip)
+      auto _IsSnipWindow = [&](HWND hWnd) -> bool {
+        return (hWnd != NULL && std::find (snipWindows.begin ( ), snipWindows.end ( ), hWnd) != snipWindows.end ( ));
+      };
+
+      // Implicitly cancel snipping if the focus moves away from its windows during snipping
+      if (_registry._SnippingMode && snipFocused && ! _IsSnipWindow (GetForegroundWindow ()))
       {
         _registry._SnippingMode     = false;
         _registry._SnippingModeExit =  true;
@@ -2175,11 +2181,12 @@ wWinMain ( _In_     HINSTANCE hInstance,
         _registry._SnippingModeExit   = false;
         _registry._SnippingModeInit   =  true;
 
-        // The overlay, hidden at once (Dear ImGui destroys its window once it is no longer drawn, a frame or so later)
-        if (hWndSnip != NULL && IsWindow (hWndSnip))
-          ShowWindow (hWndSnip, SW_HIDE);
+        // The overlays, hidden at once (Dear ImGui destroys their windows once they are no longer drawn, a frame or so later)
+        for (HWND hWnd : snipWindows)
+          if (hWnd != NULL && IsWindow (hWnd))
+            ShowWindow (hWnd, SW_HIDE);
 
-        hWndSnip    = NULL;
+        snipWindows.clear ( );
         snipFocused = false;
 
         // The focus back to the window that had it before
@@ -2197,23 +2204,31 @@ wWinMain ( _In_     HINSTANCE hInstance,
       {
 #pragma region UI: Snipping Mode
 
-        extern skiv_image_desktop_s SKIV_DesktopImage;
+        // The displays captured (all of them), the one under the cursor first: its overlay has the toolbar and the focus
+        std::vector <const skiv_image_desktop_s*> displays;
 
-        ImVec2 resolution =
-          SKIV_DesktopImage._resolution;
-
-        if (SKIV_DesktopImage._rotation == DXGI_MODE_ROTATION_ROTATE90 ||
-            SKIV_DesktopImage._rotation == DXGI_MODE_ROTATION_ROTATE270)
+        for (const auto& display : SKIV_DesktopImages)
         {
-          std::swap (resolution.x, resolution.y);
+          if (display._desktop_pos == SKIV_DesktopImage._desktop_pos)
+            displays.insert (displays.begin ( ), &display);
+          else
+            displays.push_back (&display);
         }
 
-        ImRect allowable (SKIV_DesktopImage._desktop_pos,
-                          SKIV_DesktopImage._desktop_pos + resolution);
+        if (displays.empty ( ))
+          displays.push_back (&SKIV_DesktopImage);
+
+        // Where a region can be selected: all of them (it may span several; where the desktop is not rectangular, the
+        //   parts on no display are left black)
+        ImRect allowable (displays.front ( )->_desktop_pos, displays.front ( )->_desktop_pos + displays.front ( )->desktopSize ( ));
+
+        for (const auto* display : displays)
+          allowable.Add (ImRect (display->_desktop_pos, display->_desktop_pos + display->desktopSize ( )));
+
         SKIV_CaptureData capture_data = SKIV_CaptureData (ImRect(), L"", CaptureMode_None);
 
-        // The snipping overlay: over the display captured (Dear ImGui's positions are the desktop's), in a platform window
-        //   of its own (no frame, no taskbar button, topmost), which shows the capture of the display and the selection
+        // The snipping overlays: over their displays (Dear ImGui's positions are the desktop's), each in a platform window
+        //   of its own (no frame, no taskbar button, topmost), which shows the capture of its display and the selection
         static ImGuiWindowClass SKIV_SnippingOverlay = [](void) {
           ImGuiWindowClass wc;
           wc.ViewportFlagsOverrideSet = ImGuiViewportFlags_NoAutoMerge | ImGuiViewportFlags_NoDecoration |
@@ -2221,68 +2236,108 @@ wWinMain ( _In_     HINSTANCE hInstance,
           return wc;
         } ( );
 
-        ImGui::SetNextWindowClass (&SKIV_SnippingOverlay);
-        ImGui::SetNextWindowPos   (allowable.Min);
-        ImGui::SetNextWindowSize  (allowable.GetSize ( ));
+        static const ImGuiWindowFlags overlayFlags =
+          ImGuiWindowFlags_NoDecoration    | ImGuiWindowFlags_NoMove    | ImGuiWindowFlags_NoResize          |
+          ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoScrollWithMouse |
+          ImGuiWindowFlags_NoNav;
 
-        ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding,    ImVec2 (0.0f, 0.0f));
-        ImGui::PushStyleVar (ImGuiStyleVar_WindowBorderSize, 0.0f);
-        ImGui::PushStyleVar (ImGuiStyleVar_WindowRounding,   0.0f);
+        auto _OverlayName = [](size_t index) -> std::string {
+          return "###SKIV_SnippingOverlay" + std::to_string (index);
+        };
 
-        ImGui::Begin ("###SKIV_SnippingOverlay", nullptr,
-                        ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove      | ImGuiWindowFlags_NoResize          |
-                        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoScrollWithMouse |
-                        ImGuiWindowFlags_NoNav);
+        std::vector <ImGuiViewport*> overlayViewports;
 
-        ImGui::PopStyleVar (3);
+        snipWindows.assign (displays.size ( ), NULL);
 
-        // Its platform window (none until Dear ImGui has made it, at the end of its first frame)
+        bool HDR_Image = false, // The display under the cursor's (its toolbar's HDR options)
+             SKIV_HDR  = false;
+
+        for (size_t i = 0; i < displays.size ( ); i++)
         {
+          const skiv_image_desktop_s& display = *displays [i];
+          const ImRect                on_desk (display._desktop_pos, display._desktop_pos + display.desktopSize ( ));
+
+          ImGui::SetNextWindowClass (&SKIV_SnippingOverlay);
+          ImGui::SetNextWindowPos   (on_desk.Min);
+          ImGui::SetNextWindowSize  (on_desk.GetSize ( ));
+
+          ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding,    ImVec2 (0.0f, 0.0f));
+          ImGui::PushStyleVar (ImGuiStyleVar_WindowBorderSize, 0.0f);
+          ImGui::PushStyleVar (ImGuiStyleVar_WindowRounding,   0.0f);
+
+          ImGui::Begin (_OverlayName (i).c_str ( ), nullptr, overlayFlags);
+
+          ImGui::PopStyleVar (3);
+
+          // Its platform window (none until Dear ImGui has made it, at the end of its first frame)
           ImGuiViewport* vp = ImGui::GetWindowViewport ( );
 
-          hWndSnip = (vp != nullptr && vp->PlatformWindowCreated && vp->PlatformHandle != SKIF_ImGui_hWnd)
-                   ? static_cast <HWND> (vp->PlatformHandle) : NULL;
+          overlayViewports.push_back (vp);
+
+          snipWindows [i] = (vp != nullptr && vp->PlatformWindowCreated && vp->PlatformHandle != SKIF_ImGui_hWnd)
+                          ? static_cast <HWND> (vp->PlatformHandle) : NULL;
+
+          const bool hdrImage = display._hdr_image,
+                     hdrShown = (hdrImage && snipWindows [i] != NULL) ? SKIF_ImGui_IsViewportHDR (snipWindows [i]) : false;
+
+          if (i == 0)
+          {
+            HDR_Image = hdrImage;
+            SKIV_HDR  = hdrShown;
+          }
+
+          // Temporarily engage HDR mode for SKIV during snipping mode
+          if (hdrImage && ! hdrShown && snipWindows [i] != NULL && SKIF_ImGui_IsViewportHDRCapable (snipWindows [i]))
+          {
+            _registry._SnippingModeTempHDR = true;
+            _registry.iHDRMode = 2;
+            RecreateSwapChains = true;
+          }
+
+          if (display._srv != nullptr)
+          {
+            static const ImVec2 srgb_uv0 = ImVec2 (0, 0),
+                                srgb_uv1 = ImVec2 (1, 1),
+                                hdr_uv0  = ImVec2 (-1024.0f, -1024.0f), // HDR formats
+                                hdr_uv1  = ImVec2 (-2048.0f, -2048.0f); // HDR formats
+
+            SKIF_ImGui_OptImage ( display._srv,
+                                  display._resolution, (hdrImage && hdrShown) ? hdr_uv0 : srgb_uv0,
+                                                       (hdrImage && hdrShown) ? hdr_uv1 : srgb_uv1,
+                                    ImVec4 (1,1,1,1),
+                                    ImVec4 (0,0,0,0), display._rotation );
+
+            // Draw a slightly dark transparent overlay on top of the captured image
+            ImGui::GetForegroundDrawList ( )->AddRectFilled (on_desk.Min, on_desk.Max, ImGui::GetColorU32 (IM_COL32 (0, 0, 0, 20)));
+          }
+
+          ImGui::End ( );
         }
 
-        bool HDR_Image = SKIV_DesktopImage._hdr_image;
-        bool SKIV_HDR  = (HDR_Image && hWndSnip != NULL) ? SKIF_ImGui_IsViewportHDR (hWndSnip) : false;
-
-        // Temporarily engage HDR mode for SKIV during snipping mode
-        if (HDR_Image && ! SKIV_HDR && hWndSnip != NULL && SKIF_ImGui_IsViewportHDRCapable (hWndSnip))
+        // Draws a selection on every overlay (each shows its part of it, on its display)
+        auto _DrawOnOverlays = [&](ImRect rect, bool filled) -> void
         {
-          _registry._SnippingModeTempHDR = true;
-          _registry.iHDRMode = 2;
-          RecreateSwapChains = true;
-        }
+          rect = ImRect (ImMin (rect.Min, rect.Max), ImMax (rect.Min, rect.Max));
 
-        if (SKIV_DesktopImage._srv != nullptr)
-        {
-          static const ImVec2 srgb_uv0 = ImVec2 (0, 0),
-                              srgb_uv1 = ImVec2 (1, 1),
-                              hdr_uv0  = ImVec2 (-1024.0f, -1024.0f), // HDR formats
-                              hdr_uv1  = ImVec2 (-2048.0f, -2048.0f); // HDR formats
+          for (ImGuiViewport* vp : overlayViewports)
+          {
+            ImDrawList* draw_list = ImGui::GetForegroundDrawList (vp);
 
-          SKIF_ImGui_OptImage ( SKIV_DesktopImage._srv,
-                                SKIV_DesktopImage._resolution, (HDR_Image && SKIV_HDR) ? hdr_uv0 : srgb_uv0,
-                                                               (HDR_Image && SKIV_HDR) ? hdr_uv1 : srgb_uv1,
-                                  ImVec4 (1,1,1,1),
-                                  ImVec4 (0,0,0,0), SKIV_DesktopImage._rotation );
+            draw_list->AddRect         (rect.Min, rect.Max, ImGui::GetColorU32 (IM_COL32(0,130,216,255)), 0.0f, 5.0f); // Border
 
-          ImDrawList* draw_list =
-            ImGui::GetForegroundDrawList ();
-
-          // Draw a slightly dark transparent overlay on top of the captured image
-          draw_list->AddRectFilled (allowable.Min, allowable.Max, ImGui::GetColorU32 (IM_COL32 (0, 0, 0, 20)));
-        }
+            if (filled)
+              draw_list->AddRectFilled (rect.Min, rect.Max, ImGui::GetColorU32 (IM_COL32(0,130,216,50)));               // Background
+          }
+        };
 
         static SKIV_CaptureData selection      = SKIV_CaptureData (ImRect(), L"Desktop_Region", CaptureMode_Region);
         static SKIV_CaptureData selection_auto = SKIV_CaptureData (ImRect(), L"Desktop_Auto",   CaptureMode_Region);
 
-        // The overlay has the focus (keyboard: Escape, Ctrl+S, Ctrl+E), once its window is there
-        if (hWndSnip != NULL)
+        // The overlays have the focus (keyboard: Escape, Ctrl+S, Ctrl+E): the one under the cursor's, once it is there
+        if (snipWindows [0] != NULL)
         {
-          if (GetForegroundWindow () != hWndSnip)
-            SetForegroundWindow (hWndSnip);
+          if (! _IsSnipWindow (GetForegroundWindow ( )))
+            SetForegroundWindow (snipWindows [0]);
           else
             snipFocused = true;
         }
@@ -2308,7 +2363,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
           // Ignore windows of various characteristics
           if (
-               hWndSnip         ==   hWnd   // (The overlay; the main window is one to capture as any other)
+               _IsSnipWindow        (hWnd)  // (The overlays; the main window is one to capture as any other)
             ||    ! IsWindowVisible (hWnd)
             || (RealGetWindowClassW (hWnd, wszWindowTextBuffer, 64) && ignoreClassNames.count (wszWindowTextBuffer))
             ||     ! GetWindowTextW (hWnd, wszWindowTextBuffer, 64)
@@ -2323,21 +2378,9 @@ wWinMain ( _In_     HINSTANCE hInstance,
           return false;
         };
 
+        // (Rotated displays too: regions are cropped from the displays' images by their rotation, SKIV_Image_CaptureRegion)
         auto _GetRectBelowCursor = [&](SKIV_CaptureData* _data, bool isAutoSelection) -> void
         {
-          // This feature is unsupported on rotated displays
-          //
-          if (SKIV_DesktopImage._rotation == DXGI_MODE_ROTATION_ROTATE90 ||
-              SKIV_DesktopImage._rotation == DXGI_MODE_ROTATION_ROTATE270)
-          {
-            if (isAutoSelection)
-            {
-              _data->_rect.Min = ImVec2 (0.0f, 0.0f);
-              _data->_rect.Max = ImVec2 (0.0f, 0.0f);
-            }
-            return;
-          }
-
           std::vector <HWND> vHWNDs;
           vHWNDs.reserve (2048);
 
@@ -2442,6 +2485,9 @@ wWinMain ( _In_     HINSTANCE hInstance,
         static bool toolbar = true; // HDR_Image && SKIV_HDR
         if (toolbar)
         {
+          // On the overlay of the display under the cursor (its window again: what follows is added to it)
+          ImGui::Begin (_OverlayName (0).c_str ( ), nullptr, overlayFlags);
+
           static ImVec2 vSnippingToolbarSize = ImVec2 (128.0f, 32.0f);
 
           ImGui::SetNextWindowPos  (ImVec2 (ImGui::GetCurrentWindow ()->Pos.x         +
@@ -2598,6 +2644,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
           vSnippingToolbarSize = ImGui::GetWindowSize ();
           ImGui::EndChild          ();
 
+          ImGui::End               ();
         }
 
         // A right click cancels the snip, as Escape does (also while a region is being dragged out). The viewer is drawn
@@ -2614,7 +2661,15 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
         else if (! bHoveringSnipToolbar)
         {
-          if (! clicked && SKIF_ImGui_SelectionRect (&selection._rect, allowable, 0, SelectionFlag_Filled))
+          // A region dragged out (in desktop coordinates: from one display onto others too, as the mouse stays with the
+          //   overlay it was pressed on), drawn on every overlay
+          const bool selected =
+            (! clicked && SKIF_ImGui_SelectionRect (&selection._rect, allowable, 0, SelectionFlag_Filled | SelectionFlag_NoDraw));
+
+          if (! clicked && ImGui::IsMouseDown (ImGuiMouseButton_Left) && ! selected)
+            _DrawOnOverlays (selection._rect, true);
+
+          if (selected)
           {
             _registry._SnippingModeExit = true;
             _GetRectBelowCursor  (&selection, false);
@@ -2638,14 +2693,9 @@ wWinMain ( _In_     HINSTANCE hInstance,
               capture_data = selection_auto;
             }
 
+            // The window below the cursor (on whichever displays it is)
             else if (selection_auto._rect.Min != selection_auto._rect.Max)
-            {
-              ImDrawList* draw_list =
-                ImGui::GetForegroundDrawList ();
-
-              draw_list->AddRect       (selection_auto._rect.Min, selection_auto._rect.Max, ImGui::GetColorU32 (IM_COL32(0,130,216,255)), 0.0f, 5.0f); // Border
-            //draw_list->AddRectFilled (selection_auto._rect.Min, selection_auto._rect.Max, ImGui::GetColorU32 (IM_COL32(0,130,216,50)));                 // Background
-            }
+              _DrawOnOverlays (selection_auto._rect, false);
           }
 
           else
@@ -2675,8 +2725,6 @@ wWinMain ( _In_     HINSTANCE hInstance,
           ImGui::GetIO ( ).MouseWheel  = 0.0f;
           ImGui::GetIO ( ).MouseWheelH = 0.0f;
         }
-
-        ImGui::End ( );
 #pragma endregion
       }
 
@@ -4611,7 +4659,7 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
       DirectX::ScratchImage captured_img;
       HRESULT hr =
-        SKIV_Image_CaptureDesktop (captured_img, capture_point);
+        SKIV_Image_CaptureDesktop (captured_img, capture_point, (mode == CaptureMode_Region) ? SKIV_CaptureDesktop_AllDisplays : 0x0); // Region snips: every display
 
       if (SUCCEEDED (hr))
       {
@@ -4640,11 +4688,11 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
         else if (mode == CaptureMode_Screen)
         {
-          extern skiv_image_desktop_s SKIV_DesktopImage;
+          // The display under the cursor, where it is on the desktop (regions are in desktop coordinates)
           const SKIV_CaptureData region =
                 SKIV_CaptureData (
-                  ImRect (ImVec2 (0, 0),
-                          SKIV_DesktopImage._resolution),
+                  ImRect (SKIV_DesktopImage._desktop_pos,
+                          SKIV_DesktopImage._desktop_pos + SKIV_DesktopImage.desktopSize ( )),
                   app_names,
                   ((_registry.eScreenshotsAutosave & mode) == CaptureMode_Screen) ? CaptureMode_Screen : CaptureMode_None
           );
@@ -4653,7 +4701,7 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
           _registry._SnippingMode = false;
         }
 
-        // CaptureMode_Region: in a window of its own over the display captured (the snipping overlay, see the main loop),
+        // CaptureMode_Region: in windows of their own over the displays captured (the snipping overlays, see the main loop),
         //   which leaves the main window as it is (shown, minimized or in the tray, wherever it is)
         else
         {

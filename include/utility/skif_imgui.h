@@ -36,6 +36,7 @@ enum SelectionFlag_
   SelectionFlag_SingleClick   = 1 << 0, // Select on a single click
   SelectionFlag_AllowInverted = 1 << 1, // Allow an inverted selection rectangle?
   SelectionFlag_Filled        = 1 << 2, // Fill out the selection rectangle
+  SelectionFlag_NoDraw        = 1 << 3, // Draw nothing (the caller draws it: e.g. over several windows)
 
   // Multi-flags
   SelectionFlag_Default       =         // Default flags: SelectionFlag_Filled

@@ -616,7 +616,7 @@ SKIF_ImGui_SelectionRect (ImRect*          selection,
 
   // Draw the selection rectangle: from its corners, whichever way it was dragged from where it started (up or left too:
   //   ImDrawList takes Min as its top left corner, and draws nothing of an inverted rectangle)
-  if (ImGui::IsMouseDown (mouse_button) || single_click)
+  if ((ImGui::IsMouseDown (mouse_button) || single_click) && ! (flags & SelectionFlag_NoDraw))
   {
     ImDrawList* draw_list =
       ImGui::GetForegroundDrawList ();
