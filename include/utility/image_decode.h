@@ -91,11 +91,12 @@ struct image_anim_s {
   size_t                window       = 0;                 //   ... at most this many
   size_t                frameBytes   = 0;                 // The video memory a frame takes
 
-  // Playback (main thread only)
+  // Playback (main thread only), in microseconds (image_decode.cpp's _AnimationClock): frames may last fractions of a
+  //   millisecond (1/60 s), which playback keeps the pace of
   bool                  paused       = false;             // Paused by the user
   size_t                current      = 0;                 // The frame shown (or to be shown, once it is decoded)
-  DWORD                 shownAt      = 0;                 // When it started to show (0: not yet)
-  DWORD                 pausedIn     = 0;                 // Paused: how long it had shown (ms)
+  uint64_t              shownAt      = 0;                 // When it started to show (0: not yet)
+  uint64_t              pausedIn     = 0;                 // Paused: how long it had shown
   CComPtr <ID3D11ShaderResourceView>
                         shown;                            // The texture shown: the current frame's, or the last one before it
 
@@ -104,13 +105,15 @@ struct image_anim_s {
   // Moves playback on to the frame due now (if it has been decoded), and returns the texture to show. nextAt: when the
   //   frame after it is due (SKIF_Util_timeGetTime1), 0 if none is (paused); changed: whether the texture changed.
   ID3D11ShaderResourceView*
-         update          (DWORD now, DWORD& nextAt, bool& changed);
-  void   play            (DWORD now);
-  void   pause           (DWORD now);
-  void   step            (DWORD now, int frames);         // Pauses, and moves this many frames ahead (or back)
+         update          (DWORD& nextAt, bool& changed);
+  void   play            (void);
+  void   pause           (void);
+  void   step            (int frames);                    // Pauses, and moves this many frames ahead (or back)
   size_t getCount        (void) const;                    // How many frames it has
-  DWORD  getDelay        (size_t frame) const;            // How long a frame shows (ms), 0 if not known yet (not decoded)
-  DWORD  getDuration     (void) const;                    // ms, 0 until every frame has been decoded once
+  uint32_t
+         getDelay        (size_t frame) const;            // How long a frame shows (microseconds), 0 if not known yet
+  uint64_t
+         getDuration     (void) const;                    // Microseconds, 0 until every frame has been decoded once
   void   release         (void);                          // Stops decoding, and pushes the textures to be released
                                                           //   (SKIF_ResourcesToFree): by whoever holds the last reference
 

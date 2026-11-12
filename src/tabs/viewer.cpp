@@ -381,7 +381,7 @@ SKIV_GetImageFrame (image_s& image, ImVec2& uv0, ImVec2& uv1, bool track)
   bool  changed = false;
 
   ID3D11ShaderResourceView* pSRV =
-    image.anim->update (SKIF_Util_timeGetTime1 ( ), nextAt, changed);
+    image.anim->update (nextAt, changed);
 
   // (Whoever asks first sees the change: cover and cover_old may share the animation)
   if (changed)
@@ -2649,21 +2649,28 @@ SKIF_UI_Tab_DrawViewer (void)
     {
       const image_anim_s& anim     = *described.anim;
       const size_t        frame    = anim.current;
-      const DWORD         duration = anim.getDuration ( ); // 0 until every frame has been decoded once
+      const uint64_t      duration = anim.getDuration ( );    // 0 until every frame has been decoded once (microseconds)
+      const uint32_t      delay    = anim.getDelay (frame);   // (Microseconds: whole milliseconds shown as such, 16.67 ms ...)
 
       char szAnimLabels [128] = { };
       char szAnimData   [256] = { };
       char szDuration   [ 64] = "...";
+      char szDelay      [ 32] = { };
 
       if (duration != 0)
-        sprintf (szDuration, "%.2f s", static_cast <float> (duration) / 1000.0f);
+        sprintf (szDuration, "%.2f s", static_cast <double> (duration) / 1000000.0);
+
+      if (delay % 1000 == 0)
+        sprintf (szDelay, "%u ms",   delay / 1000);
+      else
+        sprintf (szDelay, "%.2f ms", static_cast <double> (delay) / 1000.0);
 
       sprintf (szAnimLabels, "Frame:\n"
                              "Duration:\n");
-      sprintf (szAnimData,   "%zu / %zu (%lu ms)%s\n"
+      sprintf (szAnimData,   "%zu / %zu (%s)%s\n"
                              "%s%s\n",
                               frame + 1, anim.getCount (),
-                              anim.getDelay (frame),
+                              szDelay,
                               anim.paused ? ", paused" : "",
                               szDuration,
                               (anim.streamed) ? " (streamed)" : "");
@@ -3337,21 +3344,19 @@ SKIF_UI_Tab_DrawViewer (void)
       // Animated images
       if (cover.anim != nullptr)
       {
-        const DWORD now = SKIF_Util_timeGetTime1 ( );
-
         if (cover.anim->paused)
         {
           if (SKIF_ImGui_MenuItemEx2 ("Play",     ICON_FA_PLAY,         ImGui::GetStyleColorVec4(ImGuiCol_Text),      "Space"))
-            cover.anim->play  (now);
+            cover.anim->play  ( );
         }
 
         else if (SKIF_ImGui_MenuItemEx2 ("Pause", ICON_FA_PAUSE,        ImGui::GetStyleColorVec4(ImGuiCol_Text),      "Space"))
-          cover.anim->pause (now);
+          cover.anim->pause ( );
 
         if (SKIF_ImGui_MenuItemEx2 ("Next frame", 0,                    ImGui::GetStyleColorVec4(ImGuiCol_Text),      "."))
-          cover.anim->step (now,  1);
+          cover.anim->step ( 1);
         if (SKIF_ImGui_MenuItemEx2 ("Previous frame", 0,                ImGui::GetStyleColorVec4(ImGuiCol_Text),      ","))
-          cover.anim->step (now, -1);
+          cover.anim->step (-1);
       }
       if (SKIF_ImGui_MenuItemEx2 ("Close", 0,                           ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info), "Ctrl+W"))
         _SwapOutCover ();
@@ -3783,21 +3788,19 @@ SKIF_UI_Tab_DrawViewer (void)
     // Animated images: Space pauses / resumes, and , / . step a frame back / ahead (pausing it)
     else if (cover.anim != nullptr && ! ImGui::GetIO ( ).WantTextInput && ! ImGui::IsPopupOpen (nullptr, ImGuiPopupFlags_AnyPopupId))
     {
-      const DWORD now = SKIF_Util_timeGetTime1 ( );
-
       if (ImGui::IsKeyPressed (ImGuiKey_Space, false))
       {
         if (cover.anim->paused)
-          cover.anim->play  (now);
+          cover.anim->play  ( );
         else
-          cover.anim->pause (now);
+          cover.anim->pause ( );
       }
 
       else if (ImGui::IsKeyPressed (ImGuiKey_Period))
-        cover.anim->step (now,  1);
+        cover.anim->step ( 1);
 
       else if (ImGui::IsKeyPressed (ImGuiKey_Comma))
-        cover.anim->step (now, -1);
+        cover.anim->step (-1);
     }
   }
 

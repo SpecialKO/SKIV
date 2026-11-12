@@ -92,11 +92,12 @@ _AppendPNGChunk (std::vector <uint8_t>& png, const char* type, const uint8_t* da
   _WriteBE32 (p + 8 + length, crc ^ 0xFFFFFFFFu);
 }
 
-// How long a frame is shown (ms). Delays of 10 ms or less are shown for 100 ms, as browsers do (many GIFs rely on it).
+// How long a frame is shown, in microseconds (an APNG's or an AVIF's may be a fraction of a millisecond, as 1/60 s is).
+//   Delays of 10 ms or less are shown for 100 ms, as browsers do (many GIFs rely on it).
 static uint32_t
-_AnimatedFrameDelay (uint32_t ms)
+_AnimatedFrameDelay (uint64_t us)
 {
-  return (ms <= 10) ? 100 : ms;
+  return (us <= 10000) ? 100000 : static_cast <uint32_t> (std::min <uint64_t> (us, UINT32_MAX));
 }
 
 struct apng_s
@@ -106,7 +107,7 @@ struct apng_s
                             height  = 0,
                             x       = 0,
                             y       = 0,
-                            delay   = 0; // ms
+                            delay   = 0; // microseconds
     uint8_t                 dispose = 0; // 0: none, 1: clear to transparent, 2: restore the canvas from before the frame
     uint8_t                 blend   = 0; // 0: replace, 1: alpha blend over the canvas
     std::vector <uint8_t>   data;        // The frame's zlib stream (IDAT / fdAT data, without the sequence numbers)
@@ -173,7 +174,7 @@ _ParseAPNG (const uint8_t* file, size_t size, apng_s& apng)
 
       const uint32_t num = _ReadBE16 (data + 20),
                      den = _ReadBE16 (data + 22);
-      frame.delay   = _AnimatedFrameDelay (num * 1000 / ((den == 0) ? 100 : den));
+      frame.delay   = _AnimatedFrameDelay (static_cast <uint64_t> (num) * 1000000 / ((den == 0) ? 100 : den));
 
       if (frame.width  == 0 || static_cast <uint64_t> (frame.x) + frame.width  > apng.width  ||
           frame.height == 0 || static_cast <uint64_t> (frame.y) + frame.height > apng.height ||
@@ -224,7 +225,7 @@ _ParseAPNG (const uint8_t* file, size_t size, apng_s& apng)
 }
 
 // Decodes the frames of an APNG, drawn onto its canvas (RGBA, width x height), and hands each one to onFrame (canvas,
-//   delay in ms), which returns false to stop. Returns the number of frames handed over, or -1 on an error.
+//   delay in microseconds), which returns false to stop. Returns the number of frames handed over, or -1 on an error.
 static int
 _DecodeAPNG (const apng_s& apng, const std::function <bool (const uint8_t*, uint32_t)>& onFrame)
 {
@@ -397,7 +398,7 @@ _ScanGIF (const uint8_t* file, size_t size, uint32_t& width, uint32_t& height, u
 }
 
 // Decodes the frames of a GIF (stb_image draws each onto its canvas, RGBA, width x height) and hands each one to onFrame
-//   (canvas, delay in ms), which returns false to stop. Returns the number of frames handed over, or -1 on an error before
+//   (canvas, delay in microseconds), which returns false to stop. Returns the number of frames handed over, or -1 on an error before
 //     the first one. A GIF that breaks off after some frames keeps those.
 static int
 _DecodeGIF (const uint8_t* file, size_t size, const std::function <bool (const uint8_t*, uint32_t)>& onFrame)
@@ -451,7 +452,7 @@ _DecodeGIF (const uint8_t* file, size_t size, const std::function <bool (const u
 
     count++;
 
-    if (! onFrame (canvas, _AnimatedFrameDelay (static_cast <uint32_t> (std::max (g->delay, 0)))))
+    if (! onFrame (canvas, _AnimatedFrameDelay (static_cast <uint64_t> (std::max (g->delay, 0)) * 1000)))
       break;
   }
 
@@ -491,7 +492,7 @@ _ScanWebP (const uint8_t* file, size_t size, uint32_t& width, uint32_t& height, 
 }
 
 // Decodes the frames of an animated WebP (libwebp draws each onto its canvas, RGBA, width x height) and hands each one to
-//   onFrame (canvas, delay in ms), which returns false to stop. Returns the number of frames handed over, or -1 on an error
+//   onFrame (canvas, delay in microseconds), which returns false to stop. Returns the number of frames handed over, or -1 on an error
 //     before the first one.
 static int
 _DecodeWebP (const uint8_t* file, size_t size, const std::function <bool (const uint8_t*, uint32_t)>& onFrame)
@@ -526,7 +527,7 @@ _DecodeWebP (const uint8_t* file, size_t size, const std::function <bool (const 
     const int delay = std::max (timestamp - previous, 0);
     previous        = timestamp;
 
-    if (! onFrame (canvas, _AnimatedFrameDelay (static_cast <uint32_t> (delay))))
+    if (! onFrame (canvas, _AnimatedFrameDelay (static_cast <uint64_t> (delay) * 1000)))
       break;
   }
 
