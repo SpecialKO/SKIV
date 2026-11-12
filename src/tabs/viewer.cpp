@@ -220,10 +220,7 @@ bool                   newImageFailed    = false; // Set by the window msg handl
 bool                   imageFailWarning  = false; // Set to true to warn about a failed image load
 
 bool                   activateSnipping  = false; // Set to true when a desktop capture is complete and ready to snip
-bool                   iconicBeforeSnip  = false;
-bool                   trayedBeforeSnip  = false;
-HWND                   hwndBeforeSnip    =  0;
-HWND                   hwndTopBeforeSnip =  0; // Window above SKIV in z-order
+HWND                   hwndBeforeSnip    =  0;    // The foreground window when a snip began (given the focus back once it ends)
 //ImRect               selection_rect    = { };
 
 bool                   coverRefresh      = false; // This just triggers a refresh of the cover

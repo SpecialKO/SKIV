@@ -2508,6 +2508,27 @@ SKIF_ImGui_ImplWin32_SetDWMBorders (void* hWnd, DWM_WINDOW_CORNER_PREFERENCE dwm
   if (! SKIF_Util_IsWindows11orGreater ( ))
     return;
 
+  // A window other than the main one that covers its display exactly (the snipping overlay): neither rounded nor
+  //   bordered, as Windows leaves a fullscreen window (its corners would show the desktop, the border would frame it).
+  //     Whatever the corners setting is, as the system's own default rounds it too.
+  if (SKIF_ImGui_hWnd != NULL && SKIF_ImGui_hWnd != (HWND)hWnd && dwmCornerPreference == DWMWCP_DEFAULT)
+  {
+    RECT        rcWindow = { };
+    MONITORINFO minfo    = { .cbSize = sizeof (MONITORINFO) };
+
+    if (::GetWindowRect  ((HWND)hWnd, &rcWindow) &&
+        ::GetMonitorInfo (::MonitorFromWindow ((HWND)hWnd, MONITOR_DEFAULTTONEAREST), &minfo) &&
+        ::EqualRect      (&rcWindow, &minfo.rcMonitor))
+    {
+      const DWM_WINDOW_CORNER_PREFERENCE dwmNoCorners = DWMWCP_DONOTROUND;
+      const COLORREF                     dwmNoBorder  = DWMWA_COLOR_NONE;
+
+      ::DwmSetWindowAttribute ((HWND)hWnd, DWMWA_WINDOW_CORNER_PREFERENCE, &dwmNoCorners, sizeof (dwmNoCorners));
+      ::DwmSetWindowAttribute ((HWND)hWnd, DWMWA_BORDER_COLOR,             &dwmNoBorder,  sizeof (dwmNoBorder));
+      return;
+    }
+  }
+
   static SKIF_RegistrySettings& _registry = SKIF_RegistrySettings::GetInstance ( );
 
   if (! _registry.bWin11Corners)
