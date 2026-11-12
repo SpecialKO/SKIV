@@ -2594,7 +2594,19 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
         }
 
-        if (! bHoveringSnipToolbar)
+        // A right click cancels the snip, as Escape does (also while a region is being dragged out). The viewer is drawn
+        //   in this frame already (once the window is restored): it must not take the click as one for its menu.
+        if (ImGui::IsMouseClicked (ImGuiMouseButton_Right))
+        {
+          _registry._SnippingModeExit = true;
+          clicked                     = false;
+          selection._rect             = ImRect ( );
+
+          extern int SKIV_Viewer_RightClickUsedInFrame;
+          SKIV_Viewer_RightClickUsedInFrame = ImGui::GetFrameCount ( );
+        }
+
+        else if (! bHoveringSnipToolbar)
         {
           if (! clicked && SKIF_ImGui_SelectionRect (&selection._rect, allowable, 0, SelectionFlag_Filled))
           {

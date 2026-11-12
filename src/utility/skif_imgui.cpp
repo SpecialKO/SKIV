@@ -614,16 +614,20 @@ SKIF_ImGui_SelectionRect (ImRect*          selection,
   static const auto
     inset = ImVec2 (0.0f, 0.0f);
 
-  // Draw the selection rectangle
+  // Draw the selection rectangle: from its corners, whichever way it was dragged from where it started (up or left too:
+  //   ImDrawList takes Min as its top left corner, and draws nothing of an inverted rectangle)
   if (ImGui::IsMouseDown (mouse_button) || single_click)
   {
     ImDrawList* draw_list =
       ImGui::GetForegroundDrawList ();
 
-    draw_list->AddRect         (selection->Min-inset, selection->Max+inset, ImGui::GetColorU32 (IM_COL32(0,130,216,255)), 0.0f, 5.0f); // Border
+    const ImVec2 top_left     (ImMin (selection->Min.x, selection->Max.x), ImMin (selection->Min.y, selection->Max.y)),
+                 bottom_right (ImMax (selection->Min.x, selection->Max.x), ImMax (selection->Min.y, selection->Max.y));
+
+    draw_list->AddRect         (top_left-inset, bottom_right+inset, ImGui::GetColorU32 (IM_COL32(0,130,216,255)), 0.0f, 5.0f); // Border
 
     if (flags & SelectionFlag_Filled)
-      draw_list->AddRectFilled (selection->Min,       selection->Max,       ImGui::GetColorU32 (IM_COL32(0,130,216,50)));  // Background
+      draw_list->AddRectFilled (top_left,       bottom_right,       ImGui::GetColorU32 (IM_COL32(0,130,216,50)));  // Background
   }
 
   const bool complete =

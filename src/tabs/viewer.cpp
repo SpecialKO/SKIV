@@ -327,6 +327,10 @@ static DWORD SKIV_Viewer_CarouselWakeAt  = 0;
 //   again as it fades in; 0: none
 static DWORD SKIV_Viewer_PreviewWakeAt   = 0;
 
+// The frame (ImGui::GetFrameCount) a right click was used in by something else (cancelling a snip, see SKIV.cpp), which
+//   the context menu then leaves alone; -1: none
+int          SKIV_Viewer_RightClickUsedInFrame = -1;
+
 // ms until the next frame of the animation shown is due (0: now), or the thumbnails carousel is due to fade out;
 //   INFINITE if neither
 DWORD
@@ -3181,7 +3185,8 @@ SKIF_UI_Tab_DrawViewer (void)
 
   auto _IsRightClicked = [&](void) -> bool
   {
-    if (ImGui::IsMouseClicked (ImGuiMouseButton_Right))
+    // (Not one that cancelled a snip in this frame, see SKIV.cpp)
+    if (ImGui::IsMouseClicked (ImGuiMouseButton_Right) && SKIV_Viewer_RightClickUsedInFrame != ImGui::GetFrameCount ( ))
     {
       return true;
     }
