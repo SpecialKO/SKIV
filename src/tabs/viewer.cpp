@@ -247,59 +247,6 @@ PopupState ContextMenu     = PopupState_Closed;
 PopupState ConfigEncoders  = PopupState_Closed;
 
 
-DWORD
-image_anim_s::getPosition (DWORD now) const
-{
-  if (duration == 0)
-    return 0;
-
-  return (playingSince != 0) ? (position + (now - playingSince)) % duration
-                             :  position                         % duration;
-}
-
-size_t
-image_anim_s::getFrameAt (DWORD pos) const
-{
-  const auto frameEnd = std::upper_bound (frameEnds.begin ( ), frameEnds.end ( ), pos);
-  const auto frame    = static_cast <size_t> (std::distance (frameEnds.begin ( ), frameEnd));
-
-  return std::min (frame, frames.size ( ) - 1);
-}
-
-void
-image_anim_s::play (DWORD now)
-{
-  paused = false;
-
-  if (playingSince == 0)
-    playingSince = now;
-}
-
-void
-image_anim_s::pause (DWORD now)
-{
-  paused = true;
-
-  if (playingSince != 0)
-  {
-    position     = getPosition (now);
-    playingSince = 0;
-  }
-}
-
-void
-image_anim_s::step (DWORD now, int count)
-{
-  pause (now);
-
-  if (frames.empty ( ))
-    return;
-
-  const int size  = static_cast <int> (frames.size ( ));
-  const int frame = ((static_cast <int> (getFrameAt (position)) + count) % size + size) % size;
-
-  position = getFrameStart (static_cast <size_t> (frame));
-}
 
 
 // How images are shown (the same for every image): their scaling, and the zoom on top of it (1.0f = 100%; 0.05f to 5.0f)
@@ -427,35 +374,30 @@ SKIV_GetImageFrame (image_s& image, ImVec2& uv0, ImVec2& uv1, bool track)
   uv0 = image.uv0;
   uv1 = image.uv1;
 
-  if (image.anim == nullptr || image.anim->frames.empty ( ))
+  if (image.anim == nullptr)
     return image.pRawTexSRV.p;
 
-  image_anim_s& anim = *image.anim;
-  const DWORD   now  = SKIF_Util_timeGetTime ( );
+  DWORD nextAt  = 0;
+  bool  changed = false;
 
-  if (! anim.paused && anim.playingSince == 0)
-    anim.play (now);
+  ID3D11ShaderResourceView* pSRV =
+    image.anim->update (SKIF_Util_timeGetTime1 ( ), nextAt, changed);
 
-  const DWORD  position = anim.getPosition (now);
-  const size_t frame    = anim.getFrameAt  (position);
+  // (Whoever asks first sees the change: cover and cover_old may share the animation)
+  if (changed)
+    SKIV_Viewer_AnimChanged = true;
 
   if (track)
   {
-    if (frame != anim.current)
-      SKIV_Viewer_AnimChanged = true;
-
     SKIV_Viewer_AnimDrawnFrame  = ImGui::GetFrameCount ( );
-    SKIV_Viewer_AnimNextFrameAt = (anim.playingSince != 0)
-                                ? std::max (SKIF_Util_timeGetTime1 ( ) + (anim.frameEnds [frame] - position), 1UL)
-                                : 0;
+    SKIV_Viewer_AnimNextFrameAt = (nextAt != 0) ? nextAt : 0;
   }
 
-  anim.current = frame;
+  // Each frame is a texture of its own
+  uv0 = ImVec2 (0, 0);
+  uv1 = ImVec2 (1, 1);
 
-  uv0 = anim.frames [frame].uv0;
-  uv1 = anim.frames [frame].uv1;
-
-  return anim.frames [frame].srv.p;
+  return (pSRV != nullptr) ? pSRV : image.pRawTexSRV.p;
 }
 
 // The pixels of the image shown, read back from the GPU: an animated image's current frame (at the size its frames
@@ -497,24 +439,6 @@ SKIV_CaptureImage (image_s& image, DirectX::ScratchImage& captured, bool scRGB =
 
   if (FAILED (hr))
     return hr;
-
-  // An animated image: its frame's part of the page
-  DirectX::ScratchImage frameImg;
-
-  if (image.anim != nullptr)
-  {
-    const image_anim_s::frame_s& frame = image.anim->frames [image.anim->current];
-
-    const size_t width  = static_cast <size_t> (image.anim->resolution.x),
-                 height = static_cast <size_t> (image.anim->resolution.y);
-
-    if (FAILED (hr = frameImg.Initialize2D (texture.GetMetadata ( ).format, width, height, 1, 1)) ||
-        FAILED (hr = DirectX::CopyRectangle (*texture.GetImages ( ), DirectX::Rect (static_cast <size_t> (frame.offset.x), static_cast <size_t> (frame.offset.y), width, height),
-                                             *frameImg.GetImages ( ), DirectX::TEX_FILTER_DEFAULT, 0, 0)))
-      return hr;
-
-    texture = std::move (frameImg);
-  }
 
   // Wide gamut SDR (scRGB): as sRGB of 8 bpc, the colors outside of it clipped, unless asked for as it is
   if (wideSDR && ! scRGB)
@@ -2700,23 +2624,28 @@ SKIF_UI_Tab_DrawViewer (void)
     }
 
     // Animated images
-    if (described.anim != nullptr && ! described.anim->frames.empty ())
+    if (described.anim != nullptr && described.anim->getCount ( ) > 0)
     {
-      const image_anim_s& anim  = *described.anim;
-      const size_t        frame = anim.current;
+      const image_anim_s& anim     = *described.anim;
+      const size_t        frame    = anim.current;
+      const DWORD         duration = anim.getDuration ( ); // 0 until every frame has been decoded once
 
       char szAnimLabels [128] = { };
       char szAnimData   [256] = { };
+      char szDuration   [ 64] = "...";
+
+      if (duration != 0)
+        sprintf (szDuration, "%.2f s", static_cast <float> (duration) / 1000.0f);
 
       sprintf (szAnimLabels, "Frame:\n"
                              "Duration:\n");
       sprintf (szAnimData,   "%zu / %zu (%lu ms)%s\n"
-                             "%.2f s%s\n",
-                              frame + 1, anim.frames.size (),
-                              anim.frameEnds [frame] - anim.getFrameStart (frame),
+                             "%s%s\n",
+                              frame + 1, anim.getCount (),
+                              anim.getDelay (frame),
                               anim.paused ? ", paused" : "",
-                              static_cast <float> (anim.duration) / 1000.0f,
-                              (anim.resolution.x != described.width) ? " (scaled down to fit)" : "");
+                              szDuration,
+                              (anim.streamed) ? " (streamed)" : "");
 
       ImGui::TextUnformatted (szAnimLabels);
       ImGui::SameLine        (posXvalues);
@@ -3387,7 +3316,7 @@ SKIF_UI_Tab_DrawViewer (void)
       // Animated images
       if (cover.anim != nullptr)
       {
-        const DWORD now = SKIF_Util_timeGetTime ( );
+        const DWORD now = SKIF_Util_timeGetTime1 ( );
 
         if (cover.anim->paused)
         {
@@ -3833,7 +3762,7 @@ SKIF_UI_Tab_DrawViewer (void)
     // Animated images: Space pauses / resumes, and , / . step a frame back / ahead (pausing it)
     else if (cover.anim != nullptr && ! ImGui::GetIO ( ).WantTextInput && ! ImGui::IsPopupOpen (nullptr, ImGuiPopupFlags_AnyPopupId))
     {
-      const DWORD now = SKIF_Util_timeGetTime ( );
+      const DWORD now = SKIF_Util_timeGetTime1 ( );
 
       if (ImGui::IsKeyPressed (ImGuiKey_Space, false))
       {

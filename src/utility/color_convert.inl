@@ -496,19 +496,4 @@ _ConvertToScRGB (cmsHPROFILE source, cmsUInt32Number inFormat, const uint8_t* in
   return true;
 }
 
-// Converts RGBA pixels (8 bpc) in place from the source profile into sRGB, clipping colors outside of it: for the frames of
-//   animated images, which stay 8 bpc (see _LoadAnimatedImage)
-static cmsHTRANSFORM
-_CreateSRGBTransform (cmsHPROFILE source)
-{
-  cmsHPROFILE   srgb      = _CreateRGBProfile (_sRGBPrimaries, _SRGBCurve ( ));
-  cmsHTRANSFORM transform = (srgb == nullptr) ? nullptr :
-    cmsCreateTransform (source, TYPE_RGBA_8, srgb, TYPE_RGBA_8, INTENT_RELATIVE_COLORIMETRIC, cmsFLAGS_COPY_ALPHA);
-
-  if (srgb != nullptr)
-    cmsCloseProfile (srgb);
-
-  return transform;
-}
-
 #pragma endregion

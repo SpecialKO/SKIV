@@ -74,38 +74,50 @@ struct color_source_s {
   }
 };
 
-// The frames of an animated image (APNG, GIF, WebP), and where it is in playing them (_LoadAnimatedImage).
-//   Frames that fit share a few textures (pages), each in a cell of its own: a texture per frame takes much more video
-//     memory than its pixels, as drivers place textures in pages of video memory (as SKIF learned with its animated covers).
-//       Each cell has a one-pixel border repeating the frame's edges, so filtering never takes in a neighboring frame.
-struct image_anim_s {
-  struct frame_s {
-    CComPtr <ID3D11ShaderResourceView> srv;                    // Its texture (shared with the other frames of its page)
-    ImVec2                             uv0    = ImVec2 (0, 0); // Its part of the texture
-    ImVec2                             uv1    = ImVec2 (1, 1);
-    ImVec2                             offset = ImVec2 (0, 0); // ... in pixels (its top left corner)
-  };
+// The frames of an animated image (APNG, GIF, WebP, AVIF), and where it is in playing them (_LoadAnimatedImage).
+//   A thread of its own decodes the frames from the file as they are played (image_anim_stream_s, image_decode.cpp),
+//     each into a texture of its own, starting with the first: it shows as soon as that one is decoded. Those of an
+//       animation that fits keepAll's budget are all kept once decoded (the thread then ends); those of a larger one are
+//         streamed: only a few around the one shown are kept, and the file is decoded again each time it loops.
+struct image_anim_stream_s;
 
-  std::vector <frame_s> frames;
-  std::vector <DWORD>   frameEnds;                        // When each frame ends (ms into the animation)
-  DWORD                 duration     = 0;                 // ms
-  ImVec2                resolution   = ImVec2 (0, 0);     // The frames' size (smaller than the image if it had to be scaled down)
-  size_t                textures     = 0;                 // How many textures the frames take
-  size_t                bytes        = 0;                 //   ... and how much video memory
+// WM_SKIF_IMAGE's wParam when a frame the main thread waits for has been decoded: it only wakes the main loop
+constexpr WPARAM SKIV_IMAGE_ANIMATION_FRAME = 0x2;
+
+struct image_anim_s {
+  ImVec2                resolution   = ImVec2 (0, 0);     // The frames' size (the image's)
   bool                  wide         = false;             // Of wide gamut colors: the frames are scRGB (half floats)
+  bool                  streamed     = false;             // Only window frames are kept at a time (otherwise all of them)
+  size_t                window       = 0;                 //   ... at most this many
+  size_t                frameBytes   = 0;                 // The video memory a frame takes
 
   // Playback (main thread only)
-  DWORD                 playingSince = 0;                 // 0: not playing (paused, or not started yet)
-  DWORD                 position     = 0;                 // ms into the animation when it was last paused / started
   bool                  paused       = false;             // Paused by the user
-  size_t                current      = 0;                 // The frame shown last
+  size_t                current      = 0;                 // The frame shown (or to be shown, once it is decoded)
+  DWORD                 shownAt      = 0;                 // When it started to show (0: not yet)
+  DWORD                 pausedIn     = 0;                 // Paused: how long it had shown (ms)
+  CComPtr <ID3D11ShaderResourceView>
+                        shown;                            // The texture shown: the current frame's, or the last one before it
 
-  DWORD  getPosition     (DWORD now) const;               // ms into the animation
-  size_t getFrameAt      (DWORD position) const;
-  DWORD  getFrameStart   (size_t frame) const { return (frame == 0 || frame > frameEnds.size ( )) ? 0 : frameEnds [frame - 1]; }
+  std::shared_ptr <image_anim_stream_s> stream;
+
+  // Moves playback on to the frame due now (if it has been decoded), and returns the texture to show. nextAt: when the
+  //   frame after it is due (SKIF_Util_timeGetTime1), 0 if none is (paused); changed: whether the texture changed.
+  ID3D11ShaderResourceView*
+         update          (DWORD now, DWORD& nextAt, bool& changed);
   void   play            (DWORD now);
   void   pause           (DWORD now);
   void   step            (DWORD now, int frames);         // Pauses, and moves this many frames ahead (or back)
+  size_t getCount        (void) const;                    // How many frames it has
+  DWORD  getDelay        (size_t frame) const;            // How long a frame shows (ms), 0 if not known yet (not decoded)
+  DWORD  getDuration     (void) const;                    // ms, 0 until every frame has been decoded once
+  void   release         (void);                          // Stops decoding, and pushes the textures to be released
+                                                          //   (SKIF_ResourcesToFree): by whoever holds the last reference
+
+  image_anim_s  (void) = default;
+  image_anim_s  (const image_anim_s&) = delete;
+  image_anim_s& operator= (const image_anim_s&) = delete;
+ ~image_anim_s  (void);                                   // Stops decoding (if release did not)
 };
 
 struct image_s {
@@ -140,7 +152,7 @@ struct image_s {
   CComPtr <ID3D11ShaderResourceView>  pGamutCoverageSRV;
 
   // Animated images: their frames (pRawTexSRV is then the first frame's texture, holding a reference of its own).
-  //   Released with SKIV_ReleaseAnimation, like the textures above are pushed to SKIF_ResourcesToFree.
+  //   Released with image_anim_s::release (SKIV_ImageStore::Release), like the textures above are pushed to SKIF_ResourcesToFree.
   std::shared_ptr <image_anim_s>      anim;
 
   // How the file describes its colors (ICC profile, cICP, ...), see color_source.inl

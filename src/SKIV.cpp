@@ -4908,7 +4908,8 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
       // The image store has decoded an image: it only wakes the main loop, as the viewer takes it (and notes that
       //   the image has loaded) on the main thread (SKIV_ImageStore::TakeResult)
-      if (wParam == 0x1) // SKIV_IMAGE_STORE_RESULT
+      //   An animated image's thread has decoded a frame that is waited for: it only wakes the main loop as well
+      if (wParam == 0x1 || wParam == 0x2) // SKIV_IMAGE_STORE_RESULT, SKIV_IMAGE_ANIMATION_FRAME
         break;
 
       // Update tryingToLoadCover

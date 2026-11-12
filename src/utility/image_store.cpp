@@ -123,11 +123,9 @@ SKIV_ImageStore::Release (image_s& image)
   {
     if (image.anim.use_count ( ) == 1)
     {
-      for (auto& frame : image.anim->frames)
-        if (frame.srv.p != nullptr)
-          SKIF_ResourcesToFree.push (frame.srv.Detach ( ));
+      image.anim->release ( );
 
-      PLOG_VERBOSE << "SKIF_ResourcesToFree: Pushed the " << image.anim->frames.size ( ) << " frames of an animated image to be released";
+      PLOG_VERBOSE << "SKIF_ResourcesToFree: Pushed the frames of an animated image to be released";
     }
 
     image.anim.reset ( );
