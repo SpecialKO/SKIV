@@ -2316,6 +2316,19 @@ static LRESULT CALLBACK ImGui_ImplWin32_WndProcHandler_PlatformWindow(HWND hWnd,
 
           break;
 
+        // A window shown at the size it was created at gets no WM_SIZE here (the one sent as it was created came before
+        //   its viewport knew it): e.g. the snipping overlays, which are never resized. Its state as it is shown, then, or
+        //     it would be taken as minimized, and nothing would be rendered for it while the main window is minimized.
+        case WM_WINDOWPOSCHANGED:
+          if (const WINDOWPOS* wp = reinterpret_cast <const WINDOWPOS*> (lParam); wp != nullptr && (wp->flags & SWP_SHOWWINDOW))
+          {
+            if (ImGui_ImplWin32_ViewportData* vd = (ImGui_ImplWin32_ViewportData*)viewport->PlatformUserData)
+              vd->WmSize = (::IsIconic (hWnd)) ? SIZE_MINIMIZED :
+                           (::IsZoomed (hWnd)) ? SIZE_MAXIMIZED : SIZE_RESTORED;
+          }
+
+          break;
+
         case WM_MOUSEACTIVATE:
           if (viewport->Flags & ImGuiViewportFlags_NoFocusOnClick)
             return MA_NOACTIVATE;
