@@ -64,6 +64,7 @@ constexpr size_t SKIV_PREVIEW_SIZE    = 4096;
 #include <atomic>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 #include <concurrent_queue.h>
 #include <utility/image_decode.h>
@@ -137,6 +138,32 @@ private:
                                                         written == other.written && path == other.path; }
   };
   static key_s Key (const std::wstring& path);
+
+  // The files' keys (and whether they are animated), looked up on a thread of their own (Lookup): the main thread never
+  //   waits on the file system for the images around the shown one (going through images, it is busy reading them for
+  //   their decodes, and a lookup could take tens of ms). Until a file's lookup comes, its key is not known (exists false).
+  struct file_s {
+    key_s key;
+    int   animated      = -1;    // Whether the file (as key) is animated: -1 not known (yet)
+    bool  asked         = false; // A lookup is in flight
+    bool  askedAnimated = false; //   ... which tells whether it is animated too
+  };
+
+  struct lookup_s {
+    std::wstring path;
+    bool         animated = false; // Whether it is animated, too (reads its header)
+  };
+
+  struct looked_s {
+    key_s key;
+    int   animated = -1;
+  };
+
+  static unsigned __stdcall Lookup (void*);
+  key_s  KnownKey    (const std::wstring& path, bool refresh); // The latest known (asked for if not known, or refresh)
+  void   AskFile     (const std::wstring& path, bool animated);
+  void   TakeLookups (void);                                   // Main thread: the lookups that came (m_keysChanged)
+  void   NoteKey     (const key_s& key);                       // Main thread: a key looked up meanwhile (fresher)
 
   struct result_s {
     int          job        = 0;
@@ -241,4 +268,11 @@ private:
   key_s                     m_previewKey;         // The preview of the request loading: its file (made, or being made),
   image_s                   m_preview = { };      //   ... and it (once made)
   int                       m_previewJob = 0;     //   ... its job (while it is made)
+
+  std::unordered_map <std::wstring, file_s>
+                            m_files;              // The files looked up, by their paths (main thread)
+  bool                      m_keysChanged = false; //   ... a key of one changed (or came): SetNeighbours takes them in again
+  concurrency::concurrent_queue <lookup_s> m_lookups; // For the lookup thread
+  concurrency::concurrent_queue <looked_s> m_looked;  //   ... from it
+  HANDLE                    m_lookupEvent = NULL; // Wakes it (started with the first lookup)
 };

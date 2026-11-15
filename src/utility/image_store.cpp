@@ -161,6 +161,165 @@ SKIV_ImageStore::Key (const std::wstring& path)
   return key;
 }
 
+// Whether two keys are alike, also when the file does not exist (operator== holds only for files that do)
+template <class K>
+static bool
+_SameKey (const K& a, const K& b)
+{
+  return a.path == b.path && a.exists == b.exists && a.size == b.size && a.written == b.written;
+}
+
+// The lookup thread: the files' keys (and whether they are animated), off the main thread, which it wakes once it has
+//   looked up those asked for (to take them in, see TakeLookups)
+unsigned __stdcall
+SKIV_ImageStore::Lookup (void*)
+{
+  SKIF_Util_SetThreadDescription (GetCurrentThread (), L"SKIV_FileLookup");
+
+  SKIV_ImageStore& store = SKIV_ImageStore::Get ( );
+
+  while (WaitForSingleObject (store.m_lookupEvent, INFINITE) == WAIT_OBJECT_0)
+  {
+    lookup_s lookup;
+    bool     looked = false;
+
+    while (store.m_lookups.try_pop (lookup))
+    {
+      looked_s result;
+      result.key = Key (lookup.path);
+
+      if (lookup.animated && result.key.exists)
+        result.animated = SKIV_IsAnimatedFile (lookup.path) ? 1 : 0;
+
+      store.m_looked.push (result);
+      looked = true;
+    }
+
+    if (looked)
+      PostMessage (SKIF_Notify_hWnd, WM_SKIF_IMAGE, SKIV_IMAGE_STORE_RESULT, 0);
+  }
+
+  return 0;
+}
+
+void
+SKIV_ImageStore::AskFile (const std::wstring& path, bool animated)
+{
+  if (path.empty ( ))
+    return;
+
+  // (Those of files no longer around are forgotten, now and then; never those in flight, nor the neighbours')
+  if (m_files.size ( ) > 4096)
+  {
+    for (auto it = m_files.begin ( ); it != m_files.end ( ); )
+    {
+      if (! it->second.asked && it->first != m_shownPath &&
+          std::find (m_aroundPaths.begin ( ), m_aroundPaths.end ( ), it->first) == m_aroundPaths.end ( ))
+        it = m_files.erase (it);
+      else
+        ++it;
+    }
+  }
+
+  file_s& file = m_files [path];
+
+  if (file.asked && (file.askedAnimated || ! animated))
+    return;
+
+  file.asked          = true;
+  file.askedAnimated |= animated;
+
+  if (m_lookupEvent == NULL)
+  {
+    m_lookupEvent = CreateEvent (nullptr, FALSE, FALSE, nullptr);
+
+    HANDLE hThread =
+      reinterpret_cast <HANDLE> (_beginthreadex (nullptr, 0x0, &SKIV_ImageStore::Lookup, nullptr, 0x0, nullptr));
+
+    if (hThread != NULL)
+      CloseHandle (hThread);
+    else
+      PLOG_ERROR << "[Image Store] Failed to start the file lookup thread!";
+  }
+
+  m_lookups.push ({ path, animated });
+  SetEvent (m_lookupEvent);
+}
+
+SKIV_ImageStore::key_s
+SKIV_ImageStore::KnownKey (const std::wstring& path, bool refresh)
+{
+  key_s key;
+  key.path = path;
+
+  if (path.empty ( ))
+    return key;
+
+  auto it = m_files.find (path);
+
+  if (it == m_files.end ( ) || refresh)
+    AskFile (path, false);
+
+  // (AskFile may have forgotten others, never this one)
+  it = m_files.find (path);
+
+  return (it != m_files.end ( ) && it->second.key.path == path) ? it->second.key : key;
+}
+
+void
+SKIV_ImageStore::NoteKey (const key_s& key)
+{
+  if (key.path.empty ( ))
+    return;
+
+  file_s& file = m_files [key.path];
+
+  if (_SameKey (file.key, key))
+    return;
+
+  // Another file (or one now looked up): whether it is animated is no longer known
+  file.key      = key;
+  file.animated = -1;
+  m_keysChanged = true;
+}
+
+void
+SKIV_ImageStore::TakeLookups (void)
+{
+  looked_s looked;
+
+  while (m_looked.try_pop (looked))
+  {
+    auto it = m_files.find (looked.key.path);
+
+    if (it == m_files.end ( ))
+      continue; // (Forgotten meanwhile)
+
+    file_s& file = it->second;
+
+    file.asked         = false;
+    file.askedAnimated = false;
+
+    const bool changed = ! _SameKey (file.key, looked.key);
+
+    if (changed)
+    {
+      file.key      = looked.key;
+      file.animated = looked.animated;
+      m_keysChanged = true;
+    }
+
+    else if (looked.animated >= 0)
+      file.animated = looked.animated;
+
+    // The thumbnails asked for (Thumbnail) with the file's key as it is now
+    if (changed)
+      for (key_s& asked : m_thumbnailsAsked)
+        if (asked.path == looked.key.path)
+          asked = looked.key;
+  }
+}
+
 void
 SKIV_ImageStore::Copy (const image_s& from, image_s& to)
 {
@@ -395,7 +554,9 @@ SKIV_ImageStore::Start (const std::wstring& path, const key_s& key, bool animate
 void
 SKIV_ImageStore::Request (const std::wstring& path, bool animatedImages)
 {
+  // (Looked up here, the file to show being read for its decode right after anyway: what is known of it then is fresh)
   const key_s key = Key (path);
+  NoteKey (key);
 
   m_pendingKey      = key;
   m_pendingPath     = path;
@@ -710,6 +871,9 @@ SKIV_ImageStore::TakeResult (image_s& image, bool& success)
     extern bool SKIV_DeviceCleanupWanted;
     SKIV_DeviceCleanupWanted = true;
 
+    // Its file, as its worker found it
+    NoteKey (result->key);
+
     // A preview: kept while its image loads (none could be made of most images: no failure)
     if (result->preview)
     {
@@ -831,14 +995,20 @@ SKIV_ImageStore::SetNeighbours (const std::wstring& shown, const std::vector <st
     m_shownPath = L"\1";
   }
 
-  if (shown != m_shownPath || around != m_aroundPaths)
+  // The files looked up meanwhile (on the lookup thread)
+  TakeLookups ( );
+
+  const bool moved = (shown != m_shownPath || around != m_aroundPaths);
+
+  // Moved (the files are looked up again: they may have changed), or a file's key changed (or came)
+  if (moved || std::exchange (m_keysChanged, false))
   {
     m_shownPath   = shown;
     m_aroundPaths = around;
 
-    m_shown = Key (shown);
-    m_next  = Key ((around.size ( ) > 0) ? around [0] : L"");
-    m_prev  = Key ((around.size ( ) > 1) ? around [1] : L"");
+    m_shown = KnownKey (shown, moved);
+    m_next  = KnownKey ((around.size ( ) > 0) ? around [0] : L"", moved);
+    m_prev  = KnownKey ((around.size ( ) > 1) ? around [1] : L"", moved);
 
     m_near.clear ( );
 
@@ -847,11 +1017,15 @@ SKIV_ImageStore::SetNeighbours (const std::wstring& shown, const std::vector <st
       m_near.push_back (m_shown);
 
       for (size_t i = 0; i < around.size ( ); i++)
-        m_near.push_back ((i == 0) ? m_next : (i == 1) ? m_prev : Key (around [i]));
+        m_near.push_back ((i == 0) ? m_next : (i == 1) ? m_prev : KnownKey (around [i], moved));
     }
 
-    m_skip.clear ( );
-    m_thumbnailsFailed.clear ( );
+    // (Until the neighbours change: not as their keys come)
+    if (moved)
+    {
+      m_skip.clear ( );
+      m_thumbnailsFailed.clear ( );
+    }
 
     // Thumbnails of files changed since they were made
     for (auto it = m_thumbnails.begin ( ); it != m_thumbnails.end ( ); )
@@ -911,8 +1085,18 @@ SKIV_ImageStore::Preload (void)
         std::find (m_skip.begin ( ), m_skip.end ( ), key) != m_skip.end ( ))
       continue;
 
-    // Animated images are not kept: their frames take much more memory
-    if (SKIV_IsAnimatedFile (key.path))
+    // Animated images are not kept: their frames take much more memory. Whether it is is found out on the lookup thread
+    //   (it reads the file's header): waited for (the thumbnails are made meanwhile).
+    auto file = m_files.find (key.path);
+
+    if (file == m_files.end ( ) || ! (file->second.key == key) || file->second.animated < 0)
+    {
+      AskFile (key.path, true);
+      PreloadThumbnail ( );
+      return;
+    }
+
+    if (file->second.animated == 1)
     {
       m_skip.push_back (key);
       continue;
@@ -1070,7 +1254,8 @@ SKIV_ImageStore::Thumbnail (const std::wstring& path, bool load)
 
     else
     {
-      m_thumbnailsAsked.insert (m_thumbnailsAsked.begin ( ), Key (path));
+      // (Its key as known; once looked up, if it is not yet: see TakeLookups)
+      m_thumbnailsAsked.insert (m_thumbnailsAsked.begin ( ), KnownKey (path, false));
 
       if (m_thumbnailsAsked.size ( ) > s_thumbnailsAsked)
         m_thumbnailsAsked.pop_back ( );
