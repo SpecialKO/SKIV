@@ -924,6 +924,9 @@ SKIV_Viewer_MoveWindowIfWanted (void)
 static struct {
   float  alpha    = 0.0f;       // Its fade (0: hidden)
   double lastNear = -1.0;       // When the mouse was last near it (ImGui::GetTime)
+  bool   fadeShow  = false;     // The way it fades: in (true) or out, from fadeFrom at fadeStart (ImGui::GetTime). Worked
+  float  fadeFrom  = 0.0f;      //   out from the time passed rather than frame by frame, so a frame drawn late (the main
+  double fadeStart = 0.0;       //     loop asleep) does not make it jump
   float  scroll   = 0.0f;       // The index of the image in its middle (eases towards target)
   float  target   = 0.0f;
   size_t current  = SIZE_MAX;   // The index of the active image, when it was last drawn
@@ -1285,6 +1288,8 @@ SKIV_Viewer_DrawCarousel (skiv_image_directory_s::fl_s& files, SKIV_ImageStore& 
   {
     s_carousel.alpha    = 0.0f;
     s_carousel.lastNear = -1.0;
+    s_carousel.fadeShow = false;
+    s_carousel.fadeFrom = 0.0f;
     return L"";
   };
 
@@ -1310,10 +1315,12 @@ SKIV_Viewer_DrawCarousel (skiv_image_directory_s::fl_s& files, SKIV_ImageStore& 
   // When it shows: always, or while the mouse is nearby it (and for a moment after), not while the image is dragged
   bool show = (mode == 2);
 
+  static constexpr double s_linger  = 0.6;  // s
+  static constexpr double s_fadeIn  = 0.15; // s
+  static constexpr double s_fadeOut = 0.25; // s
+
   if (mode == 1)
   {
-    static constexpr double s_linger = 0.6; // s
-
     const ImRect zone (ImVec2 (strip.Min.x, strip.Min.y - strip.GetHeight ( ) * 0.5f), strip.Max);
     const bool   nearby = ImGui::IsMousePosValid ( ) && zone.Contains (io.MousePos) && ! s_imageDragActive &&
                         ImGui::IsWindowHovered (ImGuiHoveredFlags_ChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
@@ -1331,8 +1338,28 @@ SKIV_Viewer_DrawCarousel (skiv_image_directory_s::fl_s& files, SKIV_ImageStore& 
       SKIV_Viewer_CarouselWakeAt = SKIF_Util_timeGetTime1 ( ) + 250;
   }
 
-  s_carousel.alpha = (show) ? std::min (1.0f, s_carousel.alpha + io.DeltaTime / 0.15f)
-                            : std::max (0.0f, s_carousel.alpha - io.DeltaTime / 0.25f);
+  // The fade, from the time passed since it turned: a fade out starts as the linger ends (not when the frame after it
+  //   happens to be drawn), from wherever the fade was then
+  if (show != s_carousel.fadeShow)
+  {
+    double start = now;
+
+    if (! show && mode == 1 && s_carousel.lastNear >= 0.0)
+      start = std::min (s_carousel.lastNear + s_linger, now);
+
+    s_carousel.fadeShow  = show;
+    s_carousel.fadeFrom  = s_carousel.alpha;
+    s_carousel.fadeStart = start;
+  }
+
+  const double elapsed = std::max (0.0, now - s_carousel.fadeStart);
+
+  s_carousel.alpha = (show) ? std::min (1.0f, s_carousel.fadeFrom + static_cast <float> (elapsed / s_fadeIn))
+                            : std::max (0.0f, s_carousel.fadeFrom - static_cast <float> (elapsed / s_fadeOut));
+
+  // While it fades, the main loop is kept awake (it would otherwise sleep until some message happens to come by)
+  if (show ? (s_carousel.alpha < 1.0f) : (s_carousel.alpha > 0.0f))
+    SKIV_Viewer_CarouselWakeAt = SKIF_Util_timeGetTime1 ( );
 
   // It follows the image shown (the wheel may have scrolled it away)
   const int half = static_cast <int> (std::ceil (strip.GetWidth ( ) * 0.5f / step)) + 1; // Tiles each way from the middle
