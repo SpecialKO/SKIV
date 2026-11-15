@@ -544,7 +544,8 @@ SaveTempImage (std::wstring_view source, std::wstring_view filename)
     {
       // If the specified window was created by the calling thread, the window procedure is called immediately as a subroutine.
       wchar_t                    wszFilePath [MAX_PATH] = { };
-      if (S_OK == StringCbCopyW (wszFilePath, MAX_PATH, _data->destination.data()))
+      // (By characters: StringCbCopyW takes bytes, which with MAX_PATH failed for paths of 130 characters or more)
+      if (S_OK == StringCchCopyW (wszFilePath, ARRAYSIZE (wszFilePath), _data->destination.data()))
       {
         COPYDATASTRUCT cds { };
         cds.dwData = SKIV_CDS_STRING;
