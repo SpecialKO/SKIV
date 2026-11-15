@@ -1595,7 +1595,7 @@ SKIF_UI_Tab_DrawViewer (void)
       tryingToDownImage = false;
 
       // Empty the working set after the image has finished loading
-      SKIF_Util_CompactWorkingSet ( );
+      //SKIF_Util_CompactWorkingSet ( ); // Causes stutters while quickly traversing a large image folder
 
       if (success)
         newImageLoaded = true;
