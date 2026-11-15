@@ -908,9 +908,9 @@ SKIF_UI_Tab_DrawSettings (void)
     static std::vector <kb_kv_s*>
       keybinds = {
         &kbToggleHDRDisplay,
-        &kbCaptureWindow,
-        &kbCaptureRegion,
-        &kbCaptureScreen
+      //&kbCaptureWindow,
+      //&kbCaptureRegion,
+      //&kbCaptureScreen
     };
 
     // The name of the keybinding, then the field, aligned across all of the rows
@@ -932,7 +932,6 @@ SKIF_UI_Tab_DrawSettings (void)
                             keybind->_key->bind_name.c_str() );
       ImGui::SameLine      (fKeybindFieldX);
 
-      // TODO: Fix bug that causes the hotkey to remain unregistered if SKIV loses focus while the keybind dialog is visible
       if (SK_ImGui_Keybinding (keybind->_key))
       {
         // Only update the registry if we are done assigning
