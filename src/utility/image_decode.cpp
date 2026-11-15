@@ -2407,13 +2407,16 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
     if (pixels == NULL && SKIV_STBI_CICP.primaries == 0)
     {
       decoder = ImageDecoder_WIC;
-      PLOG_INFO << "[Image Processing] Decoding it with WIC: stb_image cannot (its last error: " << stbi_failure_reason ( ) << ")";
+      PLOG_INFO << "[Image Processing] Decoding with WIC as stb_image failed with: " << stbi_failure_reason ( );
     }
 
     else if (pixels != nullptr && SKIV_STBI_srgb && !cicp && !SKIV_STBI_ICCP.iCCP)
     {
       decoder = ImageDecoder_WIC;
-      PLOG_INFO << "[Image Processing] Decoding it with WIC: it is sRGB, which stb_image does not decode correctly (no sRGB curve)";
+      PLOG_INFO << "[Image Processing] Decoding with WIC as stb_image does not decode sRGB properly.";
+
+      stbi_image_free (pixels);
+      pixels = nullptr;
     }
 #endif
 
@@ -2626,9 +2629,7 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
       }
 
       stbi_image_free (pixels);
-
-      //decoder = ImageDecoder_WIC;
-      //PLOG_INFO << "Using WIC decoder";
+      pixels = nullptr;
     }
   }
 
