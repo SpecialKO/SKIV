@@ -1117,16 +1117,28 @@ using namespace DirectX;
 
   // Process path
 
+  // Windows-style folder separators -- applied to the pattern itself *before*
+  //   any token substitution, so only separators the user typed create folders
+  std::replace (wsFilename.begin(), wsFilename.end(), L'/', L'\\');
+
+  // Substituted values must never introduce folder separators of their own
+  //   (e.g. locale short dates such as 11/15/2026, or window titles "A / B")
+  auto _sanitizeValue = [](std::wstring value) -> std::wstring {
+    std::replace (value.begin(), value.end(), L'/',  L'-');
+    std::replace (value.begin(), value.end(), L'\\', L'-');
+    return value;
+  };
+
   // Automatic app name population...
   pos = wsFilename.find (pApp);
   if (pos != std::wstring::npos)
   {
     if (! capture_data._names.custom.empty())
-      wsFilename.replace (pos, pApp.length(), capture_data._names.custom);
+      wsFilename.replace (pos, pApp.length(), _sanitizeValue (capture_data._names.custom));
     else if (! capture_data._names.product.empty())
-      wsFilename.replace (pos, pApp.length(), capture_data._names.product);
+      wsFilename.replace (pos, pApp.length(), _sanitizeValue (capture_data._names.product));
     else if (! capture_data._names.executable.empty())
-      wsFilename.replace (pos, pApp.length(), capture_data._names.executable);
+      wsFilename.replace (pos, pApp.length(), _sanitizeValue (capture_data._names.executable));
     else
       wsFilename.replace (pos, pApp.length(), L"unknown");
   }
@@ -1134,17 +1146,17 @@ using namespace DirectX;
   // Product name
   pos = wsFilename.find (pPro);
   if (pos != std::wstring::npos)
-    wsFilename.replace (pos, pPro.length(), (capture_data._names.product.empty()) ? L"unknown" : capture_data._names.product);
+    wsFilename.replace (pos, pPro.length(), (capture_data._names.product.empty()) ? L"unknown" : _sanitizeValue (capture_data._names.product));
 
   // Executable name
   pos = wsFilename.find (pExe);
   if (pos != std::wstring::npos)
-    wsFilename.replace (pos, pExe.length(), (capture_data._names.executable.empty()) ? L"unknown" : capture_data._names.executable);
+    wsFilename.replace (pos, pExe.length(), (capture_data._names.executable.empty()) ? L"unknown" : _sanitizeValue (capture_data._names.executable));
 
   // Window title
   pos = wsFilename.find (pWnd);
   if (pos != std::wstring::npos)
-    wsFilename.replace (pos, pWnd.length(), (capture_data._names.window.empty()) ? L"unknown" : capture_data._names.window);
+    wsFilename.replace (pos, pWnd.length(), (capture_data._names.window.empty()) ? L"unknown" : _sanitizeValue (capture_data._names.window));
 
   // Locale-aware date
   pos = wsFilename.find (pDate);
@@ -1152,7 +1164,7 @@ using namespace DirectX;
   {
     wchar_t dateBuffer[100];
     if (GetDateFormatEx (LOCALE_NAME_USER_DEFAULT, DATE_SHORTDATE, &st, NULL, dateBuffer, 100, NULL))
-      wsFilename.replace (pos, pDate.length(), dateBuffer);
+      wsFilename.replace (pos, pDate.length(), _sanitizeValue (dateBuffer));
   }
 
   // Locale-aware time
@@ -1161,14 +1173,11 @@ using namespace DirectX;
   {
     wchar_t timeBuffer[100];
     if (GetTimeFormatEx (LOCALE_NAME_USER_DEFAULT, 0, &st, NULL, timeBuffer, 100))
-      wsFilename.replace (pos, pTime.length(), timeBuffer);
+      wsFilename.replace (pos, pTime.length(), _sanitizeValue (timeBuffer));
   }
 
   // Replace : with .
-  std::replace (wsFilename.begin(), wsFilename.end(), ':', '.');
-
-  // Windows-style folder separators
-  std::replace (wsFilename.begin(), wsFilename.end(), '/', '\\');
+  std::replace (wsFilename.begin(), wsFilename.end(), L':', L'.');
 
   auto _stripInvalidCharacters = [](wchar_t tval) {
     static const std::unordered_set <wchar_t> invalid_file_char =
@@ -1181,8 +1190,7 @@ using namespace DirectX;
 
   // Strip trailing spaces from name, these are usually the result of
   //   deleting one of the non-useable characters above.
-  for (auto it = wsFilename.rbegin (); it != wsFilename.rend (); ++it)
-    if (*it == L' ') *it = L'\0'; else break;
+  wsFilename.erase (wsFilename.find_last_not_of (L' ') + 1);
 
   wsPNGPath += wsFilename + L".png";
 
