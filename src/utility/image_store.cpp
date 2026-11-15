@@ -26,6 +26,7 @@
 #include <utility/utility.h>
 #include <process.h>
 #include <algorithm>
+#include <filesystem>
 #include "DirectXTex/DirectXTex.h"
 
 extern concurrency::concurrent_queue <IUnknown *> SKIF_ResourcesToFree;
@@ -281,6 +282,59 @@ SKIV_ImageStore::NoteKey (const key_s& key)
   file.key      = key;
   file.animated = -1;
   m_keysChanged = true;
+}
+
+// The folder a file is in (empty for none)
+static std::wstring
+_Folder (const std::wstring& path)
+{
+  return (path.empty ( )) ? std::wstring ( ) : std::filesystem::path (path).parent_path ( ).wstring ( );
+}
+
+bool
+SKIV_ImageStore::InOpenFolder (const std::wstring& path) const
+{
+  // While nothing is shown yet, the folder of the image loading (the first one opened)
+  const std::wstring folder =
+    (! m_folder.empty ( ) || m_pending == 0) ? m_folder : _Folder (m_pendingPath);
+
+  return ! folder.empty ( ) && _wcsicmp (_Folder (path).c_str ( ), folder.c_str ( )) == 0;
+}
+
+void
+SKIV_ImageStore::ForgetOtherFolders (void)
+{
+  size_t released = 0;
+
+  for (auto it = m_thumbnails.begin ( ); it != m_thumbnails.end ( ); )
+  {
+    if (! InOpenFolder ((*it)->key.path))
+    {
+      Release ((*it)->image);
+      it = m_thumbnails.erase (it);
+      released++;
+    }
+    else
+      ++it;
+  }
+
+  PLOG_INFO_IF (released > 0) << "[Image Store] No longer keeping " << released << " thumbnails: "
+                              << ((m_folder.empty ( )) ? "no image is shown" : "they are of another folder");
+
+  m_thumbnailsAsked.erase (std::remove_if (m_thumbnailsAsked.begin ( ), m_thumbnailsAsked.end ( ),
+                             [&](const key_s& key) { return ! InOpenFolder (key.path); }), m_thumbnailsAsked.end ( ));
+
+  m_thumbnailsFailed.erase (std::remove_if (m_thumbnailsFailed.begin ( ), m_thumbnailsFailed.end ( ),
+                              [&](const key_s& key) { return ! InOpenFolder (key.path); }), m_thumbnailsFailed.end ( ));
+
+  // The files looked up, likewise (not those in flight: their lookups find them, see TakeLookups)
+  for (auto it = m_files.begin ( ); it != m_files.end ( ); )
+  {
+    if (! it->second.asked && ! InOpenFolder (it->first))
+      it = m_files.erase (it);
+    else
+      ++it;
+  }
 }
 
 void
@@ -998,6 +1052,13 @@ SKIV_ImageStore::SetNeighbours (const std::wstring& shown, const std::vector <st
   // The files looked up meanwhile (on the lookup thread)
   TakeLookups ( );
 
+  // Another folder, or none (the image was closed): the thumbnails of others are no longer kept
+  if (const std::wstring folder = _Folder (shown); _wcsicmp (folder.c_str ( ), m_folder.c_str ( )) != 0)
+  {
+    m_folder = folder;
+    ForgetOtherFolders ( );
+  }
+
   const bool moved = (shown != m_shownPath || around != m_aroundPaths);
 
   // Moved (the files are looked up again: they may have changed), or a file's key changed (or came)
@@ -1137,6 +1198,10 @@ SKIV_ImageStore::KeepThumbnail (const key_s& key, const image_s& image)
 {
   if (FindThumbnail (key) != nullptr)
     return true;
+
+  // Made for a folder no longer open (or the image was closed meanwhile)
+  if (! InOpenFolder (key.path))
+    return false;
 
   const size_t bytes = Bytes (image);
 

@@ -165,6 +165,11 @@ private:
   void   TakeLookups (void);                                   // Main thread: the lookups that came (m_keysChanged)
   void   NoteKey     (const key_s& key);                       // Main thread: a key looked up meanwhile (fresher)
 
+  // The thumbnails (and the files looked up) are of the folder open only: those of others are released once it changes,
+  //   and all of them once no image is shown (closed)
+  void   ForgetOtherFolders (void);
+  bool   InOpenFolder       (const std::wstring& path) const;   // In the folder open (or of the image loading); false if none
+
   struct result_s {
     int          job        = 0;
     unsigned int generation = 0;
@@ -249,6 +254,7 @@ private:
   std::wstring m_pendingPath;
   bool         m_pendingAnimated = true;
 
+  std::wstring m_folder;                          // The folder of the image shown (SetNeighbours); empty if none
   std::wstring m_shownPath;                       // SetNeighbours ( )
   std::vector <std::wstring>
                m_aroundPaths;
