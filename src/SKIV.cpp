@@ -303,7 +303,8 @@ SKIF_Startup_CopyDataRunningInstance (void)
     return;
 
   wchar_t                    wszFilePath [MAX_PATH] = { };
-  if (S_OK == StringCbCopyW (wszFilePath, MAX_PATH, _Signal._FilePath.data()))
+  // (By characters: StringCbCopyW takes bytes, which with MAX_PATH failed for paths of 130 characters or more)
+  if (S_OK == StringCchCopyW (wszFilePath, ARRAYSIZE (wszFilePath), _Signal._FilePath.data()))
   {
     COPYDATASTRUCT cds { };
     cds.dwData = SKIV_CDS_STRING;
@@ -4745,7 +4746,9 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
           data->lpData != nullptr)
       {
         wchar_t                    wszFilePath [MAX_PATH] = { };
-        if (S_OK == StringCbCopyW (wszFilePath, MAX_PATH, (LPCWSTR)data->lpData))
+        // (By characters, and no further than the data sent: StringCbCopyW takes bytes, which with MAX_PATH failed for
+        //   paths of 130 characters or more, and the running instance then got closed instead)
+        if (S_OK == StringCchCopyNW (wszFilePath, ARRAYSIZE (wszFilePath), (LPCWSTR)data->lpData, data->cbData / sizeof (wchar_t)))
         {
           extern std::wstring dragDroppedFilePath;
           dragDroppedFilePath = std::wstring(wszFilePath);
