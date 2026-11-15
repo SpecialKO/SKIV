@@ -4755,6 +4755,11 @@ SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
           // Restore, and whatnot
           if (SKIF_ImGui_hWnd != NULL)
           {
+            if (SKIF_isTrayed)
+            {   SKIF_isTrayed = false;
+              ShowWindow (SKIF_ImGui_hWnd, SW_SHOW);
+            }
+
             if (IsIconic (SKIF_ImGui_hWnd))
               ShowWindow (SKIF_ImGui_hWnd, SW_RESTORE);
 
