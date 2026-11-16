@@ -74,6 +74,39 @@ struct color_source_s {
   }
 };
 
+// What a DDS file says about its texture, as read from its header(s) and DirectXTex's metadata: for the details panel
+//   (texture modders want to know its exact format, mips, array/cube layout, alpha mode, and the kind of header it has)
+struct dds_info_s {
+  bool        valid          = false;
+  DXGI_FORMAT format         = DXGI_FORMAT_UNKNOWN; // As DirectXTex loads it (legacy formats mapped to their DXGI equivalent)
+  uint32_t    width          = 0,
+              height         = 0,
+              depth          = 0,                   // 3D textures (1 otherwise)
+              mip_levels     = 0,
+              array_size     = 0,                   // Cubemaps: of cubes (each of 6 faces)
+              dimension      = 0;                   // 1, 2, 3 (DirectX::TEX_DIMENSION_TEXTURE1D ... - 1)
+  bool        cubemap        = false;
+  uint32_t    alpha_mode     = 0;                   // DirectX::TEX_ALPHA_MODE
+  uint64_t    data_size      = 0;                   // Of all its surfaces (mips, array slices, faces), as loaded
+
+  // The file's own header
+  bool        dx10_header    = false;               // DX10 extension header (DDS_HEADER_DXT10)
+  char        fourcc [5]     = { };                 // Of the pixel format, if it has one ("DXT5", "ATI2", "DX10", ...)
+  uint32_t    header_flags   = 0;                   // DDS_HEADER::flags (DDSD_*)
+  uint32_t    pf_flags       = 0;                   // DDS_PIXELFORMAT::flags (DDPF_*)
+  uint32_t    pf_bit_count   = 0;                   // Legacy uncompressed: RGBBitCount and masks
+  uint32_t    pf_masks [4]   = { };                 //   R, G, B, A
+  uint32_t    caps           = 0,                   // DDSCAPS_*
+              caps2          = 0;                   // DDSCAPS2_* (cubemap faces, volume)
+  uint32_t    pitch_or_size  = 0;                   // DDS_HEADER::pitchOrLinearSize
+  uint32_t    dx10_format    = 0;                   // DDS_HEADER_DXT10::dxgiFormat, as written in the file
+  uint32_t    dx10_misc      = 0,                   //   ::miscFlag
+              dx10_misc2     = 0;                   //   ::miscFlags2
+};
+
+// The name of a DXGI format, without its DXGI_FORMAT_ prefix ("BC7_UNORM_SRGB"), "UNKNOWN" for those not known
+const char* SKIV_DXGI_FormatName (DXGI_FORMAT format);
+
 // The frames of an animated image (APNG, GIF, WebP, AVIF), and where it is in playing them (_LoadAnimatedImage).
 //   A thread of its own decodes the frames from the file as they are played (image_anim_stream_s, image_decode.cpp),
 //     each into a texture of its own, starting with the first: it shows as soon as that one is decoded. Those of an
@@ -149,6 +182,7 @@ struct image_s {
   bool         is_hdr      = false;
   bool         is_wcg      = false; // SDR, of colors outside of sRGB: converted to scRGB (see color_convert.inl)
   bool         is_dds      = false;
+  dds_info_s   dds;               // DDS files: their texture's format, mips, layout and header (dds.valid)
 
   CComPtr <ID3D11ShaderResourceView>  pRawTexSRV;
   CComPtr <ID3D11UnorderedAccessView> pGamutCoverageUAV;
@@ -212,6 +246,7 @@ struct image_s {
     is_hdr              = other.is_hdr;
     is_wcg              = other.is_wcg;
     is_dds              = other.is_dds;
+    dds                 = other.dds;
     light_info          = other.light_info;
     colorimetry         = other.colorimetry;
     return *this;
@@ -237,6 +272,7 @@ struct image_s {
     is_hdr              = false;
     is_wcg              = false;
     is_dds              = false;
+    dds                 = { };
     light_info          = { };
     colorimetry         = { };
   }

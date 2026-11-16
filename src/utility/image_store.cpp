@@ -393,6 +393,7 @@ SKIV_ImageStore::Copy (const image_s& from, image_s& to)
   to.is_hdr            = from.is_hdr;
   to.is_wcg            = from.is_wcg;
   to.is_dds            = from.is_dds;
+  to.dds               = from.dds;
   to.anim              = from.anim;
   to.color_source      = from.color_source;
 }
