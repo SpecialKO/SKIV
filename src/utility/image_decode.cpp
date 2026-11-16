@@ -324,6 +324,57 @@ private:
   FILE*  file_;
 };
 
+const char*
+SKIV_DXGI_FormatName (DXGI_FORMAT format)
+{
+#define _FMT(name) case DXGI_FORMAT_##name: return #name;
+  switch (format)
+  {
+    _FMT(UNKNOWN)
+    _FMT(R32G32B32A32_TYPELESS) _FMT(R32G32B32A32_FLOAT) _FMT(R32G32B32A32_UINT) _FMT(R32G32B32A32_SINT)
+    _FMT(R32G32B32_TYPELESS)    _FMT(R32G32B32_FLOAT)    _FMT(R32G32B32_UINT)    _FMT(R32G32B32_SINT)
+    _FMT(R16G16B16A16_TYPELESS) _FMT(R16G16B16A16_FLOAT) _FMT(R16G16B16A16_UNORM) _FMT(R16G16B16A16_UINT)
+    _FMT(R16G16B16A16_SNORM)    _FMT(R16G16B16A16_SINT)
+    _FMT(R32G32_TYPELESS)       _FMT(R32G32_FLOAT)       _FMT(R32G32_UINT)       _FMT(R32G32_SINT)
+    _FMT(R32G8X24_TYPELESS)     _FMT(D32_FLOAT_S8X24_UINT) _FMT(R32_FLOAT_X8X24_TYPELESS) _FMT(X32_TYPELESS_G8X24_UINT)
+    _FMT(R10G10B10A2_TYPELESS)  _FMT(R10G10B10A2_UNORM)  _FMT(R10G10B10A2_UINT)  _FMT(R11G11B10_FLOAT)
+    _FMT(R8G8B8A8_TYPELESS)     _FMT(R8G8B8A8_UNORM)     _FMT(R8G8B8A8_UNORM_SRGB) _FMT(R8G8B8A8_UINT)
+    _FMT(R8G8B8A8_SNORM)        _FMT(R8G8B8A8_SINT)
+    _FMT(R16G16_TYPELESS)       _FMT(R16G16_FLOAT)       _FMT(R16G16_UNORM)      _FMT(R16G16_UINT)
+    _FMT(R16G16_SNORM)          _FMT(R16G16_SINT)
+    _FMT(R32_TYPELESS)          _FMT(D32_FLOAT)          _FMT(R32_FLOAT)         _FMT(R32_UINT)          _FMT(R32_SINT)
+    _FMT(R24G8_TYPELESS)        _FMT(D24_UNORM_S8_UINT)  _FMT(R24_UNORM_X8_TYPELESS) _FMT(X24_TYPELESS_G8_UINT)
+    _FMT(R8G8_TYPELESS)         _FMT(R8G8_UNORM)         _FMT(R8G8_UINT)         _FMT(R8G8_SNORM)        _FMT(R8G8_SINT)
+    _FMT(R16_TYPELESS)          _FMT(R16_FLOAT)          _FMT(D16_UNORM)         _FMT(R16_UNORM)         _FMT(R16_UINT)
+    _FMT(R16_SNORM)             _FMT(R16_SINT)
+    _FMT(R8_TYPELESS)           _FMT(R8_UNORM)           _FMT(R8_UINT)           _FMT(R8_SNORM)          _FMT(R8_SINT)
+    _FMT(A8_UNORM)              _FMT(R1_UNORM)           _FMT(R9G9B9E5_SHAREDEXP)
+    _FMT(R8G8_B8G8_UNORM)       _FMT(G8R8_G8B8_UNORM)
+    _FMT(BC1_TYPELESS)          _FMT(BC1_UNORM)          _FMT(BC1_UNORM_SRGB)
+    _FMT(BC2_TYPELESS)          _FMT(BC2_UNORM)          _FMT(BC2_UNORM_SRGB)
+    _FMT(BC3_TYPELESS)          _FMT(BC3_UNORM)          _FMT(BC3_UNORM_SRGB)
+    _FMT(BC4_TYPELESS)          _FMT(BC4_UNORM)          _FMT(BC4_SNORM)
+    _FMT(BC5_TYPELESS)          _FMT(BC5_UNORM)          _FMT(BC5_SNORM)
+    _FMT(B5G6R5_UNORM)          _FMT(B5G5R5A1_UNORM)     _FMT(B8G8R8A8_UNORM)    _FMT(B8G8R8X8_UNORM)
+    _FMT(R10G10B10_XR_BIAS_A2_UNORM)
+    _FMT(B8G8R8A8_TYPELESS)     _FMT(B8G8R8A8_UNORM_SRGB) _FMT(B8G8R8X8_TYPELESS) _FMT(B8G8R8X8_UNORM_SRGB)
+    _FMT(BC6H_TYPELESS)         _FMT(BC6H_UF16)          _FMT(BC6H_SF16)
+    _FMT(BC7_TYPELESS)          _FMT(BC7_UNORM)          _FMT(BC7_UNORM_SRGB)
+    _FMT(AYUV) _FMT(Y410) _FMT(Y416) _FMT(NV12) _FMT(P010) _FMT(P016) _FMT(420_OPAQUE) _FMT(YUY2) _FMT(Y210) _FMT(Y216)
+    _FMT(NV11) _FMT(AI44) _FMT(IA44) _FMT(P8) _FMT(A8P8)
+    _FMT(B4G4R4A4_UNORM)
+    _FMT(P208) _FMT(V208) _FMT(V408)
+    default: break;
+  }
+#undef _FMT
+
+  // Not of the SDK's enum (Xbox, or newer ones such as A4B4G4R4_UNORM = 191)
+  if (static_cast <int> (format) == 191)
+    return "A4B4G4R4_UNORM";
+
+  return "UNKNOWN";
+}
+
 int
 SKIV_DXGI_NumberOfChannels (DXGI_FORMAT format)
 {
@@ -2859,6 +2910,74 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
       image.channels =                    SKIV_DXGI_NumberOfChannels (meta.format);
       image.is_dds   = true;
 
+      // What it says about its texture, for the details panel (as loaded, before any conversion for display)
+      dds_info_s& dds = image.dds;
+
+      dds.valid      = true;
+      dds.format     = meta.format;
+      dds.width      = static_cast <uint32_t> (meta.width);
+      dds.height     = static_cast <uint32_t> (meta.height);
+      dds.depth      = static_cast <uint32_t> (meta.depth);
+      dds.mip_levels = static_cast <uint32_t> (meta.mipLevels);
+      dds.array_size = static_cast <uint32_t> (meta.IsCubemap ( ) ? meta.arraySize / 6 : meta.arraySize);
+      dds.dimension  = static_cast <uint32_t> (meta.dimension) - 1; // TEX_DIMENSION_TEXTURE1D is 2
+      dds.cubemap    = meta.IsCubemap    ( );
+      dds.alpha_mode = meta.GetAlphaMode ( );
+      dds.data_size  = img.GetPixelsSize ( );
+
+      // Its own header: "DDS ", DDS_HEADER (124 bytes), and DDS_HEADER_DXT10 (20 bytes) if the pixel format's FourCC is "DX10"
+      const uint8_t* file = reinterpret_cast <const uint8_t*> (_scratchMemory.get ( ));
+      const size_t   size = _.getInitialSize ( );
+
+      auto _U32 = [&](size_t offset) -> uint32_t
+      {
+        uint32_t value = 0;
+        if (offset + sizeof (value) <= size)
+          memcpy (&value, file + offset, sizeof (value));
+        return value;
+      };
+
+      constexpr uint32_t DDPF_FOURCC = 0x4;
+
+      if (size >= 4 + 124)
+      {
+        dds.header_flags  = _U32 (  8);
+        dds.pitch_or_size = _U32 ( 20);
+        dds.pf_flags      = _U32 ( 80);
+        dds.pf_bit_count  = _U32 ( 88);
+        dds.pf_masks [0]  = _U32 ( 92);
+        dds.pf_masks [1]  = _U32 ( 96);
+        dds.pf_masks [2]  = _U32 (100);
+        dds.pf_masks [3]  = _U32 (104);
+        dds.caps          = _U32 (108);
+        dds.caps2         = _U32 (112);
+
+        if (dds.pf_flags & DDPF_FOURCC)
+        {
+          const uint32_t fourcc = _U32 (84);
+
+          // Mostly characters ("DXT1"), but some are D3DFORMAT numbers (36: D3DFMT_A16B16G16R16, 113: D3DFMT_A16B16G16R16F...)
+          bool printable = true;
+          for (int i = 0; i < 4; ++i)
+          {
+            const char c = static_cast <char> ((fourcc >> (8 * i)) & 0xFF);
+            printable &= (c >= 0x20 && c < 0x7F);
+            dds.fourcc [i] = c;
+          }
+
+          if (! printable)
+            snprintf (dds.fourcc, sizeof (dds.fourcc), "%u", fourcc % 10000);
+
+          if (fourcc == 0x30315844 /* "DX10" */ && size >= 4 + 124 + 20)
+          {
+            dds.dx10_header = true;
+            dds.dx10_format = _U32 (128);
+            dds.dx10_misc   = _U32 (136);
+            dds.dx10_misc2  = _U32 (144);
+          }
+        }
+      }
+
       if (DirectX::MakeTypeless (meta.format) == DXGI_FORMAT_BC6H_TYPELESS)
       {
         image.is_hdr = true;
@@ -4150,6 +4269,7 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
     thumbnail->is_hdr       = image.is_hdr;
     thumbnail->is_wcg       = image.is_wcg;
     thumbnail->is_dds       = image.is_dds;
+    thumbnail->dds          = image.dds;
     thumbnail->light_info   = image.light_info;
     thumbnail->colorimetry  = image.colorimetry; // (Its gamut coverage, for the details of an image loading)
     thumbnail->color_source = image.color_source;

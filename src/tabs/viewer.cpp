@@ -2507,6 +2507,7 @@ SKIF_UI_Tab_DrawViewer (void)
       s_loadingDetails.is_hdr       = thumbnail->is_hdr;
       s_loadingDetails.is_wcg       = thumbnail->is_wcg;
       s_loadingDetails.is_dds       = thumbnail->is_dds;
+      s_loadingDetails.dds          = thumbnail->dds;
       s_loadingDetails.color_source = thumbnail->color_source;
       s_loadingDetails.light_info   = thumbnail->light_info;
       s_loadingDetails.colorimetry  = thumbnail->colorimetry;
@@ -2671,6 +2672,129 @@ SKIF_UI_Tab_DrawViewer (void)
       ImGui::TextUnformatted (colorSpace.c_str ());
       if (knownImage)
         SKIF_ImGui_SetHoverTip (SKIV_DescribeColorSourceInDetail (described.color_source));
+    }
+
+    // DDS textures: what texture modders need to match (format, compression, mips, layout, alpha mode, header kind)
+    if (knownImage && described.dds.valid)
+    {
+      const dds_info_s& dds = described.dds;
+
+      ImGui::TextUnformatted ("\n");
+
+      auto _Row = [&](const char* label, const char* value, const char* tip = nullptr)
+      {
+        ImGui::TextUnformatted (label);
+        ImGui::SameLine        (posXvalues);
+        ImGui::TextUnformatted (value);
+        if (tip != nullptr)
+          SKIF_ImGui_SetHoverTip (tip);
+      };
+
+      char szValue [256] = { };
+      char szTip   [768] = { };
+
+      // Format (click to copy)
+      const char* formatName = SKIV_DXGI_FormatName (dds.format);
+      snprintf (szValue, sizeof (szValue), "%s", formatName);
+      _Row ("DDS Format:", szValue, "DXGI_FORMAT as loaded (legacy formats are mapped to their DXGI equivalent).\n"
+                                    "Click to copy.");
+      if (ImGui::IsItemClicked ( ))
+        ImGui::SetClipboardText (formatName);
+
+      // Compression
+      const char* compression = "None";
+      switch (DirectX::MakeTypeless (dds.format))
+      {
+        case DXGI_FORMAT_BC1_TYPELESS:  compression = "BC1 (DXT1), 4x4 blocks";          break;
+        case DXGI_FORMAT_BC2_TYPELESS:  compression = "BC2 (DXT2/DXT3), 4x4 blocks";     break;
+        case DXGI_FORMAT_BC3_TYPELESS:  compression = "BC3 (DXT4/DXT5), 4x4 blocks";     break;
+        case DXGI_FORMAT_BC4_TYPELESS:  compression = "BC4 (ATI1), 4x4 blocks";          break;
+        case DXGI_FORMAT_BC5_TYPELESS:  compression = "BC5 (ATI2/3Dc), 4x4 blocks";      break;
+        case DXGI_FORMAT_BC6H_TYPELESS: compression = "BC6H (HDR), 4x4 blocks";          break;
+        case DXGI_FORMAT_BC7_TYPELESS:  compression = "BC7, 4x4 blocks";                 break;
+        default:
+          if (DirectX::IsCompressed (dds.format))
+            compression = "Block compressed";
+          break;
+      }
+      _Row ("Compression:", compression);
+
+      // Color encoding
+      _Row ("Encoding:", DirectX::IsSRGB (dds.format) ? "sRGB (_SRGB format)" : "Linear (no sRGB flag)");
+
+      // Texture type
+      if (dds.cubemap)
+        snprintf (szValue, sizeof (szValue), (dds.array_size > 1) ? "Cubemap Array (%u cubes)" : "Cubemap", dds.array_size);
+      else if (dds.dimension == 3)
+        snprintf (szValue, sizeof (szValue), "3D / Volume (%ux%ux%u)", dds.width, dds.height, dds.depth);
+      else if (dds.array_size > 1)
+        snprintf (szValue, sizeof (szValue), "%uD Array (%u slices)", dds.dimension, dds.array_size);
+      else
+        snprintf (szValue, sizeof (szValue), "%uD", dds.dimension);
+      _Row ("Texture Type:", szValue);
+
+      // Mipmaps: of how many a full chain would have
+      uint32_t largest  = std::max ({ dds.width, dds.height, (dds.dimension == 3) ? dds.depth : 1U, 1U });
+      uint32_t fullMips = 1;
+      while (largest > 1) { largest >>= 1; ++fullMips; }
+
+      if (dds.mip_levels <= 1)
+        snprintf (szValue, sizeof (szValue), "1 (none)");
+      else
+        snprintf (szValue, sizeof (szValue), "%u%s", dds.mip_levels, (dds.mip_levels == fullMips) ? " (full chain)" : "");
+      if (dds.mip_levels > 1 && dds.mip_levels != fullMips)
+        snprintf (szValue + strlen (szValue), sizeof (szValue) - strlen (szValue), " of %u", fullMips);
+      _Row ("Mip Levels:", szValue, "Only the top mip level is shown.");
+
+      // Alpha mode
+      const char* alphaMode =
+        (dds.alpha_mode == DirectX::TEX_ALPHA_MODE_STRAIGHT     ) ? "Straight"      :
+        (dds.alpha_mode == DirectX::TEX_ALPHA_MODE_PREMULTIPLIED) ? "Premultiplied" :
+        (dds.alpha_mode == DirectX::TEX_ALPHA_MODE_OPAQUE       ) ? "Opaque"        :
+        (dds.alpha_mode == DirectX::TEX_ALPHA_MODE_CUSTOM       ) ? "Custom"        :
+                                                                    "Unspecified";
+      _Row ("Alpha Mode:", alphaMode, "From the DX10 header's miscFlags2 (or DXT2/DXT4, which are premultiplied).");
+
+      // Header kind, and everything it has on hover
+      if (dds.dx10_header)
+        snprintf (szValue, sizeof (szValue), "DX10 (extended)");
+      else if (dds.fourcc [0] != '\0')
+        snprintf (szValue, sizeof (szValue), "Legacy (FourCC \"%s\")", dds.fourcc);
+      else
+        snprintf (szValue, sizeof (szValue), "Legacy (%u-bit masks)", dds.pf_bit_count);
+
+      int len =
+        snprintf (szTip, sizeof (szTip), "DDS_HEADER\n"
+                                         "  flags:             0x%08X\n"
+                                         "  pitchOrLinearSize: %u\n"
+                                         "  caps / caps2:      0x%08X / 0x%08X\n"
+                                         "DDS_PIXELFORMAT\n"
+                                         "  flags:             0x%08X\n"
+                                         "  fourCC:            %s\n"
+                                         "  RGBBitCount:       %u\n"
+                                         "  R/G/B/A masks:     %08X %08X %08X %08X",
+                                         dds.header_flags, dds.pitch_or_size, dds.caps, dds.caps2,
+                                         dds.pf_flags, (dds.fourcc [0] != '\0') ? dds.fourcc : "(none)", dds.pf_bit_count,
+                                         dds.pf_masks [0], dds.pf_masks [1], dds.pf_masks [2], dds.pf_masks [3]);
+
+      if (dds.dx10_header && len > 0 && len < static_cast <int> (sizeof (szTip)))
+        snprintf (szTip + len, sizeof (szTip) - len, "\nDDS_HEADER_DXT10\n"
+                                                     "  dxgiFormat:        %u (%s)\n"
+                                                     "  miscFlag:          0x%08X\n"
+                                                     "  miscFlags2:        0x%08X",
+                                                     dds.dx10_format, SKIV_DXGI_FormatName (static_cast <DXGI_FORMAT> (dds.dx10_format)),
+                                                     dds.dx10_misc, dds.dx10_misc2);
+      _Row ("DDS Header:", szValue, szTip);
+
+      // Its surfaces' size, as loaded (all mips, slices and faces)
+      const double dataSize = static_cast <double> (dds.data_size);
+      if (dataSize > 1024.0 * 1024.0)
+        snprintf (szValue, sizeof (szValue), "%.2f MiB", dataSize / (1024.0 * 1024.0));
+      else if (dataSize > 1024.0)
+        snprintf (szValue, sizeof (szValue), "%.2f KiB", dataSize / 1024.0);
+      else
+        snprintf (szValue, sizeof (szValue), "%.0f Bytes", dataSize);
+      _Row ("Texture Data:", szValue, "The size of all its surfaces (mips, array slices, cube faces), as stored on the GPU.");
     }
 
     // Animated images
