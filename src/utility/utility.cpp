@@ -29,6 +29,7 @@
 #include <HybridDetect.h>
 
 UINT CF_HTML = NULL;
+UINT CF_PNG  = NULL;
 
 std::vector<HANDLE> vWatchHandles[UITab_ALL];
 INT64               SKIF_TimeInMilliseconds = 0;
@@ -2859,6 +2860,65 @@ SKIF_Util_GetClipboardBitmapData (void)
   return img;
 }
 
+// The "PNG" clipboard format (the image as a PNG file, which browsers and Discord copy alongside a bitmap): saved to
+//   the temp folder, which the viewer then opens as a dropped file. Keeps transparency, unlike most bitmaps.
+bool
+SKIF_Util_GetClipboardPNGData (void)
+{
+  static SKIF_CommonPathsCache& _path_cache = SKIF_CommonPathsCache::GetInstance ( );
+
+  if (CF_PNG == 0)
+    return false;
+
+  // The caller is expected to have opened the clipboard already
+  HGLOBAL hGlobal = GetClipboardData (CF_PNG);
+
+  if (hGlobal == NULL)
+    return false;
+
+  // May be larger than the PNG itself (rounded up): decoders stop at its IEND chunk
+  const SIZE_T cbGlobal = GlobalSize (hGlobal);
+
+  const BYTE* pData =
+    static_cast <const BYTE *> (GlobalLock (hGlobal));
+
+  if (pData == nullptr)
+    return false;
+
+  static constexpr BYTE png_signature [8] = { 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n' };
+
+  bool saved = false;
+
+  if (cbGlobal < sizeof (png_signature) || memcmp (pData, png_signature, sizeof (png_signature)) != 0)
+    PLOG_WARNING << "Clipboard PNG data does not start with a PNG signature!";
+
+  else
+  {
+    std::wstring path = std::wstring (_path_cache.skiv_temp) + L"paste.png";
+
+    FILE* fPNG = _wfopen (path.c_str ( ), L"wb");
+
+    if (fPNG != nullptr)
+    {
+      saved = (fwrite (pData, 1, cbGlobal, fPNG) == cbGlobal);
+      fclose (fPNG);
+    }
+
+    if (saved)
+    {
+      extern std::wstring dragDroppedFilePath;
+      dragDroppedFilePath = path;
+      PLOG_VERBOSE << "Successfully received and saved PNG data (" << cbGlobal << " bytes) from the clipboard!";
+    }
+
+    else
+      PLOG_ERROR << "Failed to save the clipboard PNG to " << path;
+  }
+
+  GlobalUnlock (hGlobal);
+
+  return saved;
+}
 // Adds/removes environment variables in a given environment block
 // Parts of this is CC BY-SA 4.0, https://stackoverflow.com/a/59597519
 std::wstring
