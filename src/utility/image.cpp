@@ -208,7 +208,7 @@ constexpr uint8_t PNG_COMPRESSION_TYPE_BASE = 0; /* Deflate method 8, 32K window
 //  1. Remove gAMA chunk  (Prevents SKIV from recognizing as HDR)
 //  2. Remove sRGB chunk  (Prevents Discord from rendering in HDR)
 //
-//  3. Add cICP  (The primary way of defining HDR10)
+//  3. Add cICP  (The primary way of defining HDR10; skipped with Discord Compatibility)
 //  4. Add iCCP  (Required for Discord to render in HDR)
 //
 //  (5) Add cLLi  [Unnecessary, but probably a good idea]
@@ -938,7 +938,9 @@ SKIV_PNG_MakeHDR ( const wchar_t*        wszFilePath,
 
       iccp_chunk.write (fPNG);
       clli_chunk.write (fPNG);
-      cicp_chunk.write (fPNG);
+      // Discord ignores the iCCP chunk when cICP is present, so its thumbnails come out SDR without tone mapping
+      if (! _registry.png.discord_compatibility)
+        cicp_chunk.write (fPNG);
       sbit_chunk.write (fPNG);
       chrm_chunk.write (fPNG);
 #if 0

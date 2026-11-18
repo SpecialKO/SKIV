@@ -40,6 +40,7 @@
 #include <utility/gamepad.h>
 
 #include <fonts/fa_621.h>
+#include <fonts/fa_621b.h>
 
 #include <imgui/imgui.h>
 #include <imgui/imgui_impl_win32.h>
@@ -2611,6 +2612,33 @@ wWinMain ( _In_     HINSTANCE hInstance,
               ImGui::TextUnformatted ("Use SDR for Snips at or Below Windows SDR Desktop Luminance");
               ImGui::Separator       ();
               ImGui::BulletText      ("For HDR range content, captures an unaltered HDR image");
+              ImGui::EndTooltip      ();
+            }
+
+            // Discord Compatibility (shared with the PNG encoder setting)
+            ImGui::SameLine          ();
+
+            const bool _discordDisabled =
+              (_registry._SnippingTonemapsHDR == 1); // Tone-mapped snips never write HDR PNGs
+
+            if (_discordDisabled)
+              SKIF_ImGui_PushDisableState ();
+
+            ImGui::PushStyleColor    (ImGuiCol_Text, ImColor (88, 101, 242).Value); // Discord blurple
+            if (ImGui::Checkbox      (" " ICON_FA_DISCORD "###ToolbarDiscordCompat", &_registry.png.discord_compatibility))
+              _registry.regKVPNGDiscordCompatibility.putData (_registry.png.discord_compatibility);
+            ImGui::PopStyleColor     ();
+
+            if (_discordDisabled)
+              SKIF_ImGui_PopDisableState ();
+
+            if (ImGui::IsItemHovered (ImGuiHoveredFlags_AllowWhenDisabled))
+            {
+              ImGui::BeginTooltip    ();
+              ImGui::TextUnformatted ("Discord Compatible HDR PNG");
+              ImGui::Separator       ();
+              ImGui::BulletText      ("Omits the cICP chunk so Discord uses the embedded ICC profile for its thumbnail.");
+              ImGui::BulletText      ("Without this, Discord's thumbnail appears in SDR without tone mapping.");
               ImGui::EndTooltip      ();
             }
             ImGui::EndGroup          ();

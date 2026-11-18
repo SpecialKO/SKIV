@@ -383,6 +383,10 @@ struct SKIF_RegistrySettings {
     SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\PNG\)",
                          LR"(HDR BitDepth)" );
 
+  KeyValue <bool> regKVPNGDiscordCompatibility =
+    SKIF_MakeRegKeyB ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\PNG\)",
+                         LR"(Discord Compatibility)" );
+
   KeyValue <int> regKVScreenshotsAutosave =
     SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(Screenshots Autosave)" );
@@ -556,6 +560,7 @@ struct SKIF_RegistrySettings {
   struct {
     CRegKey key;
     int     hdr_bitdepth = 16;
+    bool    discord_compatibility = false; // Omit cICP from HDR PNGs (Discord ignores the iCCP if cICP is present)
   } png;
 
   // Windows stuff
