@@ -5302,6 +5302,20 @@ SKIF_Notify_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
   switch (msg)
   {
+    // Delayed clipboard rendering (see SKIV_Image_CopyToClipboard): this window owns the clipboard after a copy
+    case WM_RENDERFORMAT:
+      SKIV_Image_RenderClipboardFormat (static_cast <UINT> (wParam));
+      return 0;
+
+    // Sent before this window is destroyed (as SKIV exits): the copy is put on the clipboard now, to stay pasteable
+    case WM_RENDERALLFORMATS:
+      SKIV_Image_RenderAllClipboardFormats (hWnd);
+      return 0;
+
+    case WM_DESTROYCLIPBOARD:
+      SKIV_Image_ClearClipboardCache ( );
+      return 0;
+
     case WM_SKIF_NOTIFY_ICON:
       msgDontRedraw = true; // Don't redraw the main window when we're interacting with the notification icon
       switch (lParam)

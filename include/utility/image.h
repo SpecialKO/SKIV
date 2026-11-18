@@ -169,7 +169,11 @@ float             SKIV_Image_LinearToPQY   (float N);
 DirectX::XMVECTOR SKIV_Image_Rec709toICtCp (DirectX::XMVECTOR N);
 DirectX::XMVECTOR SKIV_Image_ICtCptoRec709 (DirectX::XMVECTOR N);
 
+// Offers the image to the clipboard, rendered only once a program pastes it (delayed rendering: see image.cpp)
 bool    SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool isHDR, SKIV_CaptureData capture_data);
+void    SKIV_Image_RenderClipboardFormat     (UINT format);   // WM_RENDERFORMAT
+void    SKIV_Image_RenderAllClipboardFormats (HWND hWndOwner); // WM_RENDERALLFORMATS
+void    SKIV_Image_ClearClipboardCache       (void);          // WM_DESTROYCLIPBOARD
 HRESULT SKIV_Image_SaveToDisk_HDR  (const DirectX::Image& image, const wchar_t* wszFileName);
 HRESULT SKIV_Image_SaveToDisk_SDR  (const DirectX::Image& image, const wchar_t* wszFileName, bool force_sRGB);
 // Captures the display at pos (SKIV_DesktopImage), or every display (SKIV_DesktopImages; flags: SKIV_CaptureDesktop_AllDisplays)

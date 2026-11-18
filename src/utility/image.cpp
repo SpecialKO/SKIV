@@ -1032,60 +1032,332 @@ SKIV_HDR_SavePNGToDisk (const wchar_t* wszPNGPath, const DirectX::Image* png_ima
   return false;
 }
 
-// The parameters are screwy here because currently the only successful way
-//   of doing this copy involves passing the path to a file, but the intention
-//     is actually to pass raw image data and transfer it using OLE.
+// Delayed clipboard rendering
+//
+// A copy only offers its format to the clipboard: the image is kept here, and only made into that format once a program
+//   asks for it (WM_RENDERFORMAT) by pasting it, or when SKIV exits while it still owns the clipboard (WM_RENDERALLFORMATS).
+//     A copy that is never pasted then never has an HDR PNG written, or is tone mapped to SDR. What is saved to disk is
+//       still saved at once (it was asked for, and may be selected in File Explorer).
+//
+//   HDR (kept)  CF_HDROP:  the path of an HDR PNG, written when it is asked for (unless it was saved to disk already)
+//   SDR         CF_BITMAP: the image, tone mapped from HDR when it is asked for (unless it was already, to be saved)
+//
+// The clipboard's owner is SKIF_Notify_hWnd (see SKIF_Notify_WndProc), which lives as long as SKIV does. Everything here
+//   runs on the main thread, which also handles those messages.
+struct skiv_clipboard_cache_s {
+  bool                  active     = false; // Whether a copy is waiting to be rendered
+  bool                  rendered   = false; // Whether it has been put on the clipboard already
+  bool                  as_hdr_png = false; // CF_HDROP of an HDR PNG, or CF_BITMAP
+  DirectX::ScratchImage image;              // What is rendered (none if the HDR PNG was saved already)
+  bool                  tonemap    = false; // CF_BITMAP: the image is HDR, and to be tone mapped to SDR first
+  float                 max_nits   = 0.0f;  //   by these light levels (the displays' when it was copied)
+  float                 sdr_nits   = 0.0f;
+  std::wstring          path;               // CF_HDROP: the HDR PNG
+  bool                  path_saved = false; //   whether it has been written yet
+};
+
+static skiv_clipboard_cache_s SKIV_ClipboardCache;
+
 static bool
-SKIV_PNG_CopyToClipboard (const DirectX::Image& image, const void *pData, size_t data_size)
+SKIV_Clipboard_Open (HWND hWnd)
 {
-  std::ignore = image;
-  std::ignore = data_size; // It's a string, we can compute the size trivially
+  for (auto attempts = 0; attempts < 8; ++attempts)
+  {
+    if (attempts > 0)
+      Sleep (1 << (attempts - 1));
 
-  int clpSize = sizeof (DROPFILES);
+    if (OpenClipboard (hWnd))
+      return true;
+  }
 
-  clpSize += sizeof (wchar_t) * static_cast <int> (wcslen ((wchar_t *)pData) + 1);
-  clpSize += sizeof (wchar_t);
+  return false;
+}
 
-  HDROP hdrop =
-    (HDROP)GlobalAlloc (GHND, clpSize);
+// CF_HDROP of one file (the list ends with an empty path: GHND zeroes the memory)
+static HGLOBAL
+SKIV_Clipboard_MakeHDROP (const std::wstring& path)
+{
+  const SIZE_T size =
+    sizeof (DROPFILES) + sizeof (wchar_t) * (path.length ( ) + 2);
+
+  HGLOBAL hGlobal = GlobalAlloc (GHND, size);
+
+  if (hGlobal == NULL)
+    return NULL;
 
   DROPFILES* df =
-    (DROPFILES *)GlobalLock (hdrop);
+    static_cast <DROPFILES *> (GlobalLock (hGlobal));
+
+  if (df == nullptr)
+  {
+    GlobalFree (hGlobal);
+    return NULL;
+  }
 
   df->pFiles = sizeof (DROPFILES);
   df->fWide  = TRUE;
 
-  wcscpy ((wchar_t*)&df [1], (const wchar_t *)pData);
+  memcpy (&df [1], path.c_str ( ), sizeof (wchar_t) * (path.length ( ) + 1));
 
-  bool clipboard_open = false;
+  GlobalUnlock (hGlobal);
 
-  for (auto attempts = 0; attempts < 8; ++attempts)
+  return hGlobal;
+}
+
+// CF_BITMAP of an SDR image (converted to 8-bpc sRGB BGRX first, if it is not already)
+static HBITMAP
+SKIV_Clipboard_MakeBitmap (const DirectX::Image* pImage)
+{
+  DirectX::ScratchImage swizzled_sdr;
+
+  // Swizzle the image and handle gamma if necessary
+  if (pImage->format != DXGI_FORMAT_B8G8R8X8_UNORM_SRGB)
   {
-    if (attempts > 0)
+    if (SUCCEEDED (DirectX::Convert (*pImage, DXGI_FORMAT_B8G8R8X8_UNORM_SRGB, DirectX::TEX_FILTER_DEFAULT, 0.0f, swizzled_sdr)))
+      pImage = swizzled_sdr.GetImage (0,0,0);
+  }
+
+  const int
+      _bpc    =
+    (int)(DirectX::BitsPerPixel (pImage->format)),
+      _width  =
+    (int)(                       pImage->width),
+      _height =
+    (int)(                       pImage->height);
+
+  HBITMAP hBitmapCopy =
+     CreateBitmap (
+       _width, _height, 1,
+         _bpc, pImage->pixels
+     );
+
+  BITMAPINFOHEADER
+    bmh                 = { };
+    bmh.biSize          = sizeof (BITMAPINFOHEADER);
+    bmh.biWidth         =   _width;
+    bmh.biHeight        =  -_height;
+    bmh.biPlanes        =  1;
+    bmh.biBitCount      = (WORD)_bpc;
+    bmh.biCompression   = BI_RGB;
+    bmh.biXPelsPerMeter = 10;
+    bmh.biYPelsPerMeter = 10;
+
+  BITMAPINFO
+    bmi                 = { };
+    bmi.bmiHeader       = bmh;
+
+  HDC hdcScreen = GetDC (nullptr);
+  HDC hdcDIB    = CreateCompatibleDC (hdcScreen);
+
+  void* bitplane = nullptr;
+
+  HBITMAP
+    hBitmap =
+      CreateDIBSection ( hdcDIB, &bmi, DIB_RGB_COLORS,
+          &bitplane, nullptr, 0 );
+
+  bool copied = false;
+
+  if ( hBitmap     != nullptr &&
+       hBitmapCopy != nullptr &&
+       bitplane    != nullptr )
+  {
+    memcpy ( bitplane,
+               pImage->pixels,
+        static_cast <size_t> (_bpc / 8) *
+        static_cast <size_t> (_width  ) *
+        static_cast <size_t> (_height )
+           );
+
+    HDC hdcSrc = CreateCompatibleDC (hdcScreen);
+    HDC hdcDst = CreateCompatibleDC (hdcScreen);
+
+    auto hbmpSrc = (HBITMAP)SelectObject (hdcSrc, hBitmap);
+    auto hbmpDst = (HBITMAP)SelectObject (hdcDst, hBitmapCopy);
+
+    copied =
+      BitBlt (hdcDst, 0, 0, _width,
+                            _height, hdcSrc, 0, 0, SRCCOPY);
+
+    SelectObject     (hdcSrc, hbmpSrc);
+    SelectObject     (hdcDst, hbmpDst);
+
+    DeleteDC         (hdcSrc);
+    DeleteDC         (hdcDst);
+  }
+
+  DeleteDC  (hdcDIB);
+  ReleaseDC (nullptr, hdcScreen);
+
+  if (hBitmap != nullptr)
+    DeleteBitmap (hBitmap);
+
+  if (! copied && hBitmapCopy != nullptr)
+  {
+    DeleteBitmap (hBitmapCopy);
+    hBitmapCopy = nullptr;
+  }
+
+  return hBitmapCopy;
+}
+
+// Puts the cached copy on the clipboard (which must be open, by SKIV or the program pasting) in its format
+static bool
+SKIV_Clipboard_Render (UINT format)
+{
+  auto& cache = SKIV_ClipboardCache;
+
+  if (! cache.active)
+  {
+    PLOG_WARNING << "Asked to render clipboard format " << format << ", but no copy is waiting to be!";
+    return false;
+  }
+
+  bool success = false;
+
+  if (format == CF_HDROP && cache.as_hdr_png)
+  {
+    if (! cache.path_saved)
     {
-      Sleep (1 << (attempts - 1));
+      if (SUCCEEDED (SKIV_Image_SaveToDisk_HDR (*cache.image.GetImages ( ), cache.path.c_str ( ))))
+      {
+        PLOG_VERBOSE << "SKIF_Image_SaveToDisk_HDR ( ): SUCCEEDED";
+        cache.path_saved = true;
+        cache.image.Release ( ); // Only its path is needed from now on
+      }
+
+      else
+        PLOG_ERROR << "SKIF_Image_SaveToDisk_HDR ( ): FAILED";
     }
 
-    if (OpenClipboard (SKIF_ImGui_hWnd))
+    if (cache.path_saved)
     {
-      clipboard_open = true;
-      break;
+      if (HGLOBAL hGlobal = SKIV_Clipboard_MakeHDROP (cache.path); hGlobal != NULL)
+      {
+        success = (SetClipboardData (CF_HDROP, hGlobal) != NULL);
+
+        // The system owns it once it is on the clipboard
+        if (! success)
+          GlobalFree (hGlobal);
+      }
     }
   }
 
-  if (clipboard_open)
+  else if (format == CF_BITMAP && ! cache.as_hdr_png)
   {
-    EmptyClipboard   ();
-    SetClipboardData (CF_HDROP, hdrop);
-    CloseClipboard   ();
-    GlobalUnlock               (hdrop);
+    const DirectX::Image* pImage = cache.image.GetImages ( );
 
-    return true;
+    DirectX::ScratchImage tonemapped_sdr;
+
+    if (cache.tonemap)
+    {
+      if (SUCCEEDED (SKIV_Image_TonemapToSDR (*pImage, tonemapped_sdr, cache.max_nits, cache.sdr_nits)))
+        pImage = tonemapped_sdr.GetImage (0,0,0);
+      else
+        PLOG_INFO << "SKIV_Image_TonemapToSDR ( ): FAILED!";
+    }
+
+    if (HBITMAP hBitmap = SKIV_Clipboard_MakeBitmap (pImage); hBitmap != nullptr)
+    {
+      success = (SetClipboardData (CF_BITMAP, hBitmap) != NULL);
+
+      // The system owns it once it is on the clipboard
+      if (! success)
+        DeleteBitmap (hBitmap);
+    }
   }
 
-  GlobalUnlock (hdrop);
+  else
+    PLOG_WARNING << "Asked to render clipboard format " << format << ", which the copy does not offer!";
 
-  return false;
+  if (success)
+    cache.rendered = true;
+
+  PLOG_VERBOSE << "Rendered clipboard format " << ((format == CF_HDROP) ? "CF_HDROP" : (format == CF_BITMAP) ? "CF_BITMAP" : "?")
+               << ((success) ? ": SUCCEEDED" : ": FAILED");
+
+  return success;
+}
+
+// Empties the clipboard and offers the copy on it in its format, rendered only once it is asked for
+static bool
+SKIV_Clipboard_Offer (skiv_clipboard_cache_s&& copy)
+{
+  extern HWND SKIF_Notify_hWnd;
+
+  const UINT format =
+    (copy.as_hdr_png) ? CF_HDROP : CF_BITMAP;
+
+  if (SKIF_Notify_hWnd == NULL || ! SKIV_Clipboard_Open (SKIF_Notify_hWnd))
+  {
+    PLOG_ERROR << "Failed to open the clipboard!";
+    return false;
+  }
+
+  bool offered = false;
+
+  // Sends WM_DESTROYCLIPBOARD to the clipboard's owner: SKIV too, which clears the cache. So it is filled after.
+  if (EmptyClipboard ( ))
+  {
+    SKIV_ClipboardCache          = std::move (copy);
+    SKIV_ClipboardCache.active   = true;
+    SKIV_ClipboardCache.rendered = false;
+
+    // NULL: delayed rendering
+    SetClipboardData (format, NULL);
+
+    // SetClipboardData (format, NULL) returns NULL also when it succeeds: whether the format is offered tells instead
+    offered = (IsClipboardFormatAvailable (format) != FALSE);
+
+    if (! offered)
+      SKIV_ClipboardCache = { };
+  }
+
+  CloseClipboard ( );
+
+  PLOG_VERBOSE << "Offered clipboard format " << ((format == CF_HDROP) ? "CF_HDROP" : "CF_BITMAP")
+               << " for delayed rendering" << ((offered) ? ": SUCCEEDED" : ": FAILED");
+
+  return offered;
+}
+
+// WM_RENDERFORMAT: a program pastes the copy (and has opened the clipboard)
+void
+SKIV_Image_RenderClipboardFormat (UINT format)
+{
+  PLOG_VERBOSE << "WM_RENDERFORMAT: " << format;
+
+  SKIV_Clipboard_Render (format);
+}
+
+// WM_RENDERALLFORMATS: SKIV exits while it may still own the clipboard, so the copy is put on it now (to stay pasteable)
+void
+SKIV_Image_RenderAllClipboardFormats (HWND hWndOwner)
+{
+  PLOG_VERBOSE << "WM_RENDERALLFORMATS";
+
+  if (! SKIV_ClipboardCache.active || SKIV_ClipboardCache.rendered)
+    return;
+
+  if (OpenClipboard (hWndOwner))
+  {
+    // Another program may have taken the clipboard over since
+    if (GetClipboardOwner ( ) == hWndOwner)
+      SKIV_Clipboard_Render ((SKIV_ClipboardCache.as_hdr_png) ? CF_HDROP : CF_BITMAP);
+
+    CloseClipboard ( );
+  }
+}
+
+// WM_DESTROYCLIPBOARD: the clipboard was emptied (by another copy, SKIV's own too), so the cached copy is not needed anymore
+void
+SKIV_Image_ClearClipboardCache (void)
+{
+  if (SKIV_ClipboardCache.active)
+  {
+    SKIV_ClipboardCache = { };
+    PLOG_VERBOSE << "The copy waiting to be put on the clipboard has been cleared.";
+  }
 }
 
 bool SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool isHDR, SKIV_CaptureData capture_data)
@@ -1238,163 +1510,83 @@ using namespace DirectX;
     else snipping_tonemap_mode = 1;
   }
 
+  skiv_clipboard_cache_s copy;
+
+  // HDR: an HDR PNG, of which the clipboard gets the path
   if (isHDR && (! snipping_tonemap_mode))
   {
-    if (SUCCEEDED (SKIV_Image_SaveToDisk_HDR (*pImage, wsPNGPath.c_str())))
+    copy.as_hdr_png = true;
+    copy.path       = wsPNGPath;
+
+    // Saved to disk (or to be selected in File Explorer): now, as asked. Otherwise only once a program pastes it.
+    if (isPersistent || capture_data._select)
     {
+      if (FAILED (SKIV_Image_SaveToDisk_HDR (*pImage, wsPNGPath.c_str())))
+      {
+        PLOG_VERBOSE << "SKIF_Image_SaveToDisk_HDR ( ): FAILED";
+        return false;
+      }
+
       PLOG_VERBOSE << "SKIF_Image_SaveToDisk_HDR ( ): SUCCEEDED";
+
+      copy.path_saved = true;
 
       if (capture_data._select)
         SKIF_Util_FileExplorer_SelectFile (wsPNGPath.c_str());
-
-      if (SKIV_PNG_CopyToClipboard (*pImage, wsPNGPath.c_str(), 0))
-      {
-        PLOG_VERBOSE << "SKIV_PNG_CopyToClipboard ( ): TRUE";
-        return true;
-      }
     }
 
-    else
-      PLOG_VERBOSE << "SKIF_Image_SaveToDisk_HDR ( ): FAILED";
+    else if (FAILED (copy.image.InitializeFromImage (*pImage)))
+    {
+      PLOG_ERROR << "Failed to keep a copy of the image for the clipboard!";
+      return false;
+    }
   }
 
+  // SDR (or HDR tone mapped to it): a bitmap
   else
   {
+    copy.as_hdr_png = false;
+    copy.tonemap    = (snipping_tonemap_mode && isHDR);
+    copy.max_nits   = SKIV_DesktopImage._max_display_nits;
+    copy.sdr_nits   = SKIV_DesktopImage._sdr_display_nits;
+
+    const DirectX::Image* pSDR = pImage;
+
+    // Saved to disk: now, as asked (tone mapped first), and the clipboard gets the image as it was saved
     DirectX::ScratchImage tonemapped_sdr;
-    if (snipping_tonemap_mode && isHDR)
-    {
-      if (SUCCEEDED (SKIV_Image_TonemapToSDR (*pImage, tonemapped_sdr, SKIV_DesktopImage._max_display_nits, SKIV_DesktopImage._sdr_display_nits)))
-        pImage = tonemapped_sdr.GetImage (0,0,0);
-      else
-        PLOG_INFO << "SKIV_Image_TonemapToSDR ( ): FAILED!";
-    }
 
     if (isPersistent)
     {
-      if (SUCCEEDED (SKIV_Image_SaveToDisk_SDR (*pImage, wsPNGPath.c_str(), false)))
+      if (copy.tonemap)
+      {
+        if (SUCCEEDED (SKIV_Image_TonemapToSDR (*pImage, tonemapped_sdr, copy.max_nits, copy.sdr_nits)))
+          pSDR = tonemapped_sdr.GetImage (0,0,0);
+        else
+          PLOG_INFO << "SKIV_Image_TonemapToSDR ( ): FAILED!";
+
+        copy.tonemap = false;
+      }
+
+      if (SUCCEEDED (SKIV_Image_SaveToDisk_SDR (*pSDR, wsPNGPath.c_str(), false)))
       {
         PLOG_VERBOSE << "SKIV_Image_SaveToDisk_SDR ( ): SUCCEEDED!";
 
         if (capture_data._select)
           SKIF_Util_FileExplorer_SelectFile (wsPNGPath.c_str());
       } else
-        PLOG_VERBOSE << "SKIF_Image_SaveToDisk_HDR ( ): FAILED";
+        PLOG_VERBOSE << "SKIV_Image_SaveToDisk_SDR ( ): FAILED";
     }
 
-    const int
-        _bpc    =
-      (int)(DirectX::BitsPerPixel (pImage->format)),
-        _width  =
-      (int)(                       pImage->width),
-        _height =
-      (int)(                       pImage->height);
-
-    DirectX::ScratchImage swizzled_sdr;
-    // Swizzle the image and handle gamma if necessary
-    if (pImage->format != DXGI_FORMAT_B8G8R8X8_UNORM_SRGB)
+    if (FAILED (copy.image.InitializeFromImage (*pSDR)))
     {
-      if (SUCCEEDED (DirectX::Convert (*pImage, DXGI_FORMAT_B8G8R8X8_UNORM_SRGB, DirectX::TEX_FILTER_DEFAULT, 0.0f, swizzled_sdr)))
-      {
-        pImage = swizzled_sdr.GetImage (0,0,0);
-      }
-    }
-    ////SK_ReleaseAssert (pImage->format == DXGI_FORMAT_B8G8R8X8_UNORM ||
-    ////                  pImage->format == DXGI_FORMAT_B8G8R8A8_UNORM ||
-    ////                  pImage->format == DXGI_FORMAT_B8G8R8X8_UNORM_SRGB);
-
-    HBITMAP hBitmapCopy =
-       CreateBitmap (
-         _width, _height, 1,
-           _bpc, pImage->pixels
-       );
-
-    BITMAPINFOHEADER
-      bmh                 = { };
-      bmh.biSize          = sizeof (BITMAPINFOHEADER);
-      bmh.biWidth         =   _width;
-      bmh.biHeight        =  -_height;
-      bmh.biPlanes        =  1;
-      bmh.biBitCount      = (WORD)_bpc;
-      bmh.biCompression   = BI_RGB;
-      bmh.biXPelsPerMeter = 10;
-      bmh.biYPelsPerMeter = 10;
-
-    BITMAPINFO
-      bmi                 = { };
-      bmi.bmiHeader       = bmh;
-
-    HDC hdcDIB =
-      CreateCompatibleDC (GetDC (nullptr));
-
-    void* bitplane = nullptr;
-
-    HBITMAP
-      hBitmap =
-        CreateDIBSection ( hdcDIB, &bmi, DIB_RGB_COLORS,
-            &bitplane, nullptr, 0 );
-    memcpy ( bitplane,
-               pImage->pixels,
-        static_cast <size_t> (_bpc / 8) *
-        static_cast <size_t> (_width  ) *
-        static_cast <size_t> (_height )
-           );
-
-    HDC hdcSrc = CreateCompatibleDC (GetDC (nullptr));
-    HDC hdcDst = CreateCompatibleDC (GetDC (nullptr));
-
-    if ( hBitmap     != nullptr &&
-         hBitmapCopy != nullptr )
-    {
-      auto hbmpSrc = (HBITMAP)SelectObject (hdcSrc, hBitmap);
-      auto hbmpDst = (HBITMAP)SelectObject (hdcDst, hBitmapCopy);
-
-      BitBlt (hdcDst, 0, 0, _width,
-                            _height, hdcSrc, 0, 0, SRCCOPY);
-
-      SelectObject     (hdcSrc, hbmpSrc);
-      SelectObject     (hdcDst, hbmpDst);
-
-      bool clipboard_open = false;
-
-      for (auto attempts = 0; attempts < 8; ++attempts)
-      {
-        if (attempts > 0)
-        {
-          Sleep (1 << (attempts - 1));
-        }
-
-        if (OpenClipboard (SKIF_ImGui_hWnd))
-        {
-          clipboard_open = true;
-          break;
-        }
-      }
-
-      if (clipboard_open)
-      {
-        EmptyClipboard   ();
-        SetClipboardData (CF_BITMAP, hBitmapCopy);
-        CloseClipboard   ();
-      }
-    }
-
-    DeleteDC         (hdcSrc);
-    DeleteDC         (hdcDst);
-    DeleteDC         (hdcDIB);
-
-    if ( hBitmap     != nullptr &&
-         hBitmapCopy != nullptr )
-    {
-      DeleteBitmap   (hBitmap);
-      DeleteBitmap   (hBitmapCopy);
-
-      return true;
+      PLOG_ERROR << "Failed to keep a copy of the image for the clipboard!";
+      return false;
     }
   }
 
-  return false;
+  return
+    SKIV_Clipboard_Offer (std::move (copy));
 }
-
 // Raises the current thread's priority for a while (it is restored after). Only the thread's: never the process's,
 //   which efficiency mode sets (see SKIV.cpp), and which another thread changing it meanwhile would leave wrong.
 class SKIV_ScopedThreadPriority
