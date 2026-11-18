@@ -40,6 +40,7 @@
 #include <utility/gamepad.h>
 
 #include <fonts/fa_621.h>
+#include <fonts/fa_621b.h>
 
 #include <imgui/imgui.h>
 #include <imgui/imgui_impl_win32.h>
@@ -2209,6 +2210,16 @@ wWinMain ( _In_     HINSTANCE hInstance,
       {
 #pragma region UI: Snipping Mode
 
+        // The owner the input of each snipping frame is given to (at the end of the frame, below), so the viewer drawn
+        //   after it does not act on it. Dear ImGui keeps that owner into the next frame (while a key is held, and on the
+        //     frame it is pressed), where the toolbar's items would then never see their clicks: it is released here,
+        //       before them, and given again at the end of this frame
+        static const ImGuiID snipInputOwner = ImHashStr ("###SKIV_SnippingOverlayInput");
+
+        for (int key = ImGuiKey_NamedKey_BEGIN; key < ImGuiKey_NamedKey_END; key++)
+          if (ImGui::GetKeyOwner (static_cast <ImGuiKey> (key)) == snipInputOwner)
+            ImGui::SetKeyOwner   (static_cast <ImGuiKey> (key), ImGuiKeyOwner_NoOwner);
+
         // The displays captured (all of them), the one under the cursor first: its overlay has the toolbar and the focus
         std::vector <const skiv_image_desktop_s*> displays;
 
@@ -2607,6 +2618,33 @@ wWinMain ( _In_     HINSTANCE hInstance,
               ImGui::BulletText      ("For HDR range content, captures an unaltered HDR image");
               ImGui::EndTooltip      ();
             }
+
+            // Discord Compatibility (shared with the PNG encoder setting)
+            ImGui::SameLine          ();
+
+            const bool _discordDisabled =
+              (_registry._SnippingTonemapsHDR == 1); // Tone-mapped snips never write HDR PNGs
+
+            if (_discordDisabled)
+              SKIF_ImGui_PushDisableState ();
+
+            ImGui::PushStyleColor    (ImGuiCol_Text, ImColor (88, 101, 242).Value); // Discord blurple
+            if (ImGui::Checkbox      (" " ICON_FA_DISCORD "###ToolbarDiscordCompat", &_registry.png.discord_compatibility))
+              _registry.regKVPNGDiscordCompatibility.putData (_registry.png.discord_compatibility);
+            ImGui::PopStyleColor     ();
+
+            if (_discordDisabled)
+              SKIF_ImGui_PopDisableState ();
+
+            if (ImGui::IsItemHovered (ImGuiHoveredFlags_AllowWhenDisabled))
+            {
+              ImGui::BeginTooltip    ();
+              ImGui::TextUnformatted ("Discord Compatible HDR PNG");
+              ImGui::Separator       ();
+              ImGui::BulletText      ("Omits the cICP chunk so Discord uses the embedded ICC profile for its thumbnail.");
+              ImGui::BulletText      ("Without this, Discord's thumbnail appears in SDR without tone mapping.");
+              ImGui::EndTooltip      ();
+            }
             ImGui::EndGroup          ();
           }
 
@@ -2722,10 +2760,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
         // The input of this frame is the snip's: the viewer, drawn after it (in the main window, which stays as it is),
         //   must not act on it (e.g. a right click opening its menu, Delete deleting the image, Ctrl+wheel zooming)
         {
-          const ImGuiID owner = ImGui::GetID ("###SKIV_SnippingOverlayInput");
-
           for (int key = ImGuiKey_NamedKey_BEGIN; key < ImGuiKey_NamedKey_END; key++)
-            ImGui::SetKeyOwner (static_cast <ImGuiKey> (key), owner, ImGuiInputFlags_LockThisFrame);
+            ImGui::SetKeyOwner (static_cast <ImGuiKey> (key), snipInputOwner, ImGuiInputFlags_LockThisFrame);
 
           ImGui::GetIO ( ).MouseWheel  = 0.0f;
           ImGui::GetIO ( ).MouseWheelH = 0.0f;

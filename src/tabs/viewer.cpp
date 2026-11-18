@@ -3439,6 +3439,10 @@ SKIF_UI_Tab_DrawViewer (void)
         selection = 3;
         if (ImGui::SliderInt ("HDR Bit Depth", &_registry.png.hdr_bitdepth, 10, 16))
           _registry.regKVPNGHDRBitDepth.putData(_registry.png.hdr_bitdepth);
+        if (ImGui::Checkbox ("Discord Compatibility", &_registry.png.discord_compatibility))
+          _registry.regKVPNGDiscordCompatibility.putData (_registry.png.discord_compatibility);
+        SKIF_ImGui_SetHoverTip ("Omits the cICP chunk from HDR PNGs so Discord uses the embedded ICC profile.\n"
+                                "Without this, Discord's thumbnails of HDR PNGs appear in SDR without tone mapping.");
         ImGui::EndTabItem      ();
       }
       //if (ImGui::BeginTabItem ("Ultra HDR", nullptr, ImGuiTabItemFlags_NoTooltip))

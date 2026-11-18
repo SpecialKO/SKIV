@@ -360,6 +360,8 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
 
   if (regKVPNGHDRBitDepth.hasData  (&png.key.m_hKey))
     png.hdr_bitdepth       =   regKVPNGHDRBitDepth         .getData (&png.key.m_hKey);
+  if (regKVPNGDiscordCompatibility.hasData (&png.key.m_hKey))
+    png.discord_compatibility = regKVPNGDiscordCompatibility.getData (&png.key.m_hKey);
 
 #if 0
   if (! SKIF_Util_GetDragFromMaximized ( ))
