@@ -1466,6 +1466,10 @@ wWinMain ( _In_     HINSTANCE hInstance,
   CF_HTML = RegisterClipboardFormatW (L"HTML Format");
   PLOG_VERBOSE << "Clipboard registered format for 'HTML Format' is... " << CF_HTML;
 
+  // And the PNG format (the image itself, as browsers and Discord copy it alongside a bitmap)
+  CF_PNG  = RegisterClipboardFormatW (L"PNG");
+  PLOG_VERBOSE << "Clipboard registered format for 'PNG' is... " << CF_PNG;
+
   PLOG_INFO << "Initializing updater...";
   // Initialize the updater
   static SKIF_Updater& _updater =
@@ -3545,6 +3549,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
                     (format == CF_HTML       ) ? ClipboardData_HTML        :
                     (format == CF_BITMAP     ) ? ClipboardData_Bitmap      :
                     (format == CF_HDROP      ) ? ClipboardData_HDROP       :
+                    (format == CF_PNG        ) ? ClipboardData_PNG         :
                                                  ClipboardData_None       );
 //#ifdef _DEBUG
             wchar_t wzFormatName[256];
@@ -3552,6 +3557,11 @@ wWinMain ( _In_     HINSTANCE hInstance,
             PLOG_VERBOSE << "Supported clipboard format: " << format << " - " << std::wstring(wzFormatName);
 //#endif
           }
+
+          // The formats are tried in this order, each only if the ones before it gave nothing usable: text, the image
+          //   URL of HTML (the original file: the only way to get its full quality, HDR included), the image data (PNG,
+          //     then a bitmap: 8-bit SDR copies), and last a list of files
+          bool handled = false;
 
           if (cbd & ClipboardData_TextUnicode)
           {
@@ -3562,6 +3572,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
             if (! unicode.empty())
             {
               dragDroppedFilePath = unicode;
+              handled             = true;
 
               ImGui::InsertNotification({ ImGuiToastType::Info, 3000, "Received a Unicode paste", "%s", SK_WideCharToUTF8 (dragDroppedFilePath).c_str()});
             }
@@ -3576,12 +3587,13 @@ wWinMain ( _In_     HINSTANCE hInstance,
             if (! ansi.empty())
             {
               dragDroppedFilePath = SK_UTF8ToWideChar (ansi);
+              handled             = true;
 
               ImGui::InsertNotification({ ImGuiToastType::Info, 3000, "Received a ANSI paste", "%s", SK_WideCharToUTF8 (dragDroppedFilePath).c_str()});
             }
           }
 
-          else if (cbd & ClipboardData_HTML)
+          if (! handled && (cbd & ClipboardData_HTML))
           {
             PLOG_VERBOSE << "Received a CF_HTML paste!";
 
@@ -3630,25 +3642,54 @@ wWinMain ( _In_     HINSTANCE hInstance,
                     html_decoder.decode(html);
 
                     PLOG_VERBOSE << "Extracted image URL path: " << html;
-                    dragDroppedFilePath = SK_UTF8ToWideChar (html);
 
-                    ImGui::InsertNotification({ ImGuiToastType::Info, 3000, "Received a HTML paste", "%s", SK_WideCharToUTF8(dragDroppedFilePath).c_str()});
+                    const std::wstring src = SK_UTF8ToWideChar (html);
+
+                    // Only a URL or a file that exists can be opened: some browsers (Firefox) give just the file name
+                    //   (e.g. "image.png"), in which case the image data copied alongside it is used instead
+                    if (PathIsURLW (src.c_str ( )) || PathFileExistsW (src.c_str ( )))
+                    {
+                      dragDroppedFilePath = src;
+                      handled             = true;
+
+                      ImGui::InsertNotification({ ImGuiToastType::Info, 3000, "Received a HTML paste", "%s", SK_WideCharToUTF8(dragDroppedFilePath).c_str()});
+                    }
+
+                    else
+                      PLOG_VERBOSE << "The image URL path is neither a URL nor an existing file; trying the image data instead...";
                   }
                 }
               }
             }
           }
 
-          else if (cbd & ClipboardData_Bitmap)
+          if (! handled && (cbd & ClipboardData_PNG))
+          {
+            PLOG_VERBOSE << "Received a PNG paste!";
+
+            if (SKIF_Util_GetClipboardPNGData ( ))
+            {
+              handled = true;
+
+              ImGui::InsertNotification({ ImGuiToastType::Info, 3000, "Received a PNG paste", "" });
+            }
+          }
+
+          if (! handled && (cbd & ClipboardData_Bitmap))
           {
             PLOG_VERBOSE << "Received a CF_BITMAP paste!";
 
             SKIF_Util_GetClipboardBitmapData ( );
 
-            ImGui::InsertNotification({ ImGuiToastType::Info, 3000, "Received a bitmap paste", "" });
+            if (! dragDroppedFilePath.empty ( ))
+            {
+              handled = true;
+
+              ImGui::InsertNotification({ ImGuiToastType::Info, 3000, "Received a bitmap paste", "" });
+            }
           }
 
-          else if ((cbd & ClipboardData_HDROP))
+          if (! handled && (cbd & ClipboardData_HDROP))
           {
             PLOG_VERBOSE << "Detected a drop of type CF_HDROP";
 
