@@ -3588,8 +3588,20 @@ wWinMain ( _In_     HINSTANCE hInstance,
                     (format == CF_PNG        ) ? ClipboardData_PNG         :
                                                  ClipboardData_None       );
 //#ifdef _DEBUG
-            wchar_t wzFormatName[256];
-            GetClipboardFormatNameW (format, wzFormatName, 256);
+            // Only registered formats have a name: the predefined ones (CF_*) are named here, as the buffer would
+            //   otherwise be left as it was (showing the name of the format before it)
+            static constexpr const wchar_t* wzPredefinedNames [] = {
+              L"",              L"CF_TEXT",      L"CF_BITMAP",      L"CF_METAFILEPICT", L"CF_SYLK",
+              L"CF_DIF",        L"CF_TIFF",      L"CF_OEMTEXT",     L"CF_DIB",          L"CF_PALETTE",
+              L"CF_PENDATA",    L"CF_RIFF",      L"CF_WAVE",        L"CF_UNICODETEXT",  L"CF_ENHMETAFILE",
+              L"CF_HDROP",      L"CF_LOCALE",    L"CF_DIBV5"
+            };
+
+            wchar_t wzFormatName[256] = { L'\0' };
+
+            if (GetClipboardFormatNameW (format, wzFormatName, 256) == 0)
+              wcsncpy_s (wzFormatName, 256, (format < std::size (wzPredefinedNames)) ? wzPredefinedNames [format] : L"(unnamed)", _TRUNCATE);
+
             PLOG_VERBOSE << "Supported clipboard format: " << format << " - " << std::wstring(wzFormatName);
 //#endif
           }
