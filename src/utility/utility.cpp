@@ -11,8 +11,8 @@
 #include <gdiplus.h>
 #include <regex>
 
-#ifndef SECURITY_WIN32 
-#define SECURITY_WIN32 
+#ifndef SECURITY_WIN32
+#define SECURITY_WIN32
 #endif
 
 #include <Security.h>
@@ -29,6 +29,7 @@
 #include <HybridDetect.h>
 
 UINT CF_HTML = NULL;
+UINT CF_PNG  = NULL;
 
 std::vector<HANDLE> vWatchHandles[UITab_ALL];
 INT64               SKIF_TimeInMilliseconds = 0;
@@ -59,6 +60,7 @@ struct SKIF_Util_Monitor_s {
 
 std::vector <SKIF_Util_Monitor_s> g_Monitors           = {  };
 bool                              g_WantUpdateMonitors = true;
+HMONITOR                          g_MissingMonitor     = NULL; // Last monitor SKIF_Util_GetSDRWhiteLevel ( ) was asked about that is not in the list (see there)
 
 CRITICAL_SECTION CriticalSectionDbgHelp = { };
 
@@ -262,6 +264,30 @@ SKIF_Util_TrimTrailingNewlinesW (std::wstring& input)
   input.erase (std::find_if (input.rbegin(), input.rend(), [](const       wchar_t ch) { return (ch != L'\n'); }).base(), input.end());
 }
 
+void
+SKIF_Util_ReplaceAll (std::string& input, const std::string& from, const std::string& to)
+{
+  // CC BY-SA 4.0: https://stackoverflow.com/a/24315631
+  size_t  start_pos = 0;
+  while ((start_pos = input.find(from, start_pos)) != std::string::npos)
+  {
+    input.replace(start_pos, from.length(), to);
+    start_pos += to.length();
+  }
+}
+
+void
+SKIF_Util_ReplaceAllW (std::wstring& input, const std::wstring& from, const std::wstring& to)
+{
+  // CC BY-SA 4.0: https://stackoverflow.com/a/24315631
+  size_t  start_pos = 0;
+  while ((start_pos = input.find(from, start_pos)) != std::wstring::npos)
+  {
+    input.replace(start_pos, from.length(), to);
+    start_pos += to.length();
+  }
+}
+
 
 // Handles System Error Codes, https://learn.microsoft.com/en-us/windows/win32/debug/system-error-codes#system-error-codes
 //                             https://learn.microsoft.com/en-us/windows/win32/wininet/appendix-c-handling-errors
@@ -406,12 +432,12 @@ SKIF_Util_timeGetTimeAsWStr (const std::wstring& format)
 
 // Handles comparisons of a version string split between dots by
 // looping through the parts that makes up the string one by one.
-// 
+//
 // Outputs:
 //  1 = if string1 is more than string2
 //  0 = if both strings are equal
 // -1 = if string1 is less than string2
-//  
+//
 // Basically https://www.geeksforgeeks.org/compare-two-version-numbers/
 int
 SKIF_Util_CompareVersionStrings (std::string string1, std::string string2)
@@ -439,14 +465,14 @@ SKIF_Util_CompareVersionStrings (std::string string1, std::string string2)
     // If string2 is higher than string1, return -1
     if (sum2 > sum1) return -1;
 
-    // if equal, reset variables and go for next numeric part 
+    // if equal, reset variables and go for next numeric part
     sum1 = sum2 = 0;
     i++;
     j++;
   }
 
   // If both strings are equal, return 0
-  return 0; 
+  return 0;
 }
 
 int
@@ -475,14 +501,14 @@ SKIF_Util_CompareVersionStrings (std::wstring string1, std::wstring string2)
     // If string2 is higher than string1, return -1
     if (sum2 > sum1) return -1;
 
-    // if equal, reset variables and go for next numeric part 
+    // if equal, reset variables and go for next numeric part
     sum1 = sum2 = 0;
     i++;
     j++;
   }
 
   // If both strings are equal, return 0
-  return 0; 
+  return 0;
 }
 
 
@@ -771,7 +797,7 @@ SKIF_UtilInt_IniUserMachineStrip (void)
     wchar_t wszUserDisName [MAX_PATH] = { };
     wchar_t wszMachineName [MAX_PATH] = { };
 
-    if (GetUserProfileDirectoryW (SKIF_Util_GetCurrentProcessToken ( ), wszUserProfile, &dwLen))
+    if (GetUserProfileDirectoryW (SKIF_Util_GetCurrentUserToken ( ), wszUserProfile, &dwLen))
     {
       PathStripPathW                   (wszUserProfile);
       userProfile     = std::wstring   (wszUserProfile);
@@ -780,7 +806,7 @@ SKIF_UtilInt_IniUserMachineStrip (void)
       replProfile     = std::wstring      (userProfile.length(), L'*');
       replProfileUTF8 = SK_WideCharToUTF8 (replProfile);
     }
-    
+
     dwLen             = MAX_PATH;
 
     if (GetUserNameExW (NameSamCompatible, wszUserSamName, &dwLen))
@@ -801,7 +827,7 @@ SKIF_UtilInt_IniUserMachineStrip (void)
       replMacName     = std::wstring        (machineName.length(), L'*');
       replMacNameUTF8 = SK_WideCharToUTF8   (replMacName);
     }
-    
+
     dwLen             = MAX_PATH;
 
     if (GetUserNameExW (NameDisplay,    wszUserDisName, &dwLen))
@@ -819,7 +845,7 @@ std::string
 SKIF_Util_StripPersonalData (std::string input)
 {
   SKIF_UtilInt_IniUserMachineStrip ( );
-  
+
   if (! userDisNameUTF8.empty())
     input = std::regex_replace (input, std::regex  (userDisNameUTF8.c_str()), replDisNameUTF8.c_str()); // Strip Display Name first as it is most likely to include the profile/SAM account name
 
@@ -831,7 +857,7 @@ SKIF_Util_StripPersonalData (std::string input)
 
   if (! machineNameUTF8.empty())
     input = std::regex_replace (input, std::regex  (machineNameUTF8.c_str()), replMacNameUTF8.c_str());
-  
+
   // Trim a single trailing newline
   if (! input.empty() && input.back() == '\n')
     input.pop_back();
@@ -843,7 +869,7 @@ std::wstring
 SKIF_Util_StripPersonalData (std::wstring input)
 {
   SKIF_UtilInt_IniUserMachineStrip ( );
-  
+
   if (! userDisName.empty())
     input = std::regex_replace (input, std::wregex (userDisName.c_str()),    replDisName.c_str()); // Strip Display Name first as it is most likely to include the profile/SAM account name
 
@@ -855,7 +881,7 @@ SKIF_Util_StripPersonalData (std::wstring input)
 
   if (! machineName.empty())
     input = std::regex_replace (input, std::wregex (machineName.c_str()),    replMacName.c_str());
-  
+
   // Trim a single trailing newline
   if (! input.empty() && input.back() == L'\n')
     input.pop_back();
@@ -981,7 +1007,7 @@ SKIF_Util_ShellExecuteUnelevated (
 
     spView->QueryInterface(riid, ppv);
   };
-    
+
   auto _GetDesktopAutomationObject = [&](REFIID riid, void **ppv) -> void
   {
     CComPtr<IShellView> spsv;
@@ -1040,7 +1066,7 @@ SKIF_Util_CreateProcess (
     std::map<std::wstring, std::wstring> env;
     SKIF_Util_CreateProcess_s* proc;
   };
-  
+
   thread_s* data = new thread_s;
 
   data->proc = proc;
@@ -1074,7 +1100,7 @@ SKIF_Util_CreateProcess (
     PathRemoveFileSpecW (wszExecutableBase);
     data->directory    = wszExecutableBase;
   }
-  
+
   if (env != nullptr)
     data->env = *env;
 
@@ -1087,7 +1113,7 @@ SKIF_Util_CreateProcess (
     SKIF_Util_SetThreadPowerThrottling (GetCurrentThread (), 1); // Enable EcoQoS for this thread
     SetThreadPriority (GetCurrentThread (), THREAD_MODE_BACKGROUND_BEGIN);
 
-    PLOG_DEBUG << "SKIF_CreateProcessWorker thread started!";
+    PLOG_VERBOSE << "SKIF_CreateProcessWorker thread started!";
 
     thread_s* _data = static_cast<thread_s*>(var);
 
@@ -1095,23 +1121,27 @@ SKIF_Util_CreateProcess (
     STARTUPINFO         supinfo  = { };
     SecureZeroMemory  (&supinfo,   sizeof (STARTUPINFO));
     supinfo.cb                   = sizeof (STARTUPINFO);
-      
+
     LPVOID       lpEnvBlock      = nullptr;
     std::wstring wsEnvBlock;
-      
+
     // Create a clear and empty environment block for the current user
-    CreateEnvironmentBlock (&lpEnvBlock, SKIF_Util_GetCurrentProcessToken(), FALSE);
+    if (CreateEnvironmentBlock (&lpEnvBlock, SKIF_Util_GetCurrentUserToken ( ), FALSE))
+    {
+      // Convert to a nicely stored wstring
+      wsEnvBlock   = SKIF_Util_AddEnvironmentBlock (lpEnvBlock, L"", L"");
 
-    // Convert to a nicely stored wstring
-    wsEnvBlock   = SKIF_Util_AddEnvironmentBlock (lpEnvBlock, L"", L"");
+      // Add any custom variables to it
+      for (auto& env_var : _data->env)
+        wsEnvBlock = SKIF_Util_AddEnvironmentBlock (wsEnvBlock.c_str(), env_var.first, env_var.second);
 
-    // Add any custom variables to it
-    for (auto& env_var : _data->env)
-      wsEnvBlock = SKIF_Util_AddEnvironmentBlock (wsEnvBlock.c_str(), env_var.first, env_var.second);
+      // Destroy the block once we are done with it
+      DestroyEnvironmentBlock (lpEnvBlock);
+    }
+    else {
+      PLOG_ERROR << "Failed to create an environment block for the current user: " << SKIF_Util_GetErrorAsWStr (GetLastError ( ));
+    }
 
-    // Destroy the block once we are done with it
-    DestroyEnvironmentBlock (lpEnvBlock);
-      
     PLOG_INFO                                          << "Creating process...";
     PLOG_INFO_IF  (! _data->path             .empty()) << "Application         : " << _data->path;
     PLOG_INFO_IF  (! _data->parameters       .empty()) << "Parameters          : " << _data->parameters;
@@ -1163,7 +1193,7 @@ SKIF_Util_CreateProcess (
           SetEnvironmentVariable (env_var.first.c_str(), env_var.second.c_str());
 
         PLOG_INFO << "Performing a ShellExecuteEx call...";
-  
+
         SHELLEXECUTEINFOW
           sexi              = { };
           sexi.cbSize       = sizeof (SHELLEXECUTEINFOW);
@@ -1202,7 +1232,7 @@ SKIF_Util_CreateProcess (
     // Free up the memory we allocated
     delete _data;
 
-    PLOG_DEBUG << "SKIF_CreateProcessWorker thread stopped!";
+    PLOG_VERBOSE << "SKIF_CreateProcessWorker thread stopped!";
 
     SetThreadPriority (GetCurrentThread (), THREAD_MODE_BACKGROUND_END);
 
@@ -1245,6 +1275,22 @@ SKIF_Util_GetCurrentProcessToken (void)
   return (HANDLE)(LONG_PTR) -4;
 }
 
+// This is not always the same as what SKIF_Util_GetCurrentProcessToken() returns...
+// At least not on Windows 7 where CreateEnvironmentBlock() crashes if given a -4 handle...
+HANDLE
+SKIF_Util_GetCurrentUserToken (void)
+{
+  static HANDLE token = NULL;
+
+  if (token != NULL)
+    return token;
+
+  // CreateEnvironmentBlock requires a token with TOKEN_QUERY and TOKEN_DUPLICATE access
+  OpenProcessToken (SKIF_Util_GetCurrentProcess ( ), (TOKEN_QUERY | TOKEN_DUPLICATE), &token);
+
+  return token;
+}
+
 // Terminates the process with the given process ID
 BOOL
 SKIF_Util_TerminateProcess (DWORD dwProcessId, UINT uExitCode)
@@ -1264,7 +1310,7 @@ SKIF_Util_TerminateProcess (HANDLE hProcess, UINT uExitCode)
 {
   if (hProcess == INVALID_HANDLE_VALUE)
     return FALSE;
-   
+
   return
     TerminateProcess (hProcess, uExitCode);
 }
@@ -1556,7 +1602,7 @@ HybridDetect::PROCESSOR_INFO*
 SKIF_Util_GetProcessInfoHybridDetect (void)
 {
   static HybridDetect::PROCESSOR_INFO procInfo;
-  
+
   static bool
       runOnce = true;
   if (runOnce)
@@ -1584,7 +1630,7 @@ SKIF_Util_GetSystemCpuSetInformation (PSYSTEM_CPU_SET_INFORMATION Information, U
 
   if (SKIF_GetSystemCpuSetInformation == nullptr)
     return FALSE;
-  
+
   return SKIF_GetSystemCpuSetInformation (Information, BufferLength, ReturnedLength, Process, Flags);
 }
 
@@ -1595,9 +1641,9 @@ SKIF_Util_SetThreadPrefersECores (void)
     return false;
 
   HybridDetect::PROCESSOR_INFO procInfo = *SKIF_Util_GetProcessInfoHybridDetect ( );
-  
+
   bool succeeded = false;
-  
+
   // From Intel's Game Dev Guide for 12th Gen Intel® Core™ Processor:
   //  - CPU Sets provide APIs to declare application thread affinity in a “soft” manner that is compatible with OS power management (unlike the ThreadAffinityMask APIs).
   //  - SetThreadAffinityMask() is in the “strong” affinity class of Windows API functions.
@@ -1637,7 +1683,7 @@ SKIF_Util_SetThreadInformation (HANDLE hThread, THREAD_INFORMATION_CLASS ThreadI
 
   if (SKIF_SetThreadInformation == nullptr)
     return FALSE;
-  
+
   return SKIF_SetThreadInformation (hThread, ThreadInformationClass, ThreadInformation, ThreadInformationSize);
 }
 
@@ -1648,14 +1694,16 @@ SKIF_Util_SetThreadDescription (HANDLE hThread, PCWSTR lpThreadDescription)
   using SetThreadDescription_pfn =
     HRESULT (WINAPI *)(HANDLE hThread, PCWSTR lpThreadDescription);
 
+  // SetThreadDescription is exported by KernelBase.dll from Win10v1607 and onward.
+  // Kernel32.dll just forwards to KernelBase.dll; only from Win10v1703 and onward.
   static SetThreadDescription_pfn
     SKIF_SetThreadDescription =
-        (SetThreadDescription_pfn)GetProcAddress (LoadLibraryEx (L"kernel32.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32),
+        (SetThreadDescription_pfn)GetProcAddress (LoadLibraryEx (L"KernelBase.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32),
         "SetThreadDescription");
 
   if (SKIF_SetThreadDescription == nullptr)
     return 0;
-  
+
   return SKIF_SetThreadDescription (hThread, lpThreadDescription);
 }
 
@@ -1673,7 +1721,7 @@ SKIF_Util_SetThreadSelectedCpuSets (HANDLE hThread, const ULONG* CpuSetIds, ULON
 
   if (SKIF_SetThreadSelectedCpuSets == nullptr)
     return FALSE;
-  
+
   return SKIF_SetThreadSelectedCpuSets (hThread, CpuSetIds, CpuSetIdCount);
 }
 
@@ -1713,7 +1761,7 @@ SKIF_Util_SetProcessPrefersECores (void)
   HybridDetect::PROCESSOR_INFO procInfo = *SKIF_Util_GetProcessInfoHybridDetect ( );
 
   bool succeeded = false;
-  
+
   // From Intel's Game Dev Guide for 12th Gen Intel® Core™ Processor:
   //  - CPU Sets provide APIs to declare application thread affinity in a “soft” manner that is compatible with OS power management (unlike the ThreadAffinityMask APIs).
   //  - SetThreadAffinityMask() is in the “strong” affinity class of Windows API functions.
@@ -1752,7 +1800,7 @@ SKIF_Util_SetProcessDefaultCpuSets (HANDLE hProcess, const ULONG* CpuSetIds, ULO
 
   if (SKIF_SetProcessDefaultCpuSets == nullptr)
     return FALSE;
-  
+
   return SKIF_SetProcessDefaultCpuSets (hProcess, CpuSetIds, CpuSetIdCount);
 }
 
@@ -1802,36 +1850,64 @@ SKIF_Util_SetProcessMemoryPriority (HANDLE processHandle, ULONG memoryPriority)
   return SKIF_Util_SetProcessInformation (processHandle, ProcessMemoryPriority, &memoryPriorityInfo, sizeof(memoryPriorityInfo));
 }
 
+// Windows 8 or newer
 bool
-SKIF_Util_IsWindows8Point1OrGreater (void)
+SKIF_Util_IsWindows8OrGreater (void)
 {
-  SK_RunOnce (
-    SetLastError (NO_ERROR)
-  );
-
-  static bool bResult =
-      GetProcAddress (
-        GetModuleHandleW (L"kernel32.dll"),
-                           "GetSystemTimePreciseAsFileTime"
-                     ) != nullptr &&
-      GetLastError  () == NO_ERROR;
+  static const bool bResult =
+    GetProcAddress (
+      GetModuleHandleW (L"kernel32.dll"),
+                         "GetSystemTimePreciseAsFileTime"
+                   ) != nullptr;
 
   return bResult;
 }
 
+// Windows 8.1 or newer
+//   GetDpiForMonitor ( ) was introduced in shcore.dll on Windows 8.1 (shcore.dll exists on Windows 8.0 but lacks it,
+//     and does not exist on Windows 7), so its presence identifies 8.1+ without relying on reported version numbers
+bool
+SKIF_Util_IsWindows8Point1OrGreater (void)
+{
+  static const bool bResult = [](void) -> bool
+  {
+    // Kept loaded (reference counted), as SKIF uses shcore.dll for per-monitor DPI on 8.1+ anyway
+    HMODULE hShcore =
+      LoadLibraryExW (L"shcore.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+
+    return (hShcore != nullptr &&
+            GetProcAddress (hShcore, "GetDpiForMonitor") != nullptr);
+  } ( );
+
+  return bResult;
+}
+
+// Windows 10 or newer
+//   GetSystemCpuSetInformation ( ) was introduced in kernel32.dll with the first Windows 10 release (1507),
+//     so its presence identifies Windows 10+ without relying on reported version numbers
 bool
 SKIF_Util_IsWindows10OrGreater (void)
 {
-  SK_RunOnce (
-    SetLastError (NO_ERROR)
-  );
+  static const bool bResult =
+    GetProcAddress (
+      GetModuleHandleW (L"kernel32.dll"),
+                         "GetSystemCpuSetInformation"
+                   ) != nullptr;
 
-  static bool bResult =
+  return bResult;
+}
+
+// Windows 10 1607+ (Build 14393) or newer
+// SetThreadDescription is exported by KernelBase.dll from Win10v1607 and onward.
+// Kernel32.dll just forwards to KernelBase.dll; only from Win10v1703 and onward.
+bool
+SKIF_Util_IsWindows10v1607OrGreater (void)
+{
+  static const bool bResult =
       GetProcAddress (
-        GetModuleHandleW (L"kernel32.dll"),
+        GetModuleHandleW (L"KernelBase.dll"),
                            "SetThreadDescription"
-                     ) != nullptr &&
-      GetLastError  () == NO_ERROR;
+                     ) != nullptr;
 
   return bResult;
 }
@@ -1872,6 +1948,16 @@ SKIF_Util_IsWindows11orGreater (void)
 {
   static bool bResult =
     SKIF_Util_IsWindowsVersionOrGreater (10, 0, 22000);
+
+  return bResult;
+}
+
+// Windows 11 24H2 (Build 26100) or newer
+bool
+SKIF_Util_IsWindows11v24H2orGreater (void)
+{
+  static bool bResult =
+    SKIF_Util_IsWindowsVersionOrGreater (10, 0, 26100);
 
   return bResult;
 }
@@ -1921,42 +2007,40 @@ SKIF_Util_IsTouchCapable (void)
          (digitizer & NID_INTEGRATED_TOUCH));
 }
 
+SKIF_Elevation
+SKIF_Util_GetProcessElevation (DWORD PID)
+{
+  SK_AutoHandle hProcess (
+    OpenProcess (PROCESS_QUERY_LIMITED_INFORMATION, FALSE, PID)
+  );
+
+  if (hProcess.m_h == NULL)
+    return (GetLastError ( ) == ERROR_ACCESS_DENIED)
+           ? SKIF_Elevation::Unknown
+           : SKIF_Elevation::NotElevated;
+
+  SK_AutoHandle hToken (NULL);
+
+  if (! OpenProcessToken (hProcess, TOKEN_QUERY, &hToken.m_h))
+    return (GetLastError ( ) == ERROR_ACCESS_DENIED)
+           ? SKIF_Elevation::Unknown
+           : SKIF_Elevation::NotElevated;
+
+  TOKEN_ELEVATION elevation = { };
+  DWORD           cbSize    = sizeof (elevation);
+
+  if (! GetTokenInformation (hToken.m_h, TokenElevation, &elevation, sizeof (elevation), &cbSize))
+    return SKIF_Elevation::Unknown;
+
+  return (elevation.TokenIsElevated != 0)
+         ? SKIF_Elevation::Elevated
+         : SKIF_Elevation::NotElevated;
+}
+
 bool
 SKIF_Util_IsProcessAdmin (DWORD PID)
 {
-  bool          bRet = false;
-  SK_AutoHandle hToken (INVALID_HANDLE_VALUE);
-
-  SetLastError (NO_ERROR);
-
-  SK_AutoHandle hProcess = OpenProcess (PROCESS_QUERY_INFORMATION, FALSE, PID);
-
-  if (GetLastError() == ERROR_ACCESS_DENIED)
-    return true;
-
-  if ( OpenProcessToken ( hProcess,
-                            TOKEN_QUERY,
-                              &hToken.m_h )
-     )
-  {
-    TOKEN_ELEVATION Elevation = { };
-
-    DWORD cbSize =
-      sizeof (TOKEN_ELEVATION);
-
-    if ( GetTokenInformation ( hToken.m_h,
-                                 TokenElevation,
-                                   &Elevation,
-                                     sizeof (Elevation),
-                                       &cbSize )
-       )
-    {
-      bRet =
-        ( Elevation.TokenIsElevated != 0 );
-    }
-  }
-
-  return bRet;
+  return (SKIF_Util_GetProcessElevation (PID) != SKIF_Elevation::NotElevated);
 }
 
 bool
@@ -2047,7 +2131,7 @@ SKIF_Util_SaveExtractExeIcon (std::wstring sourcePath, std::wstring targetPath)
     // Create any missing directories
     if (! std::filesystem::exists (            target.parent_path(), ec))
           std::filesystem::create_directories (target.parent_path(), ec);
-    
+
     // GDI+ Image Encoder CLSIDs (haven't changed forever)
     //
     //              {distinct-same-same-same-samesamesame}
@@ -2129,7 +2213,7 @@ SKIF_Util_GetDragFromMaximized (bool refresh)
     if (state && // Only check WindowArrangementActive if DragFromMaximize is enabled
         ERROR_SUCCESS == RegGetValueW (hKey, NULL, L"WindowArrangementActive", RRF_RT_REG_SZ, NULL, &szData, &dwSize))
       state = (wcscmp (szData, L"1") == 0);
-    
+
     if (state)
       PLOG_DEBUG << "DragFromMaximize and WindowArrangementActive registry keys are enabled in Windows";
     else
@@ -2300,7 +2384,7 @@ SKIF_Util_IsMPOsDisabledInRegistry (bool refresh)
   else
     flagOverlayTestMode = DWMOverlayTestModeFlags_None;
 
-  
+
   if (iDisableOverlay || ((flagOverlayTestMode & DWMOverlayTestModeFlags_MPORelated1) == DWMOverlayTestModeFlags_MPORelated1 &&
                           (flagOverlayTestMode & DWMOverlayTestModeFlags_MPORelated2) == DWMOverlayTestModeFlags_MPORelated2))
     isDisabled = true;
@@ -2312,10 +2396,10 @@ SKIF_Util_IsMPOsDisabledInRegistry (bool refresh)
 void
 SKIF_Util_GetMonitorHzPeriod (HWND hwnd, DWORD dwFlags, DWORD& dwPeriod)
 {
-  DEVMODE 
+  DEVMODE
     dm        = { };
     dm.dmSize = sizeof (DEVMODE);
-    
+
   MONITORINFOEX
     minfoex        = { };
     minfoex.cbSize = sizeof (MONITORINFOEX);
@@ -2336,7 +2420,23 @@ SKIF_Util_SetClipboardData (const std::wstring_view& data)
 {
   bool result = false;
 
-  if (OpenClipboard (SKIF_ImGui_hWnd))
+  bool clipboard_open = false;
+
+  for (auto attempts = 0; attempts < 8; ++attempts)
+  {
+    if (attempts > 0)
+    {
+      Sleep (1 << (attempts - 1));
+    }
+
+    if (OpenClipboard (SKIF_ImGui_hWnd))
+    {
+      clipboard_open = true;
+      break;
+    }
+  }
+
+  if (clipboard_open)
   {
     HGLOBAL hGlobal = GlobalAlloc (GMEM_MOVEABLE, (data.size() + 1)  * sizeof (wchar_t));
 
@@ -2347,10 +2447,10 @@ SKIF_Util_SetClipboardData (const std::wstring_view& data)
       if (pszDestination != nullptr)
       {
         memcpy (pszDestination, data.data(), (data.length() + 1) * sizeof (wchar_t));
-        GlobalUnlock (hGlobal);
 
         EmptyClipboard ( );
         result = SetClipboardData (CF_UNICODETEXT, hGlobal);
+        GlobalUnlock                              (hGlobal);
       }
 
       if (! result)
@@ -2481,83 +2581,344 @@ SKIF_Util_GetClipboardHDROP (void)
 DirectX::Image
 SKIF_Util_GetClipboardBitmapData (void)
 {
+  static SKIF_CommonPathsCache& _path_cache = SKIF_CommonPathsCache::GetInstance ( );
+
+  // Describes the decoded image. pixels is always nullptr on return:
+  //   the converted copy only lives inside this function.
   DirectX::Image img = { };
 
-  if (true) // OpenClipboard (SKIF_ImGui_hWnd)
+  // The caller is expected to have opened the clipboard already
+  HGLOBAL hGlobal = GetClipboardData (CF_DIBV5);
+
+  if (hGlobal == NULL)
+    return img;
+
+  // Nothing past this many bytes of the clipboard data may be read
+  const uint64_t cbGlobal =
+    static_cast <uint64_t> (GlobalSize (hGlobal));
+
+  const BYTE* pData =
+    static_cast <const BYTE *> (GlobalLock (hGlobal));
+
+  if (pData == nullptr)
+    return img;
+
+  // Unlocks the clipboard data on every return path
+  struct scoped_unlock_s {
+    HGLOBAL hMem;
+   ~scoped_unlock_s (void) { GlobalUnlock (hMem); }
+  } _unlock { hGlobal };
+
+  if (cbGlobal < sizeof (BITMAPINFOHEADER))
   {
-    HGLOBAL hGlobal = GetClipboardData (CF_DIBV5);
+    PLOG_ERROR << "Clipboard bitmap is too small to hold a bitmap header (" << cbGlobal << " bytes)!";
+    return img;
+  }
 
-    if (hGlobal)
+  // Only the first bV5Size bytes are guaranteed to be header fields;
+  //   the BITMAPINFOHEADER part (the first 40 bytes) is always present.
+  const BITMAPV5HEADER* bmp5hdr =
+    reinterpret_cast <const BITMAPV5HEADER *> (pData);
+
+  const uint64_t headerSize  = bmp5hdr->bV5Size;
+  const LONG     width       = bmp5hdr->bV5Width;
+  const LONG     heightRaw   = bmp5hdr->bV5Height;
+  const WORD     bitCount    = bmp5hdr->bV5BitCount;
+  const DWORD    compression = bmp5hdr->bV5Compression;
+  const uint64_t clrUsed     = bmp5hdr->bV5ClrUsed;
+
+  PLOG_VERBOSE << "Clipboard bitmap: " << width << "x" << heightRaw << ", "
+               << bitCount   << " bpp, "
+               << headerSize << " byte header, "
+               << cbGlobal   << " bytes in total, compression: " <<
+       ((compression == BI_JPEG)      ? "BI_JPEG"      :
+        (compression == BI_PNG)       ? "BI_PNG"       :
+        (compression == BI_RGB)       ? "BI_RGB"       :
+        (compression == BI_RLE4)      ? "BI_RLE4"      :
+        (compression == BI_RLE8)      ? "BI_RLE8"      :
+        (compression == BI_BITFIELDS) ? "BI_BITFIELDS" :
+                                        "Unknown"     );
+
+  if (headerSize < sizeof (BITMAPINFOHEADER) || headerSize > cbGlobal)
+  {
+    PLOG_ERROR << "Clipboard bitmap has an invalid header size!";
+    return img;
+  }
+
+  if (compression != BI_RGB && compression != BI_BITFIELDS)
+  {
+    PLOG_WARNING << "Clipboard bitmap uses an unsupported compression!";
+    return img;
+  }
+
+  // BI_RGB is valid for 24 and 32 bpp, BI_BITFIELDS only for 32 bpp (among those two)
+  if (! (bitCount == 32 || (bitCount == 24 && compression == BI_RGB)))
+  {
+    PLOG_WARNING << "Clipboard bitmap uses an unsupported bit depth!";
+    return img;
+  }
+
+  // A positive height is the usual bottom-up row order, a negative height means top-down
+  const bool     bottomUp = (heightRaw > 0);
+  const uint64_t w        = (width > 0) ? static_cast <uint64_t> (width) : 0;
+  const uint64_t h        = (heightRaw > 0) ?  static_cast <uint64_t> (heightRaw)
+                                            : -static_cast <int64_t>  (heightRaw);
+
+  if (w == 0 || h == 0)
+  {
+    PLOG_ERROR << "Clipboard bitmap has invalid dimensions!";
+    return img;
+  }
+
+  // Pixel data starts after the header, the optional three DWORD color masks, and the optional color table
+  uint64_t offset = headerSize;
+
+  DWORD redMask   = 0x00FF0000,  // BI_RGB always uses BGR(X) order
+        greenMask = 0x0000FF00,
+        blueMask  = 0x000000FF;
+
+  if (compression == BI_BITFIELDS)
+  {
+    // BITMAPV2INFOHEADER and later headers hold the masks themselves
+    if (headerSize >= offsetof (BITMAPV5HEADER, bV5AlphaMask))
     {
-      BITMAPV5HEADER* bmp5hdr =
-        static_cast <BITMAPV5HEADER *> (GlobalLock (hGlobal));
+      redMask   = bmp5hdr->bV5RedMask;
+      greenMask = bmp5hdr->bV5GreenMask;
+      blueMask  = bmp5hdr->bV5BlueMask;
 
-      if (bmp5hdr != nullptr)
+      // Some sources, Windows' own conversion to CF_DIBV5 among them, still put a copy
+      //   of the masks after the larger header. Skip that copy if it is there.
+      if (cbGlobal - offset >= 3 * sizeof (DWORD))
       {
-        int offset =
-          bmp5hdr->bV5Size + bmp5hdr->bV5ClrUsed * sizeof (RGBQUAD);
+        DWORD masks [3] = { };
+        memcpy (masks, pData + static_cast <size_t> (offset), sizeof (masks));
 
-        PLOG_VERBOSE << "bmp5hdr->bV5Compression: " <<
-             ((bmp5hdr->bV5Compression == BI_JPEG)      ? "JPEG"         :
-              (bmp5hdr->bV5Compression == BI_PNG)       ? "BI_PNG"       :
-              (bmp5hdr->bV5Compression == BI_RGB)       ? "BI_RGB"       :
-              (bmp5hdr->bV5Compression == BI_RLE4)      ? "BI_RLE4"      :
-              (bmp5hdr->bV5Compression == BI_RLE8)      ? "BI_RLE8"      :
-              (bmp5hdr->bV5Compression == BI_BITFIELDS) ? "BI_BITFIELDS" :
-                                                          "Unknown"     );
-
-        if (bmp5hdr->bV5Compression == BI_BITFIELDS ||
-            bmp5hdr->bV5Compression == BI_RGB)
-        {
-          offset += 12;
-
-          if (bmp5hdr->bV5BitCount == 24)
-            img.format = DXGI_FORMAT_B8G8R8X8_UNORM;
-          else if (bmp5hdr->bV5BitCount == 32)
-            img.format = DXGI_FORMAT_B8G8R8A8_UNORM;
-
-          if (img.format == DXGI_FORMAT_B8G8R8A8_UNORM)
-          {
-            img.pixels     = (BYTE *)bmp5hdr + offset;
-            img.width      = bmp5hdr->bV5Width;
-            img.height     = bmp5hdr->bV5Height;
-            img.slicePitch = 4 * bmp5hdr->bV5Width * bmp5hdr->bV5Height;
-            img.rowPitch   = 4 * bmp5hdr->bV5Width;
-            DirectX::TexMetadata
-              meta           = { };
-              meta.width     = img.width;
-              meta.height    = img.height;
-              meta.format    = img.format;
-              meta.depth     = 1;
-              meta.arraySize = 1;
-              meta.mipLevels = 1;
-              meta.dimension = DirectX::TEX_DIMENSION_TEXTURE2D;
-
-            // DIBs are upside down :)
-            DirectX::ScratchImage
-              flipped;
-              flipped.Initialize (meta);
-
-            if (SUCCEEDED (DirectX::FlipRotate    (&img, 1, meta,             DirectX::TEX_FR_FLIP_VERTICAL, flipped)) &&
-                SUCCEEDED (DirectX::SaveToWICFile (*flipped.GetImage (0,0,0), DirectX::WIC_FLAGS_FORCE_SRGB, GUID_ContainerFormatTiff, L"clipboard.tiff")))
-            {
-              extern std::wstring dragDroppedFilePath;
-              dragDroppedFilePath = L"clipboard.tiff";
-              PLOG_VERBOSE << "Successfully received and saved image data from the clipboard!";
-            }
-          }
-        }
-
-        GlobalUnlock (hGlobal);
+        if (masks [0] == redMask   &&
+            masks [1] == greenMask &&
+            masks [2] == blueMask)
+          offset += sizeof (masks);
       }
     }
 
-    //CloseClipboard ( );
+    // A plain BITMAPINFOHEADER is followed by the three masks
+    else
+    {
+      if (cbGlobal - offset < 3 * sizeof (DWORD))
+      {
+        PLOG_ERROR << "Clipboard bitmap is too small to hold its color masks!";
+        return img;
+      }
+
+      DWORD masks [3] = { };
+      memcpy (masks, pData + static_cast <size_t> (offset), sizeof (masks));
+
+      redMask   = masks [0];
+      greenMask = masks [1];
+      blueMask  = masks [2];
+      offset   += sizeof (masks);
+    }
   }
+
+  // The color table is optional at these bit depths but must be skipped when present
+  if (clrUsed > (cbGlobal - offset) / sizeof (RGBQUAD))
+  {
+    PLOG_ERROR << "Clipboard bitmap has an invalid color table size!";
+    return img;
+  }
+
+  offset += clrUsed * sizeof (RGBQUAD);
+
+  // Rows are padded to a multiple of 4 bytes
+  const uint64_t bytesPerPixel = bitCount / 8;
+  const uint64_t srcRowPitch   = ((w * bitCount + 31) / 32) * 4;
+
+  // Make sure every row lies within the clipboard data before reading anything
+  if (h > (cbGlobal - offset) / srcRowPitch)
+  {
+    PLOG_ERROR << "Clipboard bitmap is smaller than its dimensions require ("
+               << cbGlobal << " bytes available, "
+               << offset + srcRowPitch * h << " bytes needed)!";
+    return img;
+  }
+
+  DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
+
+  if (bitCount == 24)
+    format = DXGI_FORMAT_B8G8R8X8_UNORM; // Expanded to 32 bpp below; there is no 24 bpp DXGI format
+
+  else if (redMask == 0x00FF0000 && greenMask == 0x0000FF00 && blueMask == 0x000000FF)
+    format = DXGI_FORMAT_B8G8R8A8_UNORM;
+
+  else if (redMask == 0x000000FF && greenMask == 0x0000FF00 && blueMask == 0x00FF0000)
+    format = DXGI_FORMAT_R8G8B8A8_UNORM;
+
+  if (format == DXGI_FORMAT_UNKNOWN)
+  {
+    PLOG_WARNING << "Clipboard bitmap uses unsupported color masks!";
+    return img;
+  }
+
+  // Copy into our own buffer, in top-down row order and in a format DXGI understands
+  DirectX::ScratchImage
+    converted;
+
+  if (FAILED (converted.Initialize2D (format, static_cast <size_t> (w), static_cast <size_t> (h), 1, 1)))
+  {
+    PLOG_ERROR << "Failed to allocate memory for the clipboard bitmap!";
+    return img;
+  }
+
+  // Everything below was bounds checked against the clipboard data size, so it fits in size_t
+  const size_t width_px  = static_cast <size_t> (w);
+  const size_t height_px = static_cast <size_t> (h);
+  const size_t pitch     = static_cast <size_t> (srcRowPitch);
+
+  const DirectX::Image* pDst  = converted.GetImage (0, 0, 0);
+  const BYTE*           pBits = pData + static_cast <size_t> (offset);
+
+  // 24 bpp carries no alpha. For 32 bpp the high byte is only meaningful when the
+  //   source actually filled it in: BI_RGB leaves it undefined, and many apps copy
+  //   32 bpp images with it left at zero, which would otherwise decode as a fully
+  //   transparent image. Treat an all-zero alpha channel as opaque, and preserve
+  //   the alpha only when at least one pixel has a non-zero value.
+  bool forceOpaque = true;
+
+  if (bitCount == 32)
+  {
+    for (size_t y = 0; y < height_px && forceOpaque; y++)
+    {
+      const BYTE* srcRow = pBits + (bottomUp ? (height_px - 1 - y) : y) * pitch;
+
+      for (size_t x = 0; x < width_px; x++)
+      {
+        if (srcRow [x * 4 + 3] != 0x00)
+        {
+          forceOpaque = false;
+          break;
+        }
+      }
+    }
+
+    if (forceOpaque)
+      PLOG_VERBOSE << "Clipboard bitmap has an all-zero alpha channel; treating it as opaque.";
+  }
+
+  for (size_t y = 0; y < height_px; y++)
+  {
+    // Bottom-up bitmaps store the last row first
+    const BYTE* srcRow = pBits + (bottomUp ? (height_px - 1 - y) : y) * pitch;
+          BYTE* dstRow = pDst->pixels + y * pDst->rowPitch;
+
+    if (bytesPerPixel == 4)
+    {
+      if (! forceOpaque)
+        memcpy (dstRow, srcRow, width_px * 4);
+
+      else
+      {
+        for (size_t x = 0; x < width_px; x++)
+        {
+          dstRow [x * 4 + 0] = srcRow [x * 4 + 0];
+          dstRow [x * 4 + 1] = srcRow [x * 4 + 1];
+          dstRow [x * 4 + 2] = srcRow [x * 4 + 2];
+          dstRow [x * 4 + 3] = 0xFF;
+        }
+      }
+    }
+
+    else
+    {
+      for (size_t x = 0; x < width_px; x++)
+      {
+        dstRow [x * 4 + 0] = srcRow [x * 3 + 0]; // B
+        dstRow [x * 4 + 1] = srcRow [x * 3 + 1]; // G
+        dstRow [x * 4 + 2] = srcRow [x * 3 + 2]; // R
+        dstRow [x * 4 + 3] = 0xFF;               // X
+      }
+    }
+  }
+
+  img.width      = pDst->width;
+  img.height     = pDst->height;
+  img.format     = pDst->format;
+  img.rowPitch   = pDst->rowPitch;
+  img.slicePitch = pDst->slicePitch;
+  img.pixels     = nullptr;
+
+  std::wstring path = std::wstring(_path_cache.skiv_temp) + L"paste.tiff";
+
+  if (SUCCEEDED (DirectX::SaveToWICFile (*pDst, DirectX::WIC_FLAGS_FORCE_SRGB, GUID_ContainerFormatTiff, path.c_str())))
+  {
+    extern std::wstring dragDroppedFilePath;
+    dragDroppedFilePath = path;
+    PLOG_VERBOSE << "Successfully received and saved image data from the clipboard!";
+  }
+
+  else
+    PLOG_ERROR << "Failed to save the clipboard bitmap to " << path;
 
   return img;
 }
 
+// The "PNG" clipboard format (the image as a PNG file, which browsers and Discord copy alongside a bitmap): saved to
+//   the temp folder, which the viewer then opens as a dropped file. Keeps transparency, unlike most bitmaps.
+bool
+SKIF_Util_GetClipboardPNGData (void)
+{
+  static SKIF_CommonPathsCache& _path_cache = SKIF_CommonPathsCache::GetInstance ( );
+
+  if (CF_PNG == 0)
+    return false;
+
+  // The caller is expected to have opened the clipboard already
+  HGLOBAL hGlobal = GetClipboardData (CF_PNG);
+
+  if (hGlobal == NULL)
+    return false;
+
+  // May be larger than the PNG itself (rounded up): decoders stop at its IEND chunk
+  const SIZE_T cbGlobal = GlobalSize (hGlobal);
+
+  const BYTE* pData =
+    static_cast <const BYTE *> (GlobalLock (hGlobal));
+
+  if (pData == nullptr)
+    return false;
+
+  static constexpr BYTE png_signature [8] = { 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n' };
+
+  bool saved = false;
+
+  if (cbGlobal < sizeof (png_signature) || memcmp (pData, png_signature, sizeof (png_signature)) != 0)
+    PLOG_WARNING << "Clipboard PNG data does not start with a PNG signature!";
+
+  else
+  {
+    std::wstring path = std::wstring (_path_cache.skiv_temp) + L"paste.png";
+
+    FILE* fPNG = _wfopen (path.c_str ( ), L"wb");
+
+    if (fPNG != nullptr)
+    {
+      saved = (fwrite (pData, 1, cbGlobal, fPNG) == cbGlobal);
+      fclose (fPNG);
+    }
+
+    if (saved)
+    {
+      extern std::wstring dragDroppedFilePath;
+      dragDroppedFilePath = path;
+      PLOG_VERBOSE << "Successfully received and saved PNG data (" << cbGlobal << " bytes) from the clipboard!";
+    }
+
+    else
+      PLOG_ERROR << "Failed to save the clipboard PNG to " << path;
+  }
+
+  GlobalUnlock (hGlobal);
+
+  return saved;
+}
 // Adds/removes environment variables in a given environment block
 // Parts of this is CC BY-SA 4.0, https://stackoverflow.com/a/59597519
 std::wstring
@@ -2578,7 +2939,7 @@ SKIF_Util_AddEnvironmentBlock (const void* pEnvBlock, const std::wstring& varNam
       key       = keyValue.substr(0, pos); // Extract the environment variable name from the given "key=value" string
     else
       key       = keyValue; // Environment variable lacks a = sign ?!
-    
+
     // We store the whole "key=value" string as the value in the map
     // Environment variables must also end with a null terminator
     value       = keyValue + L'\0';
@@ -2606,7 +2967,7 @@ SKIF_Util_AddEnvironmentBlock (const void* pEnvBlock, const std::wstring& varNam
     OutputDebugString(L"\n");
   }
 #endif
-  
+
   // Serialize the map into a new buffer
   std::wstring result;
 
@@ -2625,7 +2986,7 @@ SKIF_Util_FileExplorer_SelectFile (PCWSTR filePath)
   struct thread_s {
     std::wstring path = L"";
   };
-  
+
   thread_s* data = new thread_s;
   data->path = filePath;
 
@@ -2657,7 +3018,7 @@ SKIF_Util_FileExplorer_SelectFile (PCWSTR filePath)
         { } // Success
 
         // Use the task allocator to free to returned pidl
-        ILFree (iidlPtr);
+        CoTaskMemFree (iidlPtr);
       }
     }
 
@@ -2677,6 +3038,294 @@ SKIF_Util_FileExplorer_SelectFile (PCWSTR filePath)
     CloseHandle (hWorkerThread);
   else // Someting went wrong during thread creation, so free up the memory we allocated earlier
     delete data;
+}
+
+bool
+SKIF_Util_FileExplorer_DeleteFile (PCWSTR filePath, bool hideWarning)
+{
+  bool ret = false;
+
+  IShellItem* psi = nullptr;
+  if (SUCCEEDED (SHCreateItemFromParsingName (filePath, nullptr, IID_PPV_ARGS(&psi))))
+  {
+    IFileOperation* pfo = nullptr;
+    if (SUCCEEDED (CoCreateInstance (CLSID_FileOperation, nullptr, CLSCTX_ALL, IID_PPV_ARGS(&pfo))))
+    {
+      // This primarily adheres to Explorer's "Display delete confirmation dialog" setting
+      //   i.e. if that setting is disabled, the confirmation won't appear regardless
+      DWORD flags  =
+        FOF_FILESONLY | FOFX_RECYCLEONDELETE | FOFX_ADDUNDORECORD | ((hideWarning) ? FOF_NOCONFIRMATION : FOF_WANTNUKEWARNING); // FOF_WANTNUKEWARNING only seems to trigger on network shares
+
+      if (SUCCEEDED (pfo->SetOperationFlags (flags)))
+      {
+        if (SUCCEEDED (pfo->DeleteItem (psi, nullptr)))
+        {
+          ret = SUCCEEDED (pfo->PerformOperations());
+        }
+      }
+
+      pfo->Release();
+    }
+
+    psi->Release();
+  }
+
+  return ret;
+}
+
+void
+SKIF_Util_FileExplorer_ContextMenuFile (PCWSTR filePath, HWND hWndOwner)
+{
+  // You should call this function from a background thread.
+  // Failure to do so could cause the UI to stop responding.
+  PIDLIST_ABSOLUTE iidlPtr = nullptr;
+  HRESULT hr = SHParseDisplayName (filePath, NULL, &iidlPtr, 0, nullptr);
+  // Let us take the risk since TrackPopupMenuEx() needs to be called from the UI thread
+
+  if (SUCCEEDED (hr))
+  {
+    CComPtr<IShellFolder> parentFolder;
+    LPCITEMIDLIST child        = nullptr;
+
+    hr = SHBindToParent (iidlPtr, IID_PPV_ARGS(&parentFolder), &child);
+
+    if (SUCCEEDED (hr))
+    {
+      CComPtr<IContextMenu> ctxMenu;
+      hr = parentFolder->GetUIObjectOf (hWndOwner, 1, &child, IID_IContextMenu, nullptr, (void**)&ctxMenu);
+
+      if (SUCCEEDED (hr))
+      {
+        HMENU hMenu = CreatePopupMenu();
+        ctxMenu->QueryContextMenu (hMenu, 0, 1, 0x7FFF, CMF_NORMAL);
+
+        POINT cur = { };
+        GetCursorPos (&cur);
+
+        int cmd = TrackPopupMenuEx (hMenu, TPM_RETURNCMD, cur.x, cur.y, hWndOwner, nullptr);
+
+        if (cmd > 0)
+        {
+          CMINVOKECOMMANDINFOEX
+            info        = { sizeof(info) };
+            info.fMask  = CMIC_MASK_UNICODE;
+            info.hwnd   = hWndOwner;
+            info.lpVerb = MAKEINTRESOURCEA(cmd - 1);
+            info.nShow  = SW_SHOWNORMAL;
+
+          ctxMenu->InvokeCommand ((LPCMINVOKECOMMANDINFO)&info);
+        }
+
+        DestroyMenu (hMenu);
+      }
+    }
+
+    CoTaskMemFree (iidlPtr);
+  }
+}
+
+static int
+CALLBACK
+SKIF_Util_FileExplorer_BrowseForFolder_CallbackProc (HWND hWnd,UINT uMsg, LPARAM lParam, LPARAM lpData)
+{
+  UNREFERENCED_PARAMETER (lParam);
+
+  if (uMsg == BFFM_INITIALIZED)
+    SendMessage (hWnd, BFFM_SETSELECTION, TRUE, lpData);
+
+  return 0;
+}
+
+std::wstring
+SKIF_Util_FileExplorer_BrowseForFolderXP (PCWSTR defaultPath)
+{
+  TCHAR path[MAX_PATH] = { };
+
+  BROWSEINFO
+    bi = { };
+    bi.lpszTitle  = L"Select a new screenshot folder for SKIV to use:";
+    bi.ulFlags    = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
+    bi.lpfn       = SKIF_Util_FileExplorer_BrowseForFolder_CallbackProc;
+    bi.lParam     = (LPARAM) defaultPath;
+
+  LPITEMIDLIST pidl = SHBrowseForFolder ( &bi );
+
+  if ( pidl != 0 )
+  {
+    SHGetPathFromIDList ( pidl, path );
+    CoTaskMemFree (pidl);
+  }
+
+  return path;
+}
+
+std::wstring
+SKIF_Util_FileExplorer_BrowseForFolder (PCWSTR defaultPath)
+{
+  std::wstring path;
+
+  IFileDialog* pfd = nullptr;
+  if (SUCCEEDED (CoCreateInstance (CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&pfd))))
+  {
+    DWORD dwFlags;
+    pfd->GetOptions(&dwFlags);
+    pfd->SetOptions (dwFlags | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
+
+    // Force the dialogue to open a specific folder
+    IShellItem* psiFolder = nullptr;
+    if (SUCCEEDED (SHCreateItemFromParsingName (defaultPath, nullptr, IID_PPV_ARGS(&psiFolder))))
+      pfd->SetFolder (psiFolder);
+
+    if (SUCCEEDED (pfd->Show (SKIF_ImGui_hWnd)))
+    {
+      IShellItem* psiResult = nullptr;
+      if (SUCCEEDED (pfd->GetResult (&psiResult)))
+      {
+        PWSTR pszFolderPath = nullptr;
+        if (SUCCEEDED (psiResult->GetDisplayName (SIGDN_FILESYSPATH, &pszFolderPath)))
+        {
+          path = pszFolderPath;
+          CoTaskMemFree (pszFolderPath);
+        }
+        psiResult->Release();
+      }
+    }
+
+    if (psiFolder != nullptr)
+      psiFolder->Release();
+
+    pfd->Release();
+  }
+
+  return path;
+}
+
+bool
+SKIF_Util_Files_PruneOlderThan (std::wstring path, ULONGLONG secondsSince)
+{
+  if (path.empty())
+    return false;
+
+  if (! path.ends_with (LR"(\)"))
+    path += LR"(\)";
+
+  // Clear out any temp files older than the threshold
+  auto _isLastModified = [&](FILETIME ftLastWriteTime) -> bool
+  {
+    FILETIME ftSystemTime{}, ftAdjustedFileTime{};
+    SYSTEMTIME systemTime{};
+    GetSystemTime (&systemTime);
+
+    if (SystemTimeToFileTime (&systemTime, &ftSystemTime))
+    {
+      ULARGE_INTEGER uintLastWriteTime{};
+
+      // Copy to ULARGE_INTEGER union to perform 64-bit arithmetic
+      uintLastWriteTime.HighPart        = ftLastWriteTime.dwHighDateTime;
+      uintLastWriteTime.LowPart         = ftLastWriteTime.dwLowDateTime;
+
+      // Perform 64-bit arithmetic to add the required amount of seconds to last modified timestamp
+      uintLastWriteTime.QuadPart        = uintLastWriteTime.QuadPart + ULONGLONG(1 * (secondsSince) * 1.0e+7);
+
+      // Copy the results to an FILETIME struct
+      ftAdjustedFileTime.dwHighDateTime = uintLastWriteTime.HighPart;
+      ftAdjustedFileTime.dwLowDateTime  = uintLastWriteTime.LowPart;
+
+      // Compare with system time, and if system time is later (1), then return true
+      if (CompareFileTime (&ftSystemTime, &ftAdjustedFileTime) == 1)
+        return true;
+    }
+
+    return false;
+  };
+
+  HANDLE hFind        = INVALID_HANDLE_VALUE;
+  WIN32_FIND_DATA ffd = { };
+
+  hFind =
+    FindFirstFileExW ((path + L"*").c_str(), FindExInfoBasic, &ffd, FindExSearchNameMatch, NULL, NULL);
+
+  if (INVALID_HANDLE_VALUE != hFind)
+  {
+    if (_isLastModified   (ffd.ftLastWriteTime))
+      DeleteFile  ((path + ffd.cFileName).c_str());
+
+    while (FindNextFile (hFind, &ffd))
+      if (_isLastModified   (ffd.ftLastWriteTime))
+        DeleteFile  ((path + ffd.cFileName).c_str());
+
+    FindClose (hFind);
+  } else return false;
+
+  return true;
+}
+
+bool
+SKIF_Util_Files_PruneToLatestN (std::wstring path, size_t filesToRetain)
+{
+  if (path.empty())
+    return false;
+
+  if (! path.ends_with (LR"(\)"))
+    path += LR"(\)";
+
+  HANDLE hFind        = INVALID_HANDLE_VALUE;
+  WIN32_FIND_DATA ffd = { };
+  std::vector<WIN32_FIND_DATA> files;
+
+  // This excludes the . and .. items
+  auto _isValid = [](const wchar_t* str) -> bool
+  { return (! ((str[0] == '.') && ((str[1] == '\0') || (str[1] == '.' && str[2] == '\0')))); };
+
+  hFind =
+    FindFirstFileExW ((path + L"*").c_str(), FindExInfoBasic, &ffd, FindExSearchNameMatch, NULL, NULL);
+
+  if (INVALID_HANDLE_VALUE != hFind)
+  {
+    if (_isValid (ffd.cFileName))
+      files.push_back (ffd);
+
+    while (FindNextFile (hFind, &ffd))
+      if (_isValid (ffd.cFileName))
+        files.push_back (ffd);
+
+    FindClose (hFind);
+  } else return false;
+
+  if (files.size() > filesToRetain)
+  {
+    std::sort (files.begin(), files.end(), [](const WIN32_FIND_DATA& a, const WIN32_FIND_DATA& b)
+      { return (CompareFileTime (&a.ftLastWriteTime, &b.ftLastWriteTime) == -1); } // First file time is earlier than second file time.
+    );
+
+    for (size_t i = 0; i < (files.size() - filesToRetain); i++)
+      DeleteFile ((path + files[i].cFileName).c_str());
+
+    return true;
+  }
+
+  return false;
+}
+
+// Sets a new app color mode and returns the previous one
+AppColorMode
+SKIF_Util_SetAppColorMode (AppColorMode mode)
+{
+  if (! SKIF_Util_IsWindows11orGreater ( ))
+    return AppColorMode::Default;
+
+  using SetAppColorMode_pfn =
+           AppColorMode (WINAPI *)(AppColorMode);
+
+  static SetAppColorMode_pfn
+         SetAppColorMode =
+        (SetAppColorMode_pfn)GetProcAddress (LoadLibraryEx (L"uxtheme.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32),
+        MAKEINTRESOURCEA (135)); // Ordinal 135
+
+  if (SetAppColorMode == nullptr)
+    return AppColorMode::Default;
+
+  return SetAppColorMode (mode);
 }
 
 
@@ -2803,16 +3452,237 @@ void SKIF_Util_SetEffectivePowerModeNotifications (bool enable)
 
 // High Dynamic Range (HDR)
 
-//#if (NTDDI_VERSION >= NTDDI_WIN10_NI)
-#include <winrt/Windows.Graphics.Display.h>
-#include <winrt/Windows.Devices.Display.Core.h>
-#include <Windows.Graphics.Display.Interop.h>
-//#endif
+#if (NTDDI_VERSION < NTDDI_WIN11_GA)
+
+typedef enum _DISPLAYCONFIG_ADVANCED_COLOR_MODE
+{
+    DISPLAYCONFIG_ADVANCED_COLOR_MODE_SDR,          // RGB888 composition, display-referred color, display-referred luminance
+    DISPLAYCONFIG_ADVANCED_COLOR_MODE_WCG,          // Advanced color (FP16 scRGB composition), scene-referred color, display-referred luminance
+    DISPLAYCONFIG_ADVANCED_COLOR_MODE_HDR,          // Advanced color (FP16 scRGB composition), scene-referred color, scene-referred luminance
+} DISPLAYCONFIG_ADVANCED_COLOR_MODE;
+
+typedef struct _DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO_2
+{
+    DISPLAYCONFIG_DEVICE_INFO_HEADER header;
+    union
+    {
+        struct
+        {
+          UINT32 advancedColorSupported        :1;    // A type of advanced color is supported
+          UINT32 advancedColorActive           :1;    // A type of advanced color is active (see currentColorMode for the specific advanced color mode)
+          UINT32 reserved1                     :1;
+          UINT32 advancedColorLimitedByPolicy  :1;    // System/OS policy is limiting advanced color options (see currentColorMode for the current mode)
+
+          UINT32 highDynamicRangeSupported     :1;    // HDR is supported
+          UINT32 highDynamicRangeUserEnabled   :1;    // HDR is enabled by the user (but may not be active)
+
+          UINT32 wideColorSupported            :1;    // Wide color gamut is supported
+          UINT32 wideColorUserEnabled          :1;    // Wide color gamut is enabled by the user (but may not be active)
+
+          UINT32 reserved                      :24;
+        } DUMMYSTRUCTNAME;
+
+        UINT32 value;
+    } DUMMYUNIONNAME;
+
+    DISPLAYCONFIG_COLOR_ENCODING colorEncoding;
+    UINT32 bitsPerColorChannel;
+
+    DISPLAYCONFIG_ADVANCED_COLOR_MODE activeColorMode; // The active color mode for this monitor
+
+} DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO_2;
+
+typedef struct _DISPLAYCONFIG_SET_HDR_STATE
+{
+    DISPLAYCONFIG_DEVICE_INFO_HEADER header;
+    union
+    {
+        struct
+        {
+          UINT32 enableHdr  :1;
+          UINT32 reserved  :31;
+        } DUMMYSTRUCTNAME;
+
+        UINT32 value;
+    }DUMMYUNIONNAME;
+} DISPLAYCONFIG_SET_HDR_STATE;
+
+typedef struct _DISPLAYCONFIG_SET_WCG_STATE
+{
+    DISPLAYCONFIG_DEVICE_INFO_HEADER header;
+    union
+    {
+        struct
+        {
+          UINT32 enableWcg  :1;
+          UINT32 reserved  :31;
+        } DUMMYSTRUCTNAME;
+
+        UINT32 value;
+    }DUMMYUNIONNAME;
+} DISPLAYCONFIG_SET_WCG_STATE;
+
+#endif // (NTDDI_VERSION < NTDDI_WIN11_GA)
+
+// WinRT stuff, used by SKIF_UtilInt_UpdateMonitors() to allow
+// using WinRT calls without linking to them and breaking Win7/8 compatibility
+
+struct WindowsFoundationPoint {
+  FLOAT X;
+  FLOAT Y;
+};
+
+// Windows.Graphics.Display.HdrMetadataFormat
+// Header: Windows.Graphics.Display.h
+enum class HdrMetadataFormat
+{
+    HdrMetadataFormat_Hdr10     = 0,
+    HdrMetadataFormat_Hdr10Plus = 1,
+};
+
+// Windows.Graphics.Display.AdvancedColorKind
+// Header: Windows.Graphics.Display.h
+enum AdvancedColorKind {
+    AdvancedColorKind_StandardDynamicRange = 0,
+    AdvancedColorKind_WideColorGamut       = 1,
+    AdvancedColorKind_HighDynamicRange     = 2,
+};
+
+// WinRT IInspectable
+enum TrustLevel { TrustLevel_Base = 0, TrustLevel_Low = 1, TrustLevel_Medium = 2, TrustLevel_High = 3 }; // Dunno if this enum is correct; some AI hallucinated crap possibly
+struct IInspectable : IUnknown
+{
+    virtual HRESULT STDMETHODCALLTYPE GetIids             (ULONG*, IID**, void**) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetRuntimeClassName (HSTRING*)              = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetTrustLevel       (TrustLevel*)           = 0;
+};
+
+// ClassID: Windows.Graphics.Display.AdvancedColorInfo
+// GUID: 8797dcfb-b229-4081-ae9a-2cc85e34ad6a
+// Header: Windows.Graphics.Display.h
+static const IID IID_IAdvancedColorInfo =
+{ 0x8797DCFB, 0xB229, 0x4081, { 0xAE, 0x9A, 0x2C, 0xC8, 0x5E, 0x34, 0xAD, 0x6A } };
+interface DECLSPEC_UUID ("8797dcfb-b229-4081-ae9a-2cc85e34ad6a") IAdvancedColorInfo;
+struct IAdvancedColorInfo : IInspectable
+{
+  virtual HRESULT STDMETHODCALLTYPE CurrentAdvancedColorKind              (AdvancedColorKind*) = 0;
+  virtual HRESULT STDMETHODCALLTYPE RedPrimary                            (WindowsFoundationPoint*) = 0;
+  virtual HRESULT STDMETHODCALLTYPE GreenPrimary                          (WindowsFoundationPoint*) = 0;
+  virtual HRESULT STDMETHODCALLTYPE BluePrimary                           (WindowsFoundationPoint*) = 0;
+  virtual HRESULT STDMETHODCALLTYPE WhitePrimary                          (WindowsFoundationPoint*) = 0;
+  virtual HRESULT STDMETHODCALLTYPE MaxLuminanceInNits                    (FLOAT*) = 0;
+  virtual HRESULT STDMETHODCALLTYPE MinLuminanceInNits                    (FLOAT*) = 0;
+  virtual HRESULT STDMETHODCALLTYPE MaxAverageFullFrameLuminanceInNits    (FLOAT*) = 0;
+  virtual HRESULT STDMETHODCALLTYPE SdrWhiteLevelInNits                   (FLOAT*) = 0;
+  virtual HRESULT STDMETHODCALLTYPE IsHdrMetadataFormatCurrentlySupported (HdrMetadataFormat, BOOLEAN*) = 0;
+  virtual HRESULT STDMETHODCALLTYPE IsAdvancedColorKindAvailable          (AdvancedColorKind, BOOLEAN*) = 0;
+};
+
+// IDisplayInformation5
+// ClassID: Windows.Graphics.Display.IDisplayInformation5
+// GUID: 3a5442dc-2cde-4a8d-80d1-21dc5adcc1aa
+// Header: Windows.Graphics.Display.h
+static const IID IID_IDisplayInformation5 =
+{ 0x3A5442DC, 0x2CDE, 0x4A8D, { 0x80, 0xD1, 0x21, 0xDC, 0x5A, 0xDC, 0xC1, 0xAA } };
+interface DECLSPEC_UUID ("3a5442dc-2cde-4a8d-80d1-21dc5adcc1aa") IDisplayInformation5;
+struct IDisplayInformation5 : IInspectable
+{
+    virtual HRESULT STDMETHODCALLTYPE GetAdvancedColorInfo         (IAdvancedColorInfo**) = 0;
+    virtual HRESULT STDMETHODCALLTYPE __incomplete__AddAdvancedColorInfoChanged    (void) = 0;
+    virtual HRESULT STDMETHODCALLTYPE __incomplete__RemoveAdvancedColorInfoChanged (void) = 0;
+};
+
+// The static interop interface used by GetForMonitor
+// Header: Windows.Graphics.Display.Interop.h
+static const IID IID_IDisplayInformationStaticsInterop =
+{ 0x7449121C, 0x382B, 0x4705, { 0x8D, 0xA7, 0xA7, 0x95, 0xBA, 0x48, 0x20, 0x13 } };
+interface DECLSPEC_UUID ("7449121C-382B-4705-8DA7-A795BA482013") IDisplayInformationStaticsInterop;
+struct IDisplayInformationStaticsInterop : IInspectable
+{
+  virtual HRESULT STDMETHODCALLTYPE GetForWindow  (    HWND window,  REFIID riid, void** ppvObject) = 0; // IDisplayInformation5
+  virtual HRESULT STDMETHODCALLTYPE GetForMonitor (HMONITOR monitor, REFIID riid, void** ppvObject) = 0; // IDisplayInformation5
+};
+
+// End stupid declarations
+
+LONG
+WINAPI
+SKIF_Util_DisplayConfigSetDeviceInfo (DISPLAYCONFIG_DEVICE_INFO_HEADER * setPacket)
+{
+  using DisplayConfigSetDeviceInfo_pfn =
+    LONG (WINAPI *)(DISPLAYCONFIG_DEVICE_INFO_HEADER* setPacket);
+
+  static DisplayConfigSetDeviceInfo_pfn
+    SKIF_DisplayConfigSetDeviceInfo =
+        (DisplayConfigSetDeviceInfo_pfn)GetProcAddress (LoadLibraryEx (L"user32.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32),
+        "DisplayConfigSetDeviceInfo");
+
+  if (SKIF_DisplayConfigSetDeviceInfo == nullptr)
+    return ERROR_NOT_SUPPORTED;
+
+  return SKIF_DisplayConfigSetDeviceInfo (setPacket);
+}
+
+LONG
+WINAPI
+SKIF_Util_DisplayConfigGetDeviceInfo (DISPLAYCONFIG_DEVICE_INFO_HEADER *getPacket)
+{
+  using DisplayConfigGetDeviceInfo_pfn =
+    LONG (WINAPI *)(DISPLAYCONFIG_DEVICE_INFO_HEADER* getPacket);
+
+  static DisplayConfigGetDeviceInfo_pfn
+    SKIF_DisplayConfigGetDeviceInfo =
+        (DisplayConfigGetDeviceInfo_pfn)GetProcAddress (LoadLibraryEx (L"user32.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32),
+        "DisplayConfigGetDeviceInfo");
+
+  if (SKIF_DisplayConfigGetDeviceInfo == nullptr)
+    return ERROR_NOT_SUPPORTED;
+
+  return SKIF_DisplayConfigGetDeviceInfo (getPacket);
+}
+
+LONG
+WINAPI
+SKIF_Util_GetDisplayConfigBufferSizes (UINT32 flags, UINT32 *numPathArrayElements, UINT32 *numModeInfoArrayElements)
+{
+  using GetDisplayConfigBufferSizes_pfn =
+    LONG (WINAPI *)(UINT32 flags, UINT32 *numPathArrayElements, UINT32 *numModeInfoArrayElements);
+
+  static GetDisplayConfigBufferSizes_pfn
+    SKIF_GetDisplayConfigBufferSizes =
+        (GetDisplayConfigBufferSizes_pfn)GetProcAddress (LoadLibraryEx (L"user32.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32),
+        "GetDisplayConfigBufferSizes");
+
+  if (SKIF_GetDisplayConfigBufferSizes == nullptr)
+    return ERROR_NOT_SUPPORTED;
+
+  return SKIF_GetDisplayConfigBufferSizes (flags, numPathArrayElements, numModeInfoArrayElements);
+}
+
+LONG
+WINAPI
+SKIF_Util_QueryDisplayConfig (UINT32 flags, UINT32 *numPathArrayElements, DISPLAYCONFIG_PATH_INFO *pathArray, UINT32 *numModeInfoArrayElements, DISPLAYCONFIG_MODE_INFO *modeInfoArray, DISPLAYCONFIG_TOPOLOGY_ID *currentTopologyId)
+{
+  using QueryDisplayConfig_pfn =
+    LONG (WINAPI *)(UINT32 flags, UINT32* numPathArrayElements, DISPLAYCONFIG_PATH_INFO* pathArray, UINT32* numModeInfoArrayElements, DISPLAYCONFIG_MODE_INFO* modeInfoArray, DISPLAYCONFIG_TOPOLOGY_ID* currentTopologyId);
+
+  static QueryDisplayConfig_pfn
+    SKIF_QueryDisplayConfig =
+        (QueryDisplayConfig_pfn)GetProcAddress (LoadLibraryEx (L"user32.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32),
+        "QueryDisplayConfig");
+
+  if (SKIF_QueryDisplayConfig == nullptr)
+    return ERROR_NOT_SUPPORTED;
+
+  return SKIF_QueryDisplayConfig (flags, numPathArrayElements, pathArray, numModeInfoArrayElements, modeInfoArray, currentTopologyId);
+}
 
 // This actually updates the underlying vector
 static void
 SKIF_UtilInt_UpdateMonitors (void)
 {
+  SK_RunOnce (PLOG_INFO << "SKIF_UtilInt_UpdateMonitors (...), First Call");
+
   if (! g_WantUpdateMonitors)
     return;
 
@@ -2832,7 +3702,7 @@ SKIF_UtilInt_UpdateMonitors (void)
   {
     // Determine how many path and mode structures to allocate
     UINT32 pathCount, modeCount;
-    result = GetDisplayConfigBufferSizes (QDC_ONLY_ACTIVE_PATHS, &pathCount, &modeCount);
+    result = SKIF_Util_GetDisplayConfigBufferSizes (QDC_ONLY_ACTIVE_PATHS, &pathCount, &modeCount);
 
     if (result != ERROR_SUCCESS)
     {
@@ -2845,7 +3715,7 @@ SKIF_UtilInt_UpdateMonitors (void)
     modeArray.resize(modeCount);
 
     // Get all active paths and their modes
-    result = QueryDisplayConfig ( QDC_ONLY_ACTIVE_PATHS, &pathCount, pathArray.data(),
+    result = SKIF_Util_QueryDisplayConfig ( QDC_ONLY_ACTIVE_PATHS, &pathCount, pathArray.data(),
                                                          &modeCount, modeArray.data(), nullptr);
 
     // The function may have returned fewer paths/modes than estimated
@@ -2873,17 +3743,65 @@ SKIF_UtilInt_UpdateMonitors (void)
       mi.cbSize = sizeof(MONITORINFOEX);
       GetMonitorInfo(hmon, &mi);
       auto monitors = (std::vector<std::tuple<HMONITOR, std::wstring>>*)lp;
-      monitors->push_back({ hmon, mi.szDevice });
+      monitors->emplace_back( hmon, mi.szDevice );
       return TRUE;
   }, (LPARAM)&monitors);
+
+  enum ReaderVersion { RV_Unknown, RV_Win32v1, RV_WinRT, RV_Win32v2, };
+  ReaderVersion readerVersion = RV_Unknown;
+
+  // WinRT objects for the Windows 10 1803+ reader below. Set up on first use and shared by every monitor,
+  //   instead of loading combase.dll and activating the factory once per monitor
+  HMODULE                            hCombase           = NULL;
+  bool                               bComUninit         = false;
+  bool                               bTriedStatics      = false;
+  IDisplayInformationStaticsInterop* pDisplayStatics    = nullptr;
+
+  auto _GetDisplayInformationStatics = [&](void) -> IDisplayInformationStaticsInterop*
+  {
+    if (bTriedStatics)
+      return pDisplayStatics;
+
+    bTriedStatics = true;
+
+    // Dynamically interface with WinRT functions through combase.dll
+    // Does not inhibit backwards compatible with Windows 7 and 8
+    HRESULT hr = CoInitializeEx (nullptr, COINIT_APARTMENTTHREADED);
+    bComUninit = SUCCEEDED (hr); // S_FALSE (already initialized) must also be balanced by CoUninitialize ( )
+
+    hCombase = LoadLibraryEx (L"combase.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    if (hCombase != NULL)
+    {
+      const wchar_t* name = L"Windows.Graphics.Display.DisplayInformation";
+      const UINT32   len  = (UINT32)wcslen (name);
+
+      HSTRING        hClassName = nullptr;
+      HSTRING_HEADER header;
+      if (SUCCEEDED (SK_WindowsCreateStringReference (name, len, &header, &hClassName)) && hClassName != nullptr)
+      {
+        if (FAILED (SK_RoGetActivationFactory (hClassName, __uuidof (IDisplayInformationStaticsInterop), reinterpret_cast<void**>(&pDisplayStatics))))
+          pDisplayStatics = nullptr;
+
+        SK_WindowsDeleteString (hClassName);
+      }
+    }
+
+    return pDisplayStatics;
+  };
 
   // For each active path
   for (auto& path : pathArray)
   {
+    ReaderVersion _rv = RV_Unknown;
+
     // Virtual Display Area
     UINT32 idx = (path.flags & DISPLAYCONFIG_PATH_SUPPORT_VIRTUAL_MODE)
                 ? path.sourceInfo.sourceModeInfoIdx
                 : path.sourceInfo.modeInfoIdx;
+
+    // The index can be invalid (DISPLAYCONFIG_PATH_MODE_IDX_INVALID) or not refer to a source mode
+    if (idx >= modeArray.size ( ) || modeArray [idx].infoType != DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE)
+      continue;
 
     DISPLAYCONFIG_SOURCE_MODE *pSourceMode =
                 &modeArray [idx].sourceMode;
@@ -2906,16 +3824,18 @@ SKIF_UtilInt_UpdateMonitors (void)
       sourceName.header.type      = DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME;
       sourceName.header.size      =  sizeof (DISPLAYCONFIG_SOURCE_DEVICE_NAME);
 
-    if (ERROR_SUCCESS != DisplayConfigGetDeviceInfo ((DISPLAYCONFIG_DEVICE_INFO_HEADER*)&sourceName))
+    if (ERROR_SUCCESS != SKIF_Util_DisplayConfigGetDeviceInfo ((DISPLAYCONFIG_DEVICE_INFO_HEADER*)&sourceName))
         continue;
-
-    bool success = false;
 
     // Find the monitor handle with the same device name
     auto tup_mon = std::find_if (monitors.begin(), monitors.end(), [&sourceName](std::tuple<HMONITOR, std::wstring> t)
     {
       return ! std::get<1>(t).compare (sourceName.viewGdiDeviceName);
     });
+
+    // No match (e.g. a display was connected or removed in between, or GetMonitorInfo ( ) failed)
+    if (tup_mon == monitors.end())
+      continue;
 
     SKIF_Util_Monitor_s
       monitor { .handle = std::get<0>(*tup_mon), .display_rect = displayRect, .gdi_devicename = std::get<1>(*tup_mon) };
@@ -2924,40 +3844,90 @@ SKIF_UtilInt_UpdateMonitors (void)
     monitor.path_targetInfo.id        = path.targetInfo.id;
     monitor.path_targetInfo.adapterId = path.targetInfo.adapterId;
 
-    // Windows 10 1803+ (Build 17134) or newer
-//#if (NTDDI_VERSION >= NTDDI_WIN10_NI)
-    if (SKIF_Util_IsWindows10v1803OrGreater ( ))
+    // Windows 11 24H2+ (Build 26100) or newer
+    if (SKIF_Util_IsWindows11v24H2orGreater ( ))
     {
-      using namespace winrt::Windows::Devices::Display::Core;
-      using namespace winrt::Windows::Graphics::Display;
+      DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO_2
+        getDisplayHDR                   = { };
+        getDisplayHDR.header.adapterId  = path.targetInfo.adapterId;
+        getDisplayHDR.header.id         = path.targetInfo.id;
+        getDisplayHDR.header.type       = DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO_2;
+        getDisplayHDR.header.size       = sizeof (getDisplayHDR);
 
-      if (auto pDisplayInfoFactory { winrt::try_get_activation_factory <DisplayInformation, IDisplayInformationStaticsInterop> () })
+      if (ERROR_SUCCESS == SKIF_Util_DisplayConfigGetDeviceInfo (&getDisplayHDR.header))
       {
-        IDisplayInformation5 display_info = nullptr;
+        _rv = RV_Win32v2;
 
-        if (SUCCEEDED (pDisplayInfoFactory->GetForMonitor (monitor.handle, winrt::guid_of <IDisplayInformation5>(), winrt::put_abi (display_info))))
+        monitor.hdr.supported = getDisplayHDR.highDynamicRangeSupported &&
+                             (! getDisplayHDR.advancedColorLimitedByPolicy);
+
+        monitor.hdr.active    = getDisplayHDR.advancedColorActive         &&
+                                getDisplayHDR.highDynamicRangeUserEnabled &&
+                                getDisplayHDR.activeColorMode == DISPLAYCONFIG_ADVANCED_COLOR_MODE_HDR;
+        monitor.wcg.supported = getDisplayHDR.wideColorSupported;
+        monitor.wcg.active    = getDisplayHDR.activeColorMode == DISPLAYCONFIG_ADVANCED_COLOR_MODE_WCG;
+      }
+
+      if (monitor.hdr.supported)
+      {
+        DISPLAYCONFIG_SDR_WHITE_LEVEL
+          getSDRWhiteLevel                  = { };
+          getSDRWhiteLevel.header.adapterId = path.targetInfo.adapterId;
+          getSDRWhiteLevel.header.id        = path.targetInfo.id;
+          getSDRWhiteLevel.header.type      = DISPLAYCONFIG_DEVICE_INFO_GET_SDR_WHITE_LEVEL;
+          getSDRWhiteLevel.header.size      =         sizeof (DISPLAYCONFIG_SDR_WHITE_LEVEL);
+
+        if (ERROR_SUCCESS == SKIF_Util_DisplayConfigGetDeviceInfo (&getSDRWhiteLevel.header))
         {
-          auto acinfo = display_info.GetAdvancedColorInfo ();
-
-          monitor.hdr.supported = (acinfo.IsAdvancedColorKindAvailable  (AdvancedColorKind::HighDynamicRange));
-          monitor.wcg.supported = (acinfo.IsAdvancedColorKindAvailable  (AdvancedColorKind::WideColorGamut  ));
-
-          if (monitor.hdr.supported)
-            monitor.hdr.active  = (acinfo.CurrentAdvancedColorKind () == AdvancedColorKind::HighDynamicRange );
-
-          if (monitor.wcg.supported)
-            monitor.wcg.active  = (acinfo.CurrentAdvancedColorKind () == AdvancedColorKind::WideColorGamut   );
-
-          monitor.sdr_whitelevel = acinfo.SdrWhiteLevelInNits ( );
-
-          success = true;
+          // SDRWhiteLevel represents a multiplier for standard SDR white
+          // peak value i.e. 80 nits represented as fixed point.
+          // To get value in nits use the following conversion
+          // SDRWhiteLevel in nits = (SDRWhiteLevel / 1000) * 80
+          if (getSDRWhiteLevel.SDRWhiteLevel)
+            monitor.sdr_whitelevel = (static_cast<float> (getSDRWhiteLevel.SDRWhiteLevel) / 1000.0f) * 80.0f;
         }
       }
     }
-//#endif
+
+    // Windows 10 1803+ (Build 17134) or newer
+    if (_rv == RV_Unknown && SKIF_Util_IsWindows10v1803OrGreater ( ))
+    {
+      if (IDisplayInformationStaticsInterop* pStatics = _GetDisplayInformationStatics ( ))
+      {
+        IDisplayInformation5* pDisp = nullptr;
+        if (SUCCEEDED (pStatics->GetForMonitor (monitor.handle, IID_IDisplayInformation5, reinterpret_cast<void**>(&pDisp))) && pDisp != nullptr)
+        {
+          IAdvancedColorInfo* pAc = nullptr;
+          if (SUCCEEDED (pDisp->GetAdvancedColorInfo (&pAc)) && pAc != nullptr)
+          {
+            _rv = RV_WinRT;
+
+            BOOLEAN available = FALSE;
+
+            if (SUCCEEDED (pAc->IsAdvancedColorKindAvailable (AdvancedColorKind_HighDynamicRange, &available)))
+              monitor.hdr.supported = (available != FALSE);
+
+            if (SUCCEEDED (pAc->IsAdvancedColorKindAvailable (AdvancedColorKind_WideColorGamut,   &available)))
+              monitor.wcg.supported = (available != FALSE);
+
+            AdvancedColorKind cur = AdvancedColorKind_StandardDynamicRange;
+            if (SUCCEEDED (pAc->CurrentAdvancedColorKind (&cur)))
+            {
+              monitor.hdr.active = (monitor.hdr.supported && cur == AdvancedColorKind_HighDynamicRange);
+              monitor.wcg.active = (monitor.wcg.supported && cur == AdvancedColorKind_WideColorGamut);
+            }
+
+            pAc->SdrWhiteLevelInNits (&monitor.sdr_whitelevel);
+
+            pAc->Release();
+          }
+          pDisp->Release();
+        }
+      }
+    }
 
     // Windows 10 1709+ (Build 16299) fallback
-    if (! success || (! SKIF_Util_IsWindows10v1803OrGreater ( ) && SKIF_Util_IsWindows10v1709OrGreater ( )))
+    if (_rv == RV_Unknown && SKIF_Util_IsWindows10v1709OrGreater ( ))
     {
       DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO
         getDisplayHDR                   = { };
@@ -2966,8 +3936,10 @@ SKIF_UtilInt_UpdateMonitors (void)
         getDisplayHDR.header.type       = DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO;
         getDisplayHDR.header.size       = sizeof (getDisplayHDR);
 
-      if (ERROR_SUCCESS == DisplayConfigGetDeviceInfo (&getDisplayHDR.header))
+      if (ERROR_SUCCESS == SKIF_Util_DisplayConfigGetDeviceInfo (&getDisplayHDR.header))
       {
+        _rv = RV_Win32v1;
+
         // Technically incomplete since this also returns true
         //   for WCG capable SDR displays!
         if (getDisplayHDR.advancedColorSupported)
@@ -2985,8 +3957,8 @@ SKIF_UtilInt_UpdateMonitors (void)
           getSDRWhiteLevel.header.id        = path.targetInfo.id;
           getSDRWhiteLevel.header.type      = DISPLAYCONFIG_DEVICE_INFO_GET_SDR_WHITE_LEVEL;
           getSDRWhiteLevel.header.size      =         sizeof (DISPLAYCONFIG_SDR_WHITE_LEVEL);
-        
-        if (ERROR_SUCCESS == DisplayConfigGetDeviceInfo (&getSDRWhiteLevel.header))
+
+        if (ERROR_SUCCESS == SKIF_Util_DisplayConfigGetDeviceInfo (&getSDRWhiteLevel.header))
         {
           // SDRWhiteLevel represents a multiplier for standard SDR white
           // peak value i.e. 80 nits represented as fixed point.
@@ -2998,17 +3970,38 @@ SKIF_UtilInt_UpdateMonitors (void)
       }
     }
 
+    readerVersion = std::max (readerVersion, _rv);
     g_Monitors.push_back (monitor);
   }
 
-  for (auto& monitor : g_Monitors)
+  // Release the shared WinRT objects (if they were used)
+  if (pDisplayStatics != nullptr)
+    pDisplayStatics->Release ();
+
+  if (hCombase != NULL)
+    FreeLibrary (hCombase);
+
+  if (bComUninit)
+    CoUninitialize ( );
+
+  PLOG_DEBUG_IF(readerVersion == RV_Win32v2) << "HDR and WCG metadata was read using DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO_2.";
+  PLOG_DEBUG_IF(readerVersion == RV_Win32v1) << "HDR and WCG metadata was read using DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO.";
+  PLOG_DEBUG_IF(readerVersion == RV_WinRT)   << "HDR and WCG metadata was read using WinRT.";
+
+  if (! g_Monitors.empty())
   {
-    PLOG_VERBOSE << "Display        : " << monitor.gdi_devicename;
-    PLOG_VERBOSE << "HDR Support    : " << monitor.hdr.supported;
-    PLOG_VERBOSE << "HDR Active     : " << monitor.hdr.active;
-    PLOG_VERBOSE << "WCG Support    : " << monitor.wcg.supported;
-    PLOG_VERBOSE << "WCG Active     : " << monitor.wcg.active;
-    PLOG_VERBOSE << "SDR Whitepoint : " << monitor.sdr_whitelevel;
+    std::wstring
+      logEntry = L"Detected display capabilities:";
+    for (auto& monitor : g_Monitors)
+      logEntry += L"\n+------------------+-------------------------------------+"
+                  L"\n| Display          | " + std::   wstring (monitor.gdi_devicename) +
+                  L"\n| > HDR Support    | " + std::to_wstring (monitor.hdr.supported)  +
+                  L"\n| > HDR Active     | " + std::to_wstring (monitor.hdr.active)     +
+                  L"\n| > WCG Support    | " + std::to_wstring (monitor.wcg.supported)  +
+                  L"\n| > WCG Active     | " + std::to_wstring (monitor.wcg.active)     + 
+                  L"\n| > SDR Whitepoint | " + std::to_wstring (monitor.sdr_whitelevel);
+      logEntry += L"\n+------------------+-------------------------------------+";
+    PLOG_INFO << logEntry;
   }
 }
 
@@ -3067,7 +4060,13 @@ SKIF_Util_GetSDRWhiteLevel (HMONITOR hMonitor)
       return monitor.sdr_whitelevel;
   }
 
-  g_WantUpdateMonitors = true;
+  // Only request one refresh per unknown monitor (until the next WM_DISPLAYCHANGE), as the full query
+  //   would otherwise run again every time a monitor that is not in the list is asked about
+  if (hMonitor != g_MissingMonitor)
+  {
+    g_MissingMonitor     = hMonitor;
+    g_WantUpdateMonitors = true;
+  }
 
   return 80.0f;
 }
@@ -3101,6 +4100,7 @@ SKIF_Util_EnableHDROutput (void)
         return false;
       }
 
+      // 24H2+ could also technically use DISPLAYCONFIG_SET_HDR_STATE
       DISPLAYCONFIG_SET_ADVANCED_COLOR_STATE
         setHDRState                     = { };
         setHDRState.enableAdvancedColor = ! monitor.hdr.active;
@@ -3109,11 +4109,11 @@ SKIF_Util_EnableHDROutput (void)
         setHDRState.header.type         = DISPLAYCONFIG_DEVICE_INFO_SET_ADVANCED_COLOR_STATE;
         setHDRState.header.size         =     sizeof (DISPLAYCONFIG_SET_ADVANCED_COLOR_STATE);
 
-      result = DisplayConfigSetDeviceInfo ((DISPLAYCONFIG_DEVICE_INFO_HEADER*)&setHDRState);
+      result = SKIF_Util_DisplayConfigSetDeviceInfo ((DISPLAYCONFIG_DEVICE_INFO_HEADER*)&setHDRState);
 
       if (ERROR_SUCCESS != result)
       {
-        PLOG_ERROR << "DisplayConfigGetDeviceInfo failed: " << SKIF_Util_GetErrorAsWStr (result);
+        PLOG_ERROR << "DisplayConfigSetDeviceInfo failed: " << SKIF_Util_GetErrorAsWStr (result);
         break;
       }
 
@@ -3129,7 +4129,11 @@ void
 SKIF_Util_UpdateMonitors (void)
 {
   g_WantUpdateMonitors = true;
+  g_MissingMonitor     = NULL; // The display configuration changed, so allow a new lookup for any monitor
 }
+
+
+// Global hotkeys
 
 // Register a hotkey for toggling HDR on a per-display basis (WinKey + Ctrl + Shift + H)
 bool
@@ -3360,7 +4364,7 @@ SKIF_Util_GetHotKeyStateSVCTemp (void)
 
 DWORD
 WINAPI
-SKIF_Util_GetWebUri (skif_get_web_uri_t* get)
+SKIF_Util_GetWebUri (skif_get_web_uri_t* get, std::string* response_body)
 {
   static SKIF_RegistrySettings& _registry = SKIF_RegistrySettings::GetInstance ( );
 
@@ -3370,21 +4374,12 @@ SKIF_Util_GetWebUri (skif_get_web_uri_t* get)
             hInetHost        = nullptr,
             hInetRoot        = nullptr;
 
-  // (Cleanup On Error)
-  auto CLEANUP = [&](bool clean = false) ->
+  // Cleanup resources
+  auto CLEANUP = [&](bool success = false) ->
   DWORD
   {
-    if (! clean)
-    {
-#if 0
-      DWORD dwLastError =
-           GetLastError ();
-
-      std::wstring wsError = (std::wstring(L"WinInet Failure (") + std::to_wstring(dwLastError) + std::wstring(L"): ") + _com_error(dwLastError).ErrorMessage());
-#endif
-
+    if (! success)
       PLOG_ERROR << L"WinInet Failure: " << SKIF_Util_GetErrorAsWStr (GetLastError ( ), GetModuleHandle (L"wininet.dll"));
-    }
 
     if (hInetHTTPGetReq != nullptr) InternetCloseHandle (hInetHTTPGetReq);
     if (hInetHost       != nullptr) InternetCloseHandle (hInetHost);
@@ -3396,22 +4391,23 @@ SKIF_Util_GetWebUri (skif_get_web_uri_t* get)
 
     return 0;
   };
-  
-  PLOG_VERBOSE                                   << "Method  : " << std::wstring(get->method);
-  PLOG_VERBOSE                                   << "Target  : " << ((get->https) ? "https://" : "http://") << get->wszHostName << get->wszHostPath;
-  PLOG_VERBOSE_IF(get->wszExtraInfo[0] != L'\0') << "Fragment: " << get->wszExtraInfo;
-  PLOG_VERBOSE_IF(! get->header.empty())         << "Header  : " << get->header;
-  PLOG_VERBOSE_IF(! get->body.empty())           << "  Body  : " << get->body;
+
+  PLOG_VERBOSE                                     << "Method: " << std::wstring(get->method);
+  PLOG_VERBOSE                                     << "Target: " << ((get->https) ? "https://" : "http://") << get->wszHostName << get->wszHostPath;
+  PLOG_VERBOSE_IF(  get->wszExtraInfo[0] != L'\0') << " Query: " << get->wszExtraInfo;
+  PLOG_VERBOSE                                     << "   U-A: " << get->user_agent;
+  PLOG_VERBOSE_IF(! get->header.empty())           << "Header: " << get->header;
+  PLOG_VERBOSE_IF(! get->body.empty())             << "  Body: " << get->body;
 
   hInetRoot =
     InternetOpen (
-      L"Special K - Asset Crawler",
+      get->user_agent.c_str(),
         INTERNET_OPEN_TYPE_DIRECT,
           nullptr, nullptr,
             0x00 );
 
   if (hInetRoot == nullptr)
-    return CLEANUP ();
+    return CLEANUP ( );
 
   DWORD_PTR dwInetCtx = 0;
 
@@ -3425,7 +4421,7 @@ SKIF_Util_GetWebUri (skif_get_web_uri_t* get)
                                   (DWORD_PTR)&dwInetCtx );
 
   if (hInetHost == nullptr)
-    return CLEANUP ();
+    return CLEANUP ( );
 
   int flags = ((get->https) ? INTERNET_FLAG_SECURE : 0x0) |
               INTERNET_FLAG_IGNORE_REDIRECT_TO_HTTP  | INTERNET_FLAG_IGNORE_REDIRECT_TO_HTTPS |
@@ -3456,7 +4452,7 @@ SKIF_Util_GetWebUri (skif_get_web_uri_t* get)
                          &ulTimeout,    sizeof (ULONG) );
 
   if (hInetHTTPGetReq == nullptr)
-    return CLEANUP ();
+    return CLEANUP ( );
 
   if ( HttpSendRequestW ( hInetHTTPGetReq,
                             get->header.c_str(),
@@ -3524,18 +4520,34 @@ SKIF_Util_GetWebUri (skif_get_web_uri_t* get)
           break;
       }
 
-      FILE *fOut = nullptr;
-
-      _wfopen_s (&fOut, get->wszLocalPath, L"wb+" );
-
-      if (fOut != nullptr)
+      if (response_body != nullptr)
       {
-        fwrite (concat_buffer.data (), concat_buffer.size (), 1, fOut);
-        fflush (fOut);
-        fclose (fOut);
+        response_body->clear();
+        response_body->append (concat_buffer.data(), concat_buffer.size());
+      }
 
+      if (get->wszLocalPath[0] == '\0')
+      {
         CLEANUP (true);
         return 1;
+      }
+
+      // Write to file...
+      else
+      {
+        FILE *fOut = nullptr;
+
+        _wfopen_s (&fOut, get->wszLocalPath, L"wb+" );
+
+        if (fOut != nullptr)
+        {
+          fwrite (concat_buffer.data (), concat_buffer.size (), 1, fOut);
+          fflush (fOut);
+          fclose (fOut);
+
+          CLEANUP (true);
+          return 1;
+        }
       }
     }
 
@@ -3548,9 +4560,10 @@ SKIF_Util_GetWebUri (skif_get_web_uri_t* get)
 }
 
 DWORD
-SKIF_Util_GetWebResource (std::wstring url, std::wstring_view destination, std::wstring method, std::wstring header, std::string body)
+SKIF_Util_GetWebResource (std::wstring url, std::wstring_view file_path, std::wstring method, std::wstring header, std::string body, std::wstring user_agent, std::string* response_body)
 {
-  auto* get =
+  skif_get_web_uri_t* fallback = nullptr;
+  skif_get_web_uri_t* get =
     new skif_get_web_uri_t { };
 
   URL_COMPONENTSW urlcomps = { };
@@ -3569,21 +4582,63 @@ SKIF_Util_GetWebResource (std::wstring url, std::wstring_view destination, std::
   if (! method.empty())
     get->method = method.c_str();
 
-  if (! header.empty())
-    get->header = header.c_str();
+  if (! user_agent.empty())
+    get->user_agent = user_agent;
 
   if (! body.empty())
     get->body = body;
 
+  if (! header.empty())
+    get->header = header.c_str();
+
+  DWORD dwRet = 0;
+
   if (InternetCrackUrl (url.c_str(), static_cast <DWORD> (url.length ()), 0x00, &urlcomps))
   {
-    wcsncpy ( get->wszLocalPath,
-                           destination.data (),
-                       MAX_PATH );
-
+    wcsncpy (get->wszLocalPath, file_path.data (), MAX_PATH);
     get->https = (urlcomps.nScheme == INTERNET_SCHEME_HTTPS);
 
-    return SKIF_Util_GetWebUri (get);
+    // Set up the fallback
+    if (_wcsicmp (get->wszHostName, L"sk-data.special-k.info") == 0)
+    {
+      fallback = new skif_get_web_uri_t { };
+      fallback->https = get->https;
+
+      wcsncpy (fallback->wszHostName,  L"sk-data.nyc3.digitaloceanspaces.com", INTERNET_MAX_HOST_NAME_LENGTH);
+      wcsncpy (fallback->wszHostPath,  get->wszHostPath,  INTERNET_MAX_PATH_LENGTH);
+      wcsncpy (fallback->wszExtraInfo, get->wszExtraInfo, INTERNET_MAX_PATH_LENGTH);
+      wcsncpy (fallback->wszLocalPath, get->wszLocalPath, MAX_PATH);
+
+      if (! method.empty())
+        fallback->method = method.c_str();
+
+      if (! user_agent.empty())
+        fallback->user_agent = user_agent;
+
+      if (! body.empty())
+        fallback->body = body;
+
+      if (! header.empty())
+        fallback->header = header.c_str();
+    }
+
+    dwRet = SKIF_Util_GetWebUri (get, response_body); // This deletes the get variable
+
+    if (fallback)
+    {
+      if (! dwRet)
+      {
+        PLOG_WARNING << "Failed to retrieve resource from subdomain endpoint (sk-data.special-k.info), retrying with CDN endpoint (sk-data.nyc3.digitaloceanspaces.com) (Cloudflare bypass)...";
+        dwRet = SKIF_Util_GetWebUri (fallback, response_body); // This deletes the fallback variable
+      }
+
+      // Delete fallback manually if the first request was successful
+      else {
+        skif_get_web_uri_t*  to_delete = nullptr;
+        std::swap (fallback, to_delete);
+        delete               to_delete;
+      }
+    }
   }
 
   else {
@@ -3592,9 +4647,14 @@ SKIF_Util_GetWebResource (std::wstring url, std::wstring_view destination, std::
     PLOG_VERBOSE_IF(!    url.empty()) << "Target: " << url;
     PLOG_VERBOSE_IF(! header.empty()) << "Header: " << header;
     PLOG_VERBOSE_IF(!   body.empty()) << "  Body: " << body;
+
+    // Delete get manually on failure
+    skif_get_web_uri_t* to_delete = nullptr;
+    std::swap   (get,   to_delete);
+    delete              to_delete;
   }
 
-  return 0;
+  return dwRet;
 }
 
 skif_get_web_uri_t
@@ -3632,9 +4692,136 @@ SKIF_Util_CrackWebUrl (const std::wstring url)
 
 // Directory Watch
 
+// Adds a handle to the wait lists of the main loop (MsgWaitForMultipleObjects), which accepts at most
+//   SKIF_MaxWatchHandles (63) handles. A tab that is already full is skipped, as going over the limit
+//     would make every wait fail (WAIT_FAILED) and the main loop spin instead of sleeping.
+bool
+SKIF_Util_AddWatchHandle (HANDLE handle, UITab waitTab)
+{
+  if (handle == NULL || handle == INVALID_HANDLE_VALUE || waitTab == UITab_None)
+    return false;
+
+  bool added = true;
+
+  auto _Add = [handle, &added](std::vector<HANDLE>& vWatchHandle, int tab)
+  {
+    // Already waited on for this tab
+    if (std::find (vWatchHandle.begin (), vWatchHandle.end (), handle) != vWatchHandle.end ())
+      return;
+
+    if (vWatchHandle.size () >= SKIF_MaxWatchHandles)
+    {
+      PLOG_WARNING << "The wait list of tab " << tab << " is full (" << SKIF_MaxWatchHandles << " handles); "
+                   << "the new watch will only be noticed when the app wakes up for other reasons!";
+      added = false;
+      return;
+    }
+
+    vWatchHandle.push_back (handle);
+  };
+
+  if (waitTab == UITab_ALL)
+  {
+    for (int tab = 0; tab < UITab_ALL; ++tab)
+      _Add (vWatchHandles[tab], tab);
+  }
+  else
+    _Add (vWatchHandles[waitTab], waitTab);
+
+  return added;
+}
+
+// Removes a handle from the wait lists of the main loop (MsgWaitForMultipleObjects). Must be done before the handle
+//   is closed, or the main loop would wait on a closed (or reused) handle and return WAIT_FAILED straight away
+void
+SKIF_Util_RemoveWatchHandle (HANDLE handle, UITab waitTab)
+{
+  if (handle == NULL || handle == INVALID_HANDLE_VALUE)
+    return;
+
+  auto _Remove = [handle](std::vector<HANDLE>& vWatchHandle)
+  {
+    vWatchHandle.erase (std::remove (vWatchHandle.begin (), vWatchHandle.end (), handle), vWatchHandle.end ());
+  };
+
+  if (waitTab == UITab_ALL)
+  {
+    for (auto& vWatchHandle : vWatchHandles)
+      _Remove (vWatchHandle);
+  }
+  else if (waitTab != UITab_None)
+    _Remove (vWatchHandles[waitTab]);
+}
+
 SKIF_DirectoryWatch::SKIF_DirectoryWatch (std::wstring_view wstrPath, UITab waitTab, BOOL bWatchSubtree, DWORD dwNotifyFilter)
 {
   registerNotify (wstrPath, waitTab, bWatchSubtree, dwNotifyFilter);
+}
+
+SKIF_DirectoryWatch::~SKIF_DirectoryWatch (void)
+{
+  reset ( );
+}
+
+SKIF_DirectoryWatch::SKIF_DirectoryWatch (SKIF_DirectoryWatch&& other) noexcept
+  : _hChangeNotification (std::exchange (other._hChangeNotification, INVALID_HANDLE_VALUE)),
+    _waitTab             (std::exchange (other._waitTab,             UITab_None)),
+    _path                (std::move     (other._path)),
+    _watchSubtree        (other._watchSubtree),
+    _notifyFilter        (other._notifyFilter)
+{
+  other._path.clear ();
+}
+
+SKIF_DirectoryWatch& SKIF_DirectoryWatch::operator= (SKIF_DirectoryWatch&& other) noexcept
+{
+  if (this != &other)
+  {
+    // Release whatever we currently own (reset ( ) also removes it from vWatchHandles)
+    reset ( );
+
+    _hChangeNotification = std::exchange (other._hChangeNotification, INVALID_HANDLE_VALUE);
+    _waitTab             = std::exchange (other._waitTab,             UITab_None);
+    _path                = std::move     (other._path);
+    _watchSubtree        = other._watchSubtree;
+    _notifyFilter        = other._notifyFilter;
+    other._path.clear ();
+  }
+
+  return *this;
+}
+
+SKIF_DirectoryWatch::SKIF_DirectoryWatch (const SKIF_DirectoryWatch& other)
+  : _waitTab      (other._waitTab),
+    _watchSubtree (other._watchSubtree),
+    _notifyFilter (other._notifyFilter)
+{
+  if (! other._path.empty ())
+    registerNotify (other._path, other._waitTab, other._watchSubtree, other._notifyFilter);
+}
+
+SKIF_DirectoryWatch& SKIF_DirectoryWatch::operator= (const SKIF_DirectoryWatch& other)
+{
+  if (this != &other)
+  {
+    // Copy-and-swap via move keeps this exception-safe and simple
+    SKIF_DirectoryWatch tmp (other);
+    *this = std::move (tmp);
+  }
+
+  return *this;
+}
+
+std::wstring
+SKIF_DirectoryWatch::getPath (void) const
+{
+  return _path;
+}
+
+bool
+SKIF_DirectoryWatch::isActive (void) const
+{
+  return (_hChangeNotification != INVALID_HANDLE_VALUE);
 }
 
 bool
@@ -3676,38 +4863,37 @@ SKIF_DirectoryWatch::isSignaled (std::wstring_view wstrPath, UITab waitTab, BOOL
 void
 SKIF_DirectoryWatch::reset (void)
 {
-  if (      _hChangeNotification != INVALID_HANDLE_VALUE)
-    FindCloseChangeNotification (_hChangeNotification);
-
-
-  if (_waitTab == UITab_ALL)
+  if (     _hChangeNotification != INVALID_HANDLE_VALUE)
   {
-    for (auto& vWatchHandle : vWatchHandles)
-    {
-      if (! vWatchHandle.empty())
-        vWatchHandle.erase(std::remove(vWatchHandle.begin(), vWatchHandle.end(), _hChangeNotification), vWatchHandle.end());
-    }
+    // Remove it from the wait lists before closing it
+    SKIF_Util_RemoveWatchHandle (_hChangeNotification, _waitTab);
+    FindCloseChangeNotification (_hChangeNotification);
   }
-  else if (_waitTab != UITab_None && ! vWatchHandles[_waitTab].empty())
-    vWatchHandles[_waitTab].erase(std::remove(vWatchHandles[_waitTab].begin(), vWatchHandles[_waitTab].end(), _hChangeNotification), vWatchHandles[_waitTab].end());
 
   // Reset variables
   _hChangeNotification = INVALID_HANDLE_VALUE;
-  _waitTab             = UITab_None; // ?
+  _waitTab             = UITab_None;
   _path                = L"";
 }
 
 void
 SKIF_DirectoryWatch::registerNotify (std::wstring_view wstrPath, UITab waitTab, BOOL bWatchSubtree, DWORD dwNotifyFilter)
 {
-  if (! wstrPath.empty())
+  _path          = wstrPath;
+  _waitTab       = waitTab;
+  _watchSubtree  = bWatchSubtree;
+  _notifyFilter  = dwNotifyFilter;
+
+  if (! _path.empty())
   {
-    _path = wstrPath;
+    // Normalize all paths (keeps the leading \\ of UNC paths)
+    _path = SKIF_Util_NormalizeFullPath (_path);
 
     _hChangeNotification =
       FindFirstChangeNotificationW (
-        _path.c_str(), bWatchSubtree,
-        dwNotifyFilter
+        _path.c_str(),
+        _watchSubtree,
+        _notifyFilter
       );
 
     if (_hChangeNotification != INVALID_HANDLE_VALUE)
@@ -3716,15 +4902,7 @@ SKIF_DirectoryWatch::registerNotify (std::wstring_view wstrPath, UITab waitTab, 
         _hChangeNotification
       );
 
-      _waitTab  = waitTab;
-
-      if (_waitTab == UITab_ALL)
-      {
-        for (auto& vWatchHandle : vWatchHandles)
-          vWatchHandle.push_back (_hChangeNotification);
-      }
-      else if (_waitTab != UITab_None)
-        vWatchHandles[_waitTab].push_back (_hChangeNotification);
+      SKIF_Util_AddWatchHandle (_hChangeNotification, _waitTab);
     }
   }
 
@@ -3733,78 +4911,181 @@ SKIF_DirectoryWatch::registerNotify (std::wstring_view wstrPath, UITab waitTab, 
   }
 }
 
-SKIF_DirectoryWatch::~SKIF_DirectoryWatch (void)
-{
-  reset ( );
-}
-
 
 // Registry Watch
+
+static std::wstring
+SKIF_UtilInt_MakeUniqueEventName (const std::wstring& baseName)
+{
+  static std::atomic<unsigned long> counter { 0 };
+
+  // The events are named so they are easy to identify when debugging (e.g. in Process Explorer).
+  // The counter keeps every watch (including copies) distinct, and the PID keeps names distinct across
+  //   multiple instances of the app if the base name lives in a shared namespace (e.g. "Local\\..." / "Global\\...").
+  return baseName + L"_"
+                  + std::to_wstring (GetCurrentProcessId ()) + L"_"
+                  + std::to_wstring (++counter);
+}
 
 SKIF_RegistryWatch::SKIF_RegistryWatch ( HKEY hRootKey, const wchar_t* wszSubKey, const wchar_t* wszEventName, BOOL bWatchSubtree, DWORD dwNotifyFilter, UITab waitTab, bool bWOW6432Key, bool bWOW6464Key )
 {
   _init.root          = hRootKey;
   _init.sub_key       = wszSubKey;
+  _init.event_name    = (wszEventName) ? wszEventName : L"";
   _init.watch_subtree = bWatchSubtree;
   _init.filter_mask   = dwNotifyFilter;
   _init.wow64_32key   = bWOW6432Key;
   _init.wow64_64key   = bWOW6464Key;
   _waitTab            = waitTab;
 
+  if (! _init.event_name.empty())
+    _eventNameActual = SKIF_UtilInt_MakeUniqueEventName (_init.event_name);
+
   _hEvent             =
       CreateEvent ( nullptr, TRUE,
-                            FALSE, wszEventName );
+                            FALSE, (_eventNameActual.empty ()
+                                  ? nullptr
+                                  : _eventNameActual.c_str ()));
 
   reset ();
 
-  if (_waitTab != UITab_None && _hEvent != NULL)
-    vWatchHandles[_waitTab].push_back(_hEvent);
-
   if (_hEvent != NULL)
-  {
-    if (_waitTab == UITab_ALL)
-    {
-      for (auto& vWatchHandle : vWatchHandles)
-        vWatchHandle.push_back (_hEvent);
-    }
-    else if (_waitTab != UITab_None)
-      vWatchHandles[_waitTab].push_back (_hEvent);
-  }
+    SKIF_Util_AddWatchHandle (_hEvent, _waitTab);
 }
 
 SKIF_RegistryWatch::~SKIF_RegistryWatch (void)
 {
   if (_hEvent != NULL)
   {
-    if (_waitTab == UITab_ALL)
-    {
-      for (auto& vWatchHandle : vWatchHandles)
-      {
-        if (! vWatchHandle.empty())
-          vWatchHandle.erase(std::remove(vWatchHandle.begin(), vWatchHandle.end(), _hEvent), vWatchHandle.end());
-      }
-    }
-    else if (_waitTab != UITab_None && ! vWatchHandles[_waitTab].empty())
-      vWatchHandles[_waitTab].erase(std::remove(vWatchHandles[_waitTab].begin(), vWatchHandles[_waitTab].end(), _hEvent), vWatchHandles[_waitTab].end());
-  }
+    SKIF_Util_RemoveWatchHandle (_hEvent, _waitTab);
 
-  RegCloseKey (_hKeyBase);
-  CloseHandle (_hEvent);
-  _hEvent = NULL;
+    RegCloseKey (_hKeyBase);
+    _hKeyBase = NULL;
+    CloseHandle (_hEvent);
+    _hEvent = NULL;
+  }
+}
+
+SKIF_RegistryWatch::SKIF_RegistryWatch (const SKIF_RegistryWatch& other)
+  : _init     (other._init),
+    _hKeyBase (NULL),
+    _hEvent   (NULL),
+    _waitTab  (other._waitTab)
+{
+  // Copy of an empty/moved-from object is empty
+  if (other._hEvent == NULL)
+    return;
+
+  if (! _init.event_name.empty())
+    _eventNameActual = SKIF_UtilInt_MakeUniqueEventName (_init.event_name);
+
+  _hEvent             =
+      CreateEvent ( nullptr, TRUE,
+                            FALSE, (_eventNameActual.empty ()
+                                  ? nullptr
+                                  : _eventNameActual.c_str ()));
+
+  reset ();
+
+  if (_hEvent != NULL)
+    SKIF_Util_AddWatchHandle (_hEvent, _waitTab);
+}
+
+SKIF_RegistryWatch::SKIF_RegistryWatch (SKIF_RegistryWatch&& other) noexcept
+  : _init            (std::move     (other._init)),
+    _hKeyBase        (std::exchange (other._hKeyBase, nullptr)),
+    _hEvent          (std::exchange (other._hEvent,   nullptr)),
+    _waitTab         (std::exchange (other._waitTab,  UITab_None)),
+    _eventNameActual (std::move     (other._eventNameActual)) // The name belongs to the event, so it moves along with it
+{
+  other._init.root = { };
+  // The HANDLE value is unchanged, so its entry in vWatchHandles stays valid.
+  // other._hEvent == NULL makes other's destructor a complete no-op.
+}
+
+void SKIF_RegistryWatch::swap (SKIF_RegistryWatch& other) noexcept
+{
+  std::swap (_init,            other._init);
+  std::swap (_hKeyBase,        other._hKeyBase);
+  std::swap (_hEvent,          other._hEvent);
+  std::swap (_waitTab,         other._waitTab);
+  std::swap (_eventNameActual, other._eventNameActual); // Keeps each name with the event it was created for
+}
+
+HKEY
+SKIF_RegistryWatch::getKey (void) const
+{
+  return _hKeyBase;
+}
+
+HKEY
+SKIF_RegistryWatch::getRootKey (void) const
+{
+  return _init.root;
+}
+
+const std::wstring&
+SKIF_RegistryWatch::getSubKey (void) const
+{
+  return _init.sub_key;
+}
+
+bool
+SKIF_RegistryWatch::isWOW6432Key (void) const
+{
+  return (_init.wow64_32key != FALSE);
+}
+
+bool
+SKIF_RegistryWatch::isWOW6464Key (void) const
+{
+  return (_init.wow64_64key != FALSE);
+}
+
+SKIF_RegistryWatch& SKIF_RegistryWatch::operator= (const SKIF_RegistryWatch& other)
+{
+  if (this != &other)
+  {
+    SKIF_RegistryWatch tmp (other);
+    swap (tmp); // tmp's destructor releases our old resources
+  }
+  return *this;
+}
+
+SKIF_RegistryWatch& SKIF_RegistryWatch::operator= (SKIF_RegistryWatch&& other) noexcept
+{
+  if (this != &other)
+  {
+    SKIF_RegistryWatch tmp (std::move (other));
+    swap (tmp);
+  }
+  return *this;
 }
 
 LSTATUS
-SKIF_RegistryWatch::registerNotify (void) const
+SKIF_RegistryWatch::registerNotify (void)
 {
-  return RegNotifyChangeKeyValue (_hKeyBase, _init.watch_subtree, _init.filter_mask, _hEvent, TRUE);
+#ifndef REG_NOTIFY_THREAD_AGNOSTIC
+#define REG_NOTIFY_THREAD_AGNOSTIC 0x10000000L
+#endif
+
+  // Without REG_NOTIFY_THREAD_AGNOSTIC (Windows 8+), the registration is silently removed once the thread that made it exits
+  static const DWORD dwThreadAgnostic =
+    (SKIF_Util_IsWindowsVersionOrGreater (6, 2, 0)) ? REG_NOTIFY_THREAD_AGNOSTIC : 0x0;
+
+  return RegNotifyChangeKeyValue (_hKeyBase, _init.watch_subtree, _init.filter_mask | dwThreadAgnostic, _hEvent, TRUE);
 }
 
 void
 SKIF_RegistryWatch::reset (void)
 {
-  RegCloseKey (_hKeyBase);
+  if (_hKeyBase != NULL)
+  {
+    RegCloseKey (_hKeyBase);
+    _hKeyBase = NULL;
+  }
 
-  if ((intptr_t)_hEvent > 0)
+  if (_hEvent != NULL)
     ResetEvent (_hEvent);
 
   LSTATUS lStat =
@@ -3817,10 +5098,31 @@ SKIF_RegistryWatch::reset (void)
 
   if (lStat != ERROR_SUCCESS)
   {
-    PLOG_ERROR << "Failed to register for registry notifications: " << _init.sub_key << ", " << _init.watch_subtree;
-    RegCloseKey (_hKeyBase);
-    CloseHandle (_hEvent);
-    _hEvent = NULL;
+    PLOG_ERROR << "Failed to register for registry notifications: "
+               << ((_init.root == HKEY_LOCAL_MACHINE)  ? R"(HKLM\)" :
+                   (_init.root == HKEY_CURRENT_USER)   ? R"(HKCU\)" :
+                   (_init.root == HKEY_CLASSES_ROOT)   ? R"(HKCR\)" :
+                   (_init.root == HKEY_USERS)          ? R"(HKU\)" :
+                   (_init.root == HKEY_CURRENT_CONFIG) ? R"(HKEY_CURRENT_CONFIG\)" : "")
+               << _init.sub_key
+               << ", " << _init.watch_subtree
+               << ", " << _init.filter_mask
+               << ", " << _init.wow64_32key
+               << ", " << _init.wow64_64key;
+
+    if (_hKeyBase != NULL)
+    {
+      RegCloseKey (_hKeyBase);
+      _hKeyBase = NULL;
+    }
+
+    if (_hEvent != NULL)
+    {
+      // Remove it from the wait lists before closing it, or the main loop would wait on a closed handle
+      SKIF_Util_RemoveWatchHandle (_hEvent, _waitTab);
+      CloseHandle (_hEvent);
+      _hEvent   = NULL;
+    }
   }
 }
 
@@ -3836,7 +5138,14 @@ SKIF_RegistryWatch::isSignaled (void)
     ) == WAIT_OBJECT_0;
 
   if (signaled)
-    reset ();
+  {
+    // Re-arm the notification on the key that is already open; only close and reopen it
+    //   if that fails (e.g. ERROR_KEY_DELETED after the key was deleted or recreated)
+    ResetEvent (_hEvent);
+
+    if (_hKeyBase == NULL || registerNotify ( ) != ERROR_SUCCESS)
+      reset ();
+  }
 
   return signaled;
 }
@@ -3926,9 +5235,9 @@ SKIF_Util_ResolveShortcut (HWND hwnd, LPCWSTR lpszLinkFile, LPWSTR lpszTarget, L
 
 //
 // https://docs.microsoft.com/en-au/windows/win32/shell/links?redirectedfrom=MSDN#creating-a-shortcut-and-a-folder-shortcut-to-a-file
-// 
-// CreateLink - Uses the Shell's IShellLink and IPersistFile interfaces 
-//              to create and store a shortcut to the specified object. 
+//
+// CreateLink - Uses the Shell's IShellLink and IPersistFile interfaces
+//              to create and store a shortcut to the specified object.
 //
 // Returns true if successful; false if an error occurred.
 //
@@ -3947,7 +5256,7 @@ SKIF_Util_ResolveShortcut (HWND hwnd, LPCWSTR lpszLinkFile, LPWSTR lpszTarget, L
 // lpszIconLocation - Address of a buffer that contains the full path of icon
 //                    used for the shortcut, if relevant.
 // iIcon            - Index for the icon at lpszIconLocation to use.
-// 
+//
 
 bool
 SKIF_Util_CreateShortcut (LPCWSTR lpszPathLink, LPCWSTR lpszTarget, LPCWSTR lpszArgs, LPCWSTR lpszWorkDir, LPCWSTR lpszDesc, LPCWSTR lpszIconLocation, int iIcon)
@@ -3971,7 +5280,7 @@ SKIF_Util_CreateShortcut (LPCWSTR lpszPathLink, LPCWSTR lpszTarget, LPCWSTR lpsz
   {
     IPersistFile* ppf = nullptr;
 
-    // Set the specifics of the shortcut. 
+    // Set the specifics of the shortcut.
     psl->SetPath               (lpszTarget);
 
     if (wcscmp (lpszWorkDir, L"\0") == 0) // lpszWorkDir == L"\0"
@@ -3988,18 +5297,18 @@ SKIF_Util_CreateShortcut (LPCWSTR lpszPathLink, LPCWSTR lpszTarget, LPCWSTR lpsz
     if (wcscmp (lpszIconLocation, L"\0") != 0) // (lpszIconLocation != L"\0")
       psl->SetIconLocation     (lpszIconLocation, iIcon);
 
-    // Query IShellLink for the IPersistFile interface, used for saving the 
-    // shortcut in persistent storage. 
+    // Query IShellLink for the IPersistFile interface, used for saving the
+    // shortcut in persistent storage.
     //hres = psl->QueryInterface(IID_IPersistFile, (LPVOID*)&ppf);
 
     if (SUCCEEDED (psl->QueryInterface (IID_IPersistFile, (void**)&ppf)))
     {
       //WCHAR wsz[MAX_PATH];
 
-      // Ensure that the string is Unicode. 
+      // Ensure that the string is Unicode.
       //MultiByteToWideChar (CP_ACP, 0, lpszPathLink, -1, wsz, MAX_PATH);
 
-      // Save the link by calling IPersistFile::Save. 
+      // Save the link by calling IPersistFile::Save.
       if (SUCCEEDED (ppf->Save (lpszPathLink, FALSE)))
         ret = true;
 
@@ -4385,7 +5694,7 @@ SKIF_Util_GetWindowMessageAsStr (UINT msg)
   //  WM_APP -  0xBFFF        Messages available for use by applications.
   //  0xC000 -  0xFFFF        String messages for use by applications.
   //          > 0xFFFF        Reserved by the system.
-  // 
+  //
   // https://learn.microsoft.com/en-us/windows/win32/winmsg/wm-app
     default:
     {
@@ -4444,4 +5753,108 @@ SK_File_GetSize (const wchar_t* wszFile)
   }
 
   return 0ULL;
+}
+
+bool
+SKIF_Util_IsWindowsVersionExactly (DWORD dwMajorVersion, DWORD dwMinorVersion, DWORD dwBuildNumber)
+{
+  NTSTATUS(WINAPI *SKIF_RtlGetVersion)(LPOSVERSIONINFOEXW) = nullptr;
+
+  OSVERSIONINFOEXW
+    osInfo                     = { };
+    osInfo.dwOSVersionInfoSize = sizeof (OSVERSIONINFOEXW);
+
+  *reinterpret_cast<FARPROC *>(&SKIF_RtlGetVersion) =
+    GetProcAddress (GetModuleHandleW (L"ntdll"), "RtlGetVersion");
+
+  if (SKIF_RtlGetVersion != nullptr)
+  {
+    if (NT_SUCCESS (SKIF_RtlGetVersion (&osInfo)))
+    {
+      return
+          ( osInfo.dwMajorVersion == dwMajorVersion &&
+            osInfo.dwMinorVersion == dwMinorVersion &&
+            osInfo.dwBuildNumber  == dwBuildNumber  );
+    }
+  }
+
+  return false;
+}
+
+// Allow dark mode for the app
+// Only available on Windows 10 1809
+// Replaced with SetPreferredAppMode on Windows 10 1903 and later
+bool
+SKIF_Util_AllowDarkModeForApp (bool allow)
+{
+  if (! SKIF_Util_IsWindowsVersionExactly (10, 0, 17763))
+    return false;
+
+  using AllowDarkModeForApp_pfn =
+           bool (WINAPI *)(bool);
+
+  static AllowDarkModeForApp_pfn
+         AllowDarkModeForApp =
+        (AllowDarkModeForApp_pfn)GetProcAddress (LoadLibraryEx (L"uxtheme.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32),
+        MAKEINTRESOURCEA (135)); // Ordinal 135
+
+  if (AllowDarkModeForApp == nullptr)
+    return false;
+
+  return AllowDarkModeForApp (allow);
+}
+
+// Sets a new app color mode and returns the previous one
+// Available on Windows 10 1903 and later
+PreferredAppMode
+SKIF_Util_SetPreferredAppMode (PreferredAppMode mode)
+{
+  if (! SKIF_Util_IsWindowsVersionOrGreater (10, 0, 18362))
+    return PreferredAppMode::Default;
+
+  using SetPreferredAppMode_pfn =
+           PreferredAppMode (WINAPI *)(PreferredAppMode);
+
+  static SetPreferredAppMode_pfn
+         SetPreferredAppMode =
+        (SetPreferredAppMode_pfn)GetProcAddress (LoadLibraryEx (L"uxtheme.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32),
+        MAKEINTRESOURCEA (135)); // Ordinal 135
+
+  if (SetPreferredAppMode == nullptr)
+    return PreferredAppMode::Default;
+
+  return SetPreferredAppMode (mode);
+}
+
+// Enable Windows to use dark decorations where possible (e.g. title bar, context menus, etc)
+void
+SKIF_Util_UpdateAppColorMode (void)
+{
+  static SKIF_RegistrySettings& _registry = SKIF_RegistrySettings::GetInstance ( );
+
+  // Light mode
+  if (_registry._StyleLightMode)
+    SKIF_Util_SetPreferredAppMode (PreferredAppMode::ForceLight);
+
+  // Dark mode
+  else if (! SKIF_Util_AllowDarkModeForApp (true))
+    SKIF_Util_SetPreferredAppMode (PreferredAppMode::AllowDark);
+}
+
+HRESULT
+WINAPI
+SKIF_Util_SHGetKnownFolderItem (REFKNOWNFOLDERID rfid, KNOWN_FOLDER_FLAG flags, HANDLE hToken, REFIID riid, void** ppv)
+{
+  using SHGetKnownFolderItem_pfn =
+    HRESULT (WINAPI *)(REFKNOWNFOLDERID rfid, KNOWN_FOLDER_FLAG flags, HANDLE hToken, REFIID riid, void** ppv);
+
+  static SHGetKnownFolderItem_pfn
+    SKIF_SHGetKnownFolderItem =
+        (SHGetKnownFolderItem_pfn)GetProcAddress (LoadLibraryEx (L"shell32.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32),
+        "SHGetKnownFolderItem");
+
+  if (SKIF_SHGetKnownFolderItem == nullptr)
+    return E_NOTIMPL;
+
+  return SKIF_SHGetKnownFolderItem (rfid, flags, hToken, riid, ppv);
 }

@@ -145,7 +145,7 @@ SK_Generate8Dot3 (const wchar_t* wszLongFileName)
   {
     ModifyPrivilege (SE_RESTORE_NAME, TRUE);
     ModifyPrivilege (SE_BACKUP_NAME,  TRUE);
-    
+
     // When opening an existing file, the CreateFile function performs the following actions:
     // [...] and ignores any file attributes (FILE_ATTRIBUTE_*) specified by dwFlagsAndAttributes.
     CHandle hFile (
@@ -337,9 +337,11 @@ SKIF_CommonPathsCache::SKIF_CommonPathsCache (void)
 {
   // Cache user profile locations
   SKIF_GetFolderPath ( &my_documents       );
+  SKIF_GetFolderPath ( &my_pictures        );
   SKIF_GetFolderPath ( &app_data_local     );
   SKIF_GetFolderPath ( &app_data_local_low );
   SKIF_GetFolderPath ( &app_data_roaming   );
+  SKIF_GetFolderPath ( &program_data       );
   SKIF_GetFolderPath ( &win_saved_games    );
   SKIF_GetFolderPath ( &desktop            );
 
@@ -410,7 +412,7 @@ SK_FileOpenDialog (LPWSTR *pszPath, const COMDLG_FILTERSPEC* fileTypes, UINT cFi
     IShellItem* psiDefaultFolder = nullptr;
     IShellItem* psiSetFolder     = nullptr;
 
-    if (S_OK == SHGetKnownFolderItem (defaultFolder, KF_FLAG_DEFAULT, NULL, IID_IShellItem, (void**)&psiDefaultFolder))
+    if (S_OK == SKIF_Util_SHGetKnownFolderItem (defaultFolder, KF_FLAG_DEFAULT, NULL, IID_IShellItem, (void**)&psiDefaultFolder))
     {
       pFileOpen->SetDefaultFolder (psiDefaultFolder);
       psiDefaultFolder->Release();

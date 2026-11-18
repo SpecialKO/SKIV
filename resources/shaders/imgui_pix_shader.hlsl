@@ -73,6 +73,10 @@ cbuffer imgui_cbuffer : register (b0)
   float4 ap1_gamut_hue;
   float4 ap0_gamut_hue;
   float4 invalid_gamut_hue;
+
+  float  alpha_toggle; // 4 byte
+  float  checkerboard_toggle; //4 byte
+  float2 padding;      // 8 byte (make it divisible by 16)
 };
 
 sampler   sampler0 : register (s0);
@@ -82,6 +86,18 @@ Texture2D texture0 : register (t0);
 #include "tone_mapping.hlsli"
 #include "visualization.hlsli"
 #include "calibration.hlsli"
+
+// Remap alpha so that blending in the (linear) scRGB framebuffer looks like
+// the gamma-space blending ImGui assumes. Exact for black/white sources over
+// any background (the color picker SV overlay, most text), approximate otherwise.
+//
+// t: 1 = light source / dark background, 0 = dark source / light background
+float GammaMatchedAlpha (float alpha, float t)
+{
+  float a_light = RemoveSRGBCurve (alpha);
+  float a_dark  = 1.0f - RemoveSRGBCurve (1.0f - alpha);
+  return lerp (a_dark, a_light, t);
+}
 
 float4 main (PS_INPUT input) : SV_Target
 {
@@ -94,8 +110,15 @@ float4 main (PS_INPUT input) : SV_Target
       (1.0f).xxxx;
   }
 
+  // The font atlas is sampled from its only mip level with SampleLevel (same result as Sample, as it has no mipmaps).
+  //   Precaution: SampleLevel cannot be affected by anisotropic filtering forced through the GPU driver's control
+  //     panel. Glyphs are rasterized with horizontal oversampling (drawn squeezed 2:1), and anisotropic filtering takes
+  //       extra samples along that axis, which could reach past the 1 pixel of padding between the glyphs of the atlas
+  //         and blend in pixels of a neighboring glyph. Plain bilinear filtering stays within the padding.
+  //   font_dims comes from a constant buffer, so this branch is uniform and Sample still has its derivatives.
   float4 out_col =
-    texture0.Sample (sampler0, input.uv);
+    (font_dims.x + font_dims.y > 0.0f) ? texture0.SampleLevel (sampler0, input.uv, 0.0f)
+                                       : texture0.Sample      (sampler0, input.uv);
 
 
 
@@ -136,24 +159,33 @@ float4 main (PS_INPUT input) : SV_Target
   }
 
   // Other way around for everything else, we do not want a texture's alpha
-  else
+  else if (!alpha_toggle)
   {
-    out_col.a = 1.0f;
+   out_col.a = 1.0f;
   }
 
   float4 orig_col = out_col;
 
-              // input.lum.x        // Luminance (white point)
-  bool isHDR   = input.lum.y > 0.0; // HDR (10 bpc or 16 bpc)
-  bool is10bpc = input.lum.z > 0.0; // 10 bpc
-  bool is16bpc = input.lum.w > 0.0; // 16 bpc (scRGB)
+                     // input.lum.x        // Luminance (white point)
+  bool isHDR           = input.lum.y > 0.0; // HDR (10 bpc or 16 bpc)
+  bool is10bpc         = input.lum.z > 0.0; // 10 bpc
+  bool is16bpc         = input.lum.w > 0.0; // 16 bpc (scRGB)
+
+  // luminance_scale.w: 1.0 = corrected alpha (base), +1.0 = linear glyph coverage
+  uint flags           = is16bpc ? (uint)(input.lum.w + 0.5f) - 1u : 0u;
+  bool linearFontAlpha = (flags & 1u) != 0;
+  bool isFontDraw      = (font_dims.x + font_dims.y) > 0.0f;
 
   // 16 bpc scRGB (SDR/HDR)
   // ColSpace:  DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709
   // Gamma:     1.0
-  // Primaries: BT.709 
+  // Primaries: BT.709
   if (is16bpc)
   {
+    float3 fg_gamma = input_col.rgb * out_col.rgb;
+    float  tex_a    = saturate (out_col.a);
+    float  vtx_a    = saturate (input_col.a);
+
     out_col =
       float4 (  input.hdr_img ?
                 RemoveGammaExp  (           input_col.rgb,        2.2f) *
@@ -164,39 +196,55 @@ float4 main (PS_INPUT input) : SV_Target
                                   saturate (input_col.a)
               );
 
+    // sRGB (SDR) Content
+    if (input.srgb_img)
+    {
+      out_col =
+        float4 ( (input_col.rgb) *
+                 (  out_col.rgb),
+        saturate (  out_col.a  ) *
+        saturate (input_col.a  ) );
+
+      out_col.rgb = RemoveSRGBCurve (out_col.rgb);
+    }
+
+    // Text and solid UI geometry (the font-atlas white pixel): the source color decides.
+    //   Images are left as they are, so their alpha channel remains correct.
+    if (isFontDraw && ! input.hdr_img && ! input.srgb_img)
+    {
+      float t = saturate (Luma (fg_gamma));
+
+      out_col.a = (linearFontAlpha) ? tex_a * GammaMatchedAlpha (vtx_a, t)
+                                    : GammaMatchedAlpha (tex_a * vtx_a, t);
+    }
+
     float hdr_scale = input.lum.x;
 
     if (! input.hdr_img)
       out_col.rgb = saturate (out_col.rgb) * hdr_scale;
-    else
+    else if (!alpha_toggle)
       out_col.a = 1.0f; // Opaque
 
-    // Manipulate the alpha channel a bit...
-  //out_col.a = 1.0f - RemoveSRGBCurve (1.0f - out_col.a); // Sort of perfect alpha transparency handling, but worsens fonts (more haloing), in particular for bright fonts on dark backgrounds
-  //out_col.a = out_col.a;                                 // Worse alpha transparency handling, but improves fonts (less haloing)
-  //out_col.a = 1.0f - ApplySRGBCurve  (1.0f - out_col.a); // Unusable alpha transparency, and worsens dark fonts on bright backgrounds
-    // No perfect solution for various reasons (ImGui not having proper subpixel font rendering or doing linear colors for example)
   }
 
   // 10 bpc SDR
   // ColSpace:  DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709
   // Gamma:     2.2
-  // Primaries: BT.709 
+  // Primaries: BT.709
   else if (is10bpc)
   {
     // sRGB (SDR) Content
     if (input.srgb_img)
     {
       out_col =
-        float4 (   (           input_col.rgb) *
-                   (             out_col.rgb),
-                                    saturate (  out_col.a)  *
-                                    saturate (input_col.a)
-                );
+        float4 ( (input_col.rgb) *
+                 (  out_col.rgb),
+        saturate (  out_col.a  ) *
+        saturate (input_col.a  ) );
 
       out_col.rgb = RemoveSRGBCurve (out_col.rgb);
     }
-    
+
     else if (! input.hdr_img)
     {
       out_col =
@@ -210,13 +258,14 @@ float4 main (PS_INPUT input) : SV_Target
     else
     {
       out_col =
-        float4 (RemoveGammaExp  (           input_col.rgb,        2.2f) *
+        float4 (RemoveGammaExp  (             input_col.rgb,        2.2f) *
                                                 out_col.rgb,
                                     saturate (  out_col.a)  *
                                     saturate (input_col.a)
                 );
 
-      out_col.a = 1.0f; // Opaque
+      if (!alpha_toggle)
+        out_col.a = 1.0f; // Opaque
     }
 
     // Manipulate the alpha channel a bit...
@@ -248,15 +297,14 @@ float4 main (PS_INPUT input) : SV_Target
     if (input.srgb_img)
     {
       out_col =
-        float4 (   (           input_col.rgb) *
-                   (             out_col.rgb),
-                                    saturate (  out_col.a)  *
-                                    saturate (input_col.a)
-                );
+        float4 ( (input_col.rgb) *
+                 (  out_col.rgb),
+        saturate (  out_col.a  ) *
+        saturate (input_col.a  ) );
 
       out_col.rgb = RemoveSRGBCurve (out_col.rgb);
     }
-    
+
     else if (! input.hdr_img)
     {
       out_col =
@@ -270,17 +318,18 @@ float4 main (PS_INPUT input) : SV_Target
     else
     {
       out_col =
-        float4 (  RemoveGammaExp  (           input_col.rgb,        2.2f) *
+        float4 (  RemoveGammaExp  (           input_col.rgb,       2.2f) *
                                                 out_col.rgb,
                                     saturate (  out_col.a)  *
                                     saturate (input_col.a)
                 );
 
-      out_col.a = 1.0f; // Opaque
+      if (!alpha_toggle)
+        out_col.a = 1.0f; // Opaque
     }
 #endif
   }
-  
+
   if (input.hdr_img)
   {
     uint implied_tonemap_type =
@@ -291,7 +340,7 @@ float4 main (PS_INPUT input) : SV_Target
       (hdr_visualization != SKIV_VISUALIZATION_NONE) ? 1.0f
                                                      :
                        isHDR ? user_brightness_scale :
-                          max (user_brightness_scale / 1.7f, 0.001f);
+                          max (user_brightness_scale, 0.001f);
 
 
     // If it's too bright, don't bother trying to tonemap the full range...
@@ -300,14 +349,20 @@ float4 main (PS_INPUT input) : SV_Target
     float dML = LinearToPQY ( display_max_luminance);
     float cML = LinearToPQY (min (hdr_max_luminance, _maxNitsToTonemap));
 
+    if (implied_tonemap_type != SKIV_TONEMAP_TYPE_NONE && (! isHDR))
+    {   implied_tonemap_type  = SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY;
+        dML = LinearToPQY (1.5f);
+    }
+
+    else if (implied_tonemap_type == SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY)
+    {
+      ///out_col.rgb *=
+      ///  1.0f / max (1.0f, 80.0f / (2.0f * sdr_reference_white));
+    }
+
     float3 ICtCp = Rec709toICtCp (out_col.rgb);
     float  Y_in  = max (ICtCp.x, 0.0f);
     float  Y_out = 1.0f;
-
-    if (implied_tonemap_type != SKIV_TONEMAP_TYPE_NONE && (! isHDR))
-    {   implied_tonemap_type  = SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY;
-        dML = LinearToPQY (1.25f);
-    }
 
     switch (implied_tonemap_type)
     {
@@ -323,6 +378,12 @@ float4 main (PS_INPUT input) : SV_Target
 
     if (Y_out + Y_in > 0.0)
     {
+      if (implied_tonemap_type == SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY)
+      {
+        if ((! isHDR))
+          ICtCp.x = pow (ICtCp.x, 1.18f);
+      }
+
       float I0      = ICtCp.x;
       float I_scale = 0.0f;
 
@@ -369,6 +430,50 @@ float4 main (PS_INPUT input) : SV_Target
 
   out_col.rgb *=
     out_col.a;
+
+     // checkerboard start
+  //   Behind the image's own transparency (its texture's alpha), not the vertex alpha: that is the image fading
+  //     in or out (or being dimmed), which the checkerboard does along with it (the output is premultiplied).
+  //   HDR images ignore the vertex color (input_col is 1), so they keep a fade of 1 here.
+  float image_a = saturate (orig_col.a);
+  float fade_a  = saturate (input_col.a);
+
+  if (image_a < 1.0f && checkerboard_toggle && (font_dims.x + font_dims.y == 0.0f))
+  {
+    float grid_size = 8.0f;
+
+    float2 pixel_pos = input.pos.xy;
+
+    // calc grid pattern
+    float2 grid = floor(pixel_pos / grid_size);
+    float checker = fmod(grid.x + grid.y, 2.0f);
+
+    // grid colors for SDR (0.75 - light-gray, 0.5 - dark-gray)
+    float3 color_white = (1.0f).xxx;
+    float3 color_gray = (0.744f).xxx;
+    float3 bg_color = (checker == 0.0f) ? color_white : color_gray;
+
+    if (is16bpc && input.hdr_img)
+    {
+      //scale grid before multiply with hdr
+      //TODO make math correct
+      bg_color = pow(max(0.0f, bg_color), 2.2f);
+
+      float hdr_alpha_mask = saturate(1.0f - image_a);
+      hdr_alpha_mask = pow(hdr_alpha_mask, 2.0f);
+
+      out_col.rgb = out_col.rgb + bg_color * hdr_alpha_mask * fade_a;
+    }
+    else
+    {
+    // mix image with grid
+      out_col.rgb = out_col.rgb + bg_color * (1.0f - image_a) * fade_a;
+    }
+
+    // The image and its checkerboard are opaque together, and fade together
+    out_col.a = fade_a;
+  }
+  //checkerboard end
 
   return
     SanitizeFP (out_col);

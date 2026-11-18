@@ -1,9 +1,10 @@
 #pragma once
 
-#include <DirectXTex.h>
+#include <DirectXTex/DirectXTex.h>
 #include <imgui/imgui_internal.h>
 #include <ImGuiNotify.hpp>
 #include <atlbase.h>
+#include "utility.h"
 
 #pragma warning( push )
 #pragma warning( disable : 4305 )
@@ -40,6 +41,14 @@ constexpr DirectX::XMMATRIX c_from709toDCIP3 = // Transposed
   { 0.0f,                          0.0f,                          0.0f,                         1.0f }
 };
 
+constexpr DirectX::XMMATRIX c_fromDCIP3to709 = // Transposed inverse
+{
+  {  1.215661f,  -0.041757f,  -0.022841f,  0.0f },
+  { -0.223146f,   1.038042f,  -0.080108f,  0.0f },
+  {  0.0f,        0.0f,        1.098369f,  0.0f },
+  {  0.0f,        0.0f,        0.0f,       1.0f }
+};
+
 constexpr DirectX::XMMATRIX c_from709toAP0 = // Transposed
 {
   { 0.4339316189289093017578125f, 0.088618390262126922607421875f, 0.01775003969669342041015625f,  0.0f },
@@ -50,10 +59,10 @@ constexpr DirectX::XMMATRIX c_from709toAP0 = // Transposed
 
 constexpr DirectX::XMMATRIX c_from709toAP1 = // Transposed
 {
-  { 0.61702883243560791015625f,       0.333867609500885009765625f,    0.04910354316234588623046875f,     0.0f },
-  { 0.069922320544719696044921875f,   0.91734969615936279296875f,     0.012727967463433742523193359375f, 0.0f },
-  { 0.02054978720843791961669921875f, 0.107552029192447662353515625f, 0.871898174285888671875f,          0.0f },
-  { 0.0f,                             0.0f,                           0.0f,                              1.0f }
+  { 0.61702883243560791015625f,    0.069922320544719696044921875f,   0.02054978720843791961669921875f, 0.0f },
+  { 0.333867609500885009765625f,   0.91734969615936279296875f,       0.107552029192447662353515625f,   0.0f },
+  { 0.04910354316234588623046875f, 0.012727967463433742523193359375f, 0.871898174285888671875f,         0.0f },
+  { 0.0f,                          0.0f,                             0.0f,                             1.0f }
 };
 
 constexpr DirectX::XMMATRIX c_fromXYZto709 = // Transposed
@@ -66,52 +75,92 @@ constexpr DirectX::XMMATRIX c_fromXYZto709 = // Transposed
 
 constexpr DirectX::XMMATRIX c_fromXYZtoLMS = // Transposed
 {
-  {  0.3592, -0.1922, 0.0070, 0.0 },
-  {  0.6976,  1.1004, 0.0749, 0.0 },
-  { -0.0358,  0.0755, 0.8434, 0.0 },
-  {  0.0,     0.0,    0.0,    1.0 }
+  {  0.3592f, -0.1922f, 0.0070f, 0.0f },
+  {  0.6976f,  1.1004f, 0.0749f, 0.0f },
+  { -0.0358f,  0.0755f, 0.8434f, 0.0f },
+  {  0.0f,     0.0f,    0.0f,    1.0f }
 };
 
 constexpr DirectX::XMMATRIX c_fromLMStoXYZ = // Transposed
 {
-  {  2.070180056695613509600,  0.364988250032657479740, -0.049595542238932107896, 0.0 },
-  { -1.326456876103021025500,  0.680467362852235141020, -0.049421161186757487412, 0.0 },
-  {  0.206616006847855170810, -0.045421753075853231409,  1.187995941732803439400, 0.0 },
-  {  0.0,                      0.0,                      0.0,                     1.0 }
+  {  2.070180056695613509600f,  0.364988250032657479740f, -0.049595542238932107896f, 0.0f },
+  { -1.326456876103021025500f,  0.680467362852235141020f, -0.049421161186757487412f, 0.0f },
+  {  0.206616006847855170810f, -0.045421753075853231409f,  1.187995941732803439400f, 0.0f },
+  {  0.0f,                      0.0f,                      0.0f,                     1.0f }
 };
 
 constexpr DirectX::XMMATRIX c_scRGBtoBt2100 = // Transposed
 {
-  { 2939026994.L /  585553224375.L,   76515593.L / 138420033750.L,    12225392.L /   93230009375.L, 0.0 },
-  { 9255011753.L / 3513319346250.L, 6109575001.L / 830520202500.L,  1772384008.L / 2517210253125.L, 0.0 },
-  {  173911579.L /  501902763750.L,   75493061.L / 830520202500.L, 18035212433.L / 2517210253125.L, 0.0 },
-  {                            0.0,                           0.0,                             0.0, 1.0 }
+  { 2939026994.0f /  585553224375.0f,   76515593.0f / 138420033750.0f,    12225392.0f /   93230009375.0f, 0.0f },
+  { 9255011753.0f / 3513319346250.0f, 6109575001.0f / 830520202500.0f,  1772384008.0f / 2517210253125.0f, 0.0f },
+  {  173911579.0f /  501902763750.0f,   75493061.0f / 830520202500.0f, 18035212433.0f / 2517210253125.0f, 0.0f },
+  {                             0.0f,                            0.0f,                              0.0f, 1.0f }
 };
 
 constexpr DirectX::XMMATRIX c_Bt2100toscRGB = // Transposed
 {
-  {  348196442125.L / 1677558947.L, -579752563250.L / 37238079773.L,  -12183628000.L /  5369968309.L, 0.0f },
-  { -123225331250.L / 1677558947.L, 5273377093000.L / 37238079773.L, -472592308000.L / 37589778163.L, 0.0f },
-  {  -15276242500.L / 1677558947.L,  -38864558125.L / 37238079773.L, 5256599974375.L / 37589778163.L, 0.0f },
-  {                           0.0f,                            0.0f,                            0.0f, 1.0f }
+  {  348196442125.0f / 1677558947.0f, -579752563250.0f / 37238079773.0f,  -12183628000.0f /  5369968309.0f, 0.0f },
+  { -123225331250.0f / 1677558947.0f, 5273377093000.0f / 37238079773.0f, -472592308000.0f / 37589778163.0f, 0.0f },
+  {  -15276242500.0f / 1677558947.0f,  -38864558125.0f / 37238079773.0f, 5256599974375.0f / 37589778163.0f, 0.0f },
+  {                             0.0f,                              0.0f,                              0.0f, 1.0f }
+};
+
+constexpr DirectX::XMMATRIX c_from601to709 = // Transposed
+{
+  { 1.0000f,  0.0000f,  0.0000f,  0.0f },
+  { 0.0000f,  1.0000f,  0.0000f,  0.0f },
+  { 0.0000f,  0.0000f,  0.9184f,  0.0f },
+  { 0.0000f,  0.0000f,  0.0000f,  1.0f }
 };
 
 struct ParamsPQ
 {
-  DirectX::XMVECTOR N, M;
+  DirectX::XMVECTOR N,       M;
   DirectX::XMVECTOR C1, C2, C3;
+  DirectX::XMVECTOR MaxPQ;
+  DirectX::XMVECTOR RcpN, RcpM;
 };
 
 static const ParamsPQ PQ =
 {
-  DirectX::XMVectorReplicate (2610.0 / 4096.0 / 4.0),   // N
-  DirectX::XMVectorReplicate (2523.0 / 4096.0 * 128.0), // M
-  DirectX::XMVectorReplicate (3424.0 / 4096.0),         // C1
-  DirectX::XMVectorReplicate (2413.0 / 4096.0 * 32.0),  // C2
-  DirectX::XMVectorReplicate (2392.0 / 4096.0 * 32.0),  // C3
+  DirectX::XMVectorReplicate  (2610.0 / 4096.0 / 4.0),   // N
+  DirectX::XMVectorReplicate  (2523.0 / 4096.0 * 128.0), // M
+  DirectX::XMVectorReplicate  (3424.0 / 4096.0),         // C1
+  DirectX::XMVectorReplicate  (2413.0 / 4096.0 * 32.0),  // C2
+  DirectX::XMVectorReplicate  (2392.0 / 4096.0 * 32.0),  // C3
+  DirectX::XMVectorReplicate  (125.0f),                  // MaxPQ
+  DirectX::XMVectorReciprocal (DirectX::XMVectorReplicate (2610.0 / 4096.0 / 4.0)),
+  DirectX::XMVectorReciprocal (DirectX::XMVectorReplicate (2523.0 / 4096.0 * 128.0)),
 };
 
 #pragma warning( pop )
+
+struct SKIV_CaptureData {
+  ImRect         _rect;
+  struct Application {
+    std::wstring custom;     // #1 - SK/SKIF profiles name
+    std::wstring product;    // #2 - Product name from executable
+    std::wstring executable; // #3 - Executable filename
+    std::wstring window;     // -optional-
+  }              _names;
+  CaptureMode    _mode;
+  bool           _select = false;
+  HWND           _hwnd = NULL;
+
+  SKIV_CaptureData (ImRect r_, Application n_, CaptureMode m_)
+  {
+    _rect  = r_;
+    _names = n_;
+    _mode  = m_;
+  }
+
+  SKIV_CaptureData (ImRect r_, std::wstring t_, CaptureMode m_)
+  {
+    _rect = r_;
+    _mode = m_;
+    _names.custom = t_;
+  }
+};
 
 // Declarations
 DirectX::XMVECTOR SKIV_Image_PQToLinear    (DirectX::XMVECTOR N, DirectX::XMVECTOR maxPQValue = DirectX::g_XMOne);
@@ -120,22 +169,92 @@ float             SKIV_Image_LinearToPQY   (float N);
 DirectX::XMVECTOR SKIV_Image_Rec709toICtCp (DirectX::XMVECTOR N);
 DirectX::XMVECTOR SKIV_Image_ICtCptoRec709 (DirectX::XMVECTOR N);
 
+// Offers the image to the clipboard, rendered only once a program pastes it (delayed rendering: see image.cpp)
+bool    SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool isHDR, SKIV_CaptureData capture_data);
+void    SKIV_Image_RenderClipboardFormat     (UINT format);   // WM_RENDERFORMAT
+void    SKIV_Image_RenderAllClipboardFormats (HWND hWndOwner); // WM_RENDERALLFORMATS
+void    SKIV_Image_ClearClipboardCache       (void);          // WM_DESTROYCLIPBOARD
 HRESULT SKIV_Image_SaveToDisk_HDR  (const DirectX::Image& image, const wchar_t* wszFileName);
 HRESULT SKIV_Image_SaveToDisk_SDR  (const DirectX::Image& image, const wchar_t* wszFileName, bool force_sRGB);
-HRESULT SKIV_Image_CaptureDesktop  (const POINT pos);
-void    SKIV_Image_SetClipboard    (ImRect capture_area, bool displayCapture);
-void    SKIV_Image_RenderToClipboard (UINT clipboard_format);
-HRESULT SKIV_Image_TonemapToSDR    (const DirectX::Image& image, DirectX::ScratchImage& final_sdr);
+// Captures the display at pos (SKIV_DesktopImage), or every display (SKIV_DesktopImages; flags: SKIV_CaptureDesktop_AllDisplays)
+constexpr int SKIV_CaptureDesktop_AllDisplays = 0x1;
+HRESULT SKIV_Image_CaptureDesktop  (DirectX::ScratchImage& image, POINT pos, int flags = 0x0);
+// Copies a region of the desktop (in its coordinates) from the displays captured: also one spanning several of them
+void    SKIV_Image_CaptureRegion   (SKIV_CaptureData capture_data);
+HRESULT SKIV_Image_TonemapToSDR    (const DirectX::Image& image, DirectX::ScratchImage& final_sdr, float mastering_max_nits, float mastering_sdr_nits);
+
+bool    SKIV_Image_IsUltraHDR      (const wchar_t* wszFileName);
+bool    SKIV_Image_IsUltraHDR      (void* data, int size);
+HRESULT SKIV_Image_LoadUltraHDR    (DirectX::ScratchImage& image, void* data, int size);
+
+// Whether the image file is animated: an APNG (acTL chunk before its image data), a GIF with more than one frame, or a WebP
+//   with its animation flag set (utility/animated_images.inl, implemented in viewer.cpp). Reads the file.
+bool    IsAnimatedImageFile        (const std::wstring& path);
+
+#include <avif/avif.h>
+
+bool isAVIFEncoderAvailable (void);
+
+using avifEncoderCreate_pfn          = avifEncoder*(*)(void);
+using avifEncoderDestroy_pfn         = void        (*)(avifEncoder*  encoder);
+using avifEncoderAddImage_pfn        = avifResult  (*)(avifEncoder*  encoder, const avifImage* image, uint64_t durationInTimescales, avifAddImageFlags addImageFlags);
+using avifEncoderFinish_pfn          = avifResult  (*)(avifEncoder*  encoder, avifRWData* output);
+
+using avifDecoderCreate_pfn          = avifDecoder*(*)(void);
+using avifDecoderDestroy_pfn         = void        (*)(avifDecoder*  decoder);
+
+using avifDecoderSetIOMemory_pfn     = avifResult  (*)(avifDecoder*  decoder, const uint8_t* data, size_t size);
+using avifDecoderParse_pfn           = avifResult  (*)(avifDecoder*  decoder);
+using avifDecoderNextImage_pfn       = avifResult  (*)(avifDecoder*  decoder);
+using avifDecoderRead_pfn            = avifResult  (*)(avifDecoder*  decoder, avifImage* image);
+using avifDecoderReadMemory_pfn      = avifResult  (*)(avifDecoder*  decoder, avifImage* image, const uint8_t* data, size_t size);
+
+using avifImageCreate_pfn            = avifImage*  (*)(uint32_t width, uint32_t height, uint32_t depth, avifPixelFormat yuvFormat);
+using avifImageRGBToYUV_pfn          = avifResult  (*)(      avifImage* image, const avifRGBImage* rgb);
+using avifImageYUVToRGB_pfn          = avifResult  (*)(const avifImage* image,       avifRGBImage* rgb);
+using avifImageSetProfileICC_pfn     = avifResult  (*)(      avifImage* image, const uint8_t* icc, size_t iccSize);
+using avifImageDestroy_pfn           = void        (*)(      avifImage* image);
+
+using avifRGBImageAllocatePixels_pfn = avifResult  (*)(avifRGBImage* rgb);
+using avifRGBImageFreePixels_pfn     = void        (*)(avifRGBImage* rgb);
+using avifRGBImageSetDefaults_pfn    = void        (*)(avifRGBImage* rgb, const avifImage* image);
+
+extern avifEncoderCreate_pfn          SK_avifEncoderCreate;
+extern avifEncoderDestroy_pfn         SK_avifEncoderDestroy;
+extern avifEncoderAddImage_pfn        SK_avifEncoderAddImage;
+extern avifEncoderFinish_pfn          SK_avifEncoderFinish;
+
+extern avifDecoderCreate_pfn          SK_avifDecoderCreate;
+extern avifDecoderDestroy_pfn         SK_avifDecoderDestroy;
+
+extern avifDecoderSetIOMemory_pfn     SK_avifDecoderSetIOMemory;
+extern avifDecoderParse_pfn           SK_avifDecoderParse;
+extern avifDecoderNextImage_pfn       SK_avifDecoderNextImage;
+extern avifDecoderRead_pfn            SK_avifDecoderRead;
+extern avifDecoderReadMemory_pfn      SK_avifDecoderReadMemory;
+
+extern avifImageCreate_pfn            SK_avifImageCreate;
+extern avifImageRGBToYUV_pfn          SK_avifImageRGBToYUV;
+extern avifImageYUVToRGB_pfn          SK_avifImageYUVToRGB;
+extern avifImageDestroy_pfn           SK_avifImageDestroy;
+
+extern avifRGBImageSetDefaults_pfn    SK_avifRGBImageSetDefaults;
+extern avifRGBImageAllocatePixels_pfn SK_avifRGBImageAllocatePixels;
+extern avifRGBImageFreePixels_pfn     SK_avifRGBImageFreePixels;
 
 // Structs
 
-struct skiv_capture_cache_s {
-  CComPtr <ID3D11ShaderResourceView> _srv        = nullptr;
-  CComPtr <ID3D11Resource>           _res        = nullptr;
-  bool                               _hdr_image  =   false;
-  bool                               _exported   =   false;
-  ImVec2                             _resolution = ImVec2 (0.0f, 0.0f);
-  DirectX::Rect                      _selection  = { }; // srcRect
+struct skiv_image_desktop_s {
+  CComPtr <ID3D11ShaderResourceView> _srv              = nullptr;
+  CComPtr <ID3D11Resource>           _res              = nullptr;
+  bool                               _hdr_image        =   false;
+  ImVec2                             _resolution       = ImVec2 (0.0f, 0.0f);
+  ImVec2                             _desktop_pos      = ImVec2 (0.0f, 0.0f);
+  DXGI_MODE_ROTATION                 _rotation         = DXGI_MODE_ROTATION_UNSPECIFIED;
+  float                              _max_display_nits = 1000.0f;
+  float                              _sdr_display_nits = 240.0f;
+
+  ImVec2 desktopSize (void) const; // Its size on the desktop: _resolution, turned by _rotation
 
   bool process (void)
   {
@@ -180,12 +299,176 @@ struct skiv_capture_cache_s {
 
   void clear (void)
   {
-    _res        = nullptr;
-    _srv        = nullptr;
-    _hdr_image  =   false;
-    _exported   =   false;
-    _resolution = ImVec2 (0.0f, 0.0f);
-    _selection  = { };
-    PLOG_VERBOSE << "Cached clipboard data has been cleared!";
+    _res              = nullptr;
+    _srv              = nullptr;
+    _hdr_image        =   false;
+    _resolution       = ImVec2 (0.0f, 0.0f);
+    _desktop_pos      = ImVec2 (0.0f, 0.0f);
+    _max_display_nits = 1000.0f;
+    _rotation         = DXGI_MODE_ROTATION_UNSPECIFIED;
   }
-} extern SKIV_ClipboardImage;
+};
+
+// The displays captured by SKIV_Image_CaptureDesktop: the one at its point (SKIV_DesktopImage), and all of them for
+//   region snips (SKIV_CaptureDesktop_AllDisplays), which may span several
+extern skiv_image_desktop_s              SKIV_DesktopImage;
+extern std::vector <skiv_image_desktop_s> SKIV_DesktopImages;
+
+// Image Directory
+
+#include <shobjidl_core.h>
+
+class FileSystemBindData : public IFileSystemBindData
+{
+public:
+  FileSystemBindData() : _ref(1)
+  {
+    ZeroMemory(&_fd, sizeof(_fd));
+  }
+
+  // IUnknown
+  IFACEMETHODIMP QueryInterface(REFIID riid, void** ppv) override
+  {
+    if (riid == IID_IUnknown || riid == IID_IFileSystemBindData)
+    {
+      *ppv = static_cast<IFileSystemBindData*>(this);
+      AddRef();
+      return S_OK;
+    }
+    *ppv = nullptr;
+    return E_NOINTERFACE;
+  }
+
+  IFACEMETHODIMP_(ULONG) AddRef() override
+  {
+    return InterlockedIncrement(&_ref);
+  }
+
+  IFACEMETHODIMP_(ULONG) Release() override
+  {
+    ULONG r = InterlockedDecrement(&_ref);
+    if (r == 0) delete this;
+    return r;
+  }
+
+  // IFileSystemBindData
+  IFACEMETHODIMP SetFindData (const WIN32_FIND_DATAW* pfd) override
+  {
+    _fd = *pfd;
+    return S_OK;
+  }
+
+  IFACEMETHODIMP GetFindData (WIN32_FIND_DATAW* pfd) override
+  {
+    *pfd = _fd;
+    return S_OK;
+  }
+
+private:
+  ~FileSystemBindData() = default;
+
+  LONG _ref;
+  WIN32_FIND_DATAW _fd;
+};
+
+struct skiv_image_directory_s {
+
+  struct fd_s {
+    std::wstring     filename;    // Image filename
+  //std::wstring     folder_path; // Parent folder path
+    std::wstring     path;        // Image path (full)
+    WIN32_FIND_DATA  ffd;
+  };
+
+  struct fl_s {
+    fd_s* getActiveFile (void)
+    {
+      return _it._Ptr;
+    }
+
+    std::vector<fd_s> getList (void)
+    {
+      return _list;
+    }
+
+    void setList (std::vector<fd_s> list)
+    {
+      _list = std::move(list);
+
+      if (_list.empty())
+        _list.push_back({ L"", L"", WIN32_FIND_DATA { } });
+
+      _it = _list.begin();
+    }
+
+    void clear (void)
+    {
+      _list.clear();
+
+      _list.push_back({ L"", L"", WIN32_FIND_DATA { } });
+
+      _it = _list.begin();
+    }
+
+    bool empty (void)
+    {
+      return _list.empty();
+    }
+
+    // The files by their index (the carousel): how many, one of them, and the index of the active one (count ( ) if none)
+    size_t count (void) const
+    {
+      return _list.size ( );
+    }
+
+    const fd_s& at (size_t index) const
+    {
+      return _list [index];
+    }
+
+    size_t activeIndex (void) const
+    {
+      return (_it == _list.end ( )) ? _list.size ( ) : static_cast <size_t> (std::distance (_list.cbegin ( ), std::vector <fd_s>::const_iterator (_it)));
+    }
+
+    void         setImage    (const std::wstring& path);
+    std::wstring nextImage   (void);
+    std::wstring prevImage   (void);
+    std::wstring peek        (int offset); // The image nextImage ( ) (or prevImage ( ), if negative) would go to, this many
+                                           //   times, without going there (empty if none, or if it comes back to the current one)
+    std::wstring deleteImage (void);
+    void         updateFileIterator (const std::wstring& path); // Find the position of the image in the current folder
+
+    bool fileDeleted = false;
+
+    fl_s (void) {
+      _list.push_back({ L"", L"", WIN32_FIND_DATA { } });
+      _it = _list.begin();
+    }
+
+  private:
+    std::vector<fd_s>           _list;
+    std::vector<fd_s>::iterator _it;
+
+  } fileList;
+
+//std::wstring                orig_path;   // Holds a cached copy of cover.path
+//std::wstring                filename;    // Image filename
+  std::wstring                folder_path; // Parent folder path
+  SKIF_DirectoryWatch         watch;
+
+
+  std::vector<SORTCOLUMN>     sortColumns; // File Explorer
+
+  void         reset       (void);
+
+  // Retrieve all files in the folder, and identify our current place among them...
+  int         workerThread  (bool runThread); // 0 = Not done, 1 = No change in sort order (i.e. same files as before) , 2 = Change in the sort order (i.e. new files/folder)
+
+  // Win32 File Explorer based sorting
+private:
+  static bool updateFolderData (std::vector<fd_s>& list, std::vector<SORTCOLUMN>& sortColumns, const std::wstring& path);
+  static void updateSortOrder  (std::vector<fd_s>& list, std::vector<SORTCOLUMN>& sortColumns, const std::wstring& path);
+  static void sortByColumns    (std::vector<fd_s>& list, const std::vector<SORTCOLUMN>& sortColumns);
+  static void sortByFilename   (std::vector<fd_s>& list);
+};

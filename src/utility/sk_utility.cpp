@@ -24,8 +24,8 @@
 #include <utility/utility.h>
 #include <Windows.h>
 
-#ifndef SECURITY_WIN32 
-#define SECURITY_WIN32 
+#ifndef SECURITY_WIN32
+#define SECURITY_WIN32
 #endif
 
 #include <Security.h>
@@ -34,6 +34,11 @@
 #include <imgui/imgui.h>
 #include <imgui/imgui_internal.h>
 
+#include <utility/skif_imgui.h>
+
+// Last, as it defines short macros such as _ ( )
+#include <utility/l10n.h>
+
 #pragma comment(lib, "Secur32.lib")
 #pragma comment(lib, "Userenv.lib")
 
@@ -41,7 +46,7 @@ std::string
 SK_WideCharToUTF8 (const std::wstring& in)
 {
   // CC BY-SA 4.0: https://stackoverflow.com/a/59617138
-  int count = 
+  int count =
     WideCharToMultiByte (CP_UTF8, 0, in.c_str(), static_cast <int> (in.length()), NULL, 0, NULL, NULL);
   std::string out       (count, 0);
   WideCharToMultiByte   (CP_UTF8, 0, in.c_str(), -1, &out[0], count, NULL, NULL);
@@ -53,7 +58,7 @@ std::wstring
 SK_UTF8ToWideChar (const std::string& in)
 {
   // CC BY-SA 4.0: https://stackoverflow.com/a/59617138
-  int count = 
+  int count =
     MultiByteToWideChar (CP_UTF8, 0, in.c_str(), static_cast <int> (in.length()), NULL, 0);
   std::wstring out      (count, 0);
   MultiByteToWideChar   (CP_UTF8, 0, in.c_str(), static_cast <int> (in.length()), &out[0], count);
@@ -361,7 +366,7 @@ SK_RemoveTrailingDecimalZeros (char* szNum, size_t bufLen)
 
 using wstring_hash = size_t;
 
-bool SK_Keybind_g_isAssigning = false;
+bool g_activeKeybindPopup = false;
 std::unordered_map <wstring_hash, BYTE> humanKeyNameToVirtKeyCode;
 std::unordered_map <BYTE, wchar_t [32]> virtKeyCodeToHumanKeyName;
 std::unordered_map <BYTE, wchar_t [32]> virtKeyCodeToFullyLocalizedKeyName;
@@ -369,7 +374,7 @@ std::unordered_map <BYTE, wchar_t [32]> virtKeyCodeToFullyLocalizedKeyName;
 static auto& humanToVirtual = humanKeyNameToVirtKeyCode;
 static auto& virtualToHuman = virtKeyCodeToHumanKeyName;
 static auto& virtualToLocal = virtKeyCodeToFullyLocalizedKeyName;
- 
+
 char* SK_CharNextA (const char *szInput, int n = 1);
 
 static inline wchar_t*
@@ -425,8 +430,18 @@ SK_Keybind::parse (void)
   shift = false;
   super = false;
 
-  wchar_t   wszKeyBind [128] = { };
-  lstrcatW (wszKeyBind, human_readable.c_str ());
+  // Abort if the key is unbound
+  if (human_readable == L"<Not Bound>")
+  {
+    human_readable_utf8 = SK_WideCharToUTF8 (human_readable);
+    masked_code         = 1 << 13; // Forced invalid to apply changes on launch
+    return;
+  }
+
+  // The value comes from the registry or an INI file, so it may be longer than the buffer: it is cut off (and then
+  //   most likely not a valid keybinding) instead of overrunning it
+  wchar_t    wszKeyBind [128] = { };
+  wcsncpy_s (wszKeyBind, _countof (wszKeyBind), human_readable.c_str (), _TRUNCATE);
 
   wchar_t* wszBuf = nullptr;
   wchar_t* wszTok = std::wcstok (wszKeyBind, L"+", &wszBuf);
@@ -749,13 +764,15 @@ SK_ImGui_KeybindSelect (SK_Keybind* keybind)
     return false;
 
   ImGui::PushStyleColor (ImGuiCol_Text, ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_TextBase)); //ImVec4 (0.667f, 0.667f, 0.667f, 1.0f));
+  ImGui::PushStyleColor (ImGuiCol_Header, ImGui::GetStyleColorVec4 (ImGuiCol_FrameBg));
   ImGui::PushItemWidth  (ImGui::GetContentRegionAvail ().x);
 
   bool ret =
-    ImGui::Selectable (keybind->human_readable_utf8.c_str(), false);
+    SKIF_ImGui_FrameButton (keybind->human_readable_utf8.c_str());
 
   ImGui::PopItemWidth  ();
-  ImGui::PopStyleColor ();
+  ImGui::PopStyleColor (); // ImGuiCol_Header
+  ImGui::PopStyleColor (); // ImGuiCol_Text
 
   return ret;
 }
@@ -769,56 +786,60 @@ SK_ImGui_KeybindDialog (SK_KeybindMultiState* keybind)
   auto& io =
     ImGui::GetIO ();
 
-  const  float font_size = ImGui::GetFont ()->FontSize * io.FontGlobalScale;
+  const  float font_size = ImGui::GetFontSize ();
 
-  if (ImGui::IsPopupOpen (keybind->bind_name))
+  // The dialog is shown while assigning (set by SK_ImGui_Keybinding ( ) when the binding is clicked). It is not an ImGui modal
+  //   popup, which would dim and block every window (the main window and the INI editor alike), but a SKIF popup: it dims
+  //     and blocks only the window (viewport) it was opened from, and is centered on it.
+  if (! keybind->assigning)
   {
-    ImGui::SetNextWindowSizeConstraints ( ImVec2 (font_size *  9.0f, font_size * 3.0f),
-                                          ImVec2 (font_size * 30.0f, font_size * 6.0f) );
-
-    extern ImRect windowRect;
-    ImGui::SetNextWindowPos  (windowRect.GetCenter(), ImGuiCond_Always, ImVec2 (0.5f, 0.5f));
-
-    // Render over all other windows
-    //ImGui::SetNextWindowFocus ( );
+    keybind->applyChanges ( );
+    return keybind->hasNewState ( );
   }
 
-  if (ImGui::BeginPopupModal (keybind->bind_name, nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove     | ImGuiWindowFlags_Tooltip | // ImGuiWindowFlags_Tooltip is required to work around a pesky z-order issue on first appearance
-                                                           ImGuiWindowFlags_NoCollapse       | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings))
-  {
-		// Render over all other windows
-		//ImGui::BringWindowToDisplayFront (ImGui::GetCurrentWindow ( ));
+  // Seen by SK_ImGui_KeybindCancelIfHidden ( )
+  keybind->dialogFrame = ImGui::GetFrameCount ( );
 
-    // Indicate that we are assigning (this disables the keybinding while the popup is opened)
-    keybind->assigning = true;
-    SK_Keybind_g_isAssigning = true;
+  const ImGuiViewport* vp        = ImGui::GetWindowViewport ( );
+
+  // Keys are only read while the window the dialog is in has focus, so typing in another window (the INI editor, the main
+  //   window, or another app) neither changes the binding nor confirms or cancels it. SKIF's hotkeys are only held back
+  //     in that window too (g_activeKeybindPopup), so they keep working in the other one.
+  const bool           focused   = SKIF_ImGui_IsViewportFocused (vp);
+
+  if (focused)
+    g_activeKeybindPopup = true;
+
+  // At most 35 times the font size wide, and never wider than the window it is centered on; longer text wraps
+  const  float         max_width = ImMax (font_size * 9.0f, ImMin (font_size * 35.0f, vp->Size.x - font_size * 2.0f));
+
+  // One dialog per window (viewport): with the same name, dialogs open in both the main window and the INI editor at once
+  //   would be one and the same ImGui window, drawn in only one of them
+  char dialog_name [48];
+  snprintf (dialog_name, sizeof (dialog_name), "###SKIFKeybindDialog_%08X", vp->ID);
+
+  if (SKIF_ImGui_BeginPopup (dialog_name, nullptr, ImVec2 (0.0f, 0.0f),
+                             ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove))
+  {
+    // Minimum width (SKIF popups do not take size constraints)
+    ImGui::Dummy (ImVec2 (font_size * 9.0f - ImGui::GetStyle ( ).WindowPadding.x * 2.0f, 0.0f));
 
     int  vKey = 256;
 
-#ifndef IMGUI_DISABLE_OBSOLETE_KEYIO
-    for (vKey = 0x08; vKey < 256; vKey++)
+    for (ImGuiKey imKey = ImGuiKey_NamedKey_BEGIN; focused && imKey < ImGuiKey_NamedKey_END; imKey = (ImGuiKey)(imKey + 1))
     {
-      if ( vKey == VK_LCONTROL || vKey == VK_RCONTROL || vKey == VK_CONTROL || // Ctrl
-           vKey == VK_LSHIFT   || vKey == VK_RSHIFT   || vKey == VK_SHIFT   || // Shift
-           vKey == VK_LMENU    || vKey == VK_RMENU    || vKey == VK_MENU    || // Alt
-           vKey == VK_LWIN     || vKey == VK_RWIN     )                        // Windows
-        continue;
-
-      extern
-          ImGuiKey       ImGui_ImplWin32_VirtualKeyToImGuiKey (WPARAM);
-      if (ImGuiKey key = ImGui_ImplWin32_VirtualKeyToImGuiKey (vKey))
-      {
-        if (ImGui::IsKeyPressed (key, false))
-          break;
-      }
-    }
-#else
-    for (ImGuiKey imKey = ImGuiKey_NamedKey_BEGIN; imKey < ImGuiKey_NamedKey_END; imKey = (ImGuiKey)(imKey + 1))
-    {
+      // Modifier keys
       if ( imKey == ImGuiKey_LeftCtrl  || imKey == ImGuiKey_RightCtrl  || // Ctrl
            imKey == ImGuiKey_LeftShift || imKey == ImGuiKey_RightShift || // Shift
            imKey == ImGuiKey_LeftAlt   || imKey == ImGuiKey_RightAlt   || // Alt
            imKey == ImGuiKey_LeftSuper || imKey == ImGuiKey_RightSuper )  // Windows
+        continue;
+
+      // Reserved keys (not used for keybindings)
+      if ( imKey == ImGuiKey_Escape    || // Cancel operation
+           imKey == ImGuiKey_Backspace || // Clear keybinding
+           imKey == ImGuiKey_Delete    || // Reset to default
+           imKey == ImGuiKey_Enter     || imKey == ImGuiKey_KeypadEnter)  // Confirm
         continue;
 
       if (ImGui::IsKeyPressed (imKey, false))
@@ -832,18 +853,43 @@ SK_ImGui_KeybindDialog (SK_KeybindMultiState* keybind)
         }
       }
     }
-#endif
 
-    bool bEscape    =
-      ImGui::IsKeyPressed (ImGuiKey_Escape,    false),
-         bBackspace =
-      ImGui::IsKeyPressed (ImGuiKey_Backspace, false);
+    bool modifierKey = io.KeyCtrl || io.KeyShift || io.KeyAlt || io.KeySuper;
+    bool bEscape = false, // Cancel operation
+      bBackspace = false, // Clear keybinding
+         bDelete = false, // Reset to default
+          bEnter = false; // Confirm
 
-    ImGui::Text         ("Keybinding:"); //  %hs, keybind->pending.human_readable_utf8.c_str ()); // (0x%02X), keybind->vKey
+    if (focused && ! modifierKey)
+    {
+      bEscape    = ImGui::IsKeyPressed (ImGuiKey_Escape,    false);
+      bBackspace = ImGui::IsKeyPressed (ImGuiKey_Backspace, false);
+      bDelete    = ImGui::IsKeyPressed (ImGuiKey_Delete,    false);
+      bEnter     = ImGui::IsKeyPressed (ImGuiKey_Enter,     false) || ImGui::IsKeyPressed (ImGuiKey_KeypadEnter, false);
+    }
+
+    // Wrap the text at the widest the dialog may be (Text, TextColored and TextDisabled all follow the wrap position)
+    ImGui::PushTextWrapPos (ImGui::GetCursorPosX ( ) + max_width - ImGui::GetStyle ( ).WindowPadding.x * 2.0f);
+
+    ImGui::Text         ("%s", _("Keybinding:")); //  %hs, keybind->pending.human_readable_utf8.c_str ()); // (0x%02X), keybind->vKey
     ImGui::SameLine     ( );
-    ImGui::TextColored  (ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_TextBase), keybind->pending.human_readable_utf8.c_str ());
+    ImGui::TextColored  (ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_TextBase), "%s", keybind->pending.human_readable_utf8.c_str ());
     ImGui::Separator    ( );
-    ImGui::TextDisabled ("Press BACKSPACE to clear, or ESC to finish.");
+    if (keybind->clearable)
+      // TRANSLATORS: RETURN, ESC, BACKSPACE and DELETE are keys of the keyboard (use the names printed on keyboards in your language)
+      ImGui::TextDisabled ("%s", _("Press RETURN to confirm, ESC to cancel, BACKSPACE to clear, DELETE to reset."));
+    else
+      // TRANSLATORS: RETURN, ESC and DELETE are keys of the keyboard (use the names printed on keyboards in your language)
+      ImGui::TextDisabled ("%s", _("Press RETURN to confirm, ESC to cancel, DELETE to reset."));
+
+    ImGui::PopTextWrapPos  ( );
+
+    // A keybinding that can't be cleared is reset to its default instead
+    if (bBackspace && ! keybind->clearable)
+    {
+      bBackspace = false;
+      bDelete    = true;
+    }
 
     // Update the key binding after printing out the current one, to prevent a one-frame graphics glitch
     if (bBackspace)
@@ -857,6 +903,22 @@ SK_ImGui_KeybindDialog (SK_KeybindMultiState* keybind)
       keybind->pending.update   ( );
     }
 
+    else if (bDelete)
+    {
+      keybind->pending = keybind->default;
+      keybind->pending.parse    ( );
+      keybind->pending.makeMask ( );
+      keybind->pending.update   ( );
+    }
+
+    else if (bEscape)
+    {
+      keybind->pending = keybind->saved;
+      keybind->pending.parse    ( );
+      keybind->pending.makeMask ( );
+      keybind->pending.update   ( );
+    }
+
     else if (! bEscape && vKey != 256)
     {
       keybind->pending.vKey  = static_cast <SHORT> (vKey);
@@ -865,19 +927,15 @@ SK_ImGui_KeybindDialog (SK_KeybindMultiState* keybind)
       keybind->pending.alt   = io.KeyAlt;
       keybind->pending.super = io.KeySuper;
       keybind->pending.makeMask ( );
-      keybind->pending.makeMask ( );
       keybind->pending.update   ( );
     }
 
-    // If we are done with the changes, mark it as such
-    if (bEscape || bBackspace)
-    {
+    // If we are done with the changes, mark it as such (closes the dialog)
+    if (bEscape || bEnter)
       keybind->assigning = false;
-      ImGui::CloseCurrentPopup ( );
-    }
-
-    ImGui::EndPopup ();
   }
+
+  SKIF_ImGui_EndPopup ( ); // Must always be called, regardless of the return value of SKIF_ImGui_BeginPopup
 
   // This applies any pending changes, once done
   keybind->applyChanges ( );
@@ -887,14 +945,157 @@ SK_ImGui_KeybindDialog (SK_KeybindMultiState* keybind)
 }
 
 bool
+SK_ImGui_KeybindCancelIfHidden (SK_KeybindMultiState* binding)
+{
+  if (binding == nullptr || ! binding->assigning || binding->dialogFrame == ImGui::GetFrameCount ( ))
+    return false;
+
+  // As Esc in the dialog: back to the saved keybinding
+  binding->pending = binding->saved;
+  binding->pending.parse    ( );
+  binding->pending.makeMask ( );
+  binding->pending.update   ( );
+  binding->assigning = false;
+
+  binding->applyChanges ( );
+  binding->hasNewState  ( );
+
+  return true;
+}
+
+bool
 SK_ImGui_Keybinding (SK_KeybindMultiState* binding)
 {
   if (! binding)
     return false;
 
-  if (SK_ImGui_KeybindSelect (&binding->saved))
-    ImGui::OpenPopup (         binding->bind_name);
+  ImGui::PushID              (binding->bind_name.c_str());
 
-  return SK_ImGui_KeybindDialog (binding);
+  // Opens the dialog of SK_ImGui_KeybindDialog ( )
+  if (SK_ImGui_KeybindSelect (&binding->saved))
+    binding->assigning = true;
+
+  bool results =
+    SK_ImGui_KeybindDialog   (binding);
+
+  ImGui::PopID               ();
+
+  return results;
 }
-;
+
+
+using WindowsGetStringRawBuffer_pfn    = PCWSTR  (WINAPI *)(HSTRING, UINT32*);
+using WindowsDeleteString_pfn          = HRESULT (WINAPI *)(HSTRING);
+using WindowsCreateString_pfn          = HRESULT (WINAPI *)(PCNZWCH, UINT32, HSTRING*);
+using WindowsCreateStringReference_pfn = HRESULT (WINAPI *)(PCWSTR, UINT32, HSTRING_HEADER*, HSTRING*);
+using RoGetActivationFactory_pfn       = HRESULT (WINAPI *)(HSTRING, REFIID, void**);
+
+PCWSTR
+WINAPI
+SK_WindowsGetStringRawBuffer (HSTRING string, UINT32* length)
+{
+  static WindowsGetStringRawBuffer_pfn
+        _WindowsGetStringRawBuffer =
+        (WindowsGetStringRawBuffer_pfn)GetProcAddress (LoadLibraryEx (L"combase.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32),
+        "WindowsGetStringRawBuffer");
+
+  if (_WindowsGetStringRawBuffer == nullptr)
+  {
+    SK_RunOnce (
+      PLOG_ERROR << "WindowsGetStringRawBuffer (...) not found in combase.dll!";
+    );
+
+    return nullptr;
+  }
+
+  return
+    _WindowsGetStringRawBuffer (string, length);
+}
+
+HRESULT
+WINAPI
+SK_WindowsDeleteString (HSTRING string)
+{
+  static WindowsDeleteString_pfn
+        _WindowsDeleteString =
+        (WindowsDeleteString_pfn)GetProcAddress (LoadLibraryEx (L"combase.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32),
+        "WindowsDeleteString");
+
+  if (_WindowsDeleteString == nullptr)
+  {
+    SK_RunOnce (
+      PLOG_ERROR << "WindowsDeleteString (...) not found in combase.dll!";
+    );
+
+    return E_FAIL;
+  }
+
+  return
+    _WindowsDeleteString (string);
+}
+
+HRESULT
+WINAPI
+SK_WindowsCreateString (PCNZWCH sourceString, UINT32 length, HSTRING* string)
+{
+  static WindowsCreateString_pfn
+        _WindowsCreateString =
+        (WindowsCreateString_pfn)GetProcAddress (LoadLibraryEx (L"combase.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32),
+        "WindowsCreateString");
+
+  if (_WindowsCreateString == nullptr)
+  {
+    SK_RunOnce (
+      PLOG_ERROR << "WindowsCreateString (...) not found in combase.dll!";
+    );
+
+    return E_FAIL;
+  }
+
+  return
+    _WindowsCreateString (sourceString, length, string);
+}
+
+HRESULT
+WINAPI
+SK_WindowsCreateStringReference (PCWSTR sourceString, UINT32 length, HSTRING_HEADER* hstringHeader, HSTRING* string)
+{
+  static WindowsCreateStringReference_pfn
+        _WindowsCreateStringReference =
+        (WindowsCreateStringReference_pfn)GetProcAddress (LoadLibraryEx (L"combase.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32),
+        "WindowsCreateStringReference");
+
+  if (_WindowsCreateStringReference == nullptr)
+  {
+    SK_RunOnce (
+      PLOG_ERROR << "WindowsCreateStringReference (...) not found in combase.dll!";
+    );
+
+    return E_FAIL;
+  }
+
+  return
+    _WindowsCreateStringReference (sourceString, length, hstringHeader, string);
+}
+
+HRESULT
+WINAPI
+SK_RoGetActivationFactory (HSTRING activatableClassId, REFIID iid, void** factory)
+{
+  static RoGetActivationFactory_pfn
+        _RoGetActivationFactory =
+        (RoGetActivationFactory_pfn)GetProcAddress (LoadLibraryEx (L"combase.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32),
+        "RoGetActivationFactory");
+
+  if (_RoGetActivationFactory == nullptr)
+  {
+    SK_RunOnce (
+      PLOG_ERROR << "RoGetActivationFactory (...) not found in combase.dll!";
+    );
+
+    return E_FAIL;
+  }
+
+  return
+    _RoGetActivationFactory (activatableClassId, iid, factory);
+}

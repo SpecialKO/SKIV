@@ -12,14 +12,17 @@
 #include <vector>
 #include <shellapi.h>
 #include <stdexcept>
-#include <DirectXTex.h>
+#include <shobjidl_core.h>
+#include <shlobj_core.h>
+#include <KnownFolders.h>
+#include <DirectXTex/DirectXTex.h>
 #include "sk_utility.h"
 
 #pragma comment(lib, "wininet.lib")
 
 // Requires Windows 10, version 1703
 //        + Per Monitor v2 DPI awareness
-// 
+//
 // We use an opposite IF statement than
 //   Microsoft's to get these defined
 #if(WINVER < 0x0605)
@@ -37,6 +40,7 @@
 
 
 extern UINT          CF_HTML;        // Registered clipboard format for the "HTML Format"
+extern UINT          CF_PNG;         // Registered clipboard format for "PNG" (a PNG file, as browsers and Discord copy images)
 typedef unsigned int ClipboardData;  // -> enum ClipboardData_
 
 enum ClipboardData_
@@ -47,6 +51,7 @@ enum ClipboardData_
   ClipboardData_HTML        = 1 << 2, // HTML Format (ANSI)
   ClipboardData_Bitmap      = 1 << 3, // Bitmap
   ClipboardData_HDROP       = 1 << 4, // A list of files
+  ClipboardData_PNG         = 1 << 5, // PNG file data
 };
 
 enum UITab {
@@ -57,10 +62,16 @@ enum UITab {
   UITab_ALL      // Total number of elements in enum (technically against Microsoft's enum design guidelines, but whatever)
 };
 
-enum CaptureMode {
-  CaptureMode_Window,
-  CaptureMode_Region,
-  CaptureMode_Screen
+typedef unsigned int CaptureMode;  // -> enum CaptureMode_
+enum CaptureMode_ {
+  CaptureMode_None   = 0,
+
+  CaptureMode_Window = 1 << 0,
+  CaptureMode_Region = 1 << 1,
+  CaptureMode_Screen = 1 << 2,
+
+  CaptureMode_ALL    =
+    CaptureMode_Window | CaptureMode_Region | CaptureMode_Screen
 };
 
 struct FileSignature {
@@ -93,6 +104,14 @@ extern UITab       SKIF_Tab_ChangeTo; // Tab we want to change to
 
 extern std::vector<HANDLE> vWatchHandles[UITab_ALL];
 
+// The main loop waits on the handles of the current tab with MsgWaitForMultipleObjects ( ), which accepts at most
+//   MAXIMUM_WAIT_OBJECTS - 1 (63) handles. Always add and remove handles through these helpers, which enforce that
+//     limit per tab (a watch over the limit still works when polled, but no longer wakes the main loop by itself).
+constexpr size_t SKIF_MaxWatchHandles = MAXIMUM_WAIT_OBJECTS - 1;
+
+bool            SKIF_Util_AddWatchHandle              (HANDLE handle, UITab waitTab); // UITab_ALL adds it to every tab; false if any tab was full
+void            SKIF_Util_RemoveWatchHandle           (HANDLE handle, UITab waitTab); // Must be called before the handle is closed
+
 // Generic Utilities
 
 char *
@@ -119,6 +138,8 @@ void            SKIF_Util_TrimLeadingNewlines         (std:: string&     input);
 void            SKIF_Util_TrimLeadingNewlinesW        (std::wstring&     input);
 void            SKIF_Util_TrimTrailingNewlines        (std:: string&     input);
 void            SKIF_Util_TrimTrailingNewlinesW       (std::wstring&     input);
+void            SKIF_Util_ReplaceAll                  (std:: string&     input, const std:: string& from, const std:: string& to);
+void            SKIF_Util_ReplaceAllW                 (std::wstring&     input, const std::wstring& from, const std::wstring& to);
 std::wstring    SKIF_Util_GetErrorAsWStr              (DWORD error = GetLastError ( ), HMODULE module = NULL);
 void            SKIF_Util_GetErrorAsMsgBox            (std::wstring winTitle = L"Error detected", std::wstring preMsg = L"", DWORD error = GetLastError ( ), HMODULE module = NULL);
 DWORD           SKIF_Util_timeGetTime                 (void);
@@ -140,6 +161,7 @@ bool            SKIF_Util_HasFileSignature            (const std::vector<char>& 
 bool            SKIF_Util_HasFileExtension            (const std::wstring extension,    const FileSignature& signature);
 
 // Usernames
+
 std:: string    SKIF_Util_StripPersonalData           (std:: string input);
 std::wstring    SKIF_Util_StripPersonalData           (std::wstring input);
 void            SKIF_Util_Debug_LogUserNames          (void);
@@ -169,8 +191,24 @@ typedef struct _SKIF_MEMORY_PRIORITY_INFORMATION {
   ULONG MemoryPriority;
 } SKIF_MEMORY_PRIORITY_INFORMATION, *SKIF_PMEMORY_PRIORITY_INFORMATION;
 
+enum class AppColorMode // PreferredAppMode
+{
+  Default,
+  AllowDark,
+  ForceDark,
+  ForceLight,
+  Max
+};
+
+enum class SKIF_Elevation {
+  NotElevated,
+  Elevated,
+  Unknown /* no access: likely elevated or protected */
+};
+
 HANDLE          SKIF_Util_GetCurrentProcess           (void);
 HANDLE          SKIF_Util_GetCurrentProcessToken      (void);
+HANDLE          SKIF_Util_GetCurrentUserToken         (void);
 BOOL            SKIF_Util_TerminateProcess            (DWORD  dwProcessId, UINT uExitCode);
 BOOL    WINAPI  SKIF_Util_TerminateProcess            (HANDLE  hProcess,   UINT uExitCode);
 std::wstring    SKIF_Util_GetFileVersion              (const wchar_t* wszName);
@@ -190,13 +228,19 @@ BOOL    WINAPI  SKIF_Util_SetProcessDefaultCpuSets    (HANDLE hProcess, const UL
 BOOL    WINAPI  SKIF_Util_SetProcessInformation       (HANDLE hProcess, PROCESS_INFORMATION_CLASS ProcessInformationClass, LPVOID ProcessInformation, DWORD ProcessInformationSize);
 bool            SKIF_Util_SetProcessPowerThrottling   (HANDLE processHandle, INT state);
 bool            SKIF_Util_SetProcessMemoryPriority    (HANDLE processHandle, ULONG memoryPriority);
+bool            SKIF_Util_IsWindows8OrGreater         (void);
 bool            SKIF_Util_IsWindows8Point1OrGreater   (void);
 bool            SKIF_Util_IsWindows10OrGreater        (void);
+bool            SKIF_Util_IsWindows10v1607OrGreater   (void);
 bool            SKIF_Util_IsWindows10v1709OrGreater   (void);
+bool            SKIF_Util_IsWindows10v1803OrGreater   (void);
 bool            SKIF_Util_IsWindows10v1903OrGreater   (void);
 bool            SKIF_Util_IsWindows11orGreater        (void);
+bool            SKIF_Util_IsWindows11v24H2orGreater   (void);
 bool            SKIF_Util_IsWindowsVersionOrGreater   (DWORD dwMajorVersion, DWORD dwMinorVersion, DWORD dwBuildNumber);
+bool            SKIF_Util_IsWindowsVersionExactly     (DWORD dwMajorVersion, DWORD dwMinorVersion, DWORD dwBuildNumber);
 bool            SKIF_Util_IsTouchCapable              (void);
+SKIF_Elevation  SKIF_Util_GetProcessElevation         (DWORD PID);
 bool            SKIF_Util_IsProcessAdmin              (DWORD PID);
 bool            SKIF_Util_IsProcessX86                (HANDLE process);
 PROCESSENTRY32W SKIF_Util_FindProcessByName           (const wchar_t* wszName);
@@ -214,8 +258,29 @@ std::wstring    SKIF_Util_GetClipboardTextDataW       (void);
 std::string     SKIF_Util_GetClipboardHTMLData        (void);
 std::wstring    SKIF_Util_GetClipboardHDROP           (void);
 DirectX::Image  SKIF_Util_GetClipboardBitmapData      (void);
+bool            SKIF_Util_GetClipboardPNGData         (void);
 std::wstring    SKIF_Util_AddEnvironmentBlock         (const void* pEnvBlock, const std::wstring& varName, const std::wstring& varValue);
 void            SKIF_Util_FileExplorer_SelectFile     (PCWSTR filePath);
+bool            SKIF_Util_FileExplorer_DeleteFile     (PCWSTR filePath, bool hideWarning);
+void            SKIF_Util_FileExplorer_ContextMenuFile(PCWSTR filePath, HWND hWndOwner);
+std::wstring    SKIF_Util_FileExplorer_BrowseForFolderXP(PCWSTR defaultPath);
+std::wstring    SKIF_Util_FileExplorer_BrowseForFolder(PCWSTR defaultPath);
+enum class PreferredAppMode //
+{
+  Default,
+  AllowDark,
+  ForceDark,
+  ForceLight,
+  Max
+};
+
+bool            SKIF_Util_Files_PruneOlderThan        (std::wstring path, ULONGLONG secondsSince);
+bool            SKIF_Util_Files_PruneToLatestN        (std::wstring path, size_t filesToRetain);
+bool            SKIF_Util_AllowDarkModeForApp         (bool allow);
+PreferredAppMode SKIF_Util_SetPreferredAppMode        (PreferredAppMode mode);
+void            SKIF_Util_UpdateAppColorMode          (void);
+HRESULT WINAPI  SKIF_Util_SHGetKnownFolderItem        (REFKNOWNFOLDERID rfid, KNOWN_FOLDER_FLAG flags, HANDLE hToken, REFIID riid, void** ppv);
+AppColorMode    SKIF_Util_SetAppColorMode             (AppColorMode mode);
 std::string     SKIF_Util_GetWindowMessageAsStr       (UINT msg);
 
 
@@ -252,12 +317,13 @@ struct skif_get_web_uri_t {
   wchar_t wszLocalPath[MAX_PATH + 2]                  = { };
   LPCWSTR method                                      = L"GET";
   bool         https                                  = false;
-  std::string  body;
-  std::wstring header;
+  std::string  body                                   = { };
+  std::wstring header                                 = { };
+  std::wstring user_agent                             = L"Special K - Asset Crawler";
 };
 
-DWORD WINAPI SKIF_Util_GetWebUri              (skif_get_web_uri_t* get);
-DWORD        SKIF_Util_GetWebResource         (std::wstring url, std::wstring_view destination, std::wstring method = L"GET", std::wstring header = L"", std::string body = "");
+DWORD WINAPI SKIF_Util_GetWebUri              (skif_get_web_uri_t* get, std::string* response_body = nullptr);
+DWORD        SKIF_Util_GetWebResource         (std::wstring url, std::wstring_view file_path, std::wstring method = L"GET", std::wstring header = L"", std::string body = "", std::wstring user_agent = L"", std::string* response_body = nullptr);
 skif_get_web_uri_t SKIF_Util_CrackWebUrl      (const std::wstring url);
 
 
@@ -282,24 +348,36 @@ struct SKIF_DirectoryWatch
                                     DWORD dwNotifyFilter = FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_LAST_WRITE);
   ~SKIF_DirectoryWatch (void);
 
-  bool isSignaled      (void) const;
+  // Copy: creates a fresh, independent watch on the same path.
+  // The source's handle is left untouched.
+  SKIF_DirectoryWatch            (const SKIF_DirectoryWatch&  other);
+  SKIF_DirectoryWatch& operator= (const SKIF_DirectoryWatch&  other);
 
+  // Move: takes ownership of the source's handle.
+  SKIF_DirectoryWatch            (      SKIF_DirectoryWatch&& other) noexcept;
+  SKIF_DirectoryWatch& operator= (      SKIF_DirectoryWatch&& other) noexcept;
+
+  std::wstring getPath (void) const;
+  bool isActive        (void) const;
+  bool isSignaled      (void) const;
   bool isSignaled      (std::wstring_view wstrPath,
                                     UITab waitTab        = UITab_None,
                                      BOOL bWatchSubtree  = FALSE,
                                     DWORD dwNotifyFilter = FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_LAST_WRITE);
-  
   void reset           (void);
 
-  HANDLE       _hChangeNotification = INVALID_HANDLE_VALUE; // If the FindFirstChangeNotification function fails, the return value is INVALID_HANDLE_VALUE.
-  UITab        _waitTab             = UITab_None;
-  std::wstring _path                = L"";
 
 private:
   void registerNotify  (std::wstring_view wstrPath,
                                     UITab waitTab        = UITab_None,
                                      BOOL bWatchSubtree  = FALSE,
                                     DWORD dwNotifyFilter = FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_LAST_WRITE);
+
+  HANDLE       _hChangeNotification = INVALID_HANDLE_VALUE; // If the FindFirstChangeNotification function fails, the return value is INVALID_HANDLE_VALUE.
+  UITab        _waitTab             = UITab_None;
+  std::wstring _path                = L"";
+  BOOL         _watchSubtree        = FALSE;
+  DWORD        _notifyFilter        = FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_LAST_WRITE;
 };
 
 
@@ -317,38 +395,38 @@ struct SKIF_RegistryWatch {
 
   ~SKIF_RegistryWatch    (void);
 
-  LSTATUS registerNotify (void) const;
-  void reset             (void);
+  SKIF_RegistryWatch            (const SKIF_RegistryWatch&  other);
+  SKIF_RegistryWatch& operator= (const SKIF_RegistryWatch&  other);
+  SKIF_RegistryWatch            (      SKIF_RegistryWatch&& other) noexcept;
+  SKIF_RegistryWatch& operator= (      SKIF_RegistryWatch&& other) noexcept;
+
   bool isSignaled        (void);
 
-  struct {
-    HKEY         root        = { };
-    std::wstring sub_key;
-    BOOL         watch_subtree;
-    DWORD        filter_mask;
-    BOOL         wow64_32key; // Access a 32-bit key from either a 32-bit or 64-bit application.
-    BOOL         wow64_64key; // Access a 64-bit key from either a 32-bit or 64-bit application.
-  } _init;
-
-  HKEY    _hKeyBase    = { };
-  HANDLE  _hEvent      = NULL; // If the CreateEvent function fails, the return value is NULL.
-  UITab   _waitTab     = UITab_None;
-};
-
-class SKIV_ScopedThreadPriority
-{
-public:
-  SKIV_ScopedThreadPriority (int prio = THREAD_PRIORITY_TIME_CRITICAL) {
-    orig_prio_ =
-      GetThreadPriority (GetCurrentThread ());
-
-    SetThreadPriority (GetCurrentThread  (), prio);
-  };
-
-  ~SKIV_ScopedThreadPriority (void) {
-    SetThreadPriority (GetCurrentThread (), orig_prio_);
-  }
+  // Read-only access to the watched key, e.g. to read values from the same key that is being watched
+  HKEY                getKey       (void) const; // The opened key, or NULL if it could not be opened
+  HKEY                getRootKey   (void) const;
+  const std::wstring& getSubKey    (void) const;
+  bool                isWOW6432Key (void) const;
+  bool                isWOW6464Key (void) const;
 
 private:
-  int orig_prio_;
+  LSTATUS registerNotify (void);
+  void    reset          (void);
+
+  struct {
+    HKEY         root          = NULL;
+    std::wstring sub_key;
+    std::wstring event_name;            // Base name given by the caller (see _eventNameActual)
+    BOOL         watch_subtree = FALSE;
+    DWORD        filter_mask   = 0;
+    BOOL         wow64_32key   = FALSE; // Access a 32-bit key from either a 32-bit or 64-bit application.
+    BOOL         wow64_64key   = FALSE; // Access a 64-bit key from either a 32-bit or 64-bit application.
+  } _init;
+
+  HKEY         _hKeyBase        = NULL;
+  HANDLE       _hEvent          = NULL; // If the CreateEvent function fails, the return value is NULL.
+  UITab        _waitTab         = UITab_None;
+  std::wstring _eventNameActual = L"";  // Named, so the event is easy to identify in e.g. Process Explorer (made unique per object)
+
+  void swap (SKIF_RegistryWatch& other) noexcept;
 };

@@ -19,16 +19,20 @@ New versions will probably be distributed through their own packaged installer o
 
 ## Format support
 
-* JXR
-* AVIF* (Windows 11 only)
+* Ultra HDR (.jpg)
+* AVIF* (.avif)
+* JPEG XL (.jxl)
+* JPEG XR (.jxr)
+* OpenEXR (.exr)
 * Radiance HDR (.hdr)
 * PNG* (+ HDR support)
-* JPEG (JPG)
+* JPEG (.jpg)
 * WebP*
 * PSD
 * GIF*
 * BMP
 * TIFF
+* DDS
 
 *\* No animation support.*
 
@@ -68,13 +72,13 @@ New versions will probably be distributed through their own packaged installer o
 ## Third-party code
 
 * Uses [Dear ImGui](https://github.com/ocornut/imgui), licensed under [MIT](https://github.com/ocornut/imgui/blob/master/LICENSE.txt).
+* Uses [ImGuiNotify](https://github.com/TyomaVader/ImGuiNotify), licensed under [MIT](https://github.com/TyomaVader/ImGuiNotify/blob/Dev/LICENSE).
 * Uses [DirectX Texture Library](http://go.microsoft.com/fwlink/?LinkId=248926), licensed under [MIT](https://github.com/microsoft/DirectXTex/blob/main/LICENSE).
 * Uses [Font Awesome Free v6.2.1](https://fontawesome.com/v6/download), licensed under [SIL OFL 1.1 License](https://scripts.sil.org/OFL).
-* Uses [JSON for Modern C++](https://github.com/nlohmann/json), licensed under [MIT](https://github.com/nlohmann/json/blob/develop/LICENSE.MIT).
-* Uses [PicoSHA2](https://github.com/okdshin/PicoSHA2), licensed under [MIT](https://github.com/okdshin/PicoSHA2/blob/master/LICENSE).
 * Uses [Plog](https://github.com/SergiusTheBest/plog), licensed under [MIT](https://github.com/SergiusTheBest/plog/blob/master/LICENSE).
-* Uses [pugixml](https://pugixml.org/), licensed under [MIT](https://pugixml.org/license.html).
-* Uses [ValveFileVDF](https://github.com/TinyTinni/ValveFileVDF), licensed under [MIT](https://github.com/TinyTinni/ValveFileVDF/blob/master/LICENSE).
-* Uses [TextFlowCpp](https://github.com/catchorg/textflowcpp), licensed under [BSL-1.0](https://github.com/catchorg/textflowcpp/blob/master/LICENSE.txt).
 * Uses [HybridDetect](https://github.com/GameTechDev/HybridDetect/), licensed under [MIT](https://github.com/GameTechDev/HybridDetect/blob/main/LICENSE.md).
+* Uses [zlib](https://github.com/madler/zlib), licensed under [the zlib license](https://raw.githubusercontent.com/madler/zlib/develop/LICENSE).
+* Uses [OpenEXR](https://github.com/AcademySoftwareFoundation/openexr), licensed under [BSD](https://raw.githubusercontent.com/AcademySoftwareFoundation/openexr/main/LICENSE.md).
+* Uses code from [win32-darkmode](https://github.com/ysc3839/win32-darkmode/), licensed under [MIT](https://github.com/ysc3839/win32-darkmode/blob/master/LICENSE).
+* Optionally uses [libjxl](https://github.com/libjxl/), licensed under [BSD](https://raw.githubusercontent.com/libjxl/libjxl/main/LICENSE).
 * Includes various snippets of code from [Stack Overflow](https://stackoverflow.com/), licensed under [Creative Commons Attribution-ShareAlike](https://stackoverflow.com/help/licensing).

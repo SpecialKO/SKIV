@@ -4,7 +4,7 @@
 #include <typeindex>
 #include <sstream>
 #include <vector>
-#include "sk_utility.h"
+#include "utility.h"
 
 #ifndef RRF_SUBKEY_WOW6464KEY
 #define RRF_SUBKEY_WOW6464KEY  0x00010000
@@ -23,14 +23,14 @@ struct SKIF_RegistrySettings {
   // TODO: Rework this whole thing to not only hold a registry path but
   //       also hold the actual current value as well, allowing us to
   //       move away from ugly stuff like
-  // 
+  //
   //  _registry.uiLastSelectedGame = newValue;
   //  _registry.regKVLastSelectedGame.putData  (_registry.uiLastSelectedGame);
-  // 
+  //
   //       and instead do things like
-  // 
+  //
   //  _registry.uiLastSelectedGame.putData (newValue);
-  // 
+  //
   //       and have it automatically get stored in the registry as well.
 
   template <class _Tp>
@@ -66,7 +66,7 @@ struct SKIF_RegistrySettings {
     protected:
     private:
       KeyDesc _desc;
-      
+
       LSTATUS _SetValue (_Tp * pVal)
       {
         LSTATUS lStat         = STATUS_INVALID_DISPOSITION;
@@ -99,7 +99,7 @@ struct SKIF_RegistrySettings {
                                 _desc.wszKeyValue,
                                 _desc.dwType,
                           (LPBYTE) _in.data(), dwDataSize);
-            
+
           RegCloseKey (hKeyToSet);
 
           return lStat;
@@ -135,7 +135,7 @@ struct SKIF_RegistrySettings {
 
         return lStat;
       };
-      
+
       LSTATUS _GetValue (_Tp* pVal, DWORD* pLen = nullptr, HKEY* hKey = nullptr)
       {
         LSTATUS lStat =
@@ -166,7 +166,7 @@ struct SKIF_RegistrySettings {
 #define SKIF_MakeRegKeyI   KeyValue <int>         ::MakeKeyValue
 #define SKIF_MakeRegKeyWS  KeyValue <std::wstring>::MakeKeyValue
 #define SKIF_MakeRegKeyVEC KeyValue <std::vector <std::wstring>>::MakeKeyValue
-  
+
   // Booleans
 
   KeyValue <bool> regKVUIBorders =
@@ -233,9 +233,13 @@ struct SKIF_RegistrySettings {
     SKIF_MakeRegKeyB ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(Efficiency Mode)" );
 
-  KeyValue <bool> regKVFadeCovers =
+  KeyValue <bool> regKVCrossFade =
     SKIF_MakeRegKeyB ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
-                         LR"(Fade Covers)" );
+                         LR"(Cross-Fade)" );
+
+  KeyValue <bool> regKVAnimatedImages =
+    SKIF_MakeRegKeyB ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(Animated Images)" );
 
   KeyValue <bool> regKVControllers =
     SKIF_MakeRegKeyB ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
@@ -257,9 +261,25 @@ struct SKIF_RegistrySettings {
     SKIF_MakeRegKeyB ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(Resize Window)" );
 
+  KeyValue <bool> regKVLoopImages =
+    SKIF_MakeRegKeyB ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(Loop)" );
+
   KeyValue <bool> regKVImageDetails =
     SKIF_MakeRegKeyB ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(Image Details)" );
+
+  KeyValue <bool> regKV99thPercentileMaxCLL =
+    SKIF_MakeRegKeyB ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(99th Percentile MaxCLL)" );
+
+  KeyValue <bool> regKVAlpha =
+    SKIF_MakeRegKeyB( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(Image Alpha)");
+
+  KeyValue <bool> regKVCheckerboard =
+    SKIF_MakeRegKeyB(LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(Alpha Checkerboard)");
 
   // Integers (DWORDs)
 
@@ -279,6 +299,10 @@ struct SKIF_RegistrySettings {
     SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(Darken)" );
 
+  KeyValue <int> regKVThumbnailCarousel =
+    SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(Thumbnail Carousel)" );
+
   KeyValue <int> regKVCheckForUpdates =
     SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(Check For Updates)" );
@@ -291,17 +315,85 @@ struct SKIF_RegistrySettings {
     SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(HDR)" );
 
+  KeyValue <bool> regKVLinearFontAlpha =
+    SKIF_MakeRegKeyB ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(Linear Font Alpha)" );
+
   KeyValue <int> regKVHDRBrightness =
     SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(HDR Brightness)" );
+
+  KeyValue <int> regKVHDRToneMapType =
+    SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(HDR Tonemap Type)" );
 
   KeyValue <int> regKVUIMode =
     SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(UI Mode)" );
 
+  KeyValue <int> regKVUIWidth =
+    SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(UI Width)" );
+
+  KeyValue <int> regKVUIHeight =
+    SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(UI Height)" );
+
+  KeyValue <int> regKVUIPositionX =
+    SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(UI Position X)" );
+
+  KeyValue <int> regKVUIPositionY =
+    SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(UI Position Y)" );
+
   KeyValue <int> regKVDiagnostics =
     SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(Diagnostics)" );
+
+  KeyValue <int> regKVAVIFQuality =
+    SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\AVIF\)",
+                         LR"(Quality)" );
+
+  KeyValue <int> regKVAVIFSpeed =
+    SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\AVIF\)",
+                         LR"(Speed)" );
+
+  KeyValue <int> regKVAVIFHDRBitDepth =
+    SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\AVIF\)",
+                         LR"(HDR BitDepth)" );
+
+  KeyValue <int> regKVJXLQuality =
+    SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\JPEG XL\)",
+                         LR"(Quality)" );
+
+  KeyValue <int> regKVJXLSpeed =
+    SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\JPEG XL\)",
+                         LR"(Speed)" );
+
+  KeyValue <int> regKVJXLHDRBitDepth =
+    SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\JPEG XL\)",
+                         LR"(HDR BitDepth)" );
+
+  KeyValue <int> regKVJXRQuality =
+    SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\JPEG XR\)",
+                         LR"(Quality)" );
+
+  KeyValue <int> regKVPNGHDRBitDepth =
+    SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\PNG\)",
+                         LR"(HDR BitDepth)" );
+
+  KeyValue <bool> regKVPNGDiscordCompatibility =
+    SKIF_MakeRegKeyB ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\PNG\)",
+                         LR"(Discord Compatibility)" );
+
+  KeyValue <int> regKVScreenshotsAutosave =
+    SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(Screenshots Autosave)" );
+
+  KeyValue <int> regKVScreenshotsHotkeys =
+    SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(Screenshots Hotkeys)" );
 
   // Wide Strings
 
@@ -316,6 +408,14 @@ struct SKIF_RegistrySettings {
   KeyValue <std::wstring> regKVPathViewer =
     SKIF_MakeRegKeyWS ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(Path)" );
+
+  KeyValue <std::wstring> regKVPathScreenshots =
+    SKIF_MakeRegKeyWS ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(Screenshots)" );
+
+  KeyValue <std::wstring> regKVScreenshotsPattern =
+    SKIF_MakeRegKeyWS ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(Screenshots Pattern)" );
 
   KeyValue <std::wstring> regKVAutoUpdateVersion =
     SKIF_MakeRegKeyWS ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
@@ -371,30 +471,44 @@ struct SKIF_RegistrySettings {
                          LR"(AppsUseLightTheme)" );
 
   // Default settings (multiple options)
-//int iImageScaling            = 2;   // 0 = None,                        1 = Fill,                   2 = Fit (default),               3 = Stretch
-  int iStyle                   = 0;   // 0 = Dynamic,                     1 = SKIF Dark,              2 = SKIF Light,                  3 = ImGui Classic,                  4 = ImGui Dark
-  int iStyleTemp               = 0;   // Used to temporary hold changes in the style during the current session
-  int iDarkenImages            = 0;   // 0 = Never,                       1 = Always,                 2 = On mouse hover
-  int iCheckForUpdates         = 1;   // 0 = Never,                       1 = Weekly,                 2 = On each launch
-  int iLogging                 = 4;   // 0 = None,                        1 = Fatal,                  2 = Error,                       3 = Warning,                        4 = Info,       5 = Debug,       6 = Verbose
-  int iSDRMode                 = 0;   // 0 = 8 bpc,                       1 = 10 bpc,                 2 = 16 bpc
-  int iHDRMode                 = 2;   // 0 = Disabled,                    1 = HDR10 (10 bpc),         2 = scRGB (16 bpc)
+//int iImageScaling            =   2;   // 0 = None,                        1 = Fill,                   2 = Fit (default),               3 = Stretch
+  int iStyle                   =   0;   // 0 = Dynamic,                     1 = SKIF Dark,              2 = SKIF Light,                  3 = ImGui Classic,                  4 = ImGui Dark
+  int iStyleTemp               =   0;   // Used to temporary hold changes in the style during the current session
+  int iDarkenImages            =   0;   // 0 = Never,                       1 = Always,                 2 = On mouse hover
+  int iThumbnailCarousel       =   1;   // 0 = Never (no thumbnails),       1 = When mouse is nearby,   2 = Always
+  int iCheckForUpdates         =   1;   // 0 = Never,                       1 = Weekly,                 2 = On each launch
+  int iLogging                 =   4;   // 0 = None,                        1 = Fatal,                  2 = Error,                       3 = Warning,                        4 = Info,       5 = Debug,       6 = Verbose
+  int iSDRMode                 =   0;   // 0 = 8 bpc,                       1 = 10 bpc,                 2 = 16 bpc
+  int iHDRMode                 =   2;   // 0 = Disabled,                    1 = HDR10 (10 bpc),         2 = scRGB (16 bpc)
   int iHDRBrightness           = 203; // HDR reference white for BT.2408
-  int iUIMode                  = 1;   // 0 = Safe Mode (BitBlt),          1 = Normal,                 2 = VRR Compatibility
-  int iDiagnostics             = 1;   // 0 = None,                        1 = Normal,                 2 = Enhanced (not actually used yet)
+  int iHDRToneMapType          =   8;   // 0 = Do Nothing,                  1 = Clip Luminance,         8 = Map to Display
+  int iUIMode                  =   1;   // 0 = Safe Mode (BitBlt),          1 = Normal,                 2 = VRR Compatibility
+  int iDiagnostics             =   1;   // 0 = None,                        1 = Normal,                 2 = Enhanced (not actually used yet)
+  int iUIWidth                 =   0; //  0 = None (default)
+  int iUIHeight                =   0; //  0 = None (default)
+  int iUIPositionX             =  -1; // -1 = None (default)
+  int iUIPositionY             =  -1; // -1 = None (default)
+  CaptureMode eScreenshotsAutosave = CaptureMode_ALL, // Default to saving all types of screen captures
+              eScreenshotsHotkeys  = CaptureMode_ALL; // Default to enabling all hotkeys
 
   // Default settings (booleans)
   bool bAdjustWindow            = false; // Adjust window size based on the image size?
   bool bGhost                   = false; // Visibility of Shelly the Ghost
   bool bNotifications           =  true;
   bool bUIBorders               = false;
+  bool bLinearFontAlpha         = false; // Only applicable to 16 bpc; restores the original linear blending of text
   bool bUITooltips              =  true;
   bool bUIStatusBar             =  true;
   bool bUICaptionButtons        = false; // Minimize, Close
   bool bDPIScaling              =  true;
   bool bWin11Corners            =  true; // 2023-08-28: Enabled by default
   bool bTouchInput              =  true; // Automatically make the UI more optimized for touch input on capable devices
+
+  bool bLoopImages              = false;
   bool bImageDetails            = false;
+  bool b99thPercentileMaxCLL    =  true;
+  bool bAlpha                   = false;
+  bool bCheckerboard            = false;
 
   bool bFirstLaunch             = false;
   bool bCloseToTray             = false;
@@ -406,7 +520,8 @@ struct SKIF_RegistrySettings {
   bool bAutoUpdate              = false; // Automatically runs downloaded installers
   bool bDeveloperMode           = false;
   bool bEfficiencyMode          =  true; // Should the main thread try to engage EcoQoS / Efficiency Mode on Windows 11 ?
-  bool bFadeCovers              =  true;
+  bool bCrossFade              =  true;
+  bool bAnimatedImages          =  true; // Play animated images (APNG, GIF, WebP); off: only their first frame is shown
   bool bControllers             =  true; // Should SKIF support controller input ?
   bool bLoggingDeveloper        = false; // This is a log level "above" verbose logging that also includes stuff like window messages. Only useable for SKIF developers
 
@@ -415,9 +530,38 @@ struct SKIF_RegistrySettings {
   std::wstring wsIgnoreUpdate;
   std::wstring wsPathViewer;
   std::wstring wsPathSpecialK;
+  std::wstring wsPathScreenshots;
+  std::wstring wsScreenshotsPattern = L"<app>_<date>_<time>";
   std::wstring wsAutoUpdateVersion; // Holds the version the auto-updater is trying to install
   std::wstring wsDefaultHDRExt = L".png";
   std::wstring wsDefaultSDRExt = L".png";
+
+  // Encoder config
+  struct {
+    CRegKey key;
+    int     hdr_bitdepth = 12;
+    int     quality      = 100;
+    int     speed        = 10;
+    int     yuv_sampling = 444;
+  } avif;
+
+  struct {
+    CRegKey key;
+    int     quality      = 100;
+  } jxr;
+
+  struct {
+    CRegKey key;
+    int     quality      = 100;
+    int     speed        = 10;
+    int     hdr_bitdepth = 16;
+  } jxl;
+
+  struct {
+    CRegKey key;
+    int     hdr_bitdepth = 16;
+    bool    discord_compatibility = false; // Omit cICP from HDR PNGs (Discord ignores the iCCP if cICP is present)
+  } png;
 
   // Windows stuff
   std::wstring wsAppRegistration;
@@ -433,9 +577,10 @@ struct SKIF_RegistrySettings {
   bool _RendererHDREnabled          = false; // HDR Enabled
   bool _TouchDevice                 = false;
   bool _SnippingMode                = false;
+  bool _SnippingModeInit            =  true;
   bool _SnippingModeExit            = false;
   bool _SnippingModeTempHDR         = false;
-  int  _SnippingTonemapsHDR         = 0;
+  int  _SnippingTonemapsHDR         = 2;
 
   // Keybindings
 

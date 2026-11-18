@@ -1,10 +1,10 @@
 /**
  * @file ImGuiNotify.hpp
  * @brief A header-only library for creating toast notifications with ImGui.
- * 
+ *
  * Based on imgui-notify by patrickcjk
  * https://github.com/patrickcjk/imgui-notify
- * 
+ *
  * @version 0.0.3 WIP by TyomaVader
  * @date 18.01.2024
  */
@@ -56,9 +56,33 @@ extern float SKIF_ImGui_GlobalDPIScale;
 
 
 
+/**
+	* @brief The viewport of the current window, or the app's window when the toast is created outside of a window.
+	*
+	*   Outside of a frame (e.g. from a drop or a window message, handled while the message queue is pumped) there is no
+	*   current window. The main viewport is not the app's window in SKIV (it is ImGui's hidden host viewport, the app's
+	*   window being a viewport of its own), so a toast of the main viewport would never be rendered (RenderNotifications
+	*   is called for the app's window) and, before RenderNotifications also expired those of other windows, never removed
+	*   either: the main loop kept rendering for it for good.
+	*
+	* @return HWND The HWND of the current viewport, or of the app's window.
+	*/
+static HWND getDefaultHWND()
+{
+	const ImGuiContext* g = ImGui::GetCurrentContext();
 
+	if (g != nullptr && g->CurrentWindow != nullptr && g->CurrentWindow->Viewport != nullptr)
+		return (HWND)g->CurrentWindow->Viewport->PlatformHandleRaw;
 
-static const ImGuiChildFlags  NOTIFY_DEFAULT_CHILD_FLAGS  = ImGuiChildFlags_AlwaysAutoResize | ImGuiChildFlags_AutoResizeX | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Border;
+	extern HWND SKIF_ImGui_hWnd;
+
+	if (SKIF_ImGui_hWnd != NULL)
+		return SKIF_ImGui_hWnd;
+
+	return (HWND)ImGui::GetMainViewport()->PlatformHandleRaw;
+}
+
+static const ImGuiChildFlags  NOTIFY_DEFAULT_CHILD_FLAGS  = ImGuiChildFlags_AlwaysAutoResize | ImGuiChildFlags_AutoResizeX | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders;
 static const ImGuiWindowFlags NOTIFY_DEFAULT_WINDOW_FLAGS = ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_Tooltip; // ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoFocusOnAppearing;
 
 #define NOTIFY_NULL_OR_EMPTY(str)		(!str || !strlen(str))
@@ -113,6 +137,8 @@ private:
 	std::function<void()>						onButtonPress = nullptr; // A lambda variable, which will be executed when button in notification is pressed
 	char 										buttonLabel[NOTIFY_MAX_MSG_LENGTH];
 
+  HWND hwnd = getDefaultHWND();
+
 	static int32_t maxAssignedId;
 	       int32_t      uniqueId = 0;
 
@@ -137,8 +163,18 @@ private:
 public:
 
 	/**
+	 * @brief Set the HWND of the toast notification.
+	 *
+	 * @return HWND The HWND of the toast notification.
+	 */
+	inline void setHWnd(const HWND hwnd_)
+	{
+		this->hwnd = hwnd_;
+	};
+
+	/**
 	 * @brief Set the title of the toast notification.
-	 * 
+	 *
 	 * @param format The format string for the title.
 	 * @param ... The arguments for the format string.
 	 */
@@ -149,7 +185,7 @@ public:
 
 	/**
 	 * @brief Set the content of the toast notification.
-	 * 
+	 *
 	 * @param format The format string for the content.
 	 * @param ... The arguments for the format string.
 	 */
@@ -160,7 +196,7 @@ public:
 
 	/**
 	 * @brief Set the type of the toast notification.
-	 * 
+	 *
 	 * @param type The type of the toast notification.
 	 */
 	inline void setType(const ImGuiToastType& type_)
@@ -171,7 +207,7 @@ public:
 
 	/**
 	 * @brief Set the ImGui window flags for the notification.
-	 * 
+	 *
 	 * @param flags ImGui window flags to set.
 	*/
 	inline void setWindowFlags(const ImGuiWindowFlags& flags_)
@@ -181,7 +217,7 @@ public:
 
 	/**
 	 * @brief Set the function to run on the button click in the notification.
-	 * 
+	 *
 	 * @param onButtonPress std::fuction or lambda expression, which contains the code for execution.
 	*/
 	inline void setOnButtonPress(const std::function<void()>& onButtonPress_)
@@ -191,7 +227,7 @@ public:
 
 	/**
 	 * @brief Set the label for the button in the notification.
-	 * 
+	 *
 	 * @param format The format string for the label.
 	 * @param ... The arguments for the format string.
 	*/
@@ -204,8 +240,18 @@ public:
 	// Getters
 
 	/**
+	 * @brief Get the HWND of the toast notification.
+	 *
+	 * @return HWND The HWND of the toast notification.
+	 */
+	inline const HWND getHWND()
+	{
+		return this->hwnd;
+	};
+
+	/**
 	 * @brief Get the title of the toast notification.
-	 * 
+	 *
 	 * @return const char* The title of the toast notification.
 	 */
 	inline const char* getTitle()
@@ -215,7 +261,7 @@ public:
 
 	/**
 	 * @brief Get the default title of the toast notification based on its type.
-	 * 
+	 *
 	 * @return const char* The default title of the toast notification.
 	 */
 	inline const char* getDefaultTitle()
@@ -244,7 +290,7 @@ public:
 
 	/**
 	 * @brief Get the type of the toast notification.
-	 * 
+	 *
 	 * @return ImGuiToastType The type of the toast notification.
 	 */
 	inline ImGuiToastType getType()
@@ -254,7 +300,7 @@ public:
 
 	/**
 	 * @brief Get the color of the toast notification based on its type.
-	 * 
+	 *
 	 * @return ImVec4 The color of the toast notification.
 	 */
 	inline ImVec4 getColor()
@@ -278,10 +324,10 @@ public:
 
 	/**
 	 * @brief Get the icon of the toast notification based on its type.
-	 * 
+	 *
 	 * @return const char* The icon of the toast notification.
 	 */
-	inline const char* getIcon() 
+	inline const char* getIcon()
 	{
 		switch (this->type)
 		{
@@ -302,28 +348,28 @@ public:
 
 	/**
 	 * @brief Get the content of the toast notification.
-	 * 
+	 *
 	 * @return char* The content of the toast notification.
 	 */
-	inline char* getContent() 
+	inline char* getContent()
 	{
 		return this->content;
 	};
 
 	/**
 	 * @brief Get the elapsed time in milliseconds since the creation of the object.
-	 * 
+	 *
 	 * @return int64_t The elapsed time in milliseconds.
 	 * @throws An exception with the message "Unsupported platform" if the platform is not supported.
 	 */
-	inline std::chrono::nanoseconds getElapsedTime() 
+	inline std::chrono::nanoseconds getElapsedTime()
 	{
 		return std::chrono::system_clock::now() - this->creationTime;
 	}
 
 	/**
 	 * @brief Get the current phase of the toast notification based on the elapsed time since its creation.
-	 * 
+	 *
 	 * @return ImGuiToastPhase The current phase of the toast notification.
 	 *         - ImGuiToastPhase::FadeIn: The notification is fading in.
 	 *         - ImGuiToastPhase::Wait: The notification is waiting to be dismissed.
@@ -337,11 +383,11 @@ public:
 		if (elapsed > NOTIFY_FADE_IN_OUT_TIME + this->dismissTime + NOTIFY_FADE_IN_OUT_TIME)
 		{
 			return ImGuiToastPhase::Expired;
-		} else 
+		} else
 		if (elapsed > NOTIFY_FADE_IN_OUT_TIME + this->dismissTime)
 		{
 			return ImGuiToastPhase::FadeOut;
-		} else 
+		} else
 		if (elapsed > NOTIFY_FADE_IN_OUT_TIME)
 		{
 			return ImGuiToastPhase::Wait;
@@ -363,7 +409,7 @@ public:
 		if (phase == ImGuiToastPhase::FadeIn)
 		{
 			return ((float)elapsed / (float)NOTIFY_FADE_IN_OUT_TIME) * NOTIFY_OPACITY;
-		} else 
+		} else
 		if (phase == ImGuiToastPhase::FadeOut)
 		{
 			return (1.f - (((float)elapsed - (float)NOTIFY_FADE_IN_OUT_TIME - (float)this->dismissTime) / (float)NOTIFY_FADE_IN_OUT_TIME)) * NOTIFY_OPACITY;
@@ -418,7 +464,7 @@ public:
 
 	/**
 	 * @brief Creates a new ImGuiToast object with the specified type and dismiss time.
-	 * 
+	 *
 	 * @param type The type of the toast.
 	 * @param dismissTime The time in milliseconds after which the toast should be dismissed. Default is NOTIFY_DEFAULT_DISMISS.
 	 */
@@ -439,7 +485,7 @@ public:
 
 	/**
 	 * @brief Constructor for creating an ImGuiToast object with a specified type and message format.
-	 * 
+	 *
 	 * @param type The type of the toast message.
 	 * @param format The format string for the message.
 	 * @param ... The variable arguments to be formatted according to the format string.
@@ -451,7 +497,7 @@ public:
 
 	/**
 	 * @brief Constructor for creating a new ImGuiToast object with a specified type, dismiss time, and content format.
-	 * 
+	 *
 	 * @param type The type of the toast message.
 	 * @param dismissTime The time in milliseconds before the toast message is dismissed.
 	 * @param format The format string for the content of the toast message.
@@ -464,7 +510,7 @@ public:
 
 	/**
 	 * @brief Constructor for creating a new ImGuiToast object with a specified type, dismiss time, title, and content format.
-	 * 
+	 *
 	 * @param type The type of the toast message.
 	 * @param dismissTime The time in milliseconds before the toast message is dismissed.
 	 * @param format The format string for the content of the toast message.
@@ -479,7 +525,7 @@ public:
 
 	/**
 	 * @brief Constructor for creating a new ImGuiToast object with a specified type, dismiss time, content format, content format and a button.
-	 * 
+	 *
 	 * @param type The type of the toast message.
 	 * @param dismissTime The time in milliseconds before the toast message is dismissed.
 	 * @param buttonLabel The label for the button.
@@ -514,7 +560,7 @@ namespace ImGui
 
 	/**
 	 * @brief Removes a notification from the list of notifications.
-	 * 
+	 *
 	 * @param index The index of the notification to remove.
 	 */
 	inline void RemoveNotification(int index)
@@ -524,7 +570,7 @@ namespace ImGui
 
  /**
 	 * @brief Removes a notification from the list of notifications.
-	 * 
+	 *
 	 * @param index The index of the notification to remove.
 	 */
 	inline bool DismissNotificationById(int32_t id)
@@ -552,7 +598,7 @@ namespace ImGui
 	 * Each notification is rendered as a toast window with a title, content and an optional icon.
 	 * If a notification is expired, it is removed from the vector.
 	 */
-	inline void RenderNotifications()
+	inline void RenderNotifications(HWND hwnd = (HWND)ImGui::GetWindowViewport()->PlatformHandleRaw)
 	{
 		const ImVec2 mainWindowSize = GetCurrentWindowRead()->Size;
 		const float  textWrapWidth  = (600.0f * SKIF_ImGui_GlobalDPIScale < mainWindowSize.x - NOTIFY_PADDING_X * 2)
@@ -564,12 +610,17 @@ namespace ImGui
 		{
 			ImGuiToast* currentToast = &notifications[i];
 
-			// Remove toast if expired
+			// Remove toast if expired: whichever viewport it is of, as one no viewport renders would otherwise stay for good
+			//   (and with it, the main loop rendering for it, see SKIV.cpp). The index stays: the next toast moved into it.
 			if (currentToast->getPhase() == ImGuiToastPhase::Expired)
 			{
-				RemoveNotification(i);
+				RemoveNotification(i--);
 				continue;
 			}
+
+      // Only process toasts intended for the current viewport
+      if (currentToast->getHWND() != hwnd)
+        continue;
 
 			#if NOTIFY_RENDER_LIMIT > 0
 				if (i > NOTIFY_RENDER_LIMIT)
@@ -667,7 +718,7 @@ namespace ImGui
 					  // NEEDS TO BE REWORKED
 					  float scale = 0.8f;
 
-					  if (CalcTextSize(content).x > GetWindowContentRegionMax().x)
+					  if (CalcTextSize(content).x > GetCurrentWindowRead()->ContentRegionRect.Max.x - GetWindowPos().x) // GetWindowContentRegionMax().x before ImGui 1.91.0
 					  {
 						  scale = 0.95f;
 					  }

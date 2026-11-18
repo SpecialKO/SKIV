@@ -824,6 +824,17 @@ typedef struct
      stbi_uc matrix_coeffs;
      stbi_uc full_range;
    };
+
+   struct sbit_s {
+     stbi_uc red_bits;
+     stbi_uc green_bits;
+     stbi_uc blue_bits;
+     stbi_uc alpha_bits;
+   };
+
+   struct iccp_s {
+     bool iCCP;
+   };
 } stbi__context;
 
 
@@ -1287,6 +1298,9 @@ static unsigned char *stbi__load_and_postprocess_8bit(stbi__context *s, int *x, 
       stbi__vertical_flip(result, *x, *y, channels * sizeof(stbi_uc));
    }
 
+   extern thread_local stbi__result_info SKIV_STBI_ResultInfo;
+                                         SKIV_STBI_ResultInfo = ri;
+
    return (unsigned char *) result;
 }
 
@@ -1313,6 +1327,9 @@ static stbi__uint16 *stbi__load_and_postprocess_16bit(stbi__context *s, int *x, 
       int channels = req_comp ? req_comp : *comp;
       stbi__vertical_flip(result, *x, *y, channels * sizeof(stbi__uint16));
    }
+
+   extern thread_local stbi__result_info SKIV_STBI_ResultInfo;
+                                         SKIV_STBI_ResultInfo = ri;
 
    return (stbi__uint16 *) result;
 }
@@ -1473,6 +1490,10 @@ static float *stbi__loadf_main(stbi__context *s, int *x, int *y, int *comp, int 
       float *hdr_data = stbi__hdr_load(s,x,y,comp,req_comp, &ri);
       if (hdr_data)
          stbi__float_postprocess(hdr_data,x,y,comp,req_comp);
+
+      extern thread_local stbi__result_info SKIV_STBI_ResultInfo;
+                                            SKIV_STBI_ResultInfo = ri;
+
       return hdr_data;
    }
    #endif
@@ -3885,6 +3906,13 @@ static stbi_uc *load_jpeg_image(stbi__jpeg *z, int *out_x, int *out_y, int *comp
 
    is_rgb = z->s->img_n == 3 && (z->rgb == 3 || (z->app14_color_transform == 0 && !z->jfif));
 
+   // SKIV: raw CMYK (see below) only of CMYK and YCCK images, as 4 channels
+   {
+      extern thread_local bool SKIV_STBI_RawCMYK;
+      if (! (z->s->img_n == 4 && n == 4 && (z->app14_color_transform == 0 || z->app14_color_transform == 2)))
+         SKIV_STBI_RawCMYK = false;
+   }
+
    if (z->s->img_n == 3 && n < 3 && !is_rgb)
       decode_n = 1;
    else
@@ -3961,7 +3989,27 @@ static stbi_uc *load_jpeg_image(stbi__jpeg *z, int *out_x, int *out_y, int *comp
                   z->YCbCr_to_RGB_kernel(out, y, coutput[1], coutput[2], z->s->img_x, n);
                }
             } else if (z->s->img_n == 4) {
-               if (z->app14_color_transform == 0) { // CMYK
+               // SKIV: CMYK and YCCK as they are (CMY or YCC made RGB, inverted as Adobe stores CMYK), for SKIV to
+               //   convert by a CMYK profile (SKIV_STBI_RawCMYK is set back to false if the image is neither)
+               extern thread_local bool SKIV_STBI_RawCMYK;
+               if (SKIV_STBI_RawCMYK && z->app14_color_transform == 0) {
+                  for (i=0; i < z->s->img_x; ++i) {
+                     out[0] = coutput[0][i];
+                     out[1] = coutput[1][i];
+                     out[2] = coutput[2][i];
+                     out[3] = coutput[3][i];
+                     out += n;
+                  }
+               } else if (SKIV_STBI_RawCMYK && z->app14_color_transform == 2) {
+                  z->YCbCr_to_RGB_kernel(out, y, coutput[1], coutput[2], z->s->img_x, n);
+                  for (i=0; i < z->s->img_x; ++i) { // (YCC gives CMY as ink amounts: inverted, as K is)
+                     out[0] = 255 - out[0];
+                     out[1] = 255 - out[1];
+                     out[2] = 255 - out[2];
+                     out[3] = coutput[3][i];
+                     out += n;
+                  }
+               } else if (z->app14_color_transform == 0) { // CMYK
                   for (i=0; i < z->s->img_x; ++i) {
                      stbi_uc m = coutput[3][i];
                      out[0] = stbi__blinn_8x8(coutput[0][i], m);
@@ -5107,6 +5155,12 @@ static int stbi__parse_png_file(stbi__png *z, int scan, int req_comp)
             stbi__skip(s, c.length);
             break;
 
+         case STBI__PNG_TYPE ('s','R','G','B'):
+            extern thread_local bool SKIV_STBI_srgb;
+            SKIV_STBI_srgb = true;
+            stbi__skip(s, c.length);
+            break;
+
          //
          // SKIV modification for HDR
          //
@@ -5308,6 +5362,9 @@ static void *stbi__do_png(stbi__png *p, int *x, int *y, int *n, int req_comp, st
       *x = p->s->img_x;
       *y = p->s->img_y;
       if (n) *n = p->s->img_n;
+
+      extern thread_local stbi__result_info SKIV_STBI_ResultInfo;
+                                            SKIV_STBI_ResultInfo = *ri;
    }
    STBI_FREE(p->out);      p->out      = NULL;
    STBI_FREE(p->expanded); p->expanded = NULL;
@@ -7306,6 +7363,9 @@ static float *stbi__hdr_load(stbi__context *s, int *x, int *y, int *comp, int re
       if (scanline)
          STBI_FREE(scanline);
    }
+
+   extern thread_local stbi__result_info SKIV_STBI_ResultInfo;
+                                         SKIV_STBI_ResultInfo = *ri;
 
    return hdr_data;
 }

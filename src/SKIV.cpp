@@ -40,6 +40,7 @@
 #include <utility/gamepad.h>
 
 #include <fonts/fa_621.h>
+#include <fonts/fa_621b.h>
 
 #include <imgui/imgui.h>
 #include <imgui/imgui_impl_win32.h>
@@ -52,6 +53,7 @@
 
 #include <filesystem>
 #include <concurrent_queue.h>
+#include <unordered_set>
 #include <oleidl.h>
 #include <utility/droptarget.hpp>
 
@@ -78,6 +80,8 @@
 #include <html_coder.hpp>
 #include <utility/image.h>
 
+#include "psapi.h"
+
 const int SKIF_STEAM_APPID      = 1157970;
 bool  RecreateSwapChains        = false;
 bool  RecreateSwapChainsPending = false;
@@ -85,11 +89,14 @@ bool  RecreateWin32Windows      = false;
 bool  RepositionSKIF            = false;
 bool  RespectMonBoundaries      = false;
 bool  changedHiDPIScaling       = false;
+bool  invalidateStyle           = false;
+bool  RecreateD3DDevice         = false;
 bool  invalidateFonts           = false;
-bool  failedLoadFonts           = false;
-bool  failedLoadFontsPrompt     = false;
 DWORD invalidatedFonts          = 0;
 DWORD invalidatedDevice         = 0;
+bool  SKIF_FirstPresentDone     = false; // Set by ImGui_ImplDX11_SwapBuffers ( ) on the first successful Present ( )
+ImRect SKIF_ImGui_CaptionArea;          // Screen coordinates of the invisible title bar along the top of the window (for dragging and double-clicks)
+bool  SKIF_ImGui_CaptionDoubleClicked = false; // Set by the window procedure when the caption area is double-clicked
 bool  startedMinimized          = false;
 bool  msgDontRedraw             = false;
 bool  imageFadeActive           = false;
@@ -99,6 +106,8 @@ int   SKIF_ExitCode             = 0;
 int   SKIF_nCmdShow             = -1;
 std::atomic<int>  SKIF_FrameCount = 0;
 int   addAdditionalFrames       = 0;
+DWORD SKIV_ResourcesReleasedWakeAt = 0;  // When a frame is drawn after resources were released (SKIF_ResourcesToFree), for D3D11 to destroy them; 0: none
+bool  SKIV_DeviceCleanupWanted     = false; // Set when textures were made off the main loop (the image store's workers): the same, at the end of the frame
 DWORD dwDwmPeriod               = 16; // Assume 60 Hz by default
 bool  SteamOverlayDisabled      = false;
 bool  allowShortcutCtrlA        = true; // Used to disable the Ctrl+A when interacting with text input
@@ -106,7 +115,6 @@ bool  SKIF_MouseDragMoveAllowed = true;
 bool  SKIF_debuggerPresent      = false;
 DWORD SKIF_startupTime          = 0; // Used as a basis of how long the initialization took
 DWORD SKIF_firstFrameTime       = 0; // Used as a basis of how long the initialization took
-HANDLE SteamProcessHandle       = NULL;
 
 // Exporting RTSSHooksCompatibility set to 0x0 prevents RTSS from drawing.
 //
@@ -114,8 +122,6 @@ HANDLE SteamProcessHandle       = NULL;
 //      a profile for this application with "ForceHooking" set.
 extern "C" __declspec (dllexport)
 DWORD RTSSHooksCompatibility = 0x0;
-
-extern bool SK_Keybind_g_isAssigning;
 
 // Shell messages (registered window messages)
 UINT SHELL_TASKBAR_RESTART        = 0; // TaskbarCreated
@@ -126,6 +132,7 @@ ImVec2 SKIF_vecRegularMode          = ImVec2 (0.0f, 0.0f);
 ImVec2 SKIF_vecRegularModeDefault   = ImVec2 (1000.0f, 944.0f);   // Does not include the status bar
 ImVec2 SKIF_vecRegularModeAdjusted  = SKIF_vecRegularModeDefault; // Adjusted for status bar and tooltips (NO DPI scaling!)
 // --- Variables
+ImVec2 SKIF_vecCurrentPosition      = ImVec2 (0.0f, 0.0f); // Gets updated after ImGui::EndFrame()
 ImVec2 SKIF_vecCurrentMode          = ImVec2 (0.0f, 0.0f); // Gets updated after ImGui::EndFrame()
 ImVec2 SKIF_vecCurrentModeNext      = ImVec2 (0.0f, 0.0f); // Holds the new expected size
 ImVec2 SKIF_vecAlteredSize          = ImVec2 (0.0f, 0.0f);
@@ -137,9 +144,6 @@ ImVec2 SKIV_ResizeApp               = ImVec2 (0.0f, 0.0f);
 // Custom Global Key States used for moving SKIF around using WinKey + Arrows
 bool KeyWinKey = false;
 int  SnapKeys  = 0;     // 2 = Left, 4 = Up, 8 = Right, 16 = Down
-
-// Holds swapchain wait handles
-std::vector<HANDLE> vSwapchainWaitHandles;
 
 // GOG Galaxy stuff
 std::wstring GOGGalaxy_Path        = L"";
@@ -156,8 +160,8 @@ bool  HoverTipActive               = false;
 DWORD HoverTipDuration             = 0;
 
 // Notification icon stuff
-static const GUID SKIF_NOTIFY_GUID = // {8142287D-5BC6-4131-95CD-709A2613E1F5}
-{ 0x8142287d, 0x5bc6, 0x4131, { 0x95, 0xcd, 0x70, 0x9a, 0x26, 0x13, 0xe1, 0xf5 } };
+static const GUID SKIF_NOTIFY_GUID = // {8142287D-5BC6-4131-95CD-709A2613E1F4}
+{ 0x8142287d, 0x5bc6, 0x4131, { 0x95, 0xcd, 0x70, 0x9a, 0x26, 0x13, 0xe1, 0xf4 } };
 #define SKIF_NOTIFY_ICON                    0x1330 // 4912
 #define SKIF_NOTIFY_EXIT                    0x1331 // 4913
 #define SKIF_NOTIFY_OPEN                    0x1332 // 4914
@@ -180,6 +184,7 @@ UITab SKIF_Tab_Selected      = UITab_Viewer,
 extern PopupState  OpenFileDialog;  // Viewer: open file dialog
 extern PopupState  SaveFileDialog;  // Viewer: save file dialog
 extern PopupState  ExportSDRDialog; // Viewer: export sdr dialog
+extern PopupState  ConfigEncoders;  // Viewer: configure image encoders
 
 // Variables related to the display SKIF is visible on
 ImVec2  windowPos;
@@ -201,16 +206,22 @@ ID3D11DeviceContext*    SKIF_pd3dDeviceContext    = nullptr;
 //ID3D11RenderTargetView* SKIF_g_mainRenderTargetView = nullptr;
 
 // Forward declarations
-bool                CreateDeviceD3D                           (HWND hWnd);
-void                CleanupDeviceD3D                          (void);
-LRESULT WINAPI      SKIF_WndProc                              (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
-LRESULT WINAPI      SKIF_Notify_WndProc                       (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
-void                SKIF_Initialize                           (LPWSTR lpCmdLine);
+HRESULT             SKIF_DXGI_CreateDXGIFactory1 (REFIID riid, void **ppFactory);
+HRESULT             SKIF_D3D11CreateDevice  (IDXGIAdapter *pAdapter, D3D_DRIVER_TYPE DriverType, HMODULE Software, UINT Flags, const D3D_FEATURE_LEVEL *pFeatureLevels, UINT FeatureLevels, UINT SDKVersion, ID3D11Device **ppDevice, D3D_FEATURE_LEVEL *pFeatureLevel, ID3D11DeviceContext **ppImmediateContext);
+bool                CreateDeviceD3D         (HWND hWnd);
+void                CleanupDeviceD3D        (void);
+LRESULT WINAPI      SKIF_WndProc            (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+LRESULT WINAPI      SKIF_Notify_WndProc     (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+void                SKIF_Initialize         (LPWSTR lpCmdLine);
 
-// Holds current global DPI scaling, 1.0f == 100%, 1.5f == 150%.
+// Holds the DPI scaling of the window currently being built, 1.0f == 100%, 1.5f == 150%.
+//   Updated per window by SKIF_ImGui_OnChangedViewport (per-monitor DPI), and identical to SKIF_ImGui_MainDPIScale
+//     within the main window and between frames.
 float SKIF_ImGui_GlobalDPIScale      = 1.0f;
-// Holds last frame's DPI scaling
-float SKIF_ImGui_GlobalDPIScale_Last = 1.0f;
+// Holds the DPI scaling of the main window (SKIF_ImGui_hWnd), 1.0f == 100%, 1.5f == 150%.
+float SKIF_ImGui_MainDPIScale        = 1.0f;
+// Holds the DPI scaling that SKIF_vecCurrentMode was measured at
+float SKIF_ImGui_MainDPIScale_Last   = 1.0f; // Always identical to SKIF_ImGui_MainDPIScale within ImGui::NewFrame()
 //float SKIF_ImGui_GlobalDPIScale_New  = 1.0f;
 float SKIF_ImGui_FontSizeDefault     = 18.0f; // 18.0F
 
@@ -254,19 +265,19 @@ SKIF_Startup_ProcessCmdLineArgs (LPWSTR lpCmdLine)
 {
   // Use specific shorthands for our internal tasks instead of
   //   a case insensitive search which would produce false positives
-  _Signal.Quit            = 
+  _Signal.Quit            =
     _wcsicmp (lpCmdLine, L"/Exit") == NULL;
-  _Signal.Minimize        = 
+  _Signal.Minimize        =
     wcscmp (lpCmdLine, L"1") == NULL;
-//_Signal.CheckForUpdates = 
+//_Signal.CheckForUpdates =
 //  wcscmp (lpCmdLine, L"2") == NULL;
-  _Signal.OpenFileDialog = 
+  _Signal.OpenFileDialog =
     _wcsicmp (lpCmdLine, L"/OpenFileDialog") == NULL;
-  _Signal.CaptureWindow = 
+  _Signal.CaptureWindow =
     _wcsicmp (lpCmdLine, L"/CaptureWindow") == NULL;
-  _Signal.CaptureRegion = 
+  _Signal.CaptureRegion =
     _wcsicmp (lpCmdLine, L"/CaptureRegion") == NULL;
-  _Signal.CaptureScreen = 
+  _Signal.CaptureScreen =
     _wcsicmp (lpCmdLine, L"/CaptureScreen") == NULL;
 
   if (! _Signal.Quit           &&
@@ -293,7 +304,8 @@ SKIF_Startup_CopyDataRunningInstance (void)
     return;
 
   wchar_t                    wszFilePath [MAX_PATH] = { };
-  if (S_OK == StringCbCopyW (wszFilePath, MAX_PATH, _Signal._FilePath.data()))
+  // (By characters: StringCbCopyW takes bytes, which with MAX_PATH failed for paths of 130 characters or more)
+  if (S_OK == StringCchCopyW (wszFilePath, ARRAYSIZE (wszFilePath), _Signal._FilePath.data()))
   {
     COPYDATASTRUCT cds { };
     cds.dwData = SKIV_CDS_STRING;
@@ -355,7 +367,7 @@ SKIF_Startup_CloseRunningInstances (void)
   {
     DWORD res =
       WaitForMultipleObjectsEx (static_cast<DWORD>(shared.handles.size()), shared.handles.data(), true, 2500, false);
-    
+
     if (res == WAIT_FAILED)
       PLOG_DEBUG << "Failed when trying to wait on the running instances!";
     else if (res == WAIT_TIMEOUT)
@@ -531,7 +543,7 @@ SKIF_Startup_RaiseRunningInstance (void)
 
   PLOG_INFO << "Attempting to restore the running instance: " << pidAlreadyExists;
   SendMessage (_Signal._RunningInstance, WM_SKIF_RESTORE, 0x0, 0x0);
-  
+
   PLOG_INFO << "Terminating due to this instance having done its job.";
   ExitProcess (0x0);
 }
@@ -601,15 +613,25 @@ void SKIF_Shell_CreateNotifyToast (UINT type, std::wstring message, std::wstring
 
   if (type == SKIF_NTOAST_UPDATE || _registry.bNotifications)
   {
-    niData.uFlags       = 
+    niData.uFlags       =
         NIF_INFO  | NIF_REALTIME;  // NIF_REALTIME to indicate the notifications should be discarded if not displayed immediately
 
-    niData.dwInfoFlags  = 
+    niData.dwInfoFlags  =
       (type == SKIF_NTOAST_SERVICE)
       ? NIIF_NONE | NIIF_RESPECT_QUIET_TIME | NIIF_NOSOUND // Mute the sound for service notifications
       : NIIF_NONE | NIIF_RESPECT_QUIET_TIME;
-    wcsncpy_s (niData.szInfoTitle, 64,   title.c_str(),  64);
-    wcsncpy_s (niData.szInfo,     256, message.c_str(), 256);
+    // Cut to fit (translations may be longer than the English text); not between the two halves of a surrogate pair
+    auto _CopyTruncated = [](wchar_t* dest, size_t size, const std::wstring& src)
+    {
+      wcsncpy_s (dest, size, src.c_str(), _TRUNCATE);
+
+      size_t len = wcslen (dest);
+      if (len < src.length() && len > 0 && IS_HIGH_SURROGATE (dest [len - 1]))
+        dest [len - 1] = L'\0';
+    };
+
+    _CopyTruncated (niData.szInfoTitle, _countof (niData.szInfoTitle), title);
+    _CopyTruncated (niData.szInfo,      _countof (niData.szInfo),      message);
 
     Shell_NotifyIcon (NIM_MODIFY, &niData);
 
@@ -629,7 +651,7 @@ void SKIF_Shell_CreateJumpList (void)
   CComPtr <IObjectArray>             pRemovedItems;                             // Not actually used since we don't carry custom destinations
   PROPVARIANT                        pv;                                        // Used to give the custom tasks a title
   UINT                               cMaxSlots;                                 // Not actually used since we don't carry custom destinations
-       
+
   // Create a jump list COM object.
   if     (SUCCEEDED (pDestList.CoCreateInstance (CLSID_DestinationList)))
   {
@@ -872,7 +894,7 @@ void SKIF_Initialize (LPWSTR lpCmdLine)
 
     wcsncpy_s ( _path_cache.skiv_userdata, MAX_PATH,
                 fallbackDir.c_str(), _TRUNCATE);
-        
+
     // Create any missing directories
     if (! std::filesystem::exists             (fallbackDir, ec))
           std::filesystem::create_directories (fallbackDir, ec);
@@ -904,7 +926,7 @@ void SKIF_Initialize (LPWSTR lpCmdLine)
 
     SKIF_debuggerPresent = true;
   }
-  
+
   GetCurrentDirectoryW    (MAX_PATH, _path_cache.skiv_workdir);
 
 
@@ -938,52 +960,90 @@ void SKIF_Initialize (LPWSTR lpCmdLine)
     std::filesystem::create_directories (_path_cache.skiv_temp, ec);
 
   // Clear out any temp files older than a day
-  auto _isDayOld = [&](FILETIME ftLastWriteTime) -> bool
-  {
-    FILETIME ftSystemTime{}, ftAdjustedFileTime{};
-    SYSTEMTIME systemTime{};
-    GetSystemTime (&systemTime);
+  SKIF_Util_Files_PruneOlderThan (tempDir, 24 * 60 * 60);
 
-    if (SystemTimeToFileTime(&systemTime, &ftSystemTime))
+  // Populate SKIV's default screenshot folder
+  const std::wstring screenshotsDir =
+    SKIF_Util_NormalizeFullPath (std::wstring (_path_cache.my_pictures.path) + LR"(\Special K\SKIV\)");
+
+  wcsncpy_s (_path_cache.skiv_screenshots, MAX_PATH,
+                              screenshotsDir.c_str(), _TRUNCATE);
+  strncpy_s (_path_cache.skiv_screenshotsA, MAX_PATH,
+    SK_WideCharToUTF8 (_path_cache.skiv_screenshots).data(), _TRUNCATE);
+}
+
+static
+SKIV_CaptureData::Application
+SKIV_GetApplicationNames (HWND hWnd)
+{
+  // Limit window title / process name to 60 characters
+  const size_t len = MAX_PATH + 2;
+  wchar_t buffer [len] = { };
+  SKIV_CaptureData::Application names = { };
+
+  // Window title
+  if (GetWindowTextW (hWnd, buffer, len))
+    names.window = std::wstring(buffer);
+
+  // Process name
+  DWORD dwProcessId = 0;
+  if (GetWindowThreadProcessId (hWnd, &dwProcessId))
+  {
+    HANDLE hProcess = OpenProcess (PROCESS_QUERY_LIMITED_INFORMATION, FALSE, dwProcessId);
+
+    if (hProcess != NULL)
     {
-      ULARGE_INTEGER uintLastWriteTime{};
+      DWORD lenPath = len;
 
-      // Copy to ULARGE_INTEGER union to perform 64-bit arithmetic
-      uintLastWriteTime.HighPart        = ftLastWriteTime.dwHighDateTime;
-      uintLastWriteTime.LowPart         = ftLastWriteTime.dwLowDateTime;
+      if (QueryFullProcessImageNameW (hProcess, NULL, buffer, &lenPath))
+      {
+        std::filesystem::path path = std::wstring (buffer);
 
-      // Perform 64-bit arithmetic to add 1 day to last modified timestamp
-      uintLastWriteTime.QuadPart        = uintLastWriteTime.QuadPart + ULONGLONG(1 * 24 * 60 * 60 * 1.0e+7);
+        // Product name
+        PLOG_DEBUG << "Parent path: " << path.parent_path();
+        names.product = SKIF_Util_GetProductName (path.c_str());
 
-      // Copy the results to an FILETIME struct
-      ftAdjustedFileTime.dwHighDateTime = uintLastWriteTime.HighPart;
-      ftAdjustedFileTime.dwLowDateTime  = uintLastWriteTime.LowPart;
+        // Executable
+        PathStripPathW       (buffer);
+        PathRemoveExtensionW (buffer);
+        names.executable = std::wstring(buffer);
 
-      // Compare with system time, and if system time is later (1), then return true
-      if (CompareFileTime (&ftSystemTime, &ftAdjustedFileTime) == 1)
-        return true;
+        // Custom name
+        HKEY     hKey;
+        if (ERROR_SUCCESS == RegCreateKeyExW (HKEY_CURRENT_USER, LR"(SOFTWARE\Kaldaien\Special K\Profiles)", NULL, NULL, REG_OPTION_NON_VOLATILE, KEY_QUERY_VALUE, NULL, &hKey, NULL))
+        {
+          DWORD size = len * sizeof(wchar_t);
+          if (ERROR_SUCCESS == RegGetValueW (hKey, NULL, path.parent_path().c_str(), RRF_RT_REG_SZ, NULL, buffer, &size))
+            names.custom = std::wstring(buffer);
+
+          RegCloseKey (hKey);
+        }
+      }
     }
-
-    return false;
-  };
-
-  HANDLE hFind        = INVALID_HANDLE_VALUE;
-  WIN32_FIND_DATA ffd = { };
-
-  hFind = 
-    FindFirstFileExW ((tempDir + L"*").c_str(), FindExInfoBasic, &ffd, FindExSearchNameMatch, NULL, NULL);
-
-  if (INVALID_HANDLE_VALUE != hFind)
-  {
-    if (_isDayOld  (ffd.ftLastWriteTime))
-      DeleteFile  ((tempDir + ffd.cFileName).c_str());
-
-    while (FindNextFile (hFind, &ffd))
-      if (_isDayOld  (ffd.ftLastWriteTime))
-        DeleteFile  ((tempDir + ffd.cFileName).c_str());
-
-    FindClose (hFind);
   }
+
+  // Strip all null terminator \0 characters from the strings
+  names.executable.erase (std::find(names.executable.begin(), names.executable.end(), '\0'), names.executable.end());
+  names.product.erase    (std::find(names.product.begin(),    names.product.end(),    '\0'), names.product.end());
+  names.window.erase     (std::find(names.window.begin(),     names.window.end(),     '\0'), names.window.end());
+  names.custom.erase     (std::find(names.custom.begin(),     names.custom.end(),     '\0'), names.custom.end());
+
+  if (names.executable.size() > 30)
+    names.executable = names.executable.substr(0, 30);
+
+  if (names.product.size() > 30)
+    names.product = names.product.substr(0, 30);
+
+  if (names.window.size() > 30)
+    names.window = names.window.substr(0, 30);
+
+  PLOG_DEBUG << "Application names:";
+  PLOG_DEBUG << "Executable: " << names.executable;
+  PLOG_DEBUG << "   Product: " << names.product;
+  PLOG_DEBUG << "    Window: " << names.window;
+  PLOG_DEBUG << "    Custom: " << names.custom;
+
+  return names;
 }
 
 bool bKeepWindowAlive  = true,
@@ -998,6 +1058,74 @@ bool bKeepWindowAlive  = true,
 // Modern (Current User; non-elevated): %LOCALAPPDATA%\Programs\Special K
 // Modern (All Users;        elevated): %PROGRAMFILES%\Special K
 
+#include "MinHook.h"
+
+using LoadLibraryA_pfn   = HMODULE (WINAPI*)(LPCSTR);
+using LoadLibraryW_pfn   = HMODULE (WINAPI*)(LPCWSTR);
+using LoadLibraryExA_pfn = HMODULE (WINAPI*)(LPCSTR,HANDLE,DWORD);
+using LoadLibraryExW_pfn = HMODULE (WINAPI*)(LPCWSTR,HANDLE,DWORD);
+
+LoadLibraryA_pfn   LoadLibraryA_Original   = nullptr;
+LoadLibraryW_pfn   LoadLibraryW_Original   = nullptr;
+LoadLibraryExA_pfn LoadLibraryExA_Original = nullptr;
+LoadLibraryExW_pfn LoadLibraryExW_Original = nullptr;
+
+HMODULE
+WINAPI
+LoadLibraryExW_Hook (LPCWSTR lpLibFileName, HANDLE hFile, DWORD dwFlags)
+{
+  if (StrStrIW (lpLibFileName, L"GameOverlayRenderer") || StrStrIW (lpLibFileName, L"RTSS"))
+  {
+    SetLastError (ERROR_MOD_NOT_FOUND);
+    return nullptr;
+  }
+
+  return
+    LoadLibraryExW_Original (lpLibFileName, hFile, dwFlags);
+}
+
+HMODULE
+WINAPI
+LoadLibraryExA_Hook (LPCSTR lpLibFileName, HANDLE hFile, DWORD dwFlags)
+{
+  if (StrStrIA (lpLibFileName, "GameOverlayRenderer") || StrStrIA (lpLibFileName, "RTSS"))
+  {
+    SetLastError (ERROR_MOD_NOT_FOUND);
+    return nullptr;
+  }
+
+  return
+    LoadLibraryExA_Original (lpLibFileName, hFile, dwFlags);
+}
+
+HMODULE
+WINAPI
+LoadLibraryW_Hook (LPCWSTR lpLibFileName)
+{
+  if (StrStrIW (lpLibFileName, L"GameOverlayRenderer") || StrStrIW (lpLibFileName, L"RTSS"))
+  {
+    SetLastError (ERROR_MOD_NOT_FOUND);
+    return nullptr;
+  }
+
+  return
+    LoadLibraryW_Original (lpLibFileName);
+}
+
+HMODULE
+WINAPI
+LoadLibraryA_Hook (LPCSTR lpLibFileName)
+{
+  if (StrStrIA (lpLibFileName, "GameOverlayRenderer") || StrStrIA (lpLibFileName, "RTSS"))
+  {
+    SetLastError (ERROR_MOD_NOT_FOUND);
+    return nullptr;
+  }
+
+  return
+    LoadLibraryA_Original (lpLibFileName);
+}
+
 // Main code
 int
 APIENTRY
@@ -1009,8 +1137,18 @@ wWinMain ( _In_     HINSTANCE hInstance,
   UNREFERENCED_PARAMETER (hPrevInstance);
   UNREFERENCED_PARAMETER (hInstance);
 
+  MH_Initialize ();
+
+  MH_CreateHookApi (L"kernel32.dll", "LoadLibraryW",   LoadLibraryW_Hook,   (LPVOID *)&LoadLibraryW_Original);
+  MH_CreateHookApi (L"kernel32.dll", "LoadLibraryExW", LoadLibraryExW_Hook, (LPVOID *)&LoadLibraryExW_Original);
+  MH_CreateHookApi (L"kernel32.dll", "LoadLibraryA",   LoadLibraryA_Hook,   (LPVOID *)&LoadLibraryA_Original);
+  MH_CreateHookApi (L"kernel32.dll", "LoadLibraryExA", LoadLibraryExA_Hook, (LPVOID *)&LoadLibraryExA_Original);
+
+  MH_QueueEnableHook (MH_ALL_HOOKS);
+  MH_ApplyQueued     ();
+
   SetErrorMode (SEM_FAILCRITICALERRORS | SEM_NOALIGNMENTFAULTEXCEPT);
-  
+
   SKIF_Util_SetThreadDescription (GetCurrentThread (), L"SKIV_MainThread");
 
   //CoInitializeEx (nullptr, 0x0);
@@ -1022,14 +1160,14 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
   // Get the current time to use as a basis of how long the initialization took
   SKIF_startupTime = SKIF_Util_timeGetTime1();
-  
+
   // Process cmd line arguments (1/4) -- this sets up the necessary variables
   SKIF_Startup_ProcessCmdLineArgs (lpCmdLine);
 
   // This constructs these singleton objects
   static SKIF_CommonPathsCache& _path_cache = SKIF_CommonPathsCache::GetInstance ( ); // Does not rely on anything
   static SKIF_RegistrySettings& _registry   = SKIF_RegistrySettings::GetInstance ( ); // Does not rely on anything
-  
+
   // Process cmd line arguments (2/4)
   hWndOrigForeground = // Remember what third-party window is currently in the foreground
     GetForegroundWindow ( );
@@ -1050,7 +1188,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
       // Try to send data over using WM_COPYDATA,
       //   and terminate the instance if it succeeds
       SKIF_Startup_CopyDataRunningInstance   ( );
-      
+
       // The below calls only occurs if WM_COPYDATA failed
       SKIF_Startup_CloseRunningInstances   ( );
     }
@@ -1115,6 +1253,36 @@ wWinMain ( _In_     HINSTANCE hInstance,
     SKIF_Util_RegisterApp (true);
   }
 
+  // Read screenshots folder from registry if populated
+  if (! _registry.wsPathScreenshots.empty())
+  {
+    if (_registry.wsPathScreenshots.back() != '\\')
+      _registry.wsPathScreenshots += '\\';
+
+    wcsncpy_s (_path_cache.skiv_screenshots, MAX_PATH,
+                _registry.wsPathScreenshots.c_str(), _TRUNCATE);
+    strncpy_s (_path_cache.skiv_screenshotsA, MAX_PATH,
+      SK_WideCharToUTF8 (_path_cache.skiv_screenshots).data(), _TRUNCATE);
+  }
+
+  // Create the folder for our screenshots (or fall back to skiv_temp if we cannot create it)
+  std::error_code ec;
+  if (! std::filesystem::exists               (_path_cache.skiv_screenshots, ec))
+  {
+    if (! std::filesystem::create_directories (_path_cache.skiv_screenshots, ec))
+    {
+      if (! std::filesystem::exists           (_path_cache.skiv_screenshots, ec))
+      {
+        wcsncpy_s (_path_cache.skiv_screenshots, MAX_PATH,
+                   _path_cache.skiv_temp, _TRUNCATE);
+        strncpy_s (_path_cache.skiv_screenshotsA, MAX_PATH,
+          SK_WideCharToUTF8 (_path_cache.skiv_screenshots).data(), _TRUNCATE);
+      }
+      else
+        PLOG_INFO << "Created screenshot folder: " << _path_cache.skiv_screenshots;
+    }
+  }
+
   PLOG_INFO << "Creating notification icon...";
 
   // Create invisible notify window (for the traybar icon and notification toasts, and for doing D3D11 tests)
@@ -1132,9 +1300,11 @@ wWinMain ( _In_     HINSTANCE hInstance,
     return 0;
   }
 
+  SKIF_Util_SetAppColorMode (AppColorMode::AllowDark);
+
   SKIF_Notify_hWnd      =
-    CreateWindowExW (                                            WS_EX_NOACTIVATE,
-      wcNotify.lpszClassName, _T("Special K Notification Icon"), WS_ICONIC,
+    CreateWindowExW (                                                  WS_EX_NOACTIVATE,
+      wcNotify.lpszClassName, _T("Special K Image Notification Icon"), WS_ICONIC,
                          0, 0,
                          0, 0,
                    nullptr, nullptr,
@@ -1166,7 +1336,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
     _Signal._RunningInstance = SKIF_Notify_hWnd;
     SKIF_Startup_ProxyCommandLineArguments ( );
   }
-  
+
   PLOG_INFO << "Initializing Direct3D...";
 
   DWORD temp_time = SKIF_Util_timeGetTime1();
@@ -1186,7 +1356,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
   // The DropTarget object used for drag-and-drop support for new covers
   static SKIF_DropTargetObject& _drag_drop  = SKIF_DropTargetObject::GetInstance ( );
   extern std::wstring dragDroppedFilePath;
-  
+
   PLOG_INFO << "Initializing ImGui...";
 
   // Setup Dear ImGui context
@@ -1202,7 +1372,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
   io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;       // Enable Keyboard Controls
   io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;        // Enable Gamepad Controls
 //io.ConfigFlags |= ImGuiConfigFlags_NavEnableSetMousePos;
-//io.ConfigFlags |= ImGuiConfigFlags_DpiEnableScaleFonts;     // FIXME-DPI: THIS CURRENTLY DOESN'T WORK AS EXPECTED. DON'T USE IN USER APP! 
+//io.ConfigFlags |= ImGuiConfigFlags_DpiEnableScaleFonts;     // FIXME-DPI: THIS CURRENTLY DOESN'T WORK AS EXPECTED. DON'T USE IN USER APP!
 //io.ConfigFlags |= ImGuiConfigFlags_DpiEnableScaleViewports; // FIXME-DPI
 
   // Viewports
@@ -1216,6 +1386,10 @@ wWinMain ( _In_     HINSTANCE hInstance,
 //io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;           // Enable Docking
   io.ConfigDockingAlwaysTabBar       = false;
   io.ConfigDockingTransparentPayload =  true;
+
+#ifndef _DEBUG
+  io.ConfigDebugHighlightIdConflicts = false; // ImGui 1.91+: avoid showing ID-conflict warnings to users
+#endif
 
   // Main window override flags
   ImGuiWindowClass SKIF_AppWindow;
@@ -1249,6 +1423,10 @@ wWinMain ( _In_     HINSTANCE hInstance,
   // Setup Platform/Renderer bindings
   PLOG_INFO << "Initializing ImGui Win32 platform...";
   ImGui_ImplWin32_Init (nullptr); // This sets up a separate window/hWnd as well, though it will first be created at the end of the main loop
+
+  // Per-monitor DPI: ImGui calls this from Begin ()/End () when switching to a window on another viewport,
+  //   which scales the style and fonts of each window to the DPI of the monitor it is on
+  ImGui::GetPlatformIO ( ).Platform_OnChangedViewport = SKIF_ImGui_OnChangedViewport;
   PLOG_INFO << "Initializing ImGui D3D11 platform...";
   ImGui_ImplDX11_Init  (SKIF_pd3dDevice, SKIF_pd3dDeviceContext);
 
@@ -1278,17 +1456,24 @@ wWinMain ( _In_     HINSTANCE hInstance,
   SKIF_Util_RegisterHotKeyHDRToggle (_registry.kbToggleHDRDisplay.getKeybind());
 
   // Register snipping hotkey
-  SKIF_Util_RegisterHotKeyCapture (CaptureMode_Window, _registry.kbCaptureWindow.getKeybind());
-  SKIF_Util_RegisterHotKeyCapture (CaptureMode_Region, _registry.kbCaptureRegion.getKeybind());
-  SKIF_Util_RegisterHotKeyCapture (CaptureMode_Screen, _registry.kbCaptureScreen.getKeybind());
+  if ((_registry.eScreenshotsHotkeys & CaptureMode_Window) == CaptureMode_Window)
+      SKIF_Util_RegisterHotKeyCapture (CaptureMode_Window, _registry.kbCaptureWindow.getKeybind());
+  if ((_registry.eScreenshotsHotkeys & CaptureMode_Region) == CaptureMode_Region)
+      SKIF_Util_RegisterHotKeyCapture (CaptureMode_Region, _registry.kbCaptureRegion.getKeybind());
+  if ((_registry.eScreenshotsHotkeys & CaptureMode_Screen) == CaptureMode_Screen)
+      SKIF_Util_RegisterHotKeyCapture (CaptureMode_Screen, _registry.kbCaptureScreen.getKeybind());
 
   // Register the HTML Format for the clipboard
   CF_HTML = RegisterClipboardFormatW (L"HTML Format");
   PLOG_VERBOSE << "Clipboard registered format for 'HTML Format' is... " << CF_HTML;
 
+  // And the PNG format (the image itself, as browsers and Discord copy it alongside a bitmap)
+  CF_PNG  = RegisterClipboardFormatW (L"PNG");
+  PLOG_VERBOSE << "Clipboard registered format for 'PNG' is... " << CF_PNG;
+
   PLOG_INFO << "Initializing updater...";
   // Initialize the updater
-  static SKIF_Updater& _updater = 
+  static SKIF_Updater& _updater =
          SKIF_Updater::GetInstance ( );
 
   // Main loop
@@ -1341,8 +1526,10 @@ wWinMain ( _In_     HINSTANCE hInstance,
                 hotkeyCtrlF = false, // Toggle Fullscreen Mode
                 hotkeyCtrlV = false, // Paste data through the clipboard
                 hotkeyCtrlN = false, // Minimize app
-                hotkeyCtrlS = false,
-                hotkeyCtrlX = false;
+                hotkeyCtrlS = false, // Viewer: Save Current Image (in same Dynamic Range), Snipping Mode: Toggle save to Disk, Settings: Save Screenshots Pattern
+                hotkeyCtrlX = false, // Export Current Image (HDR -> SDR)
+                hotkeyCtrlB = false, // Encoder Config
+                hotkeyCtrlE = false; // Snipping Mode: Toggle browse to folder
 
     // Handled in viewer.cpp
        //hotkeyCtrl1 = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_1     )->DownDuration == 0.0f), // Viewer -> Image Scaling: View actual size (1:1 / None)
@@ -1356,6 +1543,10 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
     auto _TranslateAndDispatch = [&](void) -> bool
     {
+      // A drag on an image not interacted with yet moves the window (by its move loop, which runs the messages itself)
+      extern void SKIV_Viewer_MoveWindowIfWanted (void);
+      SKIV_Viewer_MoveWindowIfWanted ( );
+
       while (! SKIF_Shutdown.load() && PeekMessage (&msg, 0, 0U, 0U, PM_REMOVE))
       {
         if (msg.message == WM_QUIT)
@@ -1366,16 +1557,16 @@ wWinMain ( _In_     HINSTANCE hInstance,
         }
 
         // There are four different window procedures that a message can be dispatched to based on the HWND of the message
-        // 
+        //
         //                           SKIF_Notify_WndProc ( )  <=  SKIF_Notify_hWnd                         :: Handles messages meant for the notification icon.
         //                                  SKIF_WndProc ( )  <=  SKIF_Notify_hWnd                         :: Handles all custom SKIF window messages and actions.
         //                                                                                                    - Gets called by SKIF_Notify_WndProc ( ).
-        // 
+        //
         // ImGui_ImplWin32_WndProcHandler_PlatformWindow ( )  <=  SKIF_ImGui_hWnd, Other HWNDs             :: Handles messages meant for the overarching ImGui Platform window of SKIF, as well as any
         //                                                                                                      additional swapchain windows (menus/tooltips that stretches beyond SKIF_ImGui_hWnd).
         // ImGui_ImplWin32_WndProcHandler                ( )  <=  SKIF_ImGui_hWnd, Other HWNDs             :: Handles mouse/key input and focus events for ImGui platform windows.
         //                                                                                                    - Gets called by ImGui_ImplWin32_WndProcHandler_PlatformWindow ( ).
-        // 
+        //
         TranslateMessage (&msg);
         DispatchMessage  (&msg);
 
@@ -1405,22 +1596,60 @@ wWinMain ( _In_     HINSTANCE hInstance,
       return ! SKIF_Shutdown.load(); // return false on exit or system shutdown
     };
 
+    // Window stuff
+
+    ImRect rectCursorMonitor; // RepositionSKIF
+
+    // RepositionSKIF -- Step 1: Retrieve monitor of cursor
+    if (RepositionSKIF)
+    {
+      ImRect t;
+      for (int monitor_n = 0; monitor_n < ImGui::GetPlatformIO().Monitors.Size; monitor_n++)
+      {
+        const ImGuiPlatformMonitor& tmpMonitor = ImGui::GetPlatformIO().Monitors[monitor_n];
+        t = ImRect(tmpMonitor.MainPos, (tmpMonitor.MainPos + tmpMonitor.MainSize));
+
+        POINT               mouse_screen_pos = { };
+        if (::GetCursorPos (&mouse_screen_pos))
+        {
+          ImVec2 os_pos = ImVec2( (float)mouse_screen_pos.x,
+                                  (float)mouse_screen_pos.y );
+          if (t.Contains (os_pos))
+          {
+            rectCursorMonitor = t;
+          //SKIF_ImGui_GlobalDPIScale = (_registry.bDPIScaling) ? tmpMonitor.DpiScale : 1.0f;
+          }
+        }
+      }
+    }
+
+    SKIF_vecRegularMode     = SKIF_vecRegularModeAdjusted * SKIF_ImGui_MainDPIScale;
+
+  //SKIF_vecRegularMode.y  -= SKIF_vecAlteredSize.y; // Replaced with SKIF_vecCurrentModeNext
+
+    SKIF_vecRegularMode     = ImFloor (SKIF_vecRegularMode);
+
+  //SKIF_vecCurrentMode     = SKIF_vecRegularMode ;
+
     // Apply any changes to the ImGui style
     // Do it at the beginning of frames to prevent ImGui::Push... from affecting the styling
     // Note that Win11 rounded border color won't be applied until after a restart
-      
+
     // F7 to cycle between color themes
-    if ( (_registry.iStyleTemp != _registry.iStyle) || hotkeyF7)
-    {
-      _registry.iStyle            = (_registry.iStyleTemp != _registry.iStyle)
-                                  ?  _registry.iStyleTemp
-                                  : (_registry.iStyle + 1) % UIStyle_COUNT;
-      _registry.regKVStyle.putData  (_registry.iStyle);
+    if ( invalidateStyle || (_registry.iStyleTemp != _registry.iStyle) || hotkeyF7)
+    {    invalidateStyle = false;
+
+      if ((_registry.iStyleTemp != _registry.iStyle) || hotkeyF7)
+      {
+        _registry.iStyle            = (_registry.iStyleTemp != _registry.iStyle)
+                                    ?  _registry.iStyleTemp
+                                    : (_registry.iStyle + 1) % UIStyle_COUNT;
+        _registry.regKVStyle.putData  (_registry.iStyle);
+        _registry.iStyleTemp        =  _registry.iStyle;
+      }
 
       ImGuiStyle            newStyle;
       SKIF_ImGui_SetStyle (&newStyle);
-
-      _registry.iStyleTemp = _registry.iStyle;
 
       extern void
         SKIF_ImGui_ImplWin32_UpdateDWMBorders (void);
@@ -1464,8 +1693,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
       // Take the current display into account
       HMONITOR monitor =
         ::MonitorFromWindow (SKIF_ImGui_hWnd, MONITOR_DEFAULTTONEAREST);
-        
-      SKIF_ImGui_GlobalDPIScale = (_registry.bDPIScaling) ? ImGui_ImplWin32_GetDpiScaleForMonitor (monitor) : 1.0f;
+
+      SKIF_ImGui_MainDPIScale = (_registry.bDPIScaling) ? ImGui_ImplWin32_GetDpiScaleForMonitor (monitor) : 1.0f;
 
       ImGuiStyle              newStyle;
       SKIF_ImGui_SetStyle   (&newStyle);
@@ -1477,6 +1706,50 @@ wWinMain ( _In_     HINSTANCE hInstance,
         repositionToCenter   = true;
       else
         RespectMonBoundaries = true;
+    }
+
+    // Restore the last remembered window size on launch,
+    //   but only if we are not running in service mode!
+    static bool
+        applySizeOnLaunch = true;
+    if (applySizeOnLaunch)
+    {   applySizeOnLaunch = false;
+
+      if (_registry.iUIWidth > 0 && _registry.iUIHeight > 0)
+        SKIF_vecCurrentModeNext =
+                        ImVec2 (static_cast<float> (_registry.iUIWidth),
+                                static_cast<float> (_registry.iUIHeight));
+      else
+      {
+        SKIF_vecCurrentModeNext = SKIF_vecRegularMode;
+      }
+    }
+
+    // SKIF_vecCurrentModeNext 1/2
+    if (SKIF_vecCurrentModeNext.x != 0.0f)
+    {
+      // Shrink the window on low-res displays (will be applied on the next frame)
+      // Emulates auto-horizon mode
+      if (ImGui::GetFrameCount() > 2 &&
+         (SKIF_vecCurrentModeNext.x > monitor_extent.GetWidth () ||
+          SKIF_vecCurrentModeNext.y > monitor_extent.GetHeight()))
+      {
+        float arWindow = SKIF_vecCurrentModeNext.x / SKIF_vecCurrentModeNext.y;
+
+        if (monitor_extent.GetWidth() < SKIF_vecCurrentModeNext.x)
+        {
+          SKIF_vecCurrentModeNext.x = monitor_extent.GetWidth();
+          SKIF_vecCurrentModeNext.y = SKIF_vecCurrentModeNext.x / arWindow;
+        }
+
+        if (monitor_extent.GetHeight() < SKIF_vecCurrentModeNext.y)
+        {
+          SKIF_vecCurrentModeNext.y = monitor_extent.GetHeight();
+          SKIF_vecCurrentModeNext.x = SKIF_vecCurrentModeNext.y * arWindow;
+        }
+      }
+
+      SKIF_vecCurrentMode = SKIF_vecCurrentModeNext;
     }
 
     // F8 to toggle UI borders
@@ -1494,7 +1767,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
     {
       if (_registry.iHDRMode > 0 && SKIF_Util_IsHDRActive (NULL))
         _registry.iHDRMode = 1 + (_registry.iHDRMode % 2); // Cycle between 1 (10 bpc) and 2 (16 bpc)
-      else 
+      else
         _registry.iSDRMode = (_registry.iSDRMode + 1) % 3; // Cycle between 0 (8 bpc), 1 (10 bpc), and 2 (16 bpc)
 
       RecreateSwapChains = true;
@@ -1520,36 +1793,23 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
     // Should we invalidate the fonts and/or recreate them?
 
-    if (SKIF_ImGui_GlobalDPIScale != SKIF_ImGui_GlobalDPIScale_Last)
-      invalidateFonts = true;
-
-    SKIF_ImGui_GlobalDPIScale_Last = SKIF_ImGui_GlobalDPIScale;
-    float fontScale = 18.0F * SKIF_ImGui_GlobalDPIScale;
-    if (fontScale < 15.0F)
-      fontScale += 1.0F;
+    // DPI changes of the main window need neither a font reload nor a new style: fonts are loaded at their base size,
+    //   and the style sizes and font scale of every window follow the DPI of its own monitor (SKIF_ImGui_OnChangedViewport)
+    if (SKIF_ImGui_MainDPIScale_Last != SKIF_ImGui_MainDPIScale)
+        SKIF_ImGui_MainDPIScale_Last  = SKIF_ImGui_MainDPIScale;
 
     if (invalidateFonts)
     {
       invalidateFonts = false;
       SKIF_ImGui_InvalidateFonts ( );
     }
-    
-    // This occurs on the next frame, as failedLoadFonts gets evaluated and set as part of ImGui_ImplDX11_NewFrame
-    else if (failedLoadFonts)
-    {
-      // This scenario should basically never happen nowadays that SKIF only loads the specific characters needed from each character set
 
-      SKIF_ImGui_InvalidateFonts ( );
-
-      failedLoadFonts       = false;
-      failedLoadFontsPrompt = true;
-    }
 
     //temp_time = SKIF_Util_timeGetTime1();
     //PLOG_INFO << "Operation took " << (temp_time - SKIF_Util_timeGetTime1()) << " ms.";
 
 #pragma region New UI Frame
-    
+
     extern bool
       SKIF_ImGui_ImplWin32_WantUpdateMonitors (void);
     bool _WantUpdateMonitors =
@@ -1570,6 +1830,9 @@ wWinMain ( _In_     HINSTANCE hInstance,
     {
       SKIF_FrameCount.store(ImGui::GetFrameCount());
 
+      // Reset every frame
+      g_activeKeybindPopup = false;
+
       // Update hotkey variables
       hotkeyF1    = (              ImGui::GetKeyData (ImGuiKey_F1    )->DownDuration == 0.0f); // Switch to Viewer
       hotkeyF2    = (              ImGui::GetKeyData (ImGuiKey_F2    )->DownDuration == 0.0f); // Switch to Settings
@@ -1589,8 +1852,10 @@ wWinMain ( _In_     HINSTANCE hInstance,
       hotkeyCtrlF = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_F     )->DownDuration == 0.0f); // Toggle Fullscreen Mode
       hotkeyCtrlV = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_V     )->DownDuration == 0.0f); // Paste data through the clipboard
       hotkeyCtrlN = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_N     )->DownDuration == 0.0f); // Minimize app
-      hotkeyCtrlS = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_S     )->DownDuration == 0.0f); // Save Current Image (in same Dynamic Range)
+      hotkeyCtrlS = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_S     )->DownDuration == 0.0f); // Viewer: Save Current Image (in same Dynamic Range), Snipping Mode: Toggle save to Disk
       hotkeyCtrlX = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_X     )->DownDuration == 0.0f); // Export Current Image (HDR -> SDR)
+      hotkeyCtrlB = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_B     )->DownDuration == 0.0f); // Configure Image Encoders
+      hotkeyCtrlE = (io.KeyCtrl && ImGui::GetKeyData (ImGuiKey_E     )->DownDuration == 0.0f); // Snipping Toolbar: Toggle browse to folder
 
       const bool hotkeyCycleScaling       = ImGui::IsKeyPressed (ImGuiKey_GamepadL3);
       const bool hotkeyCycleVisualization = ImGui::IsKeyPressed (ImGuiKey_GamepadR3);
@@ -1609,44 +1874,67 @@ wWinMain ( _In_     HINSTANCE hInstance,
         addAdditionalFrames += 3; // Force a re-paint to change visualization
       }
 
-
-      ImRect rectCursorMonitor; // RepositionSKIF
-
-      // RepositionSKIF -- Step 1: Retrieve monitor of cursor
-      if (RepositionSKIF)
+      if (SKIF_vecCurrentModeNext.x != 0.0f &&
+          SKIF_vecCurrentModeNext   != SKIF_vecCurrentMode)
       {
-        ImRect t;
-        for (int monitor_n = 0; monitor_n < ImGui::GetPlatformIO().Monitors.Size; monitor_n++)
-        {
-          const ImGuiPlatformMonitor& tmpMonitor = ImGui::GetPlatformIO().Monitors[monitor_n];
-          t = ImRect(tmpMonitor.MainPos, (tmpMonitor.MainPos + tmpMonitor.MainSize));
+        SKIF_vecCurrentModeNext.x = 0.0f;
 
-          POINT               mouse_screen_pos = { };
-          if (::GetCursorPos (&mouse_screen_pos))
-          {
-            ImVec2 os_pos = ImVec2( (float)mouse_screen_pos.x,
-                                    (float)mouse_screen_pos.y );
-            if (t.Contains (os_pos))
-            {
-              rectCursorMonitor = t;
-              SKIF_ImGui_GlobalDPIScale = (_registry.bDPIScaling) ? tmpMonitor.DpiScale : 1.0f;
-            }
-          }
-        }
+        SKIF_vecCurrentMode = SKIF_vecCurrentModeNext;
       }
-      
-      SKIF_vecRegularMode     = SKIF_vecRegularModeAdjusted * SKIF_ImGui_GlobalDPIScale;
-      
-      SKIF_vecRegularMode.y  -= SKIF_vecAlteredSize.y;
 
-      SKIF_vecCurrentMode     = SKIF_vecRegularMode ;
+      static const ImVec2 wnd_minimum_size = ImVec2 (200.0f, 200.0f) * SKIF_ImGui_GlobalDPIScale;
+
+      // SKIF_vecCurrentModeNext 2/2
+      if (SKIF_vecCurrentModeNext.x != 0.0f)
+      {   SKIF_vecCurrentModeNext.x  = 0.0f;
+        ImGui::SetNextWindowSizeConstraints (SKIF_vecCurrentMode, SKIF_vecCurrentMode);
+      }
+
+      // The first time SKIF is being launched, or repositioned on launch, use a higher minimum size
+      else if (ImGui::GetFrameCount() == 1 || RepositionSKIF)
+        ImGui::SetNextWindowSizeConstraints (wnd_minimum_size * 2.0f, ImVec2 (FLT_MAX, FLT_MAX));
+
+      // On the second frame, limit the initial window size to only 80% of the monitor size
+      /*
+      else if (resizeAppWindow || ImGui::GetFrameCount() == 2)
+      {
+        ImVec2 size_current = windowRect.GetSize();
+        ImVec2 size_maximum = monitor_extent.GetSize() * 0.8f;
+
+        ImGui::SetNextWindowSizeConstraints (wnd_minimum_size, size_maximum);
+
+        // If the window size was too large, we need to reposition the window to the center as well
+        // This is handled on the next frame by the code above us
+        if (size_current.x > size_maximum.x || size_current.y > size_maximum.y)
+          repositionToCenter = true;
+      }
+      */
+
+      // The rest of the frames are uncapped
+      else
+        ImGui::SetNextWindowSizeConstraints (wnd_minimum_size, ImVec2 (FLT_MAX, FLT_MAX));
 
       ImGui::SetNextWindowClass (&SKIF_AppWindow);
+
+      // Restore the last remembered window position on launch
+      static bool
+          applyPositionOnLaunch = true;
+      if (applyPositionOnLaunch)
+      {   applyPositionOnLaunch = false;
+
+        if (_registry.iUIPositionX != -1 &&
+            _registry.iUIPositionY != -1)
+          ImGui::SetNextWindowPos (ImVec2 (static_cast<float> (_registry.iUIPositionX),
+                                           static_cast<float> (_registry.iUIPositionY)));
+        else
+          RepositionSKIF = true;
+      }
 
       // RepositionSKIF -- Step 2: Repositon the window
       // Repositions the window in the center of the monitor the cursor is currently on
       if (RepositionSKIF)
-        ImGui::SetNextWindowPos (ImVec2(rectCursorMonitor.GetCenter().x - (SKIF_vecCurrentMode.x / 2.0f), rectCursorMonitor.GetCenter().y - (SKIF_vecCurrentMode.y / 2.0f)));
+        ImGui::SetNextWindowPos (ImVec2 (rectCursorMonitor.GetCenter().x - (SKIF_vecCurrentMode.x / 2.0f),
+                                         rectCursorMonitor.GetCenter().y - (SKIF_vecCurrentMode.y / 2.0f)));
 
       // Calculate new window boundaries and changes to fit within the workspace if it doesn't fit
       //   Delay running the code to on the third frame to allow other required parts to have already executed...
@@ -1741,37 +2029,12 @@ wWinMain ( _In_     HINSTANCE hInstance,
         SKIV_ResizeApp = ImVec2 (0.0f, 0.0f);
       }
 
-      static const ImVec2 wnd_minimum_size = ImVec2 (200.0f, 200.0f) * SKIF_ImGui_GlobalDPIScale;
-
-      // The first time SKIF is being launched, or repositioned on launch, use a higher minimum size
-      if (ImGui::GetFrameCount() == 1 && RepositionSKIF)
-        ImGui::SetNextWindowSizeConstraints (wnd_minimum_size * 2.0f, ImVec2 (FLT_MAX, FLT_MAX));
-
-      // On the second frame, limit the initial window size to only 80% of the monitor size
-      /*
-      else if (resizeAppWindow || ImGui::GetFrameCount() == 2)
-      {
-        ImVec2 size_current = windowRect.GetSize();
-        ImVec2 size_maximum = monitor_extent.GetSize() * 0.8f;
-
-        ImGui::SetNextWindowSizeConstraints (wnd_minimum_size, size_maximum);
-
-        // If the window size was too large, we need to reposition the window to the center as well
-        // This is handled on the next frame by the code above us
-        if (size_current.x > size_maximum.x || size_current.y > size_maximum.y)
-          repositionToCenter = true;
-      }
-      */
-
-      // The rest of the frames are uncapped
-      else
-        ImGui::SetNextWindowSizeConstraints (wnd_minimum_size, ImVec2 (FLT_MAX, FLT_MAX));
-
       const bool bNoMove =
         (io.KeyCtrl || ! SKIF_MouseDragMoveAllowed);
 
-      ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2());
-      ImGui::PushStyleVar (ImGuiStyleVar_WindowBorderSize, 0.0f); // Disable ImGui's 1 px window border
+      ImGui::PushStyleColor (ImGuiCol_WindowBg, ImGui::GetStyleColorVec4 (ImGuiCol_ChildBg));
+      ImGui::PushStyleVar   (ImGuiStyleVar_WindowPadding, ImVec2());
+      ImGui::PushStyleVar   (ImGuiStyleVar_WindowBorderSize, 0.0f); // Disable ImGui's 1 px window border
       ImGui::Begin (SKIV_WINDOW_TITLE_HASH,
                        nullptr,
                        //ImGuiWindowFlags_NoResize          |
@@ -1779,15 +2042,42 @@ wWinMain ( _In_     HINSTANCE hInstance,
                          ImGuiWindowFlags_NoTitleBar        |
                          ImGuiWindowFlags_NoScrollbar       | // Hide the scrollbar for the main window
                          ImGuiWindowFlags_NoScrollWithMouse | // Prevent scrolling with the mouse as well
+                         ImGuiWindowFlags_NoSavedSettings   | // We handle size/position persistently on our own
               (bNoMove ? ImGuiWindowFlags_NoMove       |
                          ImGuiWindowFlags_NoResize     |
                          ImGuiWindowFlags_NoDecoration :
                          ImGuiWindowFlags_None)
-                      // The only comment is that it was DPI related? This prevents Ctrl+Tab from moving the window so must not be used
       );
-      ImGui::PopStyleVar (2);
+      ImGui::PopStyleVar   (2);
+      ImGui::PopStyleColor (1);
 
       SK_RunOnce (ImGui::GetCurrentWindow()->HiddenFramesCannotSkipItems += 2);
+
+      // An invisible title bar along the top of the window, as tall as a Windows title bar: dragging it moves the window
+      //   and double-clicking it maximizes/restores the window, even over the image (which is drawn there as usual).
+      //   The image's drag item leaves it out (see SKIF_UI_Tab_DrawViewer), while buttons in it work as usual.
+      //   Not in fullscreen or snipping mode, which have no title bar.
+      SKIF_ImGui_CaptionArea = ImRect ( );
+
+      if (SKIF_ImGui_hWnd != NULL && ! _registry._SnippingMode && ! SKIF_ImGui_IsFullscreen (SKIF_ImGui_hWnd))
+      {
+        // The system metrics are for the system DPI; the window may be on a monitor with another one
+        static const float fSystemDpi = [](void) -> float {
+          HDC   hDC = ::GetDC (NULL);
+          float dpi = (hDC != NULL) ? static_cast<float> (::GetDeviceCaps (hDC, LOGPIXELSY)) : 96.0f;
+          if (hDC != NULL) ::ReleaseDC (NULL, hDC);
+          return (dpi > 0.0f) ? dpi : 96.0f;
+        } ( );
+
+        const float fCaptionHeight =
+          static_cast<float> (::GetSystemMetrics (SM_CYCAPTION) + ::GetSystemMetrics (SM_CYSIZEFRAME) + ::GetSystemMetrics (SM_CXPADDEDBORDER))
+            * (ImGui::GetWindowViewport ( )->DpiScale * 96.0f / fSystemDpi);
+
+        const ImVec2 captionPos  = ImGui::GetWindowPos  ( );
+        const float  captionWidth = ImGui::GetWindowSize ( ).x;
+
+        SKIF_ImGui_CaptionArea = ImRect (captionPos, ImVec2 (captionPos.x + captionWidth, captionPos.y + ImFloor (fCaptionHeight)));
+      }
 
       HiddenFramesRemaining         = ImGui::GetCurrentWindowRead()->HiddenFramesCannotSkipItems;
       HiddenFramesContinueProcessing = (HiddenFramesRemaining > 0);
@@ -1810,7 +2100,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
           SKIF_vecAlteredSize.y = 0.0f;
 
           // This is only necessary to run once on launch, to account for the startup display DPI
-          SK_RunOnce (SKIF_ImGui_GlobalDPIScale = (_registry.bDPIScaling) ? ImGui::GetWindowViewport()->DpiScale : 1.0f);
+          SK_RunOnce (SKIF_ImGui_MainDPIScale = (_registry.bDPIScaling) ? ImGui::GetWindowViewport()->DpiScale : 1.0f);
 
           ImVec2 tmpCurrentSize  = SKIF_vecRegularModeAdjusted ;
 
@@ -1827,11 +2117,11 @@ wWinMain ( _In_     HINSTANCE hInstance,
       }
 
       // RepositionSKIF -- Step 3: The Final Step -- Prevent the global DPI scale from potentially being set to outdated values
-      if (RepositionSKIF)
+      if (RepositionSKIF && ImGui::GetFrameCount() > 2)
         RepositionSKIF = false;
 
       // Only allow navigational hotkeys when in Large Mode and as long as no popups are opened
-      if (! SKIF_ImGui_IsAnyPopupOpen ( ))
+      if (! SKIF_ImGui_IsAnyPopupOpen ( ) && ! _registry._SnippingMode)
       {
         if (hotkeyF1)
         {
@@ -1851,28 +2141,20 @@ wWinMain ( _In_     HINSTANCE hInstance,
               SKIF_Tab_ChangeTo  = UITab_About;
         }
 
-        if (allowShortcutCtrlA && (hotkeyCtrlA || hotkeyCtrlO))
+        if (SKIF_Tab_Selected == UITab_Viewer && allowShortcutCtrlA)
         {
-          if (SKIF_Tab_Selected != UITab_Viewer)
-              SKIF_Tab_ChangeTo  = UITab_Viewer;
-
-          OpenFileDialog = PopupState_Open;
-        }
-
-        if (allowShortcutCtrlA && (hotkeyCtrlX || hotkeyCtrlS))
-        {
-          if (SKIF_Tab_Selected != UITab_Viewer)
-              SKIF_Tab_ChangeTo  = UITab_Viewer;
-
+          if (hotkeyCtrlA || hotkeyCtrlO)
+            OpenFileDialog = PopupState_Open;
           if (hotkeyCtrlX)
             ExportSDRDialog = PopupState_Open;
           if (hotkeyCtrlS)
             SaveFileDialog = PopupState_Open;
+          if (hotkeyCtrlB)
+            ConfigEncoders = PopupState_Open;
         }
       }
 
       allowShortcutCtrlA = true;
-      SK_Keybind_g_isAssigning = false;
 
 
 
@@ -1880,10 +2162,20 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
       ImGui::BeginGroup ();
 
-      static bool last_snip_state = false;
+      // Region snips are made in windows of their own (the snipping overlays, below): one for each display captured, a
+      //   Dear ImGui window with a platform window (viewport) of its own, borderless and topmost over its display, so that
+      //     the main window is left as it is, and a region can be selected across all the displays. Their platform windows
+      //       (once Dear ImGui has made them; the first is the display under the cursor's, which has the toolbar and the
+      //         focus), and whether one of them has had the focus yet.
+      static std::vector <HWND> snipWindows;
+      static bool               snipFocused = false;
 
-      // Implicitly cancel snipping if focus changes during snipping
-      if (_registry._SnippingMode && last_snip_state && GetFocus () != SKIF_ImGui_hWnd)
+      auto _IsSnipWindow = [&](HWND hWnd) -> bool {
+        return (hWnd != NULL && std::find (snipWindows.begin ( ), snipWindows.end ( ), hWnd) != snipWindows.end ( ));
+      };
+
+      // Implicitly cancel snipping if the focus moves away from its windows during snipping
+      if (_registry._SnippingMode && snipFocused && ! _IsSnipWindow (GetForegroundWindow ()))
       {
         _registry._SnippingMode     = false;
         _registry._SnippingModeExit =  true;
@@ -1893,63 +2185,24 @@ wWinMain ( _In_     HINSTANCE hInstance,
       {
         _registry._SnippingMode       = false;
         _registry._SnippingModeExit   = false;
+        _registry._SnippingModeInit   =  true;
 
+        // The overlays, hidden at once (Dear ImGui destroys their windows once they are no longer drawn, a frame or so later)
+        for (HWND hWnd : snipWindows)
+          if (hWnd != NULL && IsWindow (hWnd))
+            ShowWindow (hWnd, SW_HIDE);
+
+        snipWindows.clear ( );
+        snipFocused = false;
+
+        // The focus back to the window that had it before
         extern HWND hwndBeforeSnip;
-        extern HWND hwndTopBeforeSnip;
-        extern bool iconicBeforeSnip;
-        extern bool trayedBeforeSnip;
 
-        SetForegroundWindow (hwndBeforeSnip);
-
-        // Clear the SwapChain backbuffer to black before restoring, otherwise
-        //   old garbage from a previous snip will briefly appear on screen...
-        if (ImGuiViewport *vp = ImGui::FindViewportByPlatformHandle ((void *)SKIF_ImGui_hWnd))
-        {
-          if (ImGui_ImplDX11_ViewportData* vd = (ImGui_ImplDX11_ViewportData*)vp->RendererUserData)
-          {
-            CComPtr <ID3D11Device> pDev;
-            if (SUCCEEDED (vd->SwapChain->GetDevice (IID_ID3D11Device, (void **)&pDev.p)))
-            {
-              CComPtr <ID3D11DeviceContext> pDevCtx;
-              pDev->GetImmediateContext   (&pDevCtx.p);
-
-              FLOAT                                       fClearColor [4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-              pDevCtx->ClearRenderTargetView (vd->RTView, fClearColor);
-              vd->SwapChain->Present (0,0);
-            }
-          }
-        }
-
-        if (iconicBeforeSnip || trayedBeforeSnip)
-        {
-          // Hide the window while we do this so that it doesn't
-          //   briefly appear in the wrong place...
-          ShowWindow (SKIF_ImGui_hWnd, SW_HIDE);
-        }
-
-        SKIF_ImGui_SetFullscreen (SKIF_ImGui_hWnd, false);
-
-        // Put SKIV back in the correct Z-order
-        SetWindowPos (SKIF_ImGui_hWnd, hwndTopBeforeSnip, 0,0,0,0, SWP_NOSIZE|SWP_NOMOVE|SWP_NOACTIVATE);
-
-        if (iconicBeforeSnip)
-          ShowWindow (SKIF_ImGui_hWnd, SW_MINIMIZE);
-
-        if (trayedBeforeSnip)
-        {
-          ShowWindow (SKIF_ImGui_hWnd, SW_MINIMIZE);
-          SKIF_isTrayed = true;
-        }
-
-        else
-        {
-          ShowWindow (SKIF_ImGui_hWnd, SW_SHOWNA);
-        }
+        if (hwndBeforeSnip != NULL && IsWindow (hwndBeforeSnip))
+          SetForegroundWindow (hwndBeforeSnip);
 
         ImGui::GetIO ().MouseDown         [0] = false;
         ImGui::GetIO ().MouseDownDuration [0] = -1.0f;
-
-        last_snip_state = false;
       };
 
       // Begin Snipping Mode
@@ -1957,51 +2210,164 @@ wWinMain ( _In_     HINSTANCE hInstance,
       {
 #pragma region UI: Snipping Mode
 
-        bool HDR_Image = SKIV_ClipboardImage._hdr_image;
-        bool SKIV_HDR  = (HDR_Image ? SKIF_ImGui_IsViewportHDR (SKIF_ImGui_hWnd) : false);
+        // The owner the input of each snipping frame is given to (at the end of the frame, below), so the viewer drawn
+        //   after it does not act on it. Dear ImGui keeps that owner into the next frame (while a key is held, and on the
+        //     frame it is pressed), where the toolbar's items would then never see their clicks: it is released here,
+        //       before them, and given again at the end of this frame
+        static const ImGuiID snipInputOwner = ImHashStr ("###SKIV_SnippingOverlayInput");
 
-        // Temporarily engage HDR mode for SKIV during snipping mode
-        if (HDR_Image && ! SKIV_HDR && SKIF_ImGui_IsViewportHDRCapable (SKIF_ImGui_hWnd))
+        for (int key = ImGuiKey_NamedKey_BEGIN; key < ImGuiKey_NamedKey_END; key++)
+          if (ImGui::GetKeyOwner (static_cast <ImGuiKey> (key)) == snipInputOwner)
+            ImGui::SetKeyOwner   (static_cast <ImGuiKey> (key), ImGuiKeyOwner_NoOwner);
+
+        // The displays captured (all of them), the one under the cursor first: its overlay has the toolbar and the focus
+        std::vector <const skiv_image_desktop_s*> displays;
+
+        for (const auto& display : SKIV_DesktopImages)
         {
-          _registry._SnippingModeTempHDR = true;
-          _registry.iHDRMode = 2;
-          RecreateSwapChains = true;
+          if (display._desktop_pos == SKIV_DesktopImage._desktop_pos)
+            displays.insert (displays.begin ( ), &display);
+          else
+            displays.push_back (&display);
         }
 
-        if (SKIV_ClipboardImage._srv != nullptr)
+        if (displays.empty ( ))
+          displays.push_back (&SKIV_DesktopImage);
+
+        // Where a region can be selected: all of them (it may span several; where the desktop is not rectangular, the
+        //   parts on no display are left black)
+        ImRect allowable (displays.front ( )->_desktop_pos, displays.front ( )->_desktop_pos + displays.front ( )->desktopSize ( ));
+
+        for (const auto* display : displays)
+          allowable.Add (ImRect (display->_desktop_pos, display->_desktop_pos + display->desktopSize ( )));
+
+        SKIV_CaptureData capture_data = SKIV_CaptureData (ImRect(), L"", CaptureMode_None);
+
+        // The snipping overlays: over their displays (Dear ImGui's positions are the desktop's), each in a platform window
+        //   of its own (no frame, no taskbar button, topmost), which shows the capture of its display and the selection
+        static ImGuiWindowClass SKIV_SnippingOverlay = [](void) {
+          ImGuiWindowClass wc;
+          wc.ViewportFlagsOverrideSet = ImGuiViewportFlags_NoAutoMerge | ImGuiViewportFlags_NoDecoration |
+                                        ImGuiViewportFlags_NoTaskBarIcon | ImGuiViewportFlags_TopMost;
+          return wc;
+        } ( );
+
+        static const ImGuiWindowFlags overlayFlags =
+          ImGuiWindowFlags_NoDecoration    | ImGuiWindowFlags_NoMove    | ImGuiWindowFlags_NoResize          |
+          ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoScrollWithMouse |
+          ImGuiWindowFlags_NoNav;
+
+        auto _OverlayName = [](size_t index) -> std::string {
+          return "###SKIV_SnippingOverlay" + std::to_string (index);
+        };
+
+        std::vector <ImGuiViewport*> overlayViewports;
+
+        snipWindows.assign (displays.size ( ), NULL);
+
+        bool HDR_Image = false, // The display under the cursor's (its toolbar's HDR options)
+             SKIV_HDR  = false;
+
+        for (size_t i = 0; i < displays.size ( ); i++)
         {
-          static const ImVec2 srgb_uv0 = ImVec2 (0, 0),
-                              srgb_uv1 = ImVec2 (1, 1),
-                              hdr_uv0  = ImVec2 (-1024.0f, -1024.0f), // HDR formats
-                              hdr_uv1  = ImVec2 (-2048.0f, -2048.0f); // HDR formats
+          const skiv_image_desktop_s& display = *displays [i];
+          const ImRect                on_desk (display._desktop_pos, display._desktop_pos + display.desktopSize ( ));
 
-          SKIF_ImGui_OptImage (SKIV_ClipboardImage._srv, SKIV_ClipboardImage._resolution,
-                                                                (HDR_Image && SKIV_HDR) ? hdr_uv0 : srgb_uv0,
-                                                                (HDR_Image && SKIV_HDR) ? hdr_uv1 : srgb_uv1);
+          ImGui::SetNextWindowClass (&SKIV_SnippingOverlay);
+          ImGui::SetNextWindowPos   (on_desk.Min);
+          ImGui::SetNextWindowSize  (on_desk.GetSize ( ));
 
-          ImDrawList* draw_list =
-            ImGui::GetForegroundDrawList ();
+          ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding,    ImVec2 (0.0f, 0.0f));
+          ImGui::PushStyleVar (ImGuiStyleVar_WindowBorderSize, 0.0f);
+          ImGui::PushStyleVar (ImGuiStyleVar_WindowRounding,   0.0f);
 
-          // Draw a slightly dark transparent overlay on top of the captured image
-          draw_list->AddRectFilled (ImVec2 (0, 0), SKIV_ClipboardImage._resolution, ImGui::GetColorU32 (IM_COL32 (0, 0, 0, 20)));
+          ImGui::Begin (_OverlayName (i).c_str ( ), nullptr, overlayFlags);
+
+          ImGui::PopStyleVar (3);
+
+          // Its platform window (none until Dear ImGui has made it, at the end of its first frame)
+          ImGuiViewport* vp = ImGui::GetWindowViewport ( );
+
+          overlayViewports.push_back (vp);
+
+          snipWindows [i] = (vp != nullptr && vp->PlatformWindowCreated && vp->PlatformHandle != SKIF_ImGui_hWnd)
+                          ? static_cast <HWND> (vp->PlatformHandle) : NULL;
+
+          const bool hdrImage = display._hdr_image,
+                     hdrShown = (hdrImage && snipWindows [i] != NULL) ? SKIF_ImGui_IsViewportHDR (snipWindows [i]) : false;
+
+          if (i == 0)
+          {
+            HDR_Image = hdrImage;
+            SKIV_HDR  = hdrShown;
+          }
+
+          // Temporarily engage HDR mode for SKIV during snipping mode
+          if (hdrImage && ! hdrShown && snipWindows [i] != NULL && SKIF_ImGui_IsViewportHDRCapable (snipWindows [i]))
+          {
+            _registry._SnippingModeTempHDR = true;
+            _registry.iHDRMode = 2;
+            RecreateSwapChains = true;
+          }
+
+          if (display._srv != nullptr)
+          {
+            static const ImVec2 srgb_uv0 = ImVec2 (0, 0),
+                                srgb_uv1 = ImVec2 (1, 1),
+                                hdr_uv0  = ImVec2 (-1024.0f, -1024.0f), // HDR formats
+                                hdr_uv1  = ImVec2 (-2048.0f, -2048.0f); // HDR formats
+
+            SKIF_ImGui_OptImage ( display._srv,
+                                  display._resolution, (hdrImage && hdrShown) ? hdr_uv0 : srgb_uv0,
+                                                       (hdrImage && hdrShown) ? hdr_uv1 : srgb_uv1,
+                                    ImVec4 (1,1,1,1),
+                                    ImVec4 (0,0,0,0), display._rotation );
+
+            // Draw a slightly dark transparent overlay on top of the captured image
+            ImGui::GetForegroundDrawList ( )->AddRectFilled (on_desk.Min, on_desk.Max, ImGui::GetColorU32 (IM_COL32 (0, 0, 0, 20)));
+          }
+
+          ImGui::End ( );
         }
 
-        static ImRect selection;
-        static ImRect selection_auto;
+        // Draws a selection on every overlay (each shows its part of it, on its display)
+        auto _DrawOnOverlays = [&](ImRect rect, bool filled) -> void
+        {
+          rect = ImRect (ImMin (rect.Min, rect.Max), ImMax (rect.Min, rect.Max));
 
-        if (GetForegroundWindow () != SKIF_ImGui_hWnd)
-            SetForegroundWindow (     SKIF_ImGui_hWnd);
+          for (ImGuiViewport* vp : overlayViewports)
+          {
+            ImDrawList* draw_list = ImGui::GetForegroundDrawList (vp);
 
-        // Let us store all ignored windows in a vector for quick reuse
-        static std::vector<HWND> ignoredWindows = { };
+            draw_list->AddRect         (rect.Min, rect.Max, ImGui::GetColorU32 (IM_COL32(0,130,216,255)), 0.0f, 5.0f); // Border
+
+            if (filled)
+              draw_list->AddRectFilled (rect.Min, rect.Max, ImGui::GetColorU32 (IM_COL32(0,130,216,50)));               // Background
+          }
+        };
+
+        static SKIV_CaptureData selection      = SKIV_CaptureData (ImRect(), L"Desktop_Region", CaptureMode_Region);
+        static SKIV_CaptureData selection_auto = SKIV_CaptureData (ImRect(), L"Desktop_Auto",   CaptureMode_Region);
+
+        // The overlays have the focus (keyboard: Escape, Ctrl+S, Ctrl+E): the one under the cursor's, once it is there
+        if (snipWindows [0] != NULL)
+        {
+          if (! _IsSnipWindow (GetForegroundWindow ( )))
+            SetForegroundWindow (snipWindows [0]);
+          else
+            snipFocused = true;
+        }
+
+        // Let us store all ignored windows in a hash set for quick reuse
+        static std::unordered_set <HWND> ignoredWindows = { };
 
         auto _IgnoreWindow = [&](HWND hWnd) -> bool
         {
-          if (std::find (ignoredWindows.begin(), ignoredWindows.end(), hWnd) != ignoredWindows.end())
+          if (ignoredWindows.count (hWnd))
             return true;
 
           // Window class names to ignore
-          static const std::vector<std::wstring> ignoreClassNames =
+          static const std::unordered_set <std::wstring> ignoreClassNames =
           {
             L"Progman",                   // Program Manager
             L"Button",                    // Start button?
@@ -2013,24 +2379,26 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
           // Ignore windows of various characteristics
           if (
-               SKIF_ImGui_hWnd  ==   hWnd
+               _IsSnipWindow        (hWnd)  // (The overlays; the main window is one to capture as any other)
             ||    ! IsWindowVisible (hWnd)
-            || (RealGetWindowClassW (hWnd, wszWindowTextBuffer, 64) && std::find (ignoreClassNames.begin(), ignoreClassNames.end(), wszWindowTextBuffer) != ignoreClassNames.end())
+            || (RealGetWindowClassW (hWnd, wszWindowTextBuffer, 64) && ignoreClassNames.count (wszWindowTextBuffer))
             ||     ! GetWindowTextW (hWnd, wszWindowTextBuffer, 64)
-          //|| (GetWindowLongPtr (hWnd, GWL_EXSTYLE) & WS_EX_TOOLWINDOW)
-          //|| (GetWindowLongPtr (hWnd, GWL_STYLE)   & WS_POPUP)  // Ignores some games, but allows some invisible stupid windows (UWP)
+            || (GetWindowLongPtr (hWnd, GWL_EXSTYLE) & WS_EX_TOOLWINDOW)
+            //|| (GetWindowLongPtr (hWnd, GWL_STYLE)   & WS_POPUP)  // Ignores some games, but allows some invisible stupid windows (UWP)
             )
           {
-            ignoredWindows.push_back (hWnd);
+            ignoredWindows.insert (hWnd);
             return true;
           }
 
           return false;
         };
 
-        auto _GetRectBelowCursor = [&](void) -> void
+        // (Rotated displays too: regions are cropped from the displays' images by their rotation, SKIV_Image_CaptureRegion)
+        auto _GetRectBelowCursor = [&](SKIV_CaptureData* _data, bool isAutoSelection) -> void
         {
-          std::vector<HWND> vHWNDs;
+          std::vector <HWND> vHWNDs;
+          vHWNDs.reserve (2048);
 
           // Retrieve the RECT of the window below the cursor
           EnumWindows ( []( HWND   hWnd,
@@ -2042,7 +2410,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
             return TRUE;
           }, reinterpret_cast<LPARAM>(&vHWNDs));
 
-          if (! vHWNDs.empty())
+          if (! vHWNDs.empty ())
           {
             POINT point = { };
 
@@ -2057,10 +2425,9 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
                 if (GetWindowRect (hWnd, &rect))
                 {
-                  HRGN hRgn = CreateRectRgn (rect.left, rect.top, rect.right, rect.bottom);
                   bool breakLoop = false;
 
-                  if (PtInRegion (hRgn, point.x, point.y))
+                  if (PtInRect (&rect, point))
                   {
                     // Ensure the current selected window is the top-most
                     /* Does not seem to be required
@@ -2076,9 +2443,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
                         RECT new_rect = { };
                         if (GetWindowRect (parent, &new_rect))
                         {
-                          hRgn = CreateRectRgn (new_rect.left, new_rect.top, new_rect.right, new_rect.bottom);
-
-                          if (PtInRegion (hRgn, point.x, point.y))
+                          if (PtInRect (&new_rect, point))
                           {
                             rect     = new_rect;
                             top_most = parent;
@@ -2091,10 +2456,15 @@ wWinMain ( _In_     HINSTANCE hInstance,
                     }
                     */
 
-                    selection_auto.Min.x = static_cast<float> (rect.left);
-                    selection_auto.Min.y = static_cast<float> (rect.top);
-                    selection_auto.Max.x = static_cast<float> (rect.right);
-                    selection_auto.Max.y = static_cast<float> (rect.bottom);
+                    if (isAutoSelection)
+                    {
+                      _data->_rect.Min.x = static_cast<float> (rect.left);
+                      _data->_rect.Min.y = static_cast<float> (rect.top);
+                      _data->_rect.Max.x = static_cast<float> (rect.right);
+                      _data->_rect.Max.y = static_cast<float> (rect.bottom);
+                    }
+
+                    _data->_hwnd = hWnd;
 
                     /*
                     PLOG_VERBOSE << "----------------------";
@@ -2103,14 +2473,12 @@ wWinMain ( _In_     HINSTANCE hInstance,
                     if (RealGetWindowClassW (top_most,  wszRealWindowClass, 64))
                     PLOG_VERBOSE << "Class: " << wszRealWindowClass;
                     PLOG_VERBOSE << "Pos:   " << point.x << "," << point.y;
-                    PLOG_VERBOSE << "Min:   " << selection_auto.Min.x << "," << selection_auto.Min.y;
-                    PLOG_VERBOSE << "Max:   " << selection_auto.Max.x << "," << selection_auto.Max.y;
+                    PLOG_VERBOSE << "Min:   " << _data.Min.x << "," << _data.Min.y;
+                    PLOG_VERBOSE << "Max:   " << _data.Max.x << "," << _data.Max.y;
                     */
 
                     breakLoop = true;
                   }
- 
-                  DeleteObject (hRgn);
 
                   if (breakLoop)
                     break;
@@ -2120,14 +2488,22 @@ wWinMain ( _In_     HINSTANCE hInstance,
           }
         };
 
-                          // Desktop Pos,      Desktop Pos + Desktop Size
-        ImRect allowable (monitor_extent.Min, SKIV_ClipboardImage._resolution);
-        ImRect capture_area;
-
-        static bool clicked = false;
-
-        if (HDR_Image && SKIV_HDR)
+        static bool clicked      = false;
+        static bool _saveToDisk  = false;
+        static bool _selectFile  = false;
+        if (_registry._SnippingModeInit)
         {
+          _registry._SnippingModeInit = false;
+          _saveToDisk = (_registry.eScreenshotsAutosave & CaptureMode_Region);
+          _selectFile = false; // Reset on each capture (for now)
+        }
+
+        static bool toolbar = true; // HDR_Image && SKIV_HDR
+        if (toolbar)
+        {
+          // On the overlay of the display under the cursor (its window again: what follows is added to it)
+          ImGui::Begin (_OverlayName (0).c_str ( ), nullptr, overlayFlags);
+
           static ImVec2 vSnippingToolbarSize = ImVec2 (128.0f, 32.0f);
 
           ImGui::SetNextWindowPos  (ImVec2 (ImGui::GetCurrentWindow ()->Pos.x         +
@@ -2140,12 +2516,12 @@ wWinMain ( _In_     HINSTANCE hInstance,
           ImGui::PushStyleColor    (ImGuiCol_ChildBg, ImGui::GetStyleColorVec4 (ImGuiCol_WindowBg));
           ImGui::BeginChild        ("Snipping Tool###SnippingToolbar", ImVec2 (0.0f, 0.0f),
                                       ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_AutoResizeX |
-                                      ImGuiChildFlags_AutoResizeY | ((_registry.bUIBorders) ? ImGuiChildFlags_Border
+                                      ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysAutoResize |
+                                                                    ((_registry.bUIBorders) ? ImGuiChildFlags_Borders
                                                                                             : ImGuiChildFlags_None
                                                                   | ImGuiChildFlags_FrameStyle),
                                       ImGuiWindowFlags_NoScrollbar  |
-                                      ImGuiWindowFlags_NoDecoration |
-                                      ImGuiWindowFlags_AlwaysAutoResize);
+                                      ImGuiWindowFlags_NoDecoration);
 
           ImGui::BringWindowToDisplayFront (ImGui::GetCurrentWindow ());
 
@@ -2155,28 +2531,152 @@ wWinMain ( _In_     HINSTANCE hInstance,
           ImGui::TextUnformatted   (ICON_FA_SCISSORS " Snipping Tool");
           ImGui::Separator         ();
           ImGui::PopStyleColor     ();
-          ImGui::TreePush          ("");
-          ImGui::RadioButton       ("Capture HDR PNG",    &_registry._SnippingTonemapsHDR, 0);
-          if (ImGui::IsItemHovered ())
-          {
-            ImGui::BeginTooltip    ();
-            ImGui::TextUnformatted ("HDR PNG may have Compatibility Issues");
-            ImGui::Separator       ();
-            ImGui::BulletText      ("Generally the clipboard contents can only be pasted into browser-derived software (i.e. built using Chromium, Electron) and SKIV.");
-            ImGui::BulletText      ("Some browsers cannot interpret HDR10 PNG correctly and the image will not render in HDR when pasted.");
-            ImGui::EndTooltip      ();
-          }
+
+          ImGui::Spacing           ();
           ImGui::SameLine          ();
-          ImGui::RadioButton       ("Tonemap HDR to SDR", &_registry._SnippingTonemapsHDR, 1);
+
+          // Save To Disk
+          if (hotkeyCtrlS)
+            _saveToDisk = ! _saveToDisk;
+
+          ImGui::PushStyleColor    (ImGuiCol_Text, ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Info));
+          ImGui::Checkbox          (" " ICON_FA_FLOPPY_DISK "###ToolbarSaveToDisk", &_saveToDisk);
+          ImGui::PopStyleColor     ();
           if (ImGui::IsItemHovered ())
           {
             ImGui::BeginTooltip    ();
-            ImGui::TextUnformatted ("High Quality HDR to SDR Tonemap");
+            ImGui::TextUnformatted ("Save captured screenshot?");
+            ImGui::SameLine        ();
+            ImGui::TextColored     (ImGui::GetStyleColorVec4 (ImGuiCol_TextDisabled), "Ctrl+S");
             ImGui::Separator       ();
-            ImGui::BulletText      ("Stored in the clipboard as a Bitmap for maximum compatibility with SDR software.");
+            ImGui::TextUnformatted ("Folder:");
+            ImGui::SameLine        ();
+            ImGui::TextUnformatted (_path_cache.skiv_screenshotsA);
             ImGui::EndTooltip      ();
           }
-          ImGui::TreePop           ();
+
+          ImGui::SameLine          ();
+
+          // Show File In Explorer
+          if (! _saveToDisk)
+            SKIF_ImGui_PushDisableState ();
+          else if (hotkeyCtrlE)
+            _selectFile = ! _selectFile;
+
+          static bool _tOpenFolderDisabled = false;
+          ImGui::PushStyleColor    (ImGuiCol_Text, ImColor(255, 207, 72).Value);
+          ImGui::Checkbox          (" " ICON_FA_FOLDER_OPEN "###ToolbarOpenFolder", &_selectFile);
+          ImGui::PopStyleColor     ();
+          if (ImGui::IsItemHovered ())
+          {
+            ImGui::BeginTooltip    ();
+            ImGui::TextUnformatted ("Open folder after capture?");
+            ImGui::SameLine        ();
+            ImGui::TextColored     (ImGui::GetStyleColorVec4 (ImGuiCol_TextDisabled), "Ctrl+E");
+            ImGui::EndTooltip      ();
+          }
+
+          if (! _saveToDisk)
+            SKIF_ImGui_PopDisableState ();
+
+          // HDR Tonemapping
+          if (HDR_Image && SKIV_HDR)
+          {
+            ImGui::SameLine          ();
+            ImGui::SeparatorEx       (ImGuiSeparatorFlags_Vertical);
+            ImGui::SameLine          ();
+            ImGui::BeginGroup        ();
+            ImGui::TextColored       (ImGui::GetStyleColorVec4 (ImGuiCol_TextDisabled), "HDR:");
+            ImGui::SameLine          ();
+            ImGui::RadioButton       ("Keep HDR",       &_registry._SnippingTonemapsHDR, 0);
+            if (ImGui::IsItemHovered ())
+            {
+              ImGui::BeginTooltip    ();
+              ImGui::TextUnformatted ("HDR PNG may have Compatibility Issues");
+              ImGui::Separator       ();
+              ImGui::BulletText      ("Generally the clipboard contents can only be pasted into browser-derived software (i.e. built using Chromium, Electron) and SKIV.");
+              ImGui::BulletText      ("Some browsers cannot interpret HDR10 PNG correctly and the image will not render in HDR when pasted.");
+              ImGui::EndTooltip      ();
+            }
+            ImGui::SameLine          ();
+            ImGui::RadioButton       ("Tone-map to SDR", &_registry._SnippingTonemapsHDR, 1);
+            if (ImGui::IsItemHovered ())
+            {
+              ImGui::BeginTooltip    ();
+              ImGui::TextUnformatted ("High Quality HDR to SDR Tone Map");
+              ImGui::Separator       ();
+              ImGui::BulletText      ("Stored in the clipboard as a Bitmap for maximum compatibility with SDR software.");
+              ImGui::EndTooltip      ();
+            }
+            ImGui::SameLine          ();
+            ImGui::RadioButton       ("Auto",           &_registry._SnippingTonemapsHDR, 2);
+            if (ImGui::IsItemHovered ())
+            {
+              ImGui::BeginTooltip    ();
+              ImGui::TextUnformatted ("Use SDR for Snips at or Below Windows SDR Desktop Luminance");
+              ImGui::Separator       ();
+              ImGui::BulletText      ("For HDR range content, captures an unaltered HDR image");
+              ImGui::EndTooltip      ();
+            }
+
+            // Discord Compatibility (shared with the PNG encoder setting)
+            ImGui::SameLine          ();
+
+            const bool _discordDisabled =
+              (_registry._SnippingTonemapsHDR == 1); // Tone-mapped snips never write HDR PNGs
+
+            if (_discordDisabled)
+              SKIF_ImGui_PushDisableState ();
+
+            ImGui::PushStyleColor    (ImGuiCol_Text, ImColor (88, 101, 242).Value); // Discord blurple
+            if (ImGui::Checkbox      (" " ICON_FA_DISCORD "###ToolbarDiscordCompat", &_registry.png.discord_compatibility))
+              _registry.regKVPNGDiscordCompatibility.putData (_registry.png.discord_compatibility);
+            ImGui::PopStyleColor     ();
+
+            if (_discordDisabled)
+              SKIF_ImGui_PopDisableState ();
+
+            if (ImGui::IsItemHovered (ImGuiHoveredFlags_AllowWhenDisabled))
+            {
+              ImGui::BeginTooltip    ();
+              ImGui::TextUnformatted ("Discord Compatible HDR PNG");
+              ImGui::Separator       ();
+              ImGui::BulletText      ("Omits the cICP chunk so Discord uses the embedded ICC profile for its thumbnail.");
+              ImGui::BulletText      ("Without this, Discord's thumbnail appears in SDR without tone mapping.");
+              ImGui::EndTooltip      ();
+            }
+            ImGui::EndGroup          ();
+          }
+
+          ImGui::SameLine          ();
+          ImGui::SeparatorEx       (ImGuiSeparatorFlags_Vertical);
+          ImGui::SameLine          ();
+
+          // X (Close) Button
+          ImGui::BeginGroup        ();
+          ImGui::PushStyleColor   (ImGuiCol_ButtonHovered, ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Failure));
+          ImGui::PushStyleColor   (ImGuiCol_ButtonActive,  ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Failure) * ImVec4(1.2f, 1.2f, 1.2f, 1.0f));
+
+          static bool closeButtonHoverActive = false;
+
+          if (_registry._StyleLightMode && closeButtonHoverActive)
+            ImGui::PushStyleColor (ImGuiCol_Text, ImGui::GetStyleColorVec4 (ImGuiCol_WindowBg)); //ImVec4 (0.9F, 0.9F, 0.9F, 1.0f));
+
+          if (ImGui::Button (ICON_FA_XMARK, ImVec2 ( 30.0f * SKIF_ImGui_GlobalDPIScale, 0.0f ) )) // HotkeyEsc is situational
+            _registry._SnippingModeExit = true;
+
+          if (_registry._StyleLightMode)
+          {
+            if (closeButtonHoverActive)
+              ImGui::PopStyleColor ( );
+
+            closeButtonHoverActive = (ImGui::IsItemHovered () || ImGui::IsItemActivated ());
+          }
+
+          ImGui::PopStyleColor     (2);
+          ImGui::EndGroup          ();
+          // End of X (Close) Button
+
           ImGui::EndGroup          ();
           if ( ImGui::IsWindowHovered () ||
                ImGui::IsItemActive    () )
@@ -2187,22 +2687,44 @@ wWinMain ( _In_     HINSTANCE hInstance,
           vSnippingToolbarSize = ImGui::GetWindowSize ();
           ImGui::EndChild          ();
 
+          ImGui::End               ();
         }
 
-        if (! bHoveringSnipToolbar)
+        // A right click cancels the snip, as Escape does (also while a region is being dragged out). The viewer is drawn
+        //   in this frame already (once the window is restored): it must not take the click as one for its menu.
+        if (ImGui::IsMouseClicked (ImGuiMouseButton_Right))
         {
-          if (! clicked && SKIF_ImGui_SelectionRect (&selection, allowable, 0, SelectionFlag_Filled))
+          _registry._SnippingModeExit = true;
+          clicked                     = false;
+          selection._rect             = ImRect ( );
+
+          extern int SKIV_Viewer_RightClickUsedInFrame;
+          SKIV_Viewer_RightClickUsedInFrame = ImGui::GetFrameCount ( );
+        }
+
+        else if (! bHoveringSnipToolbar)
+        {
+          // A region dragged out (in desktop coordinates: from one display onto others too, as the mouse stays with the
+          //   overlay it was pressed on), drawn on every overlay
+          const bool selected =
+            (! clicked && SKIF_ImGui_SelectionRect (&selection._rect, allowable, 0, SelectionFlag_Filled | SelectionFlag_NoDraw));
+
+          if (! clicked && ImGui::IsMouseDown (ImGuiMouseButton_Left) && ! selected)
+            _DrawOnOverlays (selection._rect, true);
+
+          if (selected)
           {
             _registry._SnippingModeExit = true;
-            capture_area = selection;
+            _GetRectBelowCursor  (&selection, false);
+            capture_data         = selection;
           }
 
           else if (! ImGui::IsMouseDragging (ImGuiMouseButton_Left))
           {
-            _GetRectBelowCursor ( );
+            _GetRectBelowCursor (&selection_auto, true);
 
             // Keep the selection within the allowed rectangle
-            selection_auto.ClipWithFull (allowable);
+            selection_auto._rect.ClipWithFull (allowable);
 
             if (ImGui::IsMouseClicked (ImGuiMouseButton_Left))
               clicked = true;
@@ -2211,30 +2733,38 @@ wWinMain ( _In_     HINSTANCE hInstance,
             {
               clicked = false;
               _registry._SnippingModeExit = true;
-              capture_area = selection_auto;
+              capture_data = selection_auto;
             }
 
-            else if (selection_auto.Min != selection_auto.Max)
-            {
-              ImDrawList* draw_list =
-                ImGui::GetForegroundDrawList ();
-
-              draw_list->AddRect       (selection_auto.Min, selection_auto.Max, ImGui::GetColorU32 (IM_COL32(0,130,216,255)), 0.0f, 0, 5.0f); // Border
-            //draw_list->AddRectFilled (selection_auto.Min, selection_auto.Max, ImGui::GetColorU32 (IM_COL32(0,130,216,50)));                 // Background
-            }
+            // The window below the cursor (on whichever displays it is)
+            else if (selection_auto._rect.Min != selection_auto._rect.Max)
+              _DrawOnOverlays (selection_auto._rect, false);
           }
 
           else
             clicked = false;
 
-          if (capture_area.GetArea() != 0)
+          if (capture_data._rect.GetArea() != 0)
           {
+            capture_data._mode   = _saveToDisk;
+            capture_data._select = _selectFile;
+            capture_data._names = SKIV_GetApplicationNames (capture_data._hwnd);
             ignoredWindows.clear();
 
             PLOG_VERBOSE << "Attempting to capture region...";
 
-            SKIV_Image_SetClipboard (capture_area, true);
+            SKIV_Image_CaptureRegion (capture_data);
           }
+        }
+
+        // The input of this frame is the snip's: the viewer, drawn after it (in the main window, which stays as it is),
+        //   must not act on it (e.g. a right click opening its menu, Delete deleting the image, Ctrl+wheel zooming)
+        {
+          for (int key = ImGuiKey_NamedKey_BEGIN; key < ImGuiKey_NamedKey_END; key++)
+            ImGui::SetKeyOwner (static_cast <ImGuiKey> (key), snipInputOwner, ImGuiInputFlags_LockThisFrame);
+
+          ImGui::GetIO ( ).MouseWheel  = 0.0f;
+          ImGui::GetIO ( ).MouseWheelH = 0.0f;
         }
 #pragma endregion
       }
@@ -2242,12 +2772,11 @@ wWinMain ( _In_     HINSTANCE hInstance,
       if (_registry._SnippingModeExit)
         _RestoreWindow ();
 
-      // Begin Large Mode
-      if (! _registry._SnippingMode)
+      // Begin Large Mode: also while snipping (in the main window, as it is: the snipping overlay is a window of its own)
       {
 #pragma region UI: Large Mode
 
-        if (_registry._SnippingModeTempHDR)
+        if (_registry._SnippingModeTempHDR && ! _registry._SnippingMode)
         {
           _registry._SnippingModeTempHDR = false;
           _registry.iHDRMode = 0;
@@ -2258,6 +2787,10 @@ wWinMain ( _In_     HINSTANCE hInstance,
         if (SKIF_Tab_Selected == UITab_Viewer ||
             SKIF_Tab_ChangeTo == UITab_Viewer)
         {
+          // Mouse wheel zoom and dragging the image: sets up the scroll position of the content frame below
+          extern void SKIV_Viewer_HandleMouseZoomPan (void);
+          SKIV_Viewer_HandleMouseZoomPan ( );
+
           ImGui::PushStyleVar (ImGuiStyleVar_FramePadding, ImVec2());
           bool show = SKIF_ImGui_BeginMainChildFrame (ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoScrollbar);
           ImGui::PopStyleVar  ( );
@@ -2285,8 +2818,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
           if (show)
           {
             SKIF_UI_Tab_DrawViewer ( );
-          
-            SKIF_ImGui_AutoScroll  (true, SKIF_ImGuiAxis_Both);
+
+            SKIF_ImGui_AutoScroll  (true, SKIF_ImGuiAxis_Both, "##AutoScrollViewer1");
             SKIF_ImGui_UpdateScrollbarState ( );
 
             // Dummy required here to solve ImGui::ErrorCheckUsingSetCursorPosToExtendParentBoundaries()
@@ -2318,15 +2851,20 @@ wWinMain ( _In_     HINSTANCE hInstance,
           if (SKIF_Tab_ChangeTo == UITab_Settings || RefreshSettingsTab)
             SKIF_Util_IsHDRActive (NULL); // true
 
+          // The max width of the content of the Settings page (centered in wider windows)
+          const float fTabColumnMaxWidth = 1000.0f * SKIF_ImGui_GlobalDPIScale;
+
           ImGui::PushStyleVar (ImGuiStyleVar_FramePadding, ImVec2 (15.0f, 15.0f) * SKIF_ImGui_GlobalDPIScale);
           bool show = SKIF_ImGui_BeginMainChildFrame ( );
           ImGui::PopStyleVar  ( );
 
           if (show)
           {
-            SKIF_UI_Tab_DrawSettings ( );
+            SKIF_ImGui_BeginCenteredColumn ("###SettingsColumn", fTabColumnMaxWidth);
+            SKIF_UI_Tab_DrawSettings       ( );
+            SKIF_ImGui_EndCenteredColumn   (true);
 
-            SKIF_ImGui_AutoScroll  (true, SKIF_ImGuiAxis_Both);
+            SKIF_ImGui_AutoScroll  (true, SKIF_ImGuiAxis_Both, "##AutoScrollViewer2");
             SKIF_ImGui_UpdateScrollbarState ( );
 
             ImGui::EndChild        ( );
@@ -2338,7 +2876,6 @@ wWinMain ( _In_     HINSTANCE hInstance,
             SKIF_Tab_Selected  = UITab_Settings;
             SKIF_Tab_ChangeTo  = UITab_None;
             RefreshSettingsTab = false;
-
           }
         }
 
@@ -2353,7 +2890,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
           SKIF_UI_Tab_DrawAbout( );
 
           // Engages auto-scroll mode (left click drag on touch + middle click drag on non-touch)
-          SKIF_ImGui_AutoScroll  (true);
+          SKIF_ImGui_AutoScroll  (true, SKIF_ImGuiAxis_Y, "##AutoScrollTab");
 
           if (SKIF_Tab_ChangeTo == UITab_About)
           {
@@ -2370,7 +2907,6 @@ wWinMain ( _In_     HINSTANCE hInstance,
 #pragma endregion
       }
 
-      last_snip_state = _registry._SnippingMode;
 
       ImGui::EndGroup             ( );
 
@@ -2384,10 +2920,10 @@ wWinMain ( _In_     HINSTANCE hInstance,
         );
 
         ImGui::SetCursorPos (ImVec2 (
-            (ImGui::GetWindowContentRegionMax().x - shelly_movable_area.x) / 2.0f,
+            (SKIF_ImGui_GetWindowContentRegionMax ( ).x - shelly_movable_area.x) / 2.0f,
              10.0f * SKIF_ImGui_GlobalDPIScale
         ));
-        
+
         ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2());
         ImGui::PushStyleVar (ImGuiStyleVar_FramePadding,  ImVec2());
         bool shelly_show = ImGui::BeginChild ("###SKIV_SHELLY", shelly_movable_area, ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar);
@@ -2421,7 +2957,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
         float distanceFromScrollbar = (SKIF_ImGui_IsScrollbarY()) ? ImGui::GetStyle().ScrollbarSize : 0.0f;
 
         ImGui::SetCursorPos (
-          ImVec2 ( (ImGui::GetWindowContentRegionMax().x - ImGui::GetStyle().FrameBorderSize * 2 - window_btn_size.x - ((distanceFromEdge + distanceFromScrollbar) * SKIF_ImGui_GlobalDPIScale)),
+          ImVec2 ( (SKIF_ImGui_GetWindowContentRegionMax ( ).x - ImGui::GetStyle().FrameBorderSize * 2 - window_btn_size.x - ((distanceFromEdge + distanceFromScrollbar) * SKIF_ImGui_GlobalDPIScale)),
                      ((distanceFromEdge * SKIF_ImGui_GlobalDPIScale) - ImGui::GetStyle().FrameBorderSize * 2) )
         );
 
@@ -2446,12 +2982,12 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
           if (ImGui::Button (ICON_FA_XMARK, ImVec2 ( 30.0f * SKIF_ImGui_GlobalDPIScale, 0.0f ) )) // HotkeyEsc is situational
             hotkeyEsc = true;
-      
+
           if (_registry._StyleLightMode)
           {
             if (closeButtonHoverActive)
               ImGui::PopStyleColor ( );
-          
+
             closeButtonHoverActive = (ImGui::IsItemHovered () || ImGui::IsItemActivated ());
           }
 
@@ -2518,7 +3054,8 @@ wWinMain ( _In_     HINSTANCE hInstance,
               bKeepProcessAlive = false;
             break;
           case UITab_Settings:
-            SKIF_Tab_ChangeTo = UITab_Viewer;
+            if (! g_activeKeybindPopup)
+              SKIF_Tab_ChangeTo = UITab_Viewer;
             break;
           case UITab_About:
             break;
@@ -2532,6 +3069,15 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
       if (hotkeyCtrlN)
         ShowWindow (SKIF_ImGui_hWnd, SW_MINIMIZE);
+
+      // A double-click on the caption area (or the empty space around the image in the viewer): maximize/restore
+      if (SKIF_ImGui_CaptionDoubleClicked)
+      {   SKIF_ImGui_CaptionDoubleClicked = false;
+
+        // (Not in fullscreen, where the window is neither)
+        if (SKIF_ImGui_hWnd != NULL && ! SKIF_ImGui_IsFullscreen (SKIF_ImGui_hWnd))
+          ::PostMessage (SKIF_ImGui_hWnd, WM_SYSCOMMAND, ::IsZoomed (SKIF_ImGui_hWnd) ? SC_RESTORE : SC_MAXIMIZE, 0);
+      }
 
       if (hotkeyCtrlQ || bKeepWindowAlive == false) // HotkeyEsc is situational
         bKeepProcessAlive = false;
@@ -2657,19 +3203,19 @@ wWinMain ( _In_     HINSTANCE hInstance,
             ImGui::Text           ("Changes:");
           }
 
-          ImGui::PushStyleColor (ImGuiCol_NavHighlight, ImVec4(0,0,0,0));
+          ImGui::PushStyleColor (ImGuiCol_NavCursor, ImVec4(0,0,0,0));
           ImGui::PushStyleColor (ImGuiCol_Text, ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_TextBase));
-          ImGui::PushFont       (fontConsolas);
+          ImGui::PushFont       (fontConsolas, SKIF_ImGui_GetFontConsolasSize ( ));
           ImGui::InputTextEx    ( "###UpdatePromptChanges", "The update does not contain any release notes...",
                                     _updater.GetResults().release_notes_formatted.notes.data(),
                                       static_cast<int>(_updater.GetResults().release_notes_formatted.notes.size()),
                                         ImVec2 ( (UpdateAvailableWidth - 15.0f) * SKIF_ImGui_GlobalDPIScale,
                                           std::min<float>(
-                                            std::min<float>(_updater.GetResults().history_formatted.lines, 40.0f) * fontConsolas->FontSize,
+                                            std::min<float>(_updater.GetResults().history_formatted.lines, 40.0f) * ImGui::GetFontSize ( ),
                                               SKIF_vecCurrentMode.y * 0.5f)
                                                ), ImGuiInputTextFlags_ReadOnly | static_cast<ImGuiInputTextFlags_>(ImGuiInputTextFlags_Multiline));
 
-          SKIF_ImGui_DisallowMouseDragMove ( );
+          SKIF_ImGui_BlockDragMoveWhenItemActive ( );
 
           ImGui::PopFont        ( );
           ImGui::PopStyleColor  ( );
@@ -2681,7 +3227,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
         fX = (ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(compareLabel.c_str()).x + (((compareNewer) ? 2 : 1) * ImGui::GetStyle().ItemSpacing.x)) / 2;
 
         ImGui::SetCursorPosX(fX);
-          
+
         ImGui::TextColored (compareColor, compareLabel.c_str());
 
         SKIF_ImGui_Spacing ();
@@ -2720,7 +3266,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
           ImGui::CloseCurrentPopup ();
         }
 
-        SKIF_ImGui_DisallowMouseDragMove ( );
+        SKIF_ImGui_BlockDragMoveWhenItemActive ( );
 
         ImGui::SameLine ();
         ImGui::Spacing  ();
@@ -2744,7 +3290,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
           ImGui::SameLine ();
         }
 
-        SKIF_ImGui_DisallowMouseDragMove ( );
+        SKIF_ImGui_BlockDragMoveWhenItemActive ( );
 
         if (ImGui::Button ("Cancel", ImVec2 ( 100 * SKIF_ImGui_GlobalDPIScale,
                                                25 * SKIF_ImGui_GlobalDPIScale )))
@@ -2753,11 +3299,11 @@ wWinMain ( _In_     HINSTANCE hInstance,
           ImGui::CloseCurrentPopup ();
         }
 
-        SKIF_ImGui_DisallowMouseDragMove ( );
+        SKIF_ImGui_BlockDragMoveWhenItemActive ( );
 
         ImGui::EndPopup ();
       }
-      
+
       static float  HistoryPopupWidth          = 0.0f;
       static std::string HistoryPopupTitle;
 
@@ -2782,7 +3328,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
         HistoryPopupTitle += "###History";
 
         ImGui::OpenPopup ("###History");
-      
+
       }
 
       if (HistoryPopup == PopupState_Open ||
@@ -2791,7 +3337,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
         ImGui::SetNextWindowSize (ImVec2 (HistoryPopupWidth * SKIF_ImGui_GlobalDPIScale, 0.0f));
         ImGui::SetNextWindowPos  (ImGui::GetCurrentWindowRead()->Viewport->GetMainRect().GetCenter(), ImGuiCond_Always, ImVec2 (0.5f, 0.5f));
       }
-      
+
       if (ImGui::BeginPopupModal (HistoryPopupTitle.c_str(), nullptr,
                                   ImGuiWindowFlags_NoResize |
                                   ImGuiWindowFlags_NoMove |
@@ -2824,19 +3370,19 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
         if (! _updater.GetResults().history_formatted.notes.empty())
         {
-          ImGui::PushStyleColor (ImGuiCol_NavHighlight, ImVec4(0,0,0,0));
+          ImGui::PushStyleColor (ImGuiCol_NavCursor, ImVec4(0,0,0,0));
           ImGui::PushStyleColor (ImGuiCol_Text, ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_TextBase));
-          ImGui::PushFont       (fontConsolas);
+          ImGui::PushFont       (fontConsolas, SKIF_ImGui_GetFontConsolasSize ( ));
           ImGui::InputTextEx    ( "###HistoryChanges", "No historical changes detected...",
                                     _updater.GetResults().history_formatted.notes.data(),
                                       static_cast<int>(_updater.GetResults().history_formatted.notes.size()),
                                         ImVec2 ( (HistoryPopupWidth - 15.0f) * SKIF_ImGui_GlobalDPIScale,
                                           std::min<float> (
-                                              std::min<float>(_updater.GetResults().history_formatted.lines, 40.0f) * fontConsolas->FontSize,
+                                              std::min<float>(_updater.GetResults().history_formatted.lines, 40.0f) * ImGui::GetFontSize ( ),
                                               SKIF_vecCurrentMode.y * 0.6f)
                                                ), ImGuiInputTextFlags_ReadOnly | static_cast<ImGuiInputTextFlags_>(ImGuiInputTextFlags_Multiline));
 
-          SKIF_ImGui_DisallowMouseDragMove ( );
+          SKIF_ImGui_BlockDragMoveWhenItemActive ( );
 
           ImGui::PopFont        ( );
           ImGui::PopStyleColor  ( );
@@ -2858,11 +3404,11 @@ wWinMain ( _In_     HINSTANCE hInstance,
           ImGui::CloseCurrentPopup ();
         }
 
-        SKIF_ImGui_DisallowMouseDragMove ( );
+        SKIF_ImGui_BlockDragMoveWhenItemActive ( );
 
         ImGui::EndPopup ();
       }
-      
+
       static float       AutoUpdatePopupWidth          = 0.0f;
       static std::string AutoUpdatePopupTitle;
       static bool        AutoUpdateChanges = (_updater.GetAutoUpdateNotes().max_length > 0 && false); //! _inject.SKVer32.empty() && _inject.SKVer32 == _registry.wsAutoUpdateVersion);
@@ -2872,7 +3418,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
         AutoUpdateChanges = false;
         AutoUpdatePopup = PopupState_Open;
       }
-      
+
       // Only open the popup prompt after the library has appeared (fixes the popup weirdly closing for some unknown reason)
       if (AutoUpdatePopup == PopupState_Open && ! HiddenFramesContinueProcessing && ! SKIF_ImGui_IsAnyPopupOpen ( ))
       {
@@ -2898,7 +3444,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
         ImGui::SetNextWindowSize (ImVec2 (AutoUpdatePopupWidth* SKIF_ImGui_GlobalDPIScale, 0.0f));
         ImGui::SetNextWindowPos  (ImGui::GetCurrentWindowRead()->Viewport->GetMainRect().GetCenter(), ImGuiCond_Always, ImVec2 (0.5f, 0.5f));
       }
-      
+
       if (ImGui::BeginPopupModal (AutoUpdatePopupTitle.c_str(), nullptr,
                                   ImGuiWindowFlags_NoResize |
                                   ImGuiWindowFlags_NoMove |
@@ -2931,19 +3477,19 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
         if (! _updater.GetAutoUpdateNotes().notes.empty())
         {
-          ImGui::PushStyleColor (ImGuiCol_NavHighlight, ImVec4(0,0,0,0));
+          ImGui::PushStyleColor (ImGuiCol_NavCursor, ImVec4(0,0,0,0));
           ImGui::PushStyleColor (ImGuiCol_Text, ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_TextBase));
-          ImGui::PushFont       (fontConsolas);
+          ImGui::PushFont       (fontConsolas, SKIF_ImGui_GetFontConsolasSize ( ));
           ImGui::InputTextEx    ( "###AutoUpdaterChanges", "No changes detected...",
                                     _updater.GetAutoUpdateNotes().notes.data(),
                                       static_cast<int>(_updater.GetAutoUpdateNotes().notes.size()),
                                         ImVec2 ( (AutoUpdatePopupWidth - 15.0f) * SKIF_ImGui_GlobalDPIScale,
                                           std::min<float> (
-                                              std::min<float>(_updater.GetAutoUpdateNotes().lines, 40.0f) * fontConsolas->FontSize,
+                                              std::min<float>(_updater.GetAutoUpdateNotes().lines, 40.0f) * ImGui::GetFontSize ( ),
                                               SKIF_vecCurrentMode.y * 0.6f)
                                                ), ImGuiInputTextFlags_ReadOnly | static_cast<ImGuiInputTextFlags_>(ImGuiInputTextFlags_Multiline));
 
-          SKIF_ImGui_DisallowMouseDragMove ( );
+          SKIF_ImGui_BlockDragMoveWhenItemActive ( );
 
           ImGui::PopFont        ( );
           ImGui::PopStyleColor  ( );
@@ -2966,11 +3512,11 @@ wWinMain ( _In_     HINSTANCE hInstance,
           ImGui::CloseCurrentPopup ();
         }
 
-        SKIF_ImGui_DisallowMouseDragMove ( );
+        SKIF_ImGui_BlockDragMoveWhenItemActive ( );
 
         ImGui::EndPopup ();
       }
-      
+
       monitor_extent =
         ImGui::GetPopupAllowedExtentRect ( // ImGui::GetWindowAllowedExtentRect
           ImGui::GetCurrentWindowRead   ()
@@ -3010,7 +3556,23 @@ wWinMain ( _In_     HINSTANCE hInstance,
       //   duplicate the same processing we're already doing in viewer.cpp
       if (hotkeyCtrlV && ! ImGui::IsAnyItemActive ( )) // && ! ImGui::IsAnyItemFocused ( )
       {
-        if (OpenClipboard (SKIF_ImGui_hWnd))
+        bool clipboard_open = false;
+
+        for (auto attempts = 0; attempts < 8; ++attempts)
+        {
+          if (attempts > 0)
+          {
+            Sleep (1 << (attempts - 1));
+          }
+
+          if (OpenClipboard (SKIF_ImGui_hWnd))
+          {
+            clipboard_open = true;
+            break;
+          }
+        }
+
+        if (clipboard_open)
         {
           ClipboardData cbd = ClipboardData_None;
 
@@ -3023,45 +3585,31 @@ wWinMain ( _In_     HINSTANCE hInstance,
                     (format == CF_HTML       ) ? ClipboardData_HTML        :
                     (format == CF_BITMAP     ) ? ClipboardData_Bitmap      :
                     (format == CF_HDROP      ) ? ClipboardData_HDROP       :
+                    (format == CF_PNG        ) ? ClipboardData_PNG         :
                                                  ClipboardData_None       );
 //#ifdef _DEBUG
-            wchar_t wzFormatName[256] = { L'\0' };
-            GetClipboardFormatNameW (format, wzFormatName, 256);
+            // Only registered formats have a name: the predefined ones (CF_*) are named here, as the buffer would
+            //   otherwise be left as it was (showing the name of the format before it)
+            static constexpr const wchar_t* wzPredefinedNames [] = {
+              L"",              L"CF_TEXT",      L"CF_BITMAP",      L"CF_METAFILEPICT", L"CF_SYLK",
+              L"CF_DIF",        L"CF_TIFF",      L"CF_OEMTEXT",     L"CF_DIB",          L"CF_PALETTE",
+              L"CF_PENDATA",    L"CF_RIFF",      L"CF_WAVE",        L"CF_UNICODETEXT",  L"CF_ENHMETAFILE",
+              L"CF_HDROP",      L"CF_LOCALE",    L"CF_DIBV5"
+            };
 
-            if (wzFormatName[0] == L'\0')
-            {
-              switch (format)
-              {
-              case CF_TEXT:        // 1
-                wcsncpy_s (wzFormatName, 256,  L"CF_TEXT", _TRUNCATE);
-                break;
-              case CF_BITMAP:      // 2
-                wcsncpy_s (wzFormatName, 256,  L"CF_BITMAP", _TRUNCATE);
-                break;
-              case CF_OEMTEXT:     // 7
-                wcsncpy_s (wzFormatName, 256,  L"CF_OEMTEXT", _TRUNCATE);
-                break;
-              case CF_DIB:         // 8
-                wcsncpy_s (wzFormatName, 256,  L"CF_DIB", _TRUNCATE);
-                break;
-              case CF_UNICODETEXT: // 13
-                wcsncpy_s (wzFormatName, 256,  L"CF_UNICODETEXT", _TRUNCATE);
-                break;
-              case CF_HDROP:       // 15
-                wcsncpy_s (wzFormatName, 256,  L"CF_HDROP", _TRUNCATE);
-                break;
-              case CF_LOCALE:      // 16
-                wcsncpy_s (wzFormatName, 256,  L"CF_LOCALE", _TRUNCATE);
-                break;
-              case CF_DIBV5:       // 17
-                wcsncpy_s (wzFormatName, 256,  L"CF_DIBV5", _TRUNCATE);
-                break;
-              }
-            }
+            wchar_t wzFormatName[256] = { L'\0' };
+
+            if (GetClipboardFormatNameW (format, wzFormatName, 256) == 0)
+              wcsncpy_s (wzFormatName, 256, (format < std::size (wzPredefinedNames)) ? wzPredefinedNames [format] : L"(unnamed)", _TRUNCATE);
 
             PLOG_VERBOSE << "Supported clipboard format: " << format << " - " << std::wstring(wzFormatName);
 //#endif
           }
+
+          // The formats are tried in this order, each only if the ones before it gave nothing usable: text, the image
+          //   URL of HTML (the original file: the only way to get its full quality, HDR included), the image data (PNG,
+          //     then a bitmap: 8-bit SDR copies), and last a list of files
+          bool handled = false;
 
           if (cbd & ClipboardData_TextUnicode)
           {
@@ -3072,6 +3620,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
             if (! unicode.empty())
             {
               dragDroppedFilePath = unicode;
+              handled             = true;
 
               ImGui::InsertNotification({ ImGuiToastType::Info, 3000, "Received a Unicode paste", "%s", SK_WideCharToUTF8 (dragDroppedFilePath).c_str()});
             }
@@ -3086,12 +3635,13 @@ wWinMain ( _In_     HINSTANCE hInstance,
             if (! ansi.empty())
             {
               dragDroppedFilePath = SK_UTF8ToWideChar (ansi);
+              handled             = true;
 
               ImGui::InsertNotification({ ImGuiToastType::Info, 3000, "Received a ANSI paste", "%s", SK_WideCharToUTF8 (dragDroppedFilePath).c_str()});
             }
           }
 
-          else if (cbd & ClipboardData_HTML)
+          if (! handled && (cbd & ClipboardData_HTML))
           {
             PLOG_VERBOSE << "Received a CF_HTML paste!";
 
@@ -3140,25 +3690,54 @@ wWinMain ( _In_     HINSTANCE hInstance,
                     html_decoder.decode(html);
 
                     PLOG_VERBOSE << "Extracted image URL path: " << html;
-                    dragDroppedFilePath = SK_UTF8ToWideChar (html);
 
-                    ImGui::InsertNotification({ ImGuiToastType::Info, 3000, "Received a HTML paste", "%s", SK_WideCharToUTF8(dragDroppedFilePath).c_str()});
+                    const std::wstring src = SK_UTF8ToWideChar (html);
+
+                    // Only a URL or a file that exists can be opened: some browsers (Firefox) give just the file name
+                    //   (e.g. "image.png"), in which case the image data copied alongside it is used instead
+                    if (PathIsURLW (src.c_str ( )) || PathFileExistsW (src.c_str ( )))
+                    {
+                      dragDroppedFilePath = src;
+                      handled             = true;
+
+                      ImGui::InsertNotification({ ImGuiToastType::Info, 3000, "Received a HTML paste", "%s", SK_WideCharToUTF8(dragDroppedFilePath).c_str()});
+                    }
+
+                    else
+                      PLOG_VERBOSE << "The image URL path is neither a URL nor an existing file; trying the image data instead...";
                   }
                 }
               }
             }
           }
 
-          else if (cbd & ClipboardData_Bitmap)
+          if (! handled && (cbd & ClipboardData_PNG))
+          {
+            PLOG_VERBOSE << "Received a PNG paste!";
+
+            if (SKIF_Util_GetClipboardPNGData ( ))
+            {
+              handled = true;
+
+              ImGui::InsertNotification({ ImGuiToastType::Info, 3000, "Received a PNG paste", "" });
+            }
+          }
+
+          if (! handled && (cbd & ClipboardData_Bitmap))
           {
             PLOG_VERBOSE << "Received a CF_BITMAP paste!";
 
             SKIF_Util_GetClipboardBitmapData ( );
 
-            ImGui::InsertNotification({ ImGuiToastType::Info, 3000, "Received a bitmap paste" });
+            if (! dragDroppedFilePath.empty ( ))
+            {
+              handled = true;
+
+              ImGui::InsertNotification({ ImGuiToastType::Info, 3000, "Received a bitmap paste", "" });
+            }
           }
 
-          else if ((cbd & ClipboardData_HDROP))
+          if (! handled && (cbd & ClipboardData_HDROP))
           {
             PLOG_VERBOSE << "Detected a drop of type CF_HDROP";
 
@@ -3180,6 +3759,9 @@ wWinMain ( _In_     HINSTANCE hInstance,
 
       // Main rendering function
       ImGui::RenderNotifications ( );
+
+      SKIF_vecCurrentMode     = ImGui::GetWindowSize ( );
+      SKIF_vecCurrentPosition = ImGui::GetWindowPos  ( );
 
       // End the main ImGui window
       ImGui::End ( );
@@ -3228,63 +3810,87 @@ wWinMain ( _In_     HINSTANCE hInstance,
     // Actual rendering is conditional, this just processes input and ends the ImGui frame.
     ImGui::Render (); // also calls ImGui::EndFrame ();
 
+    // The last window of the frame may have been on another monitor, so return to the main window's DPI scale
+    //   for everything that runs between frames
+    SKIF_ImGui_RestoreMainDPIScale ( );
+
     if (SKIF_ImGui_hWnd != NULL)
     {
       SK_RunOnce (SKIF_Shell_CreateJumpList ( ));
     }
 
-    // Conditional rendering, but only if SKIF_ImGui_hWnd has actually been created
-    bool bRefresh = (SKIF_ImGui_hWnd != NULL && (SKIF_isTrayed || IsIconic (SKIF_ImGui_hWnd))) ? false : true;
+    // Disable navigation highlight on first frames
+    SK_RunOnce(
+      ImGuiContext& g = *ImGui::GetCurrentContext();
+      g.NavCursorVisible = false;
+    );
+
+
+    // Conditional rendering, but only if a viewport is actually visible
+    extern bool SKIF_ImGui_ImplWin32_IsAnyViewportVisible (void);
+    bool bRefresh = (SKIF_ImGui_ImplWin32_IsAnyViewportVisible ( )) ? true : false; // (SKIF_ImGui_hWnd != NULL && (SKIF_isTrayed || IsIconic (SKIF_ImGui_hWnd))) ? false : true;
 
     if (invalidatedDevice > 0 && SKIF_Tab_Selected == UITab_Viewer)
       bRefresh = false;
 
-    // Disable navigation highlight on first frames
-    SK_RunOnce(
-      ImGuiContext& g = *ImGui::GetCurrentContext();
-      g.NavDisableHighlight = true;
-    );
-
-    // From ImHex: https://github.com/WerWolv/ImHex/blob/09bffb674505fa2b09f0135a519d213f6fb6077e/main/gui/source/window/window.cpp#L631-L672
-    // GPL-2.0 license: https://github.com/WerWolv/ImHex/blob/master/LICENSE
     if (bRefresh)
     {
       bRefresh = false;
-      static std::vector<uint8_t> previousVtxData;
-      static size_t previousVtxDataSize = 0;
-      size_t offset = 0;
-      size_t vtxDataSize = 0;
+      static std::vector<uint8_t>
+                    snapVtxBufferData;
+      static size_t snapVtxBufferSize = 0;
+             size_t  newVtxBufferSize = 0;
 
-      for (const auto viewPort : ImGui::GetPlatformIO().Viewports) {
-        auto drawData = viewPort->DrawData;
-        for (int n = 0; n < drawData->CmdListsCount; n++) {
-          vtxDataSize += drawData->CmdLists[n]->VtxBuffer.size() * sizeof(ImDrawVert);
-        }
-      }
-      for (const auto viewPort : ImGui::GetPlatformIO().Viewports) {
-        auto drawData = viewPort->DrawData;
-        for (int n = 0; n < drawData->CmdListsCount; n++) {
-          const ImDrawList *cmdList = drawData->CmdLists[n];
+      // Pass 1: Calculate total size
+      for (ImGuiViewport* viewport : ImGui::GetPlatformIO().Viewports)
+      {
+        if (! viewport || ! viewport->DrawData)
+          continue;
 
-          if (vtxDataSize == previousVtxDataSize) {
-            bRefresh = bRefresh || std::memcmp(previousVtxData.data() + offset, cmdList->VtxBuffer.Data, cmdList->VtxBuffer.size() * sizeof(ImDrawVert)) != 0;
-          } else {
-            bRefresh = true;
-          }
-
-          if (processAdditionalFrames > 0)
-            bRefresh = true;
-
-          if (previousVtxData.size() < offset + cmdList->VtxBuffer.size() * sizeof(ImDrawVert)) {
-            previousVtxData.resize(offset + cmdList->VtxBuffer.size() * sizeof(ImDrawVert));
-          }
-
-          std::memcpy(previousVtxData.data() + offset, cmdList->VtxBuffer.Data, cmdList->VtxBuffer.size() * sizeof(ImDrawVert));
-          offset += cmdList->VtxBuffer.size() * sizeof(ImDrawVert);
-        }
+        for (int i = 0; i < viewport->DrawData->CmdLists.Size; ++i)
+          newVtxBufferSize += viewport->DrawData->CmdLists[i]->VtxBuffer.Size * sizeof (ImDrawVert);
       }
 
-      previousVtxDataSize = vtxDataSize;
+      // Immediate refresh conditions
+      if (newVtxBufferSize != snapVtxBufferSize)
+        bRefresh = true;
+
+      std::vector<uint8_t>     newVtxBufferData;
+      newVtxBufferData.resize (newVtxBufferSize);
+
+      if (! bRefresh && newVtxBufferSize > 0)
+      {
+        size_t offset = 0;
+
+        // Pass 2: Pack vertex buffers
+        for (ImGuiViewport* viewport : ImGui::GetPlatformIO().Viewports)
+        {
+          if (! viewport || ! viewport->DrawData)
+            continue;
+
+          for (int i = 0; i < viewport->DrawData->CmdLists.Size; ++i)
+          {
+            if (viewport->DrawData->CmdLists[i]->VtxBuffer.Size <= 0)
+              continue;
+
+            const size_t bytes = static_cast<size_t> (viewport->DrawData->CmdLists[i]->VtxBuffer.Size) * sizeof (ImDrawVert);
+            std::memcpy (newVtxBufferData.data() + offset, viewport->DrawData->CmdLists[i]->VtxBuffer.Data, bytes);
+            offset += bytes;
+          }
+        }
+
+        // Compare snapshot with new buffer
+        bRefresh = std::memcmp (snapVtxBufferData.data(), newVtxBufferData.data(), newVtxBufferSize) != 0;
+      }
+
+      // Store snapshot
+      snapVtxBufferData.swap (newVtxBufferData);
+      snapVtxBufferSize = newVtxBufferSize;
+
+      // An animated image shows another frame: its texture changed, which the vertices do not show
+      extern bool SKIV_Viewer_ConsumeAnimationChange (void);
+      if (SKIV_Viewer_ConsumeAnimationChange ( ) && SKIF_Tab_Selected == UITab_Viewer)
+        bRefresh = true;
     }
 
     // Update, Render and Present the main and any additional Platform Windows
@@ -3356,8 +3962,14 @@ wWinMain ( _In_     HINSTANCE hInstance,
         RepositionSKIF = true;
     }
 
-    // Release any leftover resources from last frame
+    // Release any leftover resources from last frame. The immediate context first lets go of what it still has bound
+    //   (the textures last drawn with, e.g. the image that faded out): it would keep them alive past their release, as long
+    //     as nothing else is drawn (the main loop sleeps). The renderer sets its state up again for each frame.
+    if (! SKIF_ResourcesToFree.empty ( ) && SKIF_pd3dDeviceContext != nullptr)
+      SKIF_pd3dDeviceContext->ClearState ( );
+
     IUnknown* pResource = nullptr;
+    bool      released  = false;
     while (! SKIF_ResourcesToFree.empty ())
     {
       if (SKIF_ResourcesToFree.try_pop (pResource))
@@ -3365,10 +3977,38 @@ wWinMain ( _In_     HINSTANCE hInstance,
         CComPtr <IUnknown> ptr = pResource;
         PLOG_VERBOSE << "SKIF_ResourcesToFree: Releasing " << ptr.p;
         ptr.p->Release();
+        released = true;
       }
-      
+
       if (invalidatedDevice == 2)
         invalidatedDevice = 0;
+    }
+
+    // D3D11 destroys released resources lazily: once the GPU is done with them, as the device next works. The main loop
+    //   may well sleep from here on (as once images gone through are released), which would keep their video memory taken
+    //     until something is drawn again: after a flush, a frame is drawn a moment later (the GPU done by then), see
+    //       SKIV_Viewer_GetAnimationWakeIn.
+    extern DWORD SKIV_ResourcesReleasedWakeAt;
+
+    // (Textures made meanwhile too, e.g. by the image store's workers: their initial data is kept until then as well)
+    extern bool SKIV_DeviceCleanupWanted;
+    released |= std::exchange (SKIV_DeviceCleanupWanted, false);
+
+    if (released)
+    {
+      if (SKIF_pd3dDeviceContext != nullptr)
+        SKIF_pd3dDeviceContext->Flush ( );
+
+      SKIV_ResourcesReleasedWakeAt = SKIF_Util_timeGetTime1 ( ) + 300;
+    }
+
+    // (This frame was it: flushed again, as it may present nothing, the window being unchanged)
+    else if (SKIV_ResourcesReleasedWakeAt != 0 && static_cast <LONG> (SKIF_Util_timeGetTime1 ( ) - SKIV_ResourcesReleasedWakeAt) >= 0)
+    {
+      if (SKIF_pd3dDeviceContext != nullptr)
+        SKIF_pd3dDeviceContext->Flush ( );
+
+      SKIV_ResourcesReleasedWakeAt = 0;
     }
 
     // If process should stop, post WM_QUIT
@@ -3379,7 +4019,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
     bool input = SKIF_ImGui_IsAnyInputDown ( ) || uiLastMsg == WM_SKIF_GAMEPAD ||
                    (uiLastMsg >= WM_MOUSEFIRST && uiLastMsg <= WM_MOUSELAST)   ||
                    (uiLastMsg >= WM_KEYFIRST   && uiLastMsg <= WM_KEYLAST  );
-    
+
     // We want SKIF to continue rendering in some specific scenarios
     ImGuiWindow* wnd = ImGui::FindWindowByName ("###KeyboardHint");
     if (wnd != nullptr && wnd->Active)
@@ -3423,7 +4063,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
     //  OutputDebugString(L"[doWhile] Message spotted: WM_SKIF_COVER\n");
     //else if (uiLastMsg != 0x0)
     //  OutputDebugString((L"[doWhile] Message spotted: " + std::to_wstring(uiLastMsg) + L"\n").c_str());
-    
+
     // Pause if we don't need to render any additional frames
     if (processAdditionalFrames == 0)
       pause = true;
@@ -3432,32 +4072,12 @@ wWinMain ( _In_     HINSTANCE hInstance,
     if (HiddenFramesContinueProcessing)
       pause = false;
 
-    // Follow up on our attempt to restart the Steam client
-    if (SteamProcessHandle != NULL &&
-        SteamProcessHandle != INVALID_HANDLE_VALUE)
-    {
-      // When Steam has closed, restart it again
-      if (WaitForSingleObject (SteamProcessHandle, 0) != WAIT_TIMEOUT)
-      {
-        // Stop waiting for it on all tabs
-        for (auto& vWatchHandle : vWatchHandles)
-        {
-          if (! vWatchHandle.empty())
-            vWatchHandle.erase(std::remove(vWatchHandle.begin(), vWatchHandle.end(), SteamProcessHandle), vWatchHandle.end());
-        }
-
-        PLOG_INFO << "Starting up the Steam client...";
-        SKIF_Util_OpenURI (L"steam://open/main");
-
-        CloseHandle (SteamProcessHandle);
-        SteamProcessHandle = NULL;
-      }
-    }
-
     SK_RunOnce (PLOG_INFO << "Processed first frame! Start -> End took " << (SKIF_Util_timeGetTime1() - SKIF_firstFrameTime) << " ms.");
 
     do
     {
+      DWORD msSleep = 1000000 / dwDwmPeriod; // Assume 60 Hz (16 ms) by default
+
       // Pause rendering
       if (pause)
       {
@@ -3472,9 +4092,23 @@ wWinMain ( _In_     HINSTANCE hInstance,
         if (_registry.bEfficiencyMode && ! _registry._EfficiencyMode && SKIF_Notify_hWnd != NULL && ! msgDontRedraw && ! SKIF_ImGui_IsFocused ( ))
           SetTimer (SKIF_Notify_hWnd, cIDT_TIMER_EFFICIENCY, 1000, (TIMERPROC) &SKIF_EfficiencyModeTimerProc);
 
+        // An animated image plays: wake up when its next frame is due
+        extern DWORD SKIV_Viewer_GetAnimationWakeIn (void);
+        const DWORD dwAnimWakeIn = (SKIF_Tab_Selected == UITab_Viewer) ? SKIV_Viewer_GetAnimationWakeIn ( ) : INFINITE;
+        const DWORD dwTimeout    = std::min (bWaitTimeoutMsgInputFallback ? dwDwmPeriod : INFINITE, dwAnimWakeIn);
+
+        // The default timer resolution (15.6 ms) would make short frames late
+        const bool  bPreciseWait = (dwAnimWakeIn != INFINITE);
+
+        if (bPreciseWait)
+          timeBeginPeriod (1);
+
         // Sleep until a message is in the queue or a change notification occurs
         DWORD res =
-          MsgWaitForMultipleObjects (static_cast<DWORD>(vWatchHandles[SKIF_Tab_Selected].size()), vWatchHandles[SKIF_Tab_Selected].data(), false, bWaitTimeoutMsgInputFallback ? dwDwmPeriod : INFINITE, QS_ALLINPUT);
+          MsgWaitForMultipleObjects (static_cast<DWORD>(std::min (vWatchHandles[SKIF_Tab_Selected].size(), SKIF_MaxWatchHandles)), vWatchHandles[SKIF_Tab_Selected].data(), false, dwTimeout, QS_ALLINPUT); // Never more than the 63 handles it accepts
+
+        if (bPreciseWait)
+          timeEndPeriod   (1);
 
         // The below is required as a fallback if V-Sync OFF is forced on SKIF and e.g. analog stick drift is causing constant input.
         // Throttle to monitors refresh rate unless a new event is triggered, or user input is posted, but only if the frame rate is detected as being unlocked
@@ -3492,58 +4126,120 @@ wWinMain ( _In_     HINSTANCE hInstance,
         processAdditionalFrames = ImGui::GetFrameCount() + 3;
       }
 
-      if (bRefresh && ! msgDontRedraw && SKIF_ImGui_hWnd != NULL && ! vSwapchainWaitHandles.empty())
+      if (bRefresh && ! msgDontRedraw && SKIF_ImGui_hWnd != NULL)
       {
         static bool frameRateUnlocked = false;
         static int  unlockedCount     = 0;
 
         // If the frame rate was ever detected as being unlocked, use sleep as a limiter instead
         if (frameRateUnlocked)
-          Sleep (dwDwmPeriod);
+        {
+          timeBeginPeriod (1);
+          Sleep           (msSleep);
+          timeEndPeriod   (1);
+        }
 
         else
         {
-          static bool bWaitTimeoutSwapChainsFallback = false;
           //auto timePre = SKIF_Util_timeGetTime1 ( );
 
-          DWORD res =
-            WaitForMultipleObjectsEx (static_cast<DWORD>(vSwapchainWaitHandles.size()), vSwapchainWaitHandles.data(), true, bWaitTimeoutSwapChainsFallback ? dwDwmPeriod : 1000, true);
+          extern bool SKIF_ImGui_ImplWin32_IsViewportVisible (ImGuiViewport* viewport);
+          extern HANDLE SKIF_ImplDX11_ViewPort_GetWaitHandle (ImGuiViewport* viewport);
+          std::vector<HANDLE> vActiveSwapchainWaitHandles;
 
-          //OutputDebugString((L"[" + SKIF_Util_timeGetTimeAsWStr() + L"][#" + std::to_wstring(ImGui::GetFrameCount()) + L"] Maybe we'll be waiting? (handles: " + std::to_wstring(vSwapchainWaitHandles.size()) + L")\n").c_str());
-          if (res == WAIT_TIMEOUT)
+          for (int i = 1; i < ImGui::GetCurrentContext()->Viewports.Size; i++)
           {
-            // This is only expected to occur when an issue arises
-            // e.g. the display driver resets and invalidates the
-            // swapchain in the middle of a frame.
-            PLOG_ERROR << "Timed out while waiting on the swapchain wait objects!";
-          }
+            ImGuiViewportP* viewport = ImGui::GetCurrentContext()->Viewports[i];
 
-          // Only reason we use a timeout here is in case a swapchain gets destroyed on the same frame we try waiting on its handle
-          else if (res == WAIT_FAILED)
-          {
-            SK_RunOnce (
+            if (SKIF_ImGui_ImplWin32_IsViewportVisible (viewport))
             {
-              PLOG_ERROR << "Waiting on the swapchain wait objects failed with error message: " << SKIF_Util_GetErrorAsWStr ( );
-              PLOG_ERROR << "Timeout has permanently been set to the monitors refresh rate period (" << dwDwmPeriod << ") !";
-              bWaitTimeoutSwapChainsFallback = true;
-            });
+              if (HANDLE h = SKIF_ImplDX11_ViewPort_GetWaitHandle (viewport))
+                vActiveSwapchainWaitHandles.push_back(h);
+            }
           }
+
+
+          // Waitable Swapchains (used for Flip)
+          if (! vActiveSwapchainWaitHandles.empty())
+          {
+            static bool bWaitTimeoutSwapChainsFallback = false;
+
+            //PLOG_VERBOSE << "Waiting on " << vActiveSwapchainWaitHandles.size() << " swapchain wait objects...";
+
+            DWORD res =
+              WaitForMultipleObjectsEx (static_cast<DWORD>(vActiveSwapchainWaitHandles.size()), vActiveSwapchainWaitHandles.data(), true, bWaitTimeoutSwapChainsFallback ? msSleep : 1000, true);
+
+            //OutputDebugString((L"[" + SKIF_Util_timeGetTimeAsWStr() + L"][#" + std::to_wstring(ImGui::GetFrameCount()) + L"] Maybe we'll be waiting? (handles: " + std::to_wstring(vActiveSwapchainWaitHandles.size()) + L")\n").c_str());
+            if (res == WAIT_TIMEOUT)
+            {
+              // This is only expected to occur when an issue arises
+              // e.g. the display driver resets and invalidates the
+              // swapchain in the middle of a frame.
+              PLOG_ERROR << "Timed out while waiting on the swapchain wait objects!";
+            }
+
+            // Only reason we use a timeout here is in case a swapchain gets destroyed on the same frame we try waiting on its handle
+            else if (res == WAIT_FAILED)
+            {
+              SK_RunOnce (
+              {
+                PLOG_ERROR << "Waiting on the swapchain wait objects failed with error message: " << SKIF_Util_GetErrorAsWStr ( );
+                PLOG_ERROR << "Timeout has permanently been set to the monitors refresh rate period (" << static_cast<float> (dwDwmPeriod / 1000) << ", " << msSleep << "ms !";
+                bWaitTimeoutSwapChainsFallback = true;
+              });
+            }
+          }
+
+          // BitBlt relies on regular V-Sync (or the fallback ""framerate limiter"")
+          else { }
 
 #if 0
           auto timePost = SKIF_Util_timeGetTime1 ( );
           auto timeDiff = timePost - timePre;
+          //PLOG_VERBOSE << "Waited: " << timeDiff << " ms (handles : " << vActiveSwapchainWaitHandles.size() << ")";
 
-          if (! frameRateUnlocked && timeDiff <= 4 && ImGui::GetFrameCount ( ) > 240 && static_cast<DWORD>(ImGui::GetIO().Framerate) > (1000 / (dwDwmPeriod)))
-            unlockedCount++;
+          // Fallback ""framerate limiter""
+          static DWORD lastInput = timePre;
+
+          if (SKIF_ImGui_IsAnyInputDown ( ))
+            lastInput = timePost;
+
+          if (! frameRateUnlocked && ! HiddenFramesContinueProcessing && lastInput != timePost && timeDiff <= 1 && ImGui::GetFrameCount() > 1000)
+          {
+            float maxFPS = static_cast<float> (dwDwmPeriod) / 400; // 400 == 2.5x FPS
+
+            // If ImGui's detected frame rate is above the max FPS...
+            if (ImGui::GetIO().Framerate > maxFPS)
+            {
+              // If we haven't received an input in the last 250ms...
+              if (timePost > (lastInput + 250))
+              {
+                PLOG_WARNING << "Detected an unexpectedly high frame rate! Expected max " << maxFPS << " FPS (2.5x refresh rate), received: " << ImGui::GetIO().Framerate << " FPS...";
+                unlockedCount++;
+              }
+            }
+          }
 
           if (unlockedCount > 10)
+          {
             frameRateUnlocked = true;
-
-          //PLOG_VERBOSE << "Waited: " << timeDiff << " ms (handles : " << vSwapchainWaitHandles.size() << ")";
+            PLOG_ERROR << "Framerate was detected as being unlocked, and an additional limiter has been enforced to the monitors refresh rate period (" << static_cast<float> (dwDwmPeriod / 1000) << ", " << msSleep << "ms) !";
+          }
 #endif
         }
       }
-      
+
+      // Frames whose content did not change are not presented, which also means there is no swapchain to wait on.
+      //   Without a wait here the loop spins at tens of thousands of iterations per second for as long as something
+      //     keeps it awake (e.g. while a notification is shown). New input or a change notification still wakes it at
+      //       once, and the timeout is kept short as the fade effects of the viewer advance on a 15 ms tick.
+      if (! bRefresh && ! pause && ! msgDontRedraw && ! HiddenFramesContinueProcessing && SKIF_ImGui_hWnd != NULL)
+      {
+        timeBeginPeriod (1);
+        MsgWaitForMultipleObjects (static_cast<DWORD>(std::min (vWatchHandles[SKIF_Tab_Selected].size(), SKIF_MaxWatchHandles)), vWatchHandles[SKIF_Tab_Selected].data(), false, 4, QS_ALLINPUT); // Never more than the 63 handles it accepts
+        timeEndPeriod   (1);
+      }
+
       // Reset stuff that's set as part of pumping the message queue
       msgDontRedraw = false;
       uiLastMsg     = 0x0;
@@ -3551,7 +4247,7 @@ wWinMain ( _In_     HINSTANCE hInstance,
       // Pump the message queue, and break if we receive a false (WM_QUIT or WM_QUERYENDSESSION)
       if (! _TranslateAndDispatch ( ))
         break;
-      
+
       // If we added more frames, ensure we exit the loop
       if (addAdditionalFrames > 0)
         msgDontRedraw = false;
@@ -3576,12 +4272,56 @@ wWinMain ( _In_     HINSTANCE hInstance,
   }
 
   PLOG_INFO << "Exited main loop...";
-  
+
   SKIF_Util_UnregisterHotKeyCapture     (CaptureMode_Screen);
   SKIF_Util_UnregisterHotKeyCapture     (CaptureMode_Region);
   SKIF_Util_UnregisterHotKeyCapture     (CaptureMode_Window);
   //SKIF_Util_UnregisterHotKeySVCTemp   ( );
   //SKIF_Util_UnregisterHotKeyHDRToggle ( );
+
+  // TODO: Make an exception for scenarios where remembering the size and pos makes sense,
+  //         e.g. when size / DPI <= regular size * 1.5x or something like that!!!
+  //
+  // Only store window size and position to the registry if we are not in a maximized state
+  ImVec2 vecCurrentModeDPIUnaware = ImFloor (SKIF_vecCurrentMode / SKIF_ImGui_MainDPIScale);
+
+  if ((! IsZoomed (SKIF_ImGui_hWnd) && ! SKIF_ImGui_IsFullscreen (SKIF_ImGui_hWnd)) ||
+     (vecCurrentModeDPIUnaware.x <= SKIF_vecRegularModeDefault.x * 1.5f &&
+      vecCurrentModeDPIUnaware.y <= SKIF_vecRegularModeDefault.y * 1.5f))
+  {
+    // Only store the window size if we are not in service mode
+    if (! _registry._SnippingMode  &&
+        vecCurrentModeDPIUnaware.x > 0 &&
+        vecCurrentModeDPIUnaware.y > 0)
+    {
+      // Store a DPI-unaware size, so SKIF can automatically adjust it to the proper DPI on launch
+      _registry.iUIWidth  = static_cast<int> (vecCurrentModeDPIUnaware.x);
+      _registry.iUIHeight = static_cast<int> (vecCurrentModeDPIUnaware.y);
+
+      _registry.regKVUIWidth .putData (_registry.iUIWidth);
+      _registry.regKVUIHeight.putData (_registry.iUIHeight);
+
+      PLOG_INFO << "Wrote the window size to the registry: " << _registry.iUIWidth << "x" << _registry.iUIHeight;
+    }
+
+    // Note that negative window positions are valid!
+    if (SKIF_vecCurrentPosition.x != -1.0f &&
+        SKIF_vecCurrentPosition.y != -1.0f)
+    {
+      // Doesn't seem to be needed
+      //RECT dwmBorder = { };
+      //if (S_OK == DwmGetWindowAttribute (SKIF_ImGui_hWnd, DWMWA_EXTENDED_FRAME_BOUNDS, &dwmBorder, sizeof(dwmBorder)))
+      //{ }
+
+      _registry.iUIPositionX = static_cast<int> (SKIF_vecCurrentPosition.x);
+      _registry.iUIPositionY = static_cast<int> (SKIF_vecCurrentPosition.y);
+
+      _registry.regKVUIPositionX.putData (_registry.iUIPositionX);
+      _registry.regKVUIPositionY.putData (_registry.iUIPositionY);
+
+      PLOG_INFO << "Wrote the window position to the registry: " << _registry.iUIPositionX << ", " << _registry.iUIPositionY;
+    }
+  }
 
   PLOG_INFO << "Killing timers...";
   KillTimer (SKIF_Notify_hWnd, IDT_REFRESH_TOOLTIP);
@@ -3596,15 +4336,12 @@ wWinMain ( _In_     HINSTANCE hInstance,
   ImGui_ImplDX11_Shutdown     ( );
   ImGui_ImplWin32_Shutdown    ( );
 
-  // The notification icon must be destroyed before D3D11
-  //   so that WM_RENDERALLFORMATS gets handled properly
+  CleanupDeviceD3D            ( );
+
   PLOG_INFO << "Destroying notification icon...";
   _gamepad.UnregisterDevNotification ( );
   SKIF_Shell_DeleteNotifyIcon ( );
   DestroyWindow             (SKIF_Notify_hWnd);
-
-  PLOG_INFO << "Cleaning up D3D11...";
-  CleanupDeviceD3D            ( );
 
   PLOG_INFO << "Destroying ImGui context...";
   ImGui::DestroyContext       ( );
@@ -3625,12 +4362,64 @@ wWinMain ( _In_     HINSTANCE hInstance,
 //#define SKIF_D3D9_TEST
 
 #ifdef SKIF_D3D9_TEST
-
 #define D3D_DEBUG_INFO
 #pragma comment (lib, "d3d9.lib")
 #include <D3D9.h>
-
 #endif
+
+HRESULT
+SKIF_DXGI_CreateDXGIFactory1 (REFIID riid, void **ppFactory)
+{
+  using CreateDXGIFactory1_pfn =
+           HRESULT (WINAPI *)(REFIID, void **);
+
+  static CreateDXGIFactory1_pfn
+         CreateDXGIFactory1 =
+        (CreateDXGIFactory1_pfn)GetProcAddress (LoadLibraryEx (L"dxgi.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32),
+        "CreateDXGIFactory1");
+
+  if (CreateDXGIFactory1 == nullptr)
+    return E_FAIL;
+
+  return CreateDXGIFactory1 (riid, ppFactory);
+}
+
+HRESULT
+SKIF_D3D11CreateDevice (
+  IDXGIAdapter            *pAdapter,
+  D3D_DRIVER_TYPE          DriverType,
+  HMODULE                  Software,
+  UINT                     Flags,
+  const D3D_FEATURE_LEVEL *pFeatureLevels,
+  UINT                     FeatureLevels,
+  UINT                     SDKVersion,
+  ID3D11Device           **ppDevice,
+  D3D_FEATURE_LEVEL       *pFeatureLevel,
+  ID3D11DeviceContext    **ppImmediateContext )
+{
+  using D3D11CreateDevice_pfn =
+           HRESULT (WINAPI *)( IDXGIAdapter *, D3D_DRIVER_TYPE, HMODULE, UINT,
+                         const D3D_FEATURE_LEVEL *, UINT, UINT,
+                               ID3D11Device **, D3D_FEATURE_LEVEL *,
+                               ID3D11DeviceContext ** );
+
+  static D3D11CreateDevice_pfn
+         D3D11CreateDevice =
+        (D3D11CreateDevice_pfn)GetProcAddress (LoadLibraryEx (L"d3d11.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32),
+        "D3D11CreateDevice");
+
+  if (D3D11CreateDevice == nullptr)
+    return E_FAIL;
+
+  return D3D11CreateDevice ( pAdapter, DriverType, Software, Flags,
+                             pFeatureLevels, FeatureLevels, SDKVersion,
+                             ppDevice, pFeatureLevel, ppImmediateContext );
+}
+
+// SKIF's DX11 backend supports starting on WARP and switching to a hardware device created in the background.
+//   SKIV always starts on the hardware device, as images are loaded right away, so there is never a device to switch to.
+bool SKIF_D3D11_IsPendingDeviceReady (void) { return false; }
+bool SKIF_D3D11_AdoptPendingDevice   (void) { return false; }
 
 bool CreateDeviceD3D (HWND hWnd)
 {
@@ -3669,10 +4458,10 @@ bool CreateDeviceD3D (HWND hWnd)
     OutputDebugString(L"Direct3DCreate9() failed!\n");
   }
 #endif
-  
-  CComPtr <IDXGIFactory2> pFactory2;
 
-  if (FAILED (CreateDXGIFactory1 (__uuidof (IDXGIFactory2), (void **)&pFactory2.p)))
+  CComPtr <IDXGIFactory2> pFactory2;
+  
+  if (FAILED (SKIF_DXGI_CreateDXGIFactory1 (__uuidof (IDXGIFactory2), (void **)&pFactory2.p)))
     return false;
 
   // Windows 7 (2013 Platform Update), or Windows 8+
@@ -3680,11 +4469,11 @@ bool CreateDeviceD3D (HWND hWnd)
 
   // Windows 8.1+
   _registry._RendererCanWaitSwapchain      =
-    SKIF_Util_IsWindows8Point1OrGreater ();
+    SKIF_Util_IsWindows8Point1OrGreater ( );
 
   // Windows 10 1709+ (Build 16299)
   _registry._RendererCanHDR                =
-    SKIF_Util_IsHDRActive (NULL); // true
+    SKIF_Util_IsHDRActive (NULL);
 
   CComQIPtr <IDXGIFactory5>
                   pFactory5 (pFactory2.p);
@@ -3704,9 +4493,9 @@ bool CreateDeviceD3D (HWND hWnd)
   }
 
   // Overrides
-  //_registry._RendererCanAllowTearing       = false; // Allow Tearing
-  //SKIF_bCanFlip               = false; // Flip Sequential (if this is false, BitBlt Discard will be used instead)
-  //SKIF_bCanWaitSwapchain      = false; // Waitable Swapchain
+  //_registry._RendererCanWaitSwapchain = false; // Waitable Swapchain
+  //_registry._RendererCanHDR           = false; // HDR
+  //_registry._RendererCanAllowTearing  = false; // Allow Tearing
 
   // D3D11Device
   D3D_FEATURE_LEVEL featureLevel;
@@ -3719,8 +4508,8 @@ bool CreateDeviceD3D (HWND hWnd)
   UINT createDeviceFlags = 0;
   // This MUST be disabled before public release! Otherwise systems without the Windows SDK installed will crash on launch.
   //createDeviceFlags |= D3D11_CREATE_DEVICE_DEBUG; // Enable debug layer of D3D11
-
-  if (FAILED (D3D11CreateDevice ( nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr,
+  
+  if (FAILED (SKIF_D3D11CreateDevice ( nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr,
                                               createDeviceFlags, featureLevelArray,
                                                          sizeof (featureLevelArray) / sizeof featureLevel,
                                                 D3D11_SDK_VERSION,
@@ -3728,12 +4517,24 @@ bool CreateDeviceD3D (HWND hWnd)
                                                                 &featureLevel,
                                                        &SKIF_pd3dDeviceContext)))
   {
-    //OutputDebugString(L"D3D11CreateDevice failed!\n");
-    PLOG_ERROR << "D3D11CreateDevice failed!";
+    PLOG_FATAL << "D3D11CreateDevice failed!";
     return false;
   }
 
-  //return true; // No idea why this was left in https://github.com/SpecialKO/SKIF/commit/1c03d60642fcc62d4aa27bd440dc24115f6cf907 ... A typo probably?
+  // What adapter do we find ourselves on?
+  CComPtr<IDXGIDevice> dxgiDevice;
+  if (SUCCEEDED (SKIF_pd3dDevice->QueryInterface(IID_PPV_ARGS(&dxgiDevice))))
+  {
+    CComPtr<IDXGIAdapter> adapter;
+    if (SUCCEEDED (dxgiDevice->GetAdapter(&adapter)))
+    {
+      DXGI_ADAPTER_DESC desc;
+      if (SUCCEEDED (adapter->GetDesc(&desc)))
+      {
+        PLOG_INFO << "D3D11 device created on adapter: " << desc.Description;
+      }
+    }
+  }
 
   // We need to try creating a dummy swapchain before we actually start creating
   //   viewport windows. This is to ensure a compatible format is used from the
@@ -3773,13 +4574,13 @@ bool CreateDeviceD3D (HWND hWnd)
     // Create a dummy swapchain for the dummy viewport
     DXGI_SWAP_CHAIN_DESC1
       swap_desc                  = { };
-    swap_desc.Width              = 8;
-    swap_desc.Height             = 8;
-    swap_desc.Format             = dxgi_format;
-    swap_desc.BufferUsage        = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-    swap_desc.Flags              = 0x0;
-    swap_desc.SampleDesc.Count   = 1;
-    swap_desc.SampleDesc.Quality = 0;
+      swap_desc.Width              = 8;
+      swap_desc.Height             = 8;
+      swap_desc.Format             = dxgi_format;
+      swap_desc.BufferUsage        = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+      swap_desc.Flags              = 0x0;
+      swap_desc.SampleDesc.Count   = 1;
+      swap_desc.SampleDesc.Quality = 0;
 
     // Assume flip by default
     swap_desc.BufferCount  = 3; // Must be 2-16 for flip model
@@ -3880,250 +4681,152 @@ void CleanupRenderTarget (void)
 }
 */
 
-
-
-static void
-SKIV_EnterCaptureMode (CaptureMode mode)
-{
-  static SKIF_RegistrySettings&   _registry   = SKIF_RegistrySettings  ::GetInstance ( );
-
-  PLOG_VERBOSE << "Received request to capture " << ((mode == CaptureMode_Window) ? "window" : (mode == CaptureMode_Region) ? "region" : "screen") << "...";
-
-  if (! std::exchange (_registry._SnippingMode, true))
-  {
-    extern HWND hwndBeforeSnip;
-    hwndBeforeSnip = GetForegroundWindow ();
-
-    POINT capture_point = { };
-    RECT  capture_rect  = { };
-
-    if (mode == CaptureMode_Window)
-    {
-      if (GetWindowRect (hwndBeforeSnip, &capture_rect))
-      {
-        // Use the window's centroid in case it spans multiple monitors
-        capture_point.x = static_cast <long> (capture_rect.left)  +
-                          static_cast <long> (capture_rect.right  - capture_rect.left) / 2;
-        capture_point.y = static_cast <long> (capture_rect.top)   +
-                          static_cast <long> (capture_rect.bottom - capture_rect.top)  / 2;
-
-        HMONITOR hMonCaptured =
-          MonitorFromPoint (capture_point, MONITOR_DEFAULTTONEAREST);
-
-        MONITORINFO                    minfo = { .cbSize = sizeof (MONITORINFO) };
-        GetMonitorInfo (hMonCaptured, &minfo);
-
-        // Clamp the capture rect to the window's primary monitor
-        //   ... it's the only one we have an image captured for!
-        capture_rect.left   = std::max (capture_rect.left,   minfo.rcMonitor.left);
-        capture_rect.top    = std::max (capture_rect.top,    minfo.rcMonitor.top);
-
-        capture_rect.right  = std::min (capture_rect.right,  minfo.rcMonitor.right);
-        capture_rect.bottom = std::min (capture_rect.bottom, minfo.rcMonitor.bottom);
-      }
-    }
-
-    else
-      GetCursorPos (&capture_point);
-
-    HRESULT hr =
-      SKIV_Image_CaptureDesktop (capture_point);
-
-    if (SUCCEEDED (hr))
-    {
-      PLOG_VERBOSE << "Capture was successful!";
-
-      extern HWND hwndTopBeforeSnip;
-      extern bool iconicBeforeSnip;
-      extern bool trayedBeforeSnip;
-
-      extern ImRect selection_rect;
-
-      if (mode == CaptureMode_Window)
-      {
-        const ImRect area = ImRect (static_cast<float> (capture_rect.left  ),
-                                    static_cast<float> (capture_rect.top   ),
-                                    static_cast<float> (capture_rect.right ),
-                                    static_cast<float> (capture_rect.bottom)
-        );
-
-        //PLOG_VERBOSE << "capture_rect.left  : " << capture_rect.left;
-        //PLOG_VERBOSE << "capture_rect.top   : " << capture_rect.top;
-        //PLOG_VERBOSE << "capture_rect.right : " << capture_rect.right;
-        //PLOG_VERBOSE << "capture_rect.bottom: " << capture_rect.bottom;
-
-        SKIV_Image_SetClipboard (area, true);
-        _registry._SnippingMode = false;
-      }
-
-      else if (mode == CaptureMode_Screen)
-      {
-        const ImRect area = ImRect (ImVec2 (0, 0), SKIV_ClipboardImage._resolution);
-        SKIV_Image_SetClipboard (area, true);
-        _registry._SnippingMode = false;
-      }
-
-      // CaptureMode_Region
-      else
-      {
-        hwndTopBeforeSnip = GetWindow (SKIF_ImGui_hWnd, GW_HWNDNEXT);
-
-        trayedBeforeSnip = SKIF_isTrayed;
-        iconicBeforeSnip =
-          IsIconic (SKIF_ImGui_hWnd);
-
-        if (SKIF_isTrayed)
-        {   SKIF_isTrayed = false;
-          ShowWindow (SKIF_ImGui_hWnd, SW_SHOW);
-        }
-
-        if (iconicBeforeSnip)
-          ShowWindow (SKIF_ImGui_hWnd, SW_RESTORE);
-
-        HMONITOR monitor =
-          MonitorFromPoint (capture_point, MONITOR_DEFAULTTONEAREST);
-
-        SKIF_ImGui_SetFullscreen (SKIF_ImGui_hWnd, true, monitor);
-        UpdateWindow             (SKIF_ImGui_hWnd);
-
-        selection_rect.Min = ImVec2 (0.0f, 0.0f);
-        selection_rect.Max = ImVec2 (0.0f, 0.0f);
-
-        ImGui::GetIO ().MouseDown         [0] = false;
-        ImGui::GetIO ().MouseDownDuration [0] = -1.0f;
-      }
-    }
-
-    else
-    {
-      if (_registry._SnippingMode)
-      {
-        _registry._SnippingMode     = false;
-        _registry._SnippingModeExit = true;
-      }
-
-      ImGui::InsertNotification ({
-        ImGuiToastType::Error, 5000,
-          "Screen Capture Failed",
-          "%ws (HRESULT=%x)",
-            _com_error (hr).ErrorMessage (),
-                        hr
-      });
-    }
-  }
-
-  else
-  {
-    SetForegroundWindow (SKIF_ImGui_hWnd);
-  }
-}
-
-
+// Win32 message handler
 LRESULT
 WINAPI
-SKIF_Notify_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
+SKIF_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
-  // This is the message procedure for the notification icon window
-  //   that also handles all custom window messages and actions
-  
+  UNREFERENCED_PARAMETER (hWnd);
+  UNREFERENCED_PARAMETER (lParam);
+
+  // This is the message procedure that handles all custom SKIF window messages and actions
+
   UpdateFlags uFlags = UpdateFlags_Unknown;
-  
+
   static SKIF_CommonPathsCache&   _path_cache = SKIF_CommonPathsCache  ::GetInstance ( );
   static SKIF_RegistrySettings&   _registry   = SKIF_RegistrySettings  ::GetInstance ( );
   static SKIF_GamePadInputHelper& _gamepad    = SKIF_GamePadInputHelper::GetInstance ( );
-
   // We don't define this here to ensure it doesn't get created before we are ready to handle it
-//static SKIF_Updater&            _updater    = SKIF_Updater           ::GetInstance ( );
+//static SKIF_Updater&          _updater    = SKIF_Updater         ::GetInstance ( );
 
-  PLOG_VERBOSE_IF(_registry.isDevLogging()) << std::format("[0x{:<4x}] [{:5d}] [{:20s}]{:s}[0x{:x}, {:d}{:s}] [0x{:x}, {:d}]",
-                  msg, // Hexadecimal
-                  msg, // Decimal
-                  SKIF_Util_GetWindowMessageAsStr (msg), // String
-                    (hWnd == SKIF_Notify_hWnd ?  " [SKIF_Notify_hWnd] " : " "), // Is the message meant SKIF_Notify_hWnd ?
-                  wParam, wParam,
-            ((HWND)wParam == SKIF_Notify_hWnd ?  ", SKIF_Notify_hWnd"   : ""),  // Does wParam point to SKIF_Notify_hWnd ?
-                  lParam, lParam);
-
-  // Tell the main thread to render at least three more frames after we have processed the message
-  if (SKIF_ImGui_hWnd != NULL && ! msgDontRedraw)
+  auto _EnterSnippingMode = [&](CaptureMode mode) -> void
   {
-    addAdditionalFrames += 3;
-    //PostMessage (SKIF_ImGui_hWnd, WM_NULL, 0, 0);
-  }
+    PLOG_VERBOSE << "Received request to capture " << ((mode == CaptureMode_Window) ? "window" : (mode == CaptureMode_Region) ? "region" : "screen") << "...";
 
-#pragma region Custom Messages/Actions
+    if (! std::exchange (_registry._SnippingMode, true))
+    {
+      extern HWND hwndBeforeSnip;
+      hwndBeforeSnip = GetForegroundWindow ();
+
+      POINT capture_point        = { };
+      RECT  capture_rect         = { };
+      SKIV_CaptureData::Application app_names = { L"Display"};
+
+      if (mode == CaptureMode_Window)
+      {
+        if (GetWindowRect (hwndBeforeSnip, &capture_rect))
+        {
+          // Use the window's centroid in case it spans multiple monitors
+          capture_point.x = static_cast <long> (capture_rect.left)  +
+                            static_cast <long> (capture_rect.right  - capture_rect.left) / 2;
+          capture_point.y = static_cast <long> (capture_rect.top)   +
+                            static_cast <long> (capture_rect.bottom - capture_rect.top)  / 2;
+
+          HMONITOR hMonCaptured =
+            MonitorFromPoint (capture_point, MONITOR_DEFAULTTONEAREST);
+
+          MONITORINFO                    minfo = { .cbSize = sizeof (MONITORINFO) };
+          GetMonitorInfo (hMonCaptured, &minfo);
+
+          // Clamp the capture rect to the window's primary monitor
+          //   ... it's the only one we have an image captured for!
+          capture_rect.left   = std::max (capture_rect.left,   minfo.rcMonitor.left);
+          capture_rect.top    = std::max (capture_rect.top,    minfo.rcMonitor.top);
+
+          capture_rect.right  = std::min (capture_rect.right,  minfo.rcMonitor.right);
+          capture_rect.bottom = std::min (capture_rect.bottom, minfo.rcMonitor.bottom);
+
+          app_names = SKIV_GetApplicationNames (hwndBeforeSnip);
+        }
+      }
+
+      else
+      {
+        GetCursorPos (&capture_point);
+        HWND hWndBelowCursor = WindowFromPoint (capture_point);
+        app_names = SKIV_GetApplicationNames (hWndBelowCursor);
+      }
+
+      DirectX::ScratchImage captured_img;
+      HRESULT hr =
+        SKIV_Image_CaptureDesktop (captured_img, capture_point, (mode == CaptureMode_Region) ? SKIV_CaptureDesktop_AllDisplays : 0x0); // Region snips: every display
+
+      if (SUCCEEDED (hr))
+      {
+        PLOG_VERBOSE << "Capture was successful!";
+
+        if (mode == CaptureMode_Window)
+        {
+          const SKIV_CaptureData region =
+                SKIV_CaptureData (
+                  ImRect (static_cast<float> (capture_rect.left  ),
+                          static_cast<float> (capture_rect.top   ),
+                          static_cast<float> (capture_rect.right ),
+                          static_cast<float> (capture_rect.bottom)),
+                  app_names,
+                  ((_registry.eScreenshotsAutosave & mode) == CaptureMode_Window) ? CaptureMode_Window : CaptureMode_None
+          );
+
+          //PLOG_VERBOSE << "capture_rect.left  : " << capture_rect.left;
+          //PLOG_VERBOSE << "capture_rect.top   : " << capture_rect.top;
+          //PLOG_VERBOSE << "capture_rect.right : " << capture_rect.right;
+          //PLOG_VERBOSE << "capture_rect.bottom: " << capture_rect.bottom;
+
+          SKIV_Image_CaptureRegion (region);
+          _registry._SnippingMode = false;
+        }
+
+        else if (mode == CaptureMode_Screen)
+        {
+          // The display under the cursor, where it is on the desktop (regions are in desktop coordinates)
+          const SKIV_CaptureData region =
+                SKIV_CaptureData (
+                  ImRect (SKIV_DesktopImage._desktop_pos,
+                          SKIV_DesktopImage._desktop_pos + SKIV_DesktopImage.desktopSize ( )),
+                  app_names,
+                  ((_registry.eScreenshotsAutosave & mode) == CaptureMode_Screen) ? CaptureMode_Screen : CaptureMode_None
+          );
+
+          SKIV_Image_CaptureRegion (region);
+          _registry._SnippingMode = false;
+        }
+
+        // CaptureMode_Region: in windows of their own over the displays captured (the snipping overlays, see the main loop),
+        //   which leaves the main window as it is (shown, minimized or in the tray, wherever it is)
+        else
+        {
+          ImGui::GetIO ().MouseDown         [0] = false;
+          ImGui::GetIO ().MouseDownDuration [0] = -1.0f;
+        }
+      }
+
+      else
+      {
+        if (_registry._SnippingMode)
+        {
+          _registry._SnippingMode     = false;
+          _registry._SnippingModeExit = true;
+        }
+
+        ImGui::InsertNotification ({
+          ImGuiToastType::Error, 5000,
+            "Screen Capture Failed",
+            "%ws (HRESULT=%x)",
+              _com_error (hr).ErrorMessage (),
+                          hr
+        });
+      }
+    }
+
+    else
+    {
+      SetForegroundWindow (SKIF_ImGui_hWnd);
+    }
+  };
+
 
   switch (msg)
   {
-    // Sent to the clipboard owner before it is destroyed, if the clipboard owner has delayed rendering one or more clipboard formats.
-    // For the content of the clipboard to remain available to other applications, the clipboard owner must render data in all the formats
-    //   it is capable of generating, and place the data on the clipboard by calling the SetClipboardData function.
-    //
-    // When the application returns, the system removes any unrendered formats from the list of available clipboard formats.
-    case WM_RENDERALLFORMATS:
-
-      PLOG_VERBOSE << "WM_RENDERALLFORMATS";
-      if (OpenClipboard (hWnd))
-      {
-        if (hWnd == GetClipboardOwner ( ))
-        {
-          SKIV_Image_RenderToClipboard (CF_BITMAP);
-          SKIV_Image_RenderToClipboard (CF_HDROP);
-          SKIV_Image_RenderToClipboard (CF_UNICODETEXT);
-        }
-
-        CloseClipboard ( );
-      }
-
-      return 0;
-
-    // Delayed rendering of clipboard formats
-    // 
-    // When responding to the WM_RENDERFORMAT message, the clipboard owner
-    //   must not call OpenClipboard before calling SetClipboardData.
-    case WM_RENDERFORMAT:
-    {
-      PLOG_VERBOSE << "WM_RENDERFORMAT";
-
-      switch (wParam)
-      {
-        case CF_BITMAP:
-          SKIV_Image_RenderToClipboard (CF_BITMAP);
-          break;
-
-        case CF_HDROP:
-          SKIV_Image_RenderToClipboard (CF_HDROP);
-          break;
-
-        case CF_UNICODETEXT:
-          SKIV_Image_RenderToClipboard (CF_UNICODETEXT);
-          break;
-      }
-
-      return 0;
-    }
-
-    case WM_DESTROYCLIPBOARD:
-    {
-      PLOG_VERBOSE << "WM_DESTROYCLIPBOARD";
-
-      // Only clear the clipboard if we are not the owner of it
-      bool clearClipboard = (! OpenClipboard (hWnd));
-
-      if (! clearClipboard)
-      {
-        if (hWnd == GetClipboardOwner ( ))
-          clearClipboard = false;
-
-        CloseClipboard ( );
-      }
-
-      if (clearClipboard)
-        SKIV_ClipboardImage.clear();
-
-      return 0;
-    }
-
     case WM_COPYDATA:
     {
       PCOPYDATASTRUCT data = (PCOPYDATASTRUCT) lParam;
@@ -4132,7 +4835,9 @@ SKIF_Notify_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
           data->lpData != nullptr)
       {
         wchar_t                    wszFilePath [MAX_PATH] = { };
-        if (S_OK == StringCbCopyW (wszFilePath, MAX_PATH, (LPCWSTR)data->lpData))
+        // (By characters, and no further than the data sent: StringCbCopyW takes bytes, which with MAX_PATH failed for
+        //   paths of 130 characters or more, and the running instance then got closed instead)
+        if (S_OK == StringCchCopyNW (wszFilePath, ARRAYSIZE (wszFilePath), (LPCWSTR)data->lpData, data->cbData / sizeof (wchar_t)))
         {
           extern std::wstring dragDroppedFilePath;
           dragDroppedFilePath = std::wstring(wszFilePath);
@@ -4142,6 +4847,11 @@ SKIF_Notify_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
           // Restore, and whatnot
           if (SKIF_ImGui_hWnd != NULL)
           {
+            if (SKIF_isTrayed)
+            {   SKIF_isTrayed = false;
+              ShowWindow (SKIF_ImGui_hWnd, SW_SHOW);
+            }
+
             if (IsIconic (SKIF_ImGui_hWnd))
               ShowWindow (SKIF_ImGui_hWnd, SW_RESTORE);
 
@@ -4215,15 +4925,15 @@ SKIF_Notify_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         break;
 
       case SKIV_HotKey_CaptureWindow:
-        SKIV_EnterCaptureMode (CaptureMode_Window);
+        _EnterSnippingMode (CaptureMode_Window);
         break;
 
       case SKIV_HotKey_CaptureRegion:
-        SKIV_EnterCaptureMode (CaptureMode_Region);
+        _EnterSnippingMode (CaptureMode_Region);
         break;
 
       case SKIV_HotKey_CaptureScreen:
-        SKIV_EnterCaptureMode (CaptureMode_Screen);
+        _EnterSnippingMode (CaptureMode_Screen);
         break;
       }
     break;
@@ -4234,7 +4944,7 @@ SKIF_Notify_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
       return true;
       break;
 
-    case WM_ENDSESSION: 
+    case WM_ENDSESSION:
       // Session is shutting down -- perform any last minute changes!
       if (wParam == 1)
       {
@@ -4341,6 +5051,12 @@ SKIF_Notify_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
     case WM_SKIF_IMAGE:
       addAdditionalFrames += 3;
 
+      // The image store has decoded an image: it only wakes the main loop, as the viewer takes it (and notes that
+      //   the image has loaded) on the main thread (SKIV_ImageStore::TakeResult)
+      //   An animated image's thread has decoded a frame that is waited for: it only wakes the main loop as well
+      if (wParam == 0x1 || wParam == 0x2) // SKIV_IMAGE_STORE_RESULT, SKIV_IMAGE_ANIMATION_FRAME
+        break;
+
       // Update tryingToLoadCover
       extern bool tryingToLoadImage;
       extern std::atomic<bool> imageLoading;
@@ -4392,15 +5108,15 @@ SKIF_Notify_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
       break;
 
     case WM_SKIF_SNIP_WINDOW:
-      SKIV_EnterCaptureMode (CaptureMode_Window);
+      _EnterSnippingMode (CaptureMode_Window);
       break;
 
     case WM_SKIF_SNIP_REGION:
-      SKIV_EnterCaptureMode (CaptureMode_Region);
+      _EnterSnippingMode (CaptureMode_Region);
       break;
 
     case WM_SKIF_SNIP_SCREEN:
-      SKIV_EnterCaptureMode (CaptureMode_Screen);
+      _EnterSnippingMode (CaptureMode_Screen);
       break;
 
     case WM_SKIF_RUN_UPDATER:
@@ -4430,7 +5146,7 @@ SKIF_Notify_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             PLOG_INFO << "The app is performing an automatic update...";
 
             _registry.regKVAutoUpdateVersion.putData (SK_UTF8ToWideChar (SKIF_Updater::GetInstance ( ).GetResults ( ).version));
-            
+
             std::wstring update = SK_FormatStringW (LR"(%ws\Version\%ws)", _path_cache.skiv_userdata, SKIF_Updater::GetInstance ( ).GetResults ( ).filename.c_str());
             std::wstring args   = SK_FormatStringW (LR"(/VerySilent /NoRestart /Shortcuts=false /DIR="%ws")", _path_cache.skiv_install);
 
@@ -4500,7 +5216,7 @@ SKIF_Notify_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             msgDontRedraw = true;
             addAdditionalFrames -= 3; // Undo the 3 frames we added just above
           }
-          
+
           KillTimer (SKIF_Notify_hWnd, IDT_REFRESH_TOOLTIP);
           break;
         case IDT_REFRESH_GAMES: // TODO: Contemplate this design, and its position in the new design with situational pausing. Concerns WM_SKIF_REFRESHGAMES / IDT_REFRESH_GAMES.
@@ -4551,12 +5267,55 @@ SKIF_Notify_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
       break;
   }
 
-#pragma endregion
+  // Tell the main thread to render at least three more frames after we have processed the message
+  if (SKIF_ImGui_hWnd != NULL && ! msgDontRedraw)
+  {
+    addAdditionalFrames += 3;
+    //PostMessage (SKIF_ImGui_hWnd, WM_NULL, 0, 0);
+  }
 
-#pragma region Notification Icon
+  return 0;
+
+  //return
+  //  ::DefWindowProc (hWnd, msg, wParam, lParam);
+}
+
+LRESULT
+WINAPI
+SKIF_Notify_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+  // This is the message procedure for the notification icon window that also handles custom SKIF messages
+
+  static SKIF_RegistrySettings&   _registry  = SKIF_RegistrySettings  ::GetInstance ( );
+
+  PLOG_VERBOSE_IF(_registry.isDevLogging()) << std::format("[0x{:<4x}] [{:5d}] [{:20s}]{:s}[0x{:x}, {:d}{:s}] [0x{:x}, {:d}]",
+                  msg, // Hexadecimal
+                  msg, // Decimal
+                  SKIF_Util_GetWindowMessageAsStr (msg), // String
+                    (hWnd == SKIF_Notify_hWnd ?  " [SKIF_Notify_hWnd] " : " "), // Is the message meant SKIF_Notify_hWnd ?
+                  wParam, wParam,
+            ((HWND)wParam == SKIF_Notify_hWnd ?  ", SKIF_Notify_hWnd"   : ""),  // Does wParam point to SKIF_Notify_hWnd ?
+                  lParam, lParam);
+
+  if (SKIF_WndProc (hWnd, msg, wParam, lParam))
+    return true;
 
   switch (msg)
   {
+    // Delayed clipboard rendering (see SKIV_Image_CopyToClipboard): this window owns the clipboard after a copy
+    case WM_RENDERFORMAT:
+      SKIV_Image_RenderClipboardFormat (static_cast <UINT> (wParam));
+      return 0;
+
+    // Sent before this window is destroyed (as SKIV exits): the copy is put on the clipboard now, to stay pasteable
+    case WM_RENDERALLFORMATS:
+      SKIV_Image_RenderAllClipboardFormats (hWnd);
+      return 0;
+
+    case WM_DESTROYCLIPBOARD:
+      SKIV_Image_ClearClipboardCache ( );
+      return 0;
+
     case WM_SKIF_NOTIFY_ICON:
       msgDontRedraw = true; // Don't redraw the main window when we're interacting with the notification icon
       switch (lParam)
@@ -4628,7 +5387,7 @@ SKIF_Notify_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         SHELL_TASKBAR_BUTTON_CREATED = RegisterWindowMessage (TEXT ("TaskbarButtonCreated"));
       );
       break;
-        
+
     default:
       // Taskbar was recreated (explorer.exe restarted),
       //   so we need to recreate the notification icon
@@ -4648,9 +5407,6 @@ SKIF_Notify_WndProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
       }
       break;
   }
-
-#pragma endregion
-
   return
     ::DefWindowProc (hWnd, msg, wParam, lParam);
 }

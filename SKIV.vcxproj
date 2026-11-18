@@ -23,7 +23,7 @@
     <ProjectGuid>{93301458-CC3B-4924-B659-EB190D6EF9EB}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
     <RootNamespace>SKIV</RootNamespace>
-    <WindowsTargetPlatformVersion>10.0.22621.0</WindowsTargetPlatformVersion>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
@@ -32,7 +32,8 @@
     <CharacterSet>Unicode</CharacterSet>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <PlatformToolset>v143</PlatformToolset>
-    <VCToolsVersion>14.36.32532</VCToolsVersion>
+    <VCToolsVersion>
+    </VCToolsVersion>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
@@ -41,7 +42,8 @@
     <CharacterSet>Unicode</CharacterSet>
     <PreferredToolArchitecture>x64</PreferredToolArchitecture>
     <PlatformToolset>v143</PlatformToolset>
-    <VCToolsVersion>14.36.32532</VCToolsVersion>
+    <VCToolsVersion>
+    </VCToolsVersion>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
@@ -49,7 +51,8 @@
     <CharacterSet>Unicode</CharacterSet>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <PlatformToolset>v143</PlatformToolset>
-    <VCToolsVersion>14.36.32532</VCToolsVersion>
+    <VCToolsVersion>
+    </VCToolsVersion>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
@@ -58,7 +61,8 @@
     <CharacterSet>Unicode</CharacterSet>
     <PreferredToolArchitecture>x64</PreferredToolArchitecture>
     <PlatformToolset>v143</PlatformToolset>
-    <VCToolsVersion>14.36.32532</VCToolsVersion>
+    <VCToolsVersion>
+    </VCToolsVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ImportGroup Label="ExtensionSettings">
@@ -107,7 +111,7 @@
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <LinkIncremental>false</LinkIncremental>
-    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);.\resources\;.\packages_misc\;.\packages_misc\gsl\</IncludePath>
+    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);.\resources\;.\packages_misc\</IncludePath>
     <OutDir>Builds\</OutDir>
     <RunCodeAnalysis>false</RunCodeAnalysis>
     <EnableClangTidyCodeAnalysis>false</EnableClangTidyCodeAnalysis>
@@ -122,7 +126,7 @@
       </PrecompiledHeader>
       <WarningLevel>Level4</WarningLevel>
       <Optimization>MaxSpeed</Optimization>
-      <PreprocessorDefinitions>_WIN32_WINNT=_WIN32_WINNT_WIN10;_CRT_SECURE_NO_WARNINGS;NOMINMAX;_DEBUG;_WINDOWS;%(PreprocessorDefinitions);WIN32</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_WIN7_PLATFORM_UPDATE;_WIN32_WINNT=_WIN32_WINNT_WIN7;_CRT_SECURE_NO_WARNINGS;NOMINMAX;WIN32;_DEBUG;_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>false</ConformanceMode>
       <AdditionalIncludeDirectories>$(ProjectDir)\include</AdditionalIncludeDirectories>
       <CompileAsManaged>false</CompileAsManaged>
@@ -144,11 +148,13 @@
       <AdditionalOptions>/Ob3 %(AdditionalOptions)</AdditionalOptions>
       <UseUnicodeForAssemblerListing>true</UseUnicodeForAssemblerListing>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+      <WholeProgramOptimization>true</WholeProgramOptimization>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>advapi32.lib;comdlg32.lib;d3d11.lib;dbghelp.lib;dwmapi.lib;dxgi.lib;gdi32.lib;kernel32.lib;odbc32.lib;odbccp32.lib;ole32.lib;oleaut32.lib;shell32.lib;user32.lib;uuid.lib;version.lib;winmm.lib;winspool.lib</AdditionalDependencies>
+      <AdditionalDependencies>advapi32.lib;comdlg32.lib;dbghelp.lib;dwmapi.lib;gdi32.lib;kernel32.lib;odbc32.lib;odbccp32.lib;ole32.lib;oleaut32.lib;shell32.lib;user32.lib;uuid.lib;version.lib;winmm.lib;winspool.lib;$(SolutionDir)\packages_misc\DirectXTex\Bin\Desktop_2022\$(Platform)\$(Configuration)\DirectXTex.lib;$(SolutionDir)\packages_misc\pugixml\scripts\vs2022\$(Platform)_$(Configuration)Static\pugixml.lib</AdditionalDependencies>
       <DelayLoadDLLs>
       </DelayLoadDLLs>
       <OptimizeReferences>true</OptimizeReferences>
@@ -156,6 +162,8 @@
       <RandomizedBaseAddress>false</RandomizedBaseAddress>
       <DataExecutionPrevention>false</DataExecutionPrevention>
       <AdditionalOptions>/DEPENDENTLOADFLAG:0x800 %(AdditionalOptions)</AdditionalOptions>
+      <IgnoreSpecificDefaultLibraries>
+      </IgnoreSpecificDefaultLibraries>
     </Link>
     <PreBuildEvent>
       <Message>
@@ -164,7 +172,7 @@
       </Command>
     </PreBuildEvent>
     <PostBuildEvent>
-      <Command>post_build.bat "$(TargetPath)" "$(TargetFileName)"</Command>
+      <Command>"$(ProjectDir)post_build.bat" "$(TargetPath)" "$(TargetFileName)"</Command>
       <Message>Execute post-build events</Message>
     </PostBuildEvent>
     <Manifest>
@@ -177,7 +185,7 @@
       </PrecompiledHeader>
       <WarningLevel>Level4</WarningLevel>
       <Optimization>MaxSpeed</Optimization>
-      <PreprocessorDefinitions>_WIN32_WINNT=_WIN32_WINNT_WIN10;_CRT_SECURE_NO_WARNINGS;NOMINMAX;_DEBUG;_WINDOWS;%(PreprocessorDefinitions);_WIN64</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_WIN7_PLATFORM_UPDATE;_WIN32_WINNT=_WIN32_WINNT_WIN7;_CRT_SECURE_NO_WARNINGS;NOMINMAX;_DEBUG;_WINDOWS;%(PreprocessorDefinitions);_WIN64</PreprocessorDefinitions>
       <ConformanceMode>false</ConformanceMode>
       <AdditionalIncludeDirectories>$(ProjectDir)\include</AdditionalIncludeDirectories>
       <CompileAsManaged>false</CompileAsManaged>
@@ -201,11 +209,13 @@
       <AdditionalOptions>/Ob3 %(AdditionalOptions)</AdditionalOptions>
       <UseUnicodeForAssemblerListing>true</UseUnicodeForAssemblerListing>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+      <WholeProgramOptimization>true</WholeProgramOptimization>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>advapi32.lib;comdlg32.lib;d3d11.lib;dbghelp.lib;dwmapi.lib;dxgi.lib;gdi32.lib;kernel32.lib;odbc32.lib;odbccp32.lib;ole32.lib;oleaut32.lib;shell32.lib;user32.lib;uuid.lib;version.lib;winmm.lib;winspool.lib</AdditionalDependencies>
+      <AdditionalDependencies>advapi32.lib;comdlg32.lib;dbghelp.lib;dwmapi.lib;gdi32.lib;kernel32.lib;odbc32.lib;odbccp32.lib;ole32.lib;oleaut32.lib;shell32.lib;user32.lib;uuid.lib;version.lib;winmm.lib;winspool.lib;$(SolutionDir)\packages_misc\DirectXTex\Bin\Desktop_2022\$(Platform)\$(Configuration)\DirectXTex.lib;$(SolutionDir)\packages_misc\pugixml\scripts\vs2022\$(Platform)_$(Configuration)Static\pugixml.lib</AdditionalDependencies>
       <DelayLoadDLLs>
       </DelayLoadDLLs>
       <OptimizeReferences>true</OptimizeReferences>
@@ -213,6 +223,8 @@
       <RandomizedBaseAddress>false</RandomizedBaseAddress>
       <DataExecutionPrevention>false</DataExecutionPrevention>
       <AdditionalOptions>/DEPENDENTLOADFLAG:0x800 %(AdditionalOptions)</AdditionalOptions>
+      <IgnoreSpecificDefaultLibraries>
+      </IgnoreSpecificDefaultLibraries>
     </Link>
     <ResourceCompile>
       <PreprocessorDefinitions>_UNICODE;UNICODE;%(PreprocessorDefinitions);_WIN64</PreprocessorDefinitions>
@@ -224,7 +236,7 @@
       </Command>
     </PreBuildEvent>
     <PostBuildEvent>
-      <Command>post_build.bat "$(TargetPath)" "$(TargetFileName)"</Command>
+      <Command>"$(ProjectDir)post_build.bat" "$(TargetPath)" "$(TargetFileName)"</Command>
       <Message>Execute post-build events</Message>
     </PostBuildEvent>
     <Manifest>
@@ -239,7 +251,7 @@
       <Optimization>MaxSpeed</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
-      <PreprocessorDefinitions>_WIN32_WINNT=_WIN32_WINNT_WIN10;_CRT_SECURE_NO_WARNINGS;NOMINMAX;NDEBUG;_WINDOWS;%(PreprocessorDefinitions);WIN32</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_WIN7_PLATFORM_UPDATE;_WIN32_WINNT=_WIN32_WINNT_WIN7;_CRT_SECURE_NO_WARNINGS;NOMINMAX;WIN32;NDEBUG;_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>false</ConformanceMode>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <BufferSecurityCheck>false</BufferSecurityCheck>
@@ -263,18 +275,19 @@
       <AdditionalOptions>/Ob3 /Zf %(AdditionalOptions)</AdditionalOptions>
       <CreateHotpatchableImage>true</CreateHotpatchableImage>
       <UseUnicodeForAssemblerListing>true</UseUnicodeForAssemblerListing>
-      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <SupportJustMyCode>true</SupportJustMyCode>
       <SDLCheck>false</SDLCheck>
       <InlineFunctionExpansion>Default</InlineFunctionExpansion>
       <ErrorReporting>None</ErrorReporting>
+      <WholeProgramOptimization>true</WholeProgramOptimization>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>DebugFull</GenerateDebugInformation>
-      <AdditionalDependencies>advapi32.lib;comdlg32.lib;d3d11.lib;dbghelp.lib;dwmapi.lib;dxgi.lib;gdi32.lib;kernel32.lib;odbc32.lib;odbccp32.lib;ole32.lib;oleaut32.lib;shell32.lib;user32.lib;uuid.lib;version.lib;winmm.lib;winspool.lib</AdditionalDependencies>
+      <AdditionalDependencies>advapi32.lib;comdlg32.lib;dbghelp.lib;dwmapi.lib;gdi32.lib;kernel32.lib;odbc32.lib;odbccp32.lib;ole32.lib;oleaut32.lib;shell32.lib;user32.lib;uuid.lib;version.lib;winmm.lib;winspool.lib;$(SolutionDir)\packages_misc\DirectXTex\Bin\Desktop_2022\$(Platform)\$(Configuration)\DirectXTex.lib;$(SolutionDir)\packages_misc\pugixml\scripts\vs2022\$(Platform)_$(Configuration)Static\pugixml.lib</AdditionalDependencies>
       <DelayLoadDLLs>
       </DelayLoadDLLs>
       <LargeAddressAware>true</LargeAddressAware>
@@ -286,12 +299,14 @@
       <Profile>true</Profile>
       <LinkErrorReporting>NoErrorReport</LinkErrorReporting>
       <AdditionalOptions>/DEPENDENTLOADFLAG:0x800 %(AdditionalOptions)</AdditionalOptions>
+      <IgnoreSpecificDefaultLibraries>
+      </IgnoreSpecificDefaultLibraries>
     </Link>
     <Manifest>
       <AdditionalManifestFiles>.\resources\appcompat.manifest %(AdditionalManifestFiles)</AdditionalManifestFiles>
     </Manifest>
     <PostBuildEvent>
-      <Command>post_build.bat "$(TargetPath)" "$(TargetFileName)"</Command>
+      <Command>"$(ProjectDir)post_build.bat" "$(TargetPath)" "$(TargetFileName)"</Command>
     </PostBuildEvent>
     <PostBuildEvent>
       <Message>Execute post-build events</Message>
@@ -311,7 +326,7 @@
       <Optimization>MaxSpeed</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
-      <PreprocessorDefinitions>_WIN32_WINNT=_WIN32_WINNT_WIN10;_CRT_SECURE_NO_WARNINGS;NOMINMAX;NDEBUG;_WINDOWS;%(PreprocessorDefinitions);_WIN64</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_WIN7_PLATFORM_UPDATE;_WIN32_WINNT=_WIN32_WINNT_WIN7;_CRT_SECURE_NO_WARNINGS;NOMINMAX;WIN32;NDEBUG;_WINDOWS;%(PreprocessorDefinitions);_WIN64</PreprocessorDefinitions>
       <ConformanceMode>false</ConformanceMode>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <BufferSecurityCheck>false</BufferSecurityCheck>
@@ -334,17 +349,18 @@
       <OpenMPSupport>false</OpenMPSupport>
       <AdditionalOptions>/Ob3 /Zf %(AdditionalOptions)</AdditionalOptions>
       <UseUnicodeForAssemblerListing>true</UseUnicodeForAssemblerListing>
-      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <SupportJustMyCode>true</SupportJustMyCode>
       <SDLCheck>false</SDLCheck>
       <InlineFunctionExpansion>Default</InlineFunctionExpansion>
       <ErrorReporting>None</ErrorReporting>
+      <WholeProgramOptimization>true</WholeProgramOptimization>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>DebugFull</GenerateDebugInformation>
-      <AdditionalDependencies>advapi32.lib;comdlg32.lib;d3d11.lib;dbghelp.lib;dwmapi.lib;dxgi.lib;gdi32.lib;kernel32.lib;odbc32.lib;odbccp32.lib;ole32.lib;oleaut32.lib;shell32.lib;user32.lib;uuid.lib;version.lib;winmm.lib;winspool.lib</AdditionalDependencies>
+      <AdditionalDependencies>advapi32.lib;comdlg32.lib;dbghelp.lib;dwmapi.lib;gdi32.lib;kernel32.lib;odbc32.lib;odbccp32.lib;ole32.lib;oleaut32.lib;shell32.lib;user32.lib;uuid.lib;version.lib;winmm.lib;winspool.lib;$(SolutionDir)\packages_misc\DirectXTex\Bin\Desktop_2022\$(Platform)\$(Configuration)\DirectXTex.lib;$(SolutionDir)\packages_misc\pugixml\scripts\vs2022\$(Platform)_$(Configuration)Static\pugixml.lib</AdditionalDependencies>
       <DelayLoadDLLs>
       </DelayLoadDLLs>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
@@ -356,6 +372,9 @@
       <Profile>true</Profile>
       <LinkErrorReporting>NoErrorReport</LinkErrorReporting>
       <AdditionalOptions>/DEPENDENTLOADFLAG:0x800 %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <IgnoreSpecificDefaultLibraries>
+      </IgnoreSpecificDefaultLibraries>
     </Link>
     <Manifest>
       <AdditionalManifestFiles>.\resources\appcompat.manifest %(AdditionalManifestFiles)</AdditionalManifestFiles>
@@ -370,17 +389,53 @@
       </Message>
     </PreBuildEvent>
     <PostBuildEvent>
-      <Command>post_build.bat "$(TargetPath)" "$(TargetFileName)"</Command>
+      <Command>"$(ProjectDir)post_build.bat" "$(TargetPath)" "$(TargetFileName)"</Command>
     </PostBuildEvent>
     <PostBuildEvent>
       <Message>Execute post-build events</Message>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="include\avif\avif.h" />
+    <ClInclude Include="include\avif\internal.h" />
     <ClInclude Include="include\imgui\imgui_impl_dx11.h" />
+    <ClInclude Include="include\jxl\cms.h" />
+    <ClInclude Include="include\jxl\cms_interface.h" />
+    <ClInclude Include="include\jxl\codestream_header.h" />
+    <ClInclude Include="include\jxl\color_encoding.h" />
+    <ClInclude Include="include\jxl\compressed_icc.h" />
+    <ClInclude Include="include\jxl\decode.h" />
+    <ClInclude Include="include\jxl\decode_cxx.h" />
+    <ClInclude Include="include\jxl\encode.h" />
+    <ClInclude Include="include\jxl\encode_cxx.h" />
+    <ClInclude Include="include\jxl\gain_map.h" />
+    <ClInclude Include="include\jxl\memory_manager.h" />
+    <ClInclude Include="include\jxl\parallel_runner.h" />
+    <ClInclude Include="include\jxl\resizable_parallel_runner.h" />
+    <ClInclude Include="include\jxl\resizable_parallel_runner_cxx.h" />
+    <ClInclude Include="include\jxl\stats.h" />
+    <ClInclude Include="include\jxl\thread_parallel_runner.h" />
+    <ClInclude Include="include\jxl\thread_parallel_runner_cxx.h" />
+    <ClInclude Include="include\jxl\types.h" />
+    <ClInclude Include="include\MinHook.h" />
+    <ClInclude Include="include\ultrahdr\editorhelper.h" />
+    <ClInclude Include="include\ultrahdr\gainmapmath.h" />
+    <ClInclude Include="include\ultrahdr\gainmapmetadata.h" />
+    <ClInclude Include="include\ultrahdr\icc.h" />
+    <ClInclude Include="include\ultrahdr\jpegdecoderhelper.h" />
+    <ClInclude Include="include\ultrahdr\jpegencoderhelper.h" />
+    <ClInclude Include="include\ultrahdr\jpegr.h" />
+    <ClInclude Include="include\ultrahdr\jpegrutils.h" />
+    <ClInclude Include="include\ultrahdr\multipictureformat.h" />
+    <ClInclude Include="include\ultrahdr\ultrahdr.h" />
+    <ClInclude Include="include\ultrahdr\ultrahdrcommon.h" />
+    <ClInclude Include="include\ultrahdr\ultrahdr_api.h" />
+    <ClInclude Include="packages_misc\DirectXTexEXR.h" />
     <ClInclude Include="include\utility\droptarget.hpp" />
     <ClInclude Include="include\utility\gamepad.h" />
     <ClInclude Include="include\utility\image.h" />
+    <ClInclude Include="include\utility\image_decode.h" />
+    <ClInclude Include="include\utility\image_store.h" />
     <ClInclude Include="include\utility\plog_formatter.h" />
     <ClInclude Include="packages_misc\html_coder.hpp" />
     <ClInclude Include="packages_misc\HybridDetect.h" />
@@ -398,6 +453,7 @@
     <ClInclude Include="resources\fonts\fa_brands_400.ttf.h" />
     <ClInclude Include="resources\fonts\fa_solid_900.ttf.h" />
     <ClInclude Include="include\utility\fsutil.h" />
+    <ClInclude Include="include\utility\l10n.h" />
     <ClInclude Include="include\imgui\imconfig.h" />
     <ClInclude Include="include\imgui\imgui.h" />
     <ClInclude Include="include\imgui\imgui_impl_win32.h" />
@@ -422,11 +478,302 @@
     <ClInclude Include="version.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="packages_misc\lcms2\src\cmsalpha.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmscam02.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmscgats.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmscnvrt.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmserr.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsgamma.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsgmt.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmshalf.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsintrp.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsio0.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsio1.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmslut.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsmd5.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsmtrx.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsnamed.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsopt.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmspack.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmspcs.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsplugin.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsps2.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmssamp.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmssm.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmstypes.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsvirt.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmswtpnt.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsxform.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\lcms2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dec\alpha_dec.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\libwebp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dec\buffer_dec.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\libwebp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dec\frame_dec.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\libwebp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dec\idec_dec.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\libwebp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dec\io_dec.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\libwebp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dec\quant_dec.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\libwebp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dec\tree_dec.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\libwebp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dec\vp8_dec.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\libwebp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dec\vp8l_dec.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\libwebp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dec\webp_dec.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\libwebp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\demux\anim_decode.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\libwebp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\demux\demux.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\libwebp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dsp\alpha_processing.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\libwebp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dsp\alpha_processing_sse2.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\libwebp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dsp\alpha_processing_sse41.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\libwebp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dsp\cpu.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\libwebp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dsp\dec.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\libwebp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dsp\dec_clip_tables.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\libwebp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dsp\dec_sse2.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\libwebp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dsp\dec_sse41.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\libwebp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dsp\filters.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\libwebp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dsp\filters_sse2.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\libwebp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dsp\lossless.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\libwebp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dsp\lossless_avx2.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\libwebp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dsp\lossless_sse2.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\libwebp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dsp\lossless_sse41.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\libwebp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dsp\rescaler.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\libwebp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dsp\rescaler_sse2.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\libwebp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dsp\upsampling.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\libwebp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dsp\upsampling_sse2.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\libwebp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dsp\upsampling_sse41.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\libwebp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dsp\yuv.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\libwebp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dsp\yuv_sse2.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\libwebp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dsp\yuv_sse41.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\libwebp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\utils\bit_reader_utils.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\libwebp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\utils\color_cache_utils.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\libwebp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\utils\filters_utils.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\libwebp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\utils\huffman_utils.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\libwebp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\utils\palette.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\libwebp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\utils\quant_levels_dec_utils.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\libwebp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\utils\random_utils.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\libwebp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\utils\rescaler_utils.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\libwebp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\utils\thread_utils.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\libwebp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\utils\utils.c">
+      <AdditionalIncludeDirectories>$(ProjectDir)packages_misc\libwebp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
     <ClCompile Include="src\imgui\imgui_impl_dx11.cpp" />
     <ClCompile Include="src\imgui\imgui_impl_win32.cpp" />
     <ClCompile Include="src\imgui\imgui_tables.cpp" />
+    <ClCompile Include="src\imgui\imgui_demo.cpp" />
+    <ClCompile Include="src\MinHook\buffer.c" />
+    <ClCompile Include="src\MinHook\hde\hde32.c" />
+    <ClCompile Include="src\MinHook\hde\hde64.c" />
+    <ClCompile Include="src\MinHook\hook.c" />
+    <ClCompile Include="src\MinHook\trampoline.c" />
+    <ClCompile Include="packages_misc\DirectXTexEXR.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
+    </ClCompile>
     <ClCompile Include="src\utility\gamepad.cpp" />
     <ClCompile Include="src\utility\image.cpp" />
+    <ClCompile Include="src\utility\image_decode.cpp" />
+    <ClCompile Include="src\utility\image_store.cpp" />
     <ClCompile Include="src\utility\registry.cpp" />
     <ClCompile Include="src\utility\skif_imgui.cpp" />
     <ClCompile Include="src\utility\utility.cpp" />
@@ -481,6 +828,16 @@
       <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
       </ObjectFileOutput>
     </FxCompile>
+    <FxCompile Include="resources\shaders\avif_yuv_cs.hlsl">
+      <ShaderType>Compute</ShaderType>
+      <ShaderModel>5.0</ShaderModel>
+      <EntryPointName>main</EntryPointName>
+      <EnableDebuggingInformation>false</EnableDebuggingInformation>
+      <VariableName>avif_yuv_cs_bytecode</VariableName>
+      <HeaderFileOutput>%(DefiningProjectDirectory)\resources\shaders\avif_yuv_cs.h</HeaderFileOutput>
+      <ObjectFileOutput>
+      </ObjectFileOutput>
+    </FxCompile>
     <FxCompile Include="resources\shaders\imgui_vtx_shader.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Vertex</ShaderType>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Vertex</ShaderType>
@@ -527,18 +884,14 @@
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
-    <Import Project="packages\plog.1.1.9\build\native\plog.targets" Condition="Exists('packages\plog.1.1.9\build\native\plog.targets')" />
-    <Import Project="packages\pugixml.1.13.0\build\native\pugixml.targets" Condition="Exists('packages\pugixml.1.13.0\build\native\pugixml.targets')" />
-    <Import Project="packages\nlohmann.json.3.11.2\build\native\nlohmann.json.targets" Condition="Exists('packages\nlohmann.json.3.11.2\build\native\nlohmann.json.targets')" />
-    <Import Project="packages\directxtex_desktop_2019.2024.6.5.1\build\native\directxtex_desktop_2019.targets" Condition="Exists('packages\directxtex_desktop_2019.2024.6.5.1\build\native\directxtex_desktop_2019.targets')" />
+    <Import Project="packages\plog.1.1.11\build\native\plog.targets" Condition="Exists('packages\plog.1.1.11\build\native\plog.targets')" />
+    <Import Project="packages\nlohmann.json.3.12.0\build\native\nlohmann.json.targets" Condition="Exists('packages\nlohmann.json.3.12.0\build\native\nlohmann.json.targets')" />
   </ImportGroup>
   <Target Name="EnsureNuGetPackageBuildImports" BeforeTargets="PrepareForBuild">
     <PropertyGroup>
       <ErrorText>This project references NuGet package(s) that are missing on this computer. Use NuGet Package Restore to download them.  For more information, see http://go.microsoft.com/fwlink/?LinkID=322105. The missing file is {0}.</ErrorText>
     </PropertyGroup>
-    <Error Condition="!Exists('packages\plog.1.1.9\build\native\plog.targets')" Text="$([System.String]::Format('$(ErrorText)', 'packages\plog.1.1.9\build\native\plog.targets'))" />
-    <Error Condition="!Exists('packages\pugixml.1.13.0\build\native\pugixml.targets')" Text="$([System.String]::Format('$(ErrorText)', 'packages\pugixml.1.13.0\build\native\pugixml.targets'))" />
-    <Error Condition="!Exists('packages\nlohmann.json.3.11.2\build\native\nlohmann.json.targets')" Text="$([System.String]::Format('$(ErrorText)', 'packages\nlohmann.json.3.11.2\build\native\nlohmann.json.targets'))" />
-    <Error Condition="!Exists('packages\directxtex_desktop_2019.2024.6.5.1\build\native\directxtex_desktop_2019.targets')" Text="$([System.String]::Format('$(ErrorText)', 'packages\directxtex_desktop_2019.2024.6.5.1\build\native\directxtex_desktop_2019.targets'))" />
+    <Error Condition="!Exists('packages\plog.1.1.11\build\native\plog.targets')" Text="$([System.String]::Format('$(ErrorText)', 'packages\plog.1.1.11\build\native\plog.targets'))" />
+    <Error Condition="!Exists('packages\nlohmann.json.3.12.0\build\native\nlohmann.json.targets')" Text="$([System.String]::Format('$(ErrorText)', 'packages\nlohmann.json.3.12.0\build\native\nlohmann.json.targets'))" />
   </Target>
 </Project>

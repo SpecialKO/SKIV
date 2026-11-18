@@ -59,7 +59,7 @@ SKIF_RegistrySettings::KeyValue<std::vector <std::wstring>>::getData (HKEY* hKey
 
   std::wstring out(dwOutLen, '\0');
 
-  if ( ERROR_SUCCESS != 
+  if ( ERROR_SUCCESS !=
     RegGetValueW ( (hKey != nullptr) ? *hKey : _desc.hKey,
                    (hKey != nullptr) ?  NULL : _desc.wszSubKey,
                         _desc.wszKeyValue,
@@ -101,7 +101,7 @@ SKIF_RegistrySettings::KeyValue<std::wstring>::getData (HKEY* hKey)
 
   std::wstring out(dwOutLen, '\0');
 
-  if ( ERROR_SUCCESS != 
+  if ( ERROR_SUCCESS !=
     RegGetValueW ( (hKey != nullptr) ? *hKey : _desc.hKey,
                    (hKey != nullptr) ?  NULL : _desc.wszSubKey,
                         _desc.wszKeyValue,
@@ -152,7 +152,7 @@ SKIF_RegistrySettings::KeyValue<std::vector <std::wstring>>::putDataMultiSZ (std
                         _desc.wszKeyValue,
                         _desc.dwType,
                   (LPBYTE) wzData.data ( ), (DWORD) stDataSize * sizeof(wchar_t));
-            
+
   RegCloseKey (hKeyToSet);
 
   return (ERROR_SUCCESS == lStat);
@@ -221,7 +221,7 @@ SKIF_RegistrySettings::isDevLogging (void) const
 
 SKIF_RegistrySettings::SKIF_RegistrySettings (void)
 {
-  // iSDRMode defaults to 0, meaning 8 bpc (DXGI_FORMAT_R8G8B8A8_UNORM) 
+  // iSDRMode defaults to 0, meaning 8 bpc (DXGI_FORMAT_R8G8B8A8_UNORM)
   // but it seems that Windows 10 1709+ (Build 16299) also supports
   // 10 bpc (DXGI_FORMAT_R10G10B10A2_UNORM) for flip model.
   if (SKIF_Util_IsWindows10v1709OrGreater ( ))
@@ -232,16 +232,31 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
     iUIMode                =   2;
 
   HKEY hKey = nullptr;
-  
+
   LSTATUS lsKey = RegCreateKeyW (HKEY_CURRENT_USER, LR"(SOFTWARE\Kaldaien\Special K\Viewer\)", &hKey);
 
   if (lsKey != ERROR_SUCCESS)
     hKey = nullptr;
-  
+
+  if (regKVUIPositionX.hasData(&hKey))
+    iUIPositionX           =   regKVUIPositionX            .getData (&hKey);
+  if (regKVUIPositionY.hasData(&hKey))
+    iUIPositionY           =   regKVUIPositionY            .getData (&hKey);
+
+  // Registry keys that don't exist defaults to 0/false, so variables that has those values
+  //   as their default value don't need to be checked before we attempt to read them.
+
+  // Remembered app window size and position
+  iUIWidth                 =   regKVUIWidth                .getData (&hKey);
+  iUIHeight                =   regKVUIHeight               .getData (&hKey);
+
   // UI elements that can be toggled
 
   if (regKVUIBorders.hasData(&hKey))
     bUIBorders             =   regKVUIBorders              .getData (&hKey);
+
+  if (regKVLinearFontAlpha.hasData(&hKey))
+    bLinearFontAlpha       =   regKVLinearFontAlpha        .getData (&hKey);
   if (regKVUITooltips.hasData(&hKey))
     bUITooltips            =   regKVUITooltips             .getData (&hKey);
   if (regKVUIStatusBar.hasData(&hKey))
@@ -269,7 +284,7 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
 #endif
 
 #endif
-  
+
   if (regKVSDRMode.hasData(&hKey))
     iSDRMode               =   regKVSDRMode                .getData (&hKey);
 
@@ -277,7 +292,7 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
     // CatGPT — 5 June 2024 19:49
     // I'd also suggest removing the 16-bpc SDR option (or hiding it for now).
     // This is because STB is loading FP textures for everything and if you display those in an FP16 buffer, SDR gamma doesn't work right.
-    // I can fix that later, but best to avoid letting users do that for now. 
+    // I can fix that later, but best to avoid letting users do that for now.
 #if 1
   if (iSDRMode == 2)
     iSDRMode = 1;
@@ -293,17 +308,60 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
   if (regKVHDRBrightness.hasData(&hKey))
   {
     iHDRBrightness         =   regKVHDRBrightness          .getData (&hKey);
-    
+
     // Reset to 203 nits (the default) if outside of the acceptable range of 80-400 nits
     if (iHDRBrightness < 80 || 400 < iHDRBrightness)
       iHDRBrightness       =   203;
   }
-  
+
+  if (regKVHDRToneMapType.hasData(&hKey))
+    iHDRToneMapType        =   regKVHDRToneMapType         .getData (&hKey);
+
   if (regKVUIMode.hasData(&hKey))
     iUIMode                =   regKVUIMode                 .getData (&hKey);
-  
+
   if (regKVDiagnostics.hasData(&hKey))
     iDiagnostics           =   regKVDiagnostics            .getData (&hKey);
+
+
+  lsKey =
+    RegCreateKeyW ( HKEY_CURRENT_USER,
+                      LR"(SOFTWARE\Kaldaien\Special K\Viewer\AVIF\)",
+                        &avif.key.m_hKey );
+  lsKey =
+    RegCreateKeyW ( HKEY_CURRENT_USER,
+                      LR"(SOFTWARE\Kaldaien\Special K\Viewer\JPEG XL\)",
+                        &jxl.key.m_hKey );
+  lsKey =
+    RegCreateKeyW ( HKEY_CURRENT_USER,
+                      LR"(SOFTWARE\Kaldaien\Special K\Viewer\JPEG XR\)",
+                        &jxr.key.m_hKey );
+  lsKey =
+    RegCreateKeyW ( HKEY_CURRENT_USER,
+                      LR"(SOFTWARE\Kaldaien\Special K\Viewer\PNG\)",
+                        &png.key.m_hKey );
+
+  if (regKVAVIFHDRBitDepth.hasData (&avif.key.m_hKey))
+    avif.hdr_bitdepth      =   regKVAVIFHDRBitDepth        .getData (&avif.key.m_hKey);
+  if (regKVAVIFQuality.hasData     (&avif.key.m_hKey))
+    avif.quality           =   regKVAVIFQuality            .getData (&avif.key.m_hKey);
+  if (regKVAVIFSpeed.hasData       (&avif.key.m_hKey))
+    avif.speed             =   regKVAVIFSpeed              .getData (&avif.key.m_hKey);
+
+  if (regKVJXLHDRBitDepth.hasData  (&jxl.key.m_hKey))
+    jxl.hdr_bitdepth       =   regKVJXLHDRBitDepth         .getData (&jxl.key.m_hKey);
+  if (regKVJXLQuality.hasData      (&jxl.key.m_hKey))
+    jxl.quality            =   regKVJXLQuality             .getData (&jxl.key.m_hKey);
+  if (regKVJXLSpeed.hasData        (&jxl.key.m_hKey))
+    jxl.speed              =   regKVJXLSpeed               .getData (&jxl.key.m_hKey);
+
+  if (regKVJXRQuality.hasData      (&jxr.key.m_hKey))
+    jxr.quality            =   regKVJXRQuality             .getData (&jxr.key.m_hKey);
+
+  if (regKVPNGHDRBitDepth.hasData  (&png.key.m_hKey))
+    png.hdr_bitdepth       =   regKVPNGHDRBitDepth         .getData (&png.key.m_hKey);
+  if (regKVPNGDiscordCompatibility.hasData (&png.key.m_hKey))
+    png.discord_compatibility = regKVPNGDiscordCompatibility.getData (&png.key.m_hKey);
 
 #if 0
   if (! SKIF_Util_GetDragFromMaximized ( ))
@@ -325,8 +383,17 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
   if (regKVDarkenImages.hasData(&hKey))
     iDarkenImages          =   regKVDarkenImages           .getData (&hKey);
 
+  if (regKVThumbnailCarousel.hasData(&hKey))
+    iThumbnailCarousel     =   std::clamp (regKVThumbnailCarousel.getData (&hKey), 0, 2);
+
   if (regKVCheckForUpdates.hasData(&hKey))
     iCheckForUpdates       =   regKVCheckForUpdates        .getData (&hKey);
+
+  if (regKVScreenshotsAutosave.hasData(&hKey))
+    eScreenshotsAutosave   =   regKVScreenshotsAutosave    .getData (&hKey);
+
+  if (regKVScreenshotsHotkeys.hasData(&hKey))
+    eScreenshotsHotkeys    =   regKVScreenshotsHotkeys     .getData (&hKey);
 
   if (regKVIgnoreUpdate.hasData(&hKey))
     wsIgnoreUpdate         =   regKVIgnoreUpdate           .getData (&hKey);
@@ -337,6 +404,12 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
   if (regKVPathViewer.hasData(&hKey))
     wsPathViewer           =   regKVPathViewer             .getData (&hKey);
 
+  if (regKVPathScreenshots.hasData(&hKey))
+    wsPathScreenshots      =   regKVPathScreenshots        .getData (&hKey);
+
+  if (regKVScreenshotsPattern.hasData(&hKey))
+    wsScreenshotsPattern   =   regKVScreenshotsPattern     .getData (&hKey);
+
   if (regKVAutoUpdateVersion.hasData(&hKey))
     wsAutoUpdateVersion    =   regKVAutoUpdateVersion      .getData (&hKey);
 
@@ -346,12 +419,18 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
     bEfficiencyMode        =   regKVEfficiencyMode         .getData (&hKey);
   else
     bEfficiencyMode        =   SKIF_Util_IsWindows11orGreater ( ); // Win10 and below: false, Win11 and above: true
-  
-  if (regKVFadeCovers.hasData(&hKey))
-    bFadeCovers            =   regKVFadeCovers             .getData (&hKey);
+
+  if (regKVCrossFade.hasData(&hKey))
+    bCrossFade            =   regKVCrossFade             .getData (&hKey);
+
+  if (regKVAnimatedImages.hasData(&hKey))
+    bAnimatedImages        =   regKVAnimatedImages         .getData (&hKey);
 
   if (regKVControllers.hasData(&hKey))
     bControllers           =   regKVControllers            .getData (&hKey);
+
+  if (regKV99thPercentileMaxCLL.hasData(&hKey))
+    b99thPercentileMaxCLL  =   regKV99thPercentileMaxCLL   .getData (&hKey);
 
   // These defaults to false, so no need to check if the registry has another value
   //   since getData ( ) defaults to false for non-existent registry values
@@ -362,20 +441,23 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
   bOpenAtCursorPosition    =   regKVOpenAtCursorPosition   .getData (&hKey);
   bGhost                   =   regKVGhost                  .getData (&hKey);
   bLoggingDeveloper        =   regKVLoggingDeveloper       .getData (&hKey);
+  bLoopImages              =   regKVLoopImages             .getData (&hKey);
   bImageDetails            =   regKVImageDetails           .getData (&hKey);
+  bAlpha                   =   regKVAlpha                  .getData (&hKey);
+  bCheckerboard            =   regKVAlpha                  .getData (&hKey);
 
   // Keybindings
   // All keybindings must first read the data from the registry,
   //   then parse the human_readable data through .parse()
 
   if (regKVHotkeyCaptureWindow.hasData(&hKey))
-    kbCaptureWindow.pending.human_readable = regKVHotkeyCaptureWindow.getData (&hKey);
+    kbCaptureWindow.pending.human_readable    = regKVHotkeyCaptureWindow   .getData (&hKey);
 
   if (regKVHotkeyCaptureRegion.hasData(&hKey))
-    kbCaptureRegion.pending.human_readable = regKVHotkeyCaptureRegion.getData (&hKey);
+    kbCaptureRegion.pending.human_readable    = regKVHotkeyCaptureRegion   .getData (&hKey);
 
   if (regKVHotkeyCaptureScreen.hasData(&hKey))
-    kbCaptureScreen.pending.human_readable = regKVHotkeyCaptureScreen.getData (&hKey);
+    kbCaptureScreen.pending.human_readable    = regKVHotkeyCaptureScreen   .getData (&hKey);
 
   if (regKVHotkeyToggleHDRDisplay.hasData(&hKey))
     kbToggleHDRDisplay.pending.human_readable = regKVHotkeyToggleHDRDisplay.getData (&hKey);

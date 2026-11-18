@@ -2,23 +2,42 @@
 #include "utility/registry.h"
 #include <cstdint>
 #include <string_view>
+#include <filesystem>
+#include <unordered_set>
 #include <plog/Log.h>
 #include <strsafe.h>
 #include <wincodec.h>
 #include <ShlObj_core.h>
 #include <utility/fsutil.h>
 #include <dxgi1_5.h>
+#include <dxgi1_6.h>
 #include <Shlwapi.h>
 #include <windowsx.h>
 #include <ImGuiNotify.hpp>
 #include <utility/skif_imgui.h>
 #include <utility/utility.h>
+#include "DirectXTex/DirectXTex.h"
+#ifdef OpenEXR
+#include <package_misc/DirectXTexEXR.h>
+#endif
+
+#include <jxl/codestream_header.h>
+#include <jxl/encode.h>
+#include <jxl/encode_cxx.h>
+#include <jxl/resizable_parallel_runner.h>
+#include <jxl/resizable_parallel_runner_cxx.h>
+#include <jxl/thread_parallel_runner.h>
+#include <jxl/thread_parallel_runner_cxx.h>
+#include <jxl/types.h>
+
+#include <DirectXPackedVector.h>
+
+skiv_image_desktop_s              SKIV_DesktopImage;  // The display at the point captured (under the cursor)
+std::vector <skiv_image_desktop_s> SKIV_DesktopImages; // The displays captured (all of them for region snips)
 
 extern std::wstring defaultHDRFileExt;
 extern std::wstring defaultSDRFileExt;
 extern CComPtr <ID3D11Device> SKIF_D3D11_GetDevice (bool bWait = true);
-
-skiv_capture_cache_s SKIV_ClipboardImage;
 
 DirectX::XMVECTOR
 SKIV_Image_PQToLinear (DirectX::XMVECTOR N, DirectX::XMVECTOR maxPQValue)
@@ -28,7 +47,7 @@ using namespace DirectX;
   XMVECTOR ret;
 
   ret =
-    XMVectorPow (XMVectorAbs (N), XMVectorDivide (g_XMOne, PQ.M));
+    XMVectorPow (XMVectorMax (N, g_XMZero), PQ.RcpM);
 
   XMVECTOR nd;
 
@@ -39,7 +58,7 @@ using namespace DirectX;
             XMVectorMultiply (PQ.C3, ret)));
 
   ret =
-    XMVectorMultiply (XMVectorPow (XMVectorAbs (nd), XMVectorDivide (g_XMOne, PQ.N)), maxPQValue);
+    XMVectorMultiply (XMVectorPow (nd, PQ.RcpN), maxPQValue);
 
   return ret;
 };
@@ -52,7 +71,7 @@ SKIV_Image_LinearToPQ (DirectX::XMVECTOR N, DirectX::XMVECTOR maxPQValue)
   XMVECTOR ret;
 
   ret =
-    XMVectorPow (XMVectorAbs (XMVectorDivide (N, maxPQValue)), PQ.N);
+    XMVectorPow (XMVectorDivide (XMVectorMax (N, g_XMZero), maxPQValue), PQ.N);
 
   XMVECTOR nd =
     XMVectorDivide (
@@ -61,7 +80,7 @@ SKIV_Image_LinearToPQ (DirectX::XMVECTOR N, DirectX::XMVECTOR maxPQValue)
     );
 
   return
-    XMVectorPow (XMVectorAbs (nd), PQ.M);
+    XMVectorPow (nd, PQ.M);
 };
 
 float
@@ -92,7 +111,7 @@ SKIV_Image_Rec709toICtCp (DirectX::XMVECTOR N)
   ret = XMVector3Transform (ret, c_fromXYZtoLMS);
 
   ret =
-    SKIV_Image_LinearToPQ (ret, XMVectorReplicate (125.0f));
+    SKIV_Image_LinearToPQ (XMVectorMax (ret, g_XMZero), PQ.MaxPQ);
 
   static const DirectX::XMMATRIX ConvMat = // Transposed
   {
@@ -124,13 +143,13 @@ SKIV_Image_ICtCptoRec709 (DirectX::XMVECTOR N)
     { 0.0f,                 0.0f,                 0.0f,                1.0f }
   };
 
-#pragma warning( pop ) 
+#pragma warning( pop )
 
   ret =
     XMVector3Transform (ret, ConvMat);
 
-  ret = SKIV_Image_PQToLinear (ret, XMVectorReplicate (125.0f));
-  ret = XMVector3Transform (ret, c_fromLMStoXYZ);
+  ret = SKIV_Image_PQToLinear (ret, PQ.MaxPQ);
+  ret = XMVector3Transform    (ret, c_fromLMStoXYZ);
 
   return
     XMVector3Transform (ret, c_fromXYZto709);
@@ -173,7 +192,7 @@ png_crc32 (const void* typeless_data, size_t offset, size_t len, uint32_t crc)
       png_crc_table [(c ^ data [k]) & 255] ^
                     ((c >> 8)       & 0xFFFFFF);
   }
-  
+
   return
     (c ^ 0xffffffff);
 }
@@ -189,23 +208,33 @@ constexpr uint8_t PNG_COMPRESSION_TYPE_BASE = 0; /* Deflate method 8, 32K window
 //  1. Remove gAMA chunk  (Prevents SKIV from recognizing as HDR)
 //  2. Remove sRGB chunk  (Prevents Discord from rendering in HDR)
 //
-//  3. Add cICP  (The primary way of defining HDR10) 
+//  3. Add cICP  (The primary way of defining HDR10; skipped with Discord Compatibility)
 //  4. Add iCCP  (Required for Discord to render in HDR)
 //
 //  (5) Add cLLi  [Unnecessary, but probably a good idea]
 //  (6) Add cHRM  [Unnecessary, but probably a good idea]
 //
 
+#if (defined _M_IX86) || (defined _M_X64)
+# define SK_PNG_GetUint32(x)                    _byteswap_ulong (x)
+# define SK_PNG_SetUint32(x,y)              x = _byteswap_ulong (y)
+# define SK_PNG_DeclareUint32(x,y) uint32_t x = SK_PNG_SetUint32((x),(y))
+#else
+# define SK_PNG_GetUint32(x)                    (x)
+# define SK_PNG_SetUint32(x,y)              x = (y)
+# define SK_PNG_DeclareUint32(x,y) uint32_t x = SK_PNG_SetUint32((x),(y))
+#endif
+
 struct SK_PNG_HDR_cHRM_Payload
 {
-  uint32_t white_x = 31270;
-  uint32_t white_y = 32900;
-  uint32_t red_x   = 70800;
-  uint32_t red_y   = 29200;
-  uint32_t green_x = 17000;
-  uint32_t green_y = 79700;
-  uint32_t blue_x  = 13100;
-  uint32_t blue_y  = 04600;
+  SK_PNG_DeclareUint32 (white_x, 31270);
+  SK_PNG_DeclareUint32 (white_y, 32900);
+  SK_PNG_DeclareUint32 (red_x,   70800);
+  SK_PNG_DeclareUint32 (red_y,   29200);
+  SK_PNG_DeclareUint32 (green_x, 17000);
+  SK_PNG_DeclareUint32 (green_y, 79700);
+  SK_PNG_DeclareUint32 (blue_x,  13100);
+  SK_PNG_DeclareUint32 (blue_y,  04600);
 };
 
 struct SK_PNG_HDR_sBIT_Payload
@@ -213,36 +242,35 @@ struct SK_PNG_HDR_sBIT_Payload
   uint8_t red_bits   = 10; // 12 if source was scRGB (compression optimization)
   uint8_t green_bits = 10; // 12 if source was scRGB (compression optimization)
   uint8_t blue_bits  = 10; // 12 if source was scRGB (compression optimization)
-  uint8_t alpha_bits =  1; // Spec says it must be > 0... :shrug:
 };
 
 struct SK_PNG_HDR_mDCv_Payload
 {
   struct {
-    uint32_t red_x   = 35400; // 0.708 / 0.00002
-    uint32_t red_y   = 14600; // 0.292 / 0.00002
-    uint32_t green_x =  8500; // 0.17  / 0.00002
-    uint32_t green_y = 39850; // 0.797 / 0.00002
-    uint32_t blue_x  =  6550; // 0.131 / 0.00002
-    uint32_t blue_y  =  2300; // 0.046 / 0.00002
+    SK_PNG_DeclareUint32 (red_x,   35400); // 0.708 / 0.00002
+    SK_PNG_DeclareUint32 (red_y,   14600); // 0.292 / 0.00002
+    SK_PNG_DeclareUint32 (green_x,  8500); // 0.17  / 0.00002
+    SK_PNG_DeclareUint32 (green_y, 39850); // 0.797 / 0.00002
+    SK_PNG_DeclareUint32 (blue_x,   6550); // 0.131 / 0.00002
+    SK_PNG_DeclareUint32 (blue_y,   2300); // 0.046 / 0.00002
   } primaries;
 
   struct {
-    uint32_t x       = 15635; // 0.3127 / 0.00002
-    uint32_t y       = 16450; // 0.3290 / 0.00002
+    SK_PNG_DeclareUint32 (x, 15635); // 0.3127 / 0.00002
+    SK_PNG_DeclareUint32 (y, 16450); // 0.3290 / 0.00002
   } white_point;
 
   // The only real data we need to fill-in
   struct {
-    uint32_t maximum = 10000000; // 1000.0 cd/m^2
-    uint32_t minimum = 1;        // 0.0001 cd/m^2
+    SK_PNG_DeclareUint32 (maximum, 10000000); // 1000.0 cd/m^2
+    SK_PNG_DeclareUint32 (minimum, 1);        // 0.0001 cd/m^2
   } luminance;
 };
 
 struct SK_PNG_HDR_cLLi_Payload
 {
-  uint32_t max_cll  = 10000000; // 1000 / 0.0001
-  uint32_t max_fall =  2500000; //  250 / 0.0001
+  SK_PNG_DeclareUint32 (max_cll,  10000000); // 1000 / 0.0001
+  SK_PNG_DeclareUint32 (max_fall,  2500000); //  250 / 0.0001
 };
 
 //
@@ -449,38 +477,46 @@ sk_png_remove_chunk (const char* szName, void* data, size_t& size)
     return false;
   }
 
-  size_t   erase_pos = 0;
-  uint8_t* erase_ptr = nullptr;
+  __try {
+    size_t   erase_pos = 0;
+    uint8_t* erase_ptr = nullptr;
 
-  // Effectively a string search, but ignoring nul-bytes in both
-  //   the character array being searched and the pattern...
-  std::string_view data_view ((const char *)data, size);
-  if (erase_pos  = data_view.find (szName, 0, 4);
-      erase_pos == data_view.npos)
-  {
-    return false;
-  }
+    // Effectively a string search, but ignoring nul-bytes in both
+    //   the character array being searched and the pattern...
+    std::string_view data_view ((const char *)data, size);
+    if (erase_pos  = data_view.find (szName, 0, 4);
+        erase_pos == data_view.npos)
+    {
+      return false;
+    }
 
-  erase_pos -= 4; // Rollback to the chunk's length field
-  erase_ptr =
-    ((uint8_t *)data + erase_pos);
+    erase_pos -= 4; // Rollback to the chunk's length field
+    erase_ptr =
+      ((uint8_t *)data + erase_pos);
 
-  uint32_t chunk_size = *(uint32_t *)erase_ptr;
+    uint32_t chunk_size = *(uint32_t *)erase_ptr;
 
 // Length is Big Endian, Intel/AMD CPUs are Little Endian
 #if (defined _M_IX86) || (defined _M_X64)
-  chunk_size = _byteswap_ulong (chunk_size);
+    chunk_size = _byteswap_ulong (chunk_size);
 #endif
 
-  size_t size_to_erase = (size_t)12 + chunk_size;
+    size_t size_to_erase = (size_t)12 + chunk_size;
 
-  memmove ( erase_ptr,
-            erase_ptr             + size_to_erase,
-                 size - erase_pos - size_to_erase );
+    memmove ( erase_ptr,
+              erase_ptr             + size_to_erase,
+                   size - erase_pos - size_to_erase );
 
-  size -= size_to_erase;
+    size -= size_to_erase;
 
-  return true;
+    return true;
+  }
+
+  // Ignore malformed chunks
+  __except (EXCEPTION_EXECUTE_HANDLER)
+  {
+    return false;
+  }
 }
 
 static SK_PNG_HDR_cLLi_Payload
@@ -490,9 +526,10 @@ SKIV_HDR_CalculateContentLightInfo (const DirectX::Image& img)
 
   SK_PNG_HDR_cLLi_Payload clli;
 
-  float N         = 0.0f;
-  float fLumAccum = 0.0f;
-  XMVECTOR vMaxLum = g_XMZero;
+  float N          =       0.0f;
+  float fLumAccum  =       0.0f;
+  float fMaxLum    =       0.0f;
+  float fMinLum    = 5240320.0f;
 
   EvaluateImage ( img,
     [&](const XMVECTOR* pixels, size_t width, size_t y)
@@ -515,10 +552,16 @@ SKIV_HDR_CalculateContentLightInfo (const DirectX::Image& img)
                 SKIV_Image_PQToLinear (XMVectorSaturate (v)), c_from2020toXYZ
               );
 
-            vMaxLum =
-              XMVectorMax (vMaxLum, v);
+            const float fLum =
+              XMVectorGetY (v);
 
-            fScanlineLum += XMVectorGetY (v);
+            fMaxLum =
+              std::max (fMaxLum, fLum);
+
+            fMinLum =
+              std::min (fMinLum, fLum);
+
+            fScanlineLum += fLum;
           }
         } break;
 
@@ -533,10 +576,16 @@ SKIV_HDR_CalculateContentLightInfo (const DirectX::Image& img)
             v =
               XMVector3Transform (v, c_from709toXYZ);
 
-            vMaxLum =
-              XMVectorMax (vMaxLum, v);
+            const float fLum =
+              XMVectorGetY (v);
 
-            fScanlineLum += XMVectorGetY (v);
+            fMaxLum =
+              std::max (fMaxLum, fLum);
+
+            fMinLum =
+              std::min (fMinLum, fLum);
+
+            fScanlineLum += fLum;
           }
         } break;
 
@@ -552,10 +601,59 @@ SKIV_HDR_CalculateContentLightInfo (const DirectX::Image& img)
 
   if (N > 0.0)
   {
-    clli.max_cll  =
-      static_cast <uint32_t> (round ((80.0f * XMVectorGetY (vMaxLum)) / 0.0001f));
-    clli.max_fall = 
-      static_cast <uint32_t> (round ((80.0f * (fLumAccum / N))        / 0.0001f));
+    // 0 nits - 10k nits (limit imposed by PQ)
+    fMinLum = std::clamp (fMinLum, 0.0f,    125.0f);
+    fMaxLum = std::clamp (fMaxLum, fMinLum, 125.0f);
+
+    const float fLumRange =
+            (fMaxLum - fMinLum);
+
+    auto        luminance_freq = std::make_unique <uint32_t []> (65536);
+    ZeroMemory (luminance_freq.get (),     sizeof (uint32_t)  *  65536);
+
+    EvaluateImage ( img,
+    [&](const XMVECTOR* pixels, size_t width, size_t y)
+    {
+      UNREFERENCED_PARAMETER(y);
+
+      for (size_t j = 0; j < width; ++j)
+      {
+        XMVECTOR v = *pixels++;
+
+        v =
+          XMVectorMax (g_XMZero, XMVector3Transform (v, c_from709toXYZ));
+
+        luminance_freq [
+          std::clamp ( (int)
+            std::roundf (
+              (XMVectorGetY (v) - fMinLum)     /
+                                    (fLumRange / 65536.0f) ),
+                                              0, 65535 ) ]++;
+      }
+    });
+
+          double percent  = 100.0;
+    const double img_size = (double)img.width *
+                            (double)img.height;
+
+    for (auto i = 65535; i >= 0; --i)
+    {
+      percent -=
+        100.0 * ((double)luminance_freq [i] / img_size);
+
+      if (percent <= 99.5)
+      {
+        fMaxLum =
+          fMinLum + (fLumRange * ((float)i / 65536.0f));
+
+        break;
+      }
+    }
+
+    SK_PNG_SetUint32 (clli.max_cll,
+      static_cast <uint32_t> ((80.0f * fMaxLum)         / 0.0001f));
+    SK_PNG_SetUint32 (clli.max_fall,
+      static_cast <uint32_t> ((80.0f * (fLumAccum / N)) / 0.0001f));
   }
 
   return clli;
@@ -564,6 +662,9 @@ SKIV_HDR_CalculateContentLightInfo (const DirectX::Image& img)
 static bool
 SKIV_HDR_ConvertImageToPNG (const DirectX::Image& raw_hdr_img, DirectX::ScratchImage& png_img)
 {
+  static SKIF_RegistrySettings& _registry =
+    SKIF_RegistrySettings::GetInstance ( );
+
   using namespace DirectX;
 
   if (auto typeless_fmt = DirectX::MakeTypeless (raw_hdr_img.format);
@@ -601,41 +702,48 @@ SKIV_HDR_ConvertImageToPNG (const DirectX::Image& raw_hdr_img, DirectX::ScratchI
       UNREFERENCED_PARAMETER(y);
 
       static const XMVECTOR pq_range_10bpc = XMVectorReplicate (1023.0f),
+                            pq_range_11bpc = XMVectorReplicate (2047.0f),
                             pq_range_12bpc = XMVectorReplicate (4095.0f),
+                            pq_range_13bpc = XMVectorReplicate (8191.0f),
+                            pq_range_14bpc = XMVectorReplicate (16383.0f),
+                            pq_range_15bpc = XMVectorReplicate (32767.0f),
                             pq_range_16bpc = XMVectorReplicate (65535.0f),
                             pq_range_32bpc = XMVectorReplicate (4294967295.0f);
 
       auto pq_range_out =
-        (typeless_fmt == DXGI_FORMAT_R10G10B10A2_TYPELESS)  ? pq_range_10bpc :
-        (typeless_fmt == DXGI_FORMAT_R16G16B16A16_TYPELESS) ? pq_range_12bpc :
-                                                              pq_range_12bpc;//pq_range_16bpc;
-
-      pq_range_out = pq_range_16bpc;
+        (typeless_fmt == DXGI_FORMAT_R10G10B10A2_TYPELESS) ? pq_range_10bpc :
+                          _registry.png.hdr_bitdepth == 10 ? pq_range_10bpc :
+                          _registry.png.hdr_bitdepth == 11 ? pq_range_11bpc :
+                          _registry.png.hdr_bitdepth == 12 ? pq_range_12bpc :
+                          _registry.png.hdr_bitdepth == 13 ? pq_range_13bpc :
+                          _registry.png.hdr_bitdepth == 14 ? pq_range_14bpc :
+                          _registry.png.hdr_bitdepth == 15 ? pq_range_15bpc :
+                                                             pq_range_16bpc;
 
       const auto pq_range_in  =
         (typeless_fmt == DXGI_FORMAT_R10G10B10A2_TYPELESS)  ? pq_range_10bpc :
         (typeless_fmt == DXGI_FORMAT_R16G16B16A16_TYPELESS) ? pq_range_16bpc :
                                                               pq_range_32bpc;
 
-      int intermediate_bits = 16;
-      int output_bits       = 
+      int output_bits       =
         (typeless_fmt == DXGI_FORMAT_R10G10B10A2_TYPELESS)  ? 10 :
-        (typeless_fmt == DXGI_FORMAT_R16G16B16A16_TYPELESS) ? 12 :
-                                                              12;//16;
-
-      output_bits = 16;
+        (typeless_fmt == DXGI_FORMAT_R16G16B16A16_TYPELESS) ? _registry.png.hdr_bitdepth :
+                                                              _registry.png.hdr_bitdepth;
+      int intermediate_bits = 16;
 
       for (size_t j = 0; j < width; ++j)
       {
         XMVECTOR v =
           *pixels++;
 
+        float originalAlpha = std::clamp(DirectX::XMVectorGetW(v), 0.0f, 1.0f);
+
         // Assume scRGB for any FP32 input, though uncommon
         if (typeless_fmt == DXGI_FORMAT_R16G16B16A16_TYPELESS ||
             typeless_fmt == DXGI_FORMAT_R32G32B32A32_TYPELESS)
         {
-          XMVECTOR nvalue = XMVector3Transform (v, c_scRGBtoBt2100);
-                        v = SKIV_Image_LinearToPQ (nvalue);
+          v =
+            SKIV_Image_LinearToPQ (XMVectorMax (XMVector3Transform (v, c_scRGBtoBt2100), g_XMZero));
         }
 
         v = // Quantize to 10- or 12-bpc before expanding to 16-bpc in order to improve
@@ -649,7 +757,8 @@ SKIV_HDR_ConvertImageToPNG (const DirectX::Image& raw_hdr_img, DirectX::ScratchI
           static_cast <uint16_t> (DirectX::XMVectorGetY (v)) << (intermediate_bits - output_bits);
         *(rgb16_pixels++) =
           static_cast <uint16_t> (DirectX::XMVectorGetZ (v)) << (intermediate_bits - output_bits);
-          rgb16_pixels++; // We have an unused alpha channel that needs skipping
+        *(rgb16_pixels++) =
+          static_cast <uint16_t> (std::round            (originalAlpha * 65535.0f));
       }
     });
   }
@@ -662,6 +771,9 @@ SKIV_PNG_MakeHDR ( const wchar_t*        wszFilePath,
                    const DirectX::Image& encoded_img,
                    const DirectX::Image& raw_img )
 {
+  static SKIF_RegistrySettings& _registry =
+    SKIF_RegistrySettings::GetInstance ( );
+
   std::ignore = encoded_img;
 
   static const BYTE _test [] = { 0x49, 0x45, 0x4E, 0x44 };
@@ -691,7 +803,7 @@ SKIV_PNG_MakeHDR ( const wchar_t*        wszFilePath,
       rewind (                     fPNG);
 
       sk_png_remove_chunk ("sRGB", data.get (), size);
-      sk_png_remove_chunk ("gAMA", data.get (), size);
+    //sk_png_remove_chunk ("gAMA", data.get (), size);
 
       fwrite (data.get (), size, 1, fPNG);
 
@@ -737,6 +849,9 @@ SKIV_PNG_MakeHDR ( const wchar_t*        wszFilePath,
 
           crc =
             png_crc32 (data, 0, _native_len, png_crc32 (name, 0, 4, 0x0));
+#if (defined _M_IX86) || (defined _M_X64)
+          crc = _byteswap_ulong (crc);
+#endif
 
           fwrite (&len, 8,           1, fStream);
           fwrite (data, _native_len, 1, fStream);
@@ -765,13 +880,16 @@ SKIV_PNG_MakeHDR ( const wchar_t*        wszFilePath,
       sbit_data = {
         static_cast <unsigned char> (DirectX::BitsPerColor (raw_img.format)),
         static_cast <unsigned char> (DirectX::BitsPerColor (raw_img.format)),
-        static_cast <unsigned char> (DirectX::BitsPerColor (raw_img.format)), 1
+        static_cast <unsigned char> (DirectX::BitsPerColor (raw_img.format))
       };
 
-      // If using compression optimization, max bits = 12
-      sbit_data.red_bits   = 16;//std::min (sbit_data.red_bits,   12ui8);
-      sbit_data.green_bits = 16;//std::min (sbit_data.green_bits, 12ui8);
-      sbit_data.blue_bits  = 16;//std::min (sbit_data.blue_bits,  12ui8);
+      if (raw_img.format != DXGI_FORMAT_R10G10B10A2_UNORM)
+      {
+        // If using compression optimization, max bits = 12
+        sbit_data.red_bits   = static_cast <uint8_t> (_registry.png.hdr_bitdepth);
+        sbit_data.green_bits = static_cast <uint8_t> (_registry.png.hdr_bitdepth);
+        sbit_data.blue_bits  = static_cast <uint8_t> (_registry.png.hdr_bitdepth);
+      }
 
       // We don't actually know the mastering display, but some effort should be made
       //   to read this metadata and preserve it if it exists when SKIV originally
@@ -783,44 +901,46 @@ SKIV_PNG_MakeHDR ( const wchar_t*        wszFilePath,
       auto& active_display =
         rb.displays [rb.active_display];
 
-      mdcv_data.luminance.minimum =
-        static_cast <uint32_t> (round (active_display.gamut.minY / 0.0001f));
-      mdcv_data.luminance.maximum =
-        static_cast <uint32_t> (round (active_display.gamut.maxY / 0.0001f));
+      SK_PNG_SetUint32 (mdcv_data.luminance.minimum,
+        static_cast <uint32_t> (round (active_display.gamut.minY / 0.0001f)));
+      SK_PNG_SetUint32 (mdcv_data.luminance.maximum,
+        static_cast <uint32_t> (round (active_display.gamut.maxY / 0.0001f)));
 
-      mdcv_data.primaries.red_x =
-        static_cast <uint32_t> (round (active_display.gamut.xr / 0.00002));
-      mdcv_data.primaries.red_y =
-        static_cast <uint32_t> (round (active_display.gamut.yr / 0.00002));
+      SK_PNG_SetUint32 (mdcv_data.primaries.red_x,
+        static_cast <uint32_t> (round (active_display.gamut.xr / 0.00002)));
+      SK_PNG_SetUint32 (mdcv_data.primaries.red_y,
+        static_cast <uint32_t> (round (active_display.gamut.yr / 0.00002)));
 
-      mdcv_data.primaries.green_x =
-        static_cast <uint32_t> (round (active_display.gamut.xg / 0.00002));
-      mdcv_data.primaries.green_y =
-        static_cast <uint32_t> (round (active_display.gamut.yg / 0.00002));
+      SK_PNG_SetUint32 (mdcv_data.primaries.green_x,
+        static_cast <uint32_t> (round (active_display.gamut.xg / 0.00002)));
+      SK_PNG_SetUint32 (mdcv_data.primaries.green_y,
+        static_cast <uint32_t> (round (active_display.gamut.yg / 0.00002)));
 
-      mdcv_data.primaries.blue_x =
-        static_cast <uint32_t> (round (active_display.gamut.xb / 0.00002));
-      mdcv_data.primaries.blue_y =
-        static_cast <uint32_t> (round (active_display.gamut.yb / 0.00002));
+      SK_PNG_SetUint32 (mdcv_data.primaries.blue_x,
+        static_cast <uint32_t> (round (active_display.gamut.xb / 0.00002)));
+      SK_PNG_SetUint32 (mdcv_data.primaries.blue_y,
+        static_cast <uint32_t> (round (active_display.gamut.yb / 0.00002)));
 
-      mdcv_data.white_point.x =
-        static_cast <uint32_t> (round (active_display.gamut.Xw / 0.00002));
-      mdcv_data.white_point.y =
-        static_cast <uint32_t> (round (active_display.gamut.Yw / 0.00002));
+      SK_PNG_SetUint32 (mdcv_data.white_point.x,
+        static_cast <uint32_t> (round (active_display.gamut.Xw / 0.00002)));
+      SK_PNG_SetUint32 (mdcv_data.white_point.y,
+        static_cast <uint32_t> (round (active_display.gamut.Yw / 0.00002)));
 #endif
 
+      SK_PNG_Chunk clli_chunk = { sizeof (clli_data),               { 'c','L','L','I' }, &clli_data };
       SK_PNG_Chunk iccp_chunk = { sizeof (SK_PNG_HDR_iCCP_Payload), { 'i','C','C','P' }, &iccp_data };
       SK_PNG_Chunk cicp_chunk = { sizeof (cicp_data),               { 'c','I','C','P' }, &cicp_data };
-      SK_PNG_Chunk clli_chunk = { sizeof (clli_data),               { 'c','L','L','i' }, &clli_data };
       SK_PNG_Chunk sbit_chunk = { sizeof (sbit_data),               { 's','B','I','T' }, &sbit_data };
       SK_PNG_Chunk chrm_chunk = { sizeof (chrm_data),               { 'c','H','R','M' }, &chrm_data };
 #if 0
-      SK_PNG_Chunk mdcv_chunk = { sizeof (mdcv_data),               { 'm','D','C','v' }, &mdcv_data };
+      SK_PNG_Chunk mdcv_chunk = { sizeof (mdcv_data),               { 'm','D','C','V' }, &mdcv_data };
 #endif
 
       iccp_chunk.write (fPNG);
-      cicp_chunk.write (fPNG);
       clli_chunk.write (fPNG);
+      // Discord ignores the iCCP chunk when cICP is present, so its thumbnails come out SDR without tone mapping
+      if (! _registry.png.discord_compatibility)
+        cicp_chunk.write (fPNG);
       sbit_chunk.write (fPNG);
       chrm_chunk.write (fPNG);
 #if 0
@@ -840,15 +960,13 @@ SKIV_PNG_MakeHDR ( const wchar_t*        wszFilePath,
       fread  (full_png.get (), final_size, 1, fPNG);
       fclose (fPNG);
 
-#if 0
-      SK_LOGi1 (L"Applied HDR10 PNG chunks to %ws.", wszFilePath);
-      SK_LOGi1 (L" >> MaxCLL: %.6f nits, MaxFALL: %.6f nits",
-                static_cast <double> (clli_data.max_cll)  * 0.0001,
-                static_cast <double> (clli_data.max_fall) * 0.0001);
-      SK_LOGi1 (L" >> Mastering Display Min/Max Luminance: %.6f/%.6f nits",
-                static_cast <double> (mdcv_data.luminance.minimum) * 0.0001,
-                static_cast <double> (mdcv_data.luminance.maximum) * 0.0001);
-#endif
+      //PLOG_VERBOSE << "Applied HDR10 PNG chunks to " << SK_WideCharToUTF8 (wszFilePath).c_str () << ".";
+      //PLOG_VERBOSE << " >> MaxCLL: " <<
+      //          static_cast <double> (SK_PNG_GetUint32 (clli_data.max_cll))  * 0.0001 << " nits, MaxFALL: " <<
+      //          static_cast <double> (SK_PNG_GetUint32 (clli_data.max_fall)) * 0.0001 << " nits";
+      //SK_LOGi1 (L" >> Mastering Display Min/Max Luminance: %.6f/%.6f nits",
+      //          static_cast <double> (SK_PNG_GetUint32 (mdcv_data.luminance.minimum)) * 0.0001,
+      //          static_cast <double> (SK_PNG_GetUint32 (mdcv_data.luminance.maximum)) * 0.0001);
 
       return true;
     }
@@ -876,7 +994,7 @@ SK_WIC_SetMaximumQuality (IPropertyBag2 *props)
 static bool
 SKIV_HDR_SavePNGToDisk (const wchar_t* wszPNGPath, const DirectX::Image* png_image,
                                                    const DirectX::Image* raw_image,
-                           const char* szUtf8MetadataTitle, bool isHDR)
+                           const char* szUtf8MetadataTitle, bool isHDR, bool hasAlpha)
 {
   if ( wszPNGPath == nullptr ||
         png_image == nullptr ||
@@ -896,7 +1014,8 @@ SKIV_HDR_SavePNGToDisk (const wchar_t* wszPNGPath, const DirectX::Image* png_ima
   if (SUCCEEDED (
     DirectX::SaveToWICFile (*png_image, DirectX::WIC_FLAGS_NONE,
                            GetWICCodec (DirectX::WIC_CODEC_PNG),
-                               wszPNGPath, &GUID_WICPixelFormat48bppRGB,
+                               wszPNGPath, hasAlpha ? &GUID_WICPixelFormat64bppRGBA :
+                                                      &GUID_WICPixelFormat48bppRGB,
                                               SK_WIC_SetMaximumQuality/*,
                                             [&](IWICMetadataQueryWriter *pMQW)
                                             {
@@ -913,202 +1032,848 @@ SKIV_HDR_SavePNGToDisk (const wchar_t* wszPNGPath, const DirectX::Image* png_ima
   return false;
 }
 
+// Delayed clipboard rendering
+//
+// A copy only offers its format to the clipboard: the image is kept here, and only made into that format once a program
+//   asks for it (WM_RENDERFORMAT) by pasting it, or when SKIV exits while it still owns the clipboard (WM_RENDERALLFORMATS).
+//     A copy that is never pasted then never has an HDR PNG written, or is tone mapped to SDR. What is saved to disk is
+//       still saved at once (it was asked for, and may be selected in File Explorer).
+//
+//   HDR (kept)  CF_HDROP:  the path of an HDR PNG, written when it is asked for (unless it was saved to disk already)
+//   SDR         CF_BITMAP: the image, tone mapped from HDR when it is asked for (unless it was already, to be saved)
+//
+// The clipboard's owner is SKIF_Notify_hWnd (see SKIF_Notify_WndProc), which lives as long as SKIV does. Everything here
+//   runs on the main thread, which also handles those messages.
+struct skiv_clipboard_cache_s {
+  bool                  active     = false; // Whether a copy is waiting to be rendered
+  bool                  rendered   = false; // Whether it has been put on the clipboard already
+  bool                  as_hdr_png = false; // CF_HDROP of an HDR PNG, or CF_BITMAP
+  DirectX::ScratchImage image;              // What is rendered (none if the HDR PNG was saved already)
+  bool                  tonemap    = false; // CF_BITMAP: the image is HDR, and to be tone mapped to SDR first
+  float                 max_nits   = 0.0f;  //   by these light levels (the displays' when it was copied)
+  float                 sdr_nits   = 0.0f;
+  std::wstring          path;               // CF_HDROP: the HDR PNG
+  bool                  path_saved = false; //   whether it has been written yet
+};
+
+static skiv_clipboard_cache_s SKIV_ClipboardCache;
+
+static bool
+SKIV_Clipboard_Open (HWND hWnd)
+{
+  for (auto attempts = 0; attempts < 8; ++attempts)
+  {
+    if (attempts > 0)
+      Sleep (1 << (attempts - 1));
+
+    if (OpenClipboard (hWnd))
+      return true;
+  }
+
+  return false;
+}
+
+// CF_HDROP of one file (the list ends with an empty path: GHND zeroes the memory)
+static HGLOBAL
+SKIV_Clipboard_MakeHDROP (const std::wstring& path)
+{
+  const SIZE_T size =
+    sizeof (DROPFILES) + sizeof (wchar_t) * (path.length ( ) + 2);
+
+  HGLOBAL hGlobal = GlobalAlloc (GHND, size);
+
+  if (hGlobal == NULL)
+    return NULL;
+
+  DROPFILES* df =
+    static_cast <DROPFILES *> (GlobalLock (hGlobal));
+
+  if (df == nullptr)
+  {
+    GlobalFree (hGlobal);
+    return NULL;
+  }
+
+  df->pFiles = sizeof (DROPFILES);
+  df->fWide  = TRUE;
+
+  memcpy (&df [1], path.c_str ( ), sizeof (wchar_t) * (path.length ( ) + 1));
+
+  GlobalUnlock (hGlobal);
+
+  return hGlobal;
+}
+
+// CF_BITMAP of an SDR image (converted to 8-bpc sRGB BGRX first, if it is not already)
+static HBITMAP
+SKIV_Clipboard_MakeBitmap (const DirectX::Image* pImage)
+{
+  DirectX::ScratchImage swizzled_sdr;
+
+  // Swizzle the image and handle gamma if necessary
+  if (pImage->format != DXGI_FORMAT_B8G8R8X8_UNORM_SRGB)
+  {
+    if (SUCCEEDED (DirectX::Convert (*pImage, DXGI_FORMAT_B8G8R8X8_UNORM_SRGB, DirectX::TEX_FILTER_DEFAULT, 0.0f, swizzled_sdr)))
+      pImage = swizzled_sdr.GetImage (0,0,0);
+  }
+
+  const int
+      _bpc    =
+    (int)(DirectX::BitsPerPixel (pImage->format)),
+      _width  =
+    (int)(                       pImage->width),
+      _height =
+    (int)(                       pImage->height);
+
+  HBITMAP hBitmapCopy =
+     CreateBitmap (
+       _width, _height, 1,
+         _bpc, pImage->pixels
+     );
+
+  BITMAPINFOHEADER
+    bmh                 = { };
+    bmh.biSize          = sizeof (BITMAPINFOHEADER);
+    bmh.biWidth         =   _width;
+    bmh.biHeight        =  -_height;
+    bmh.biPlanes        =  1;
+    bmh.biBitCount      = (WORD)_bpc;
+    bmh.biCompression   = BI_RGB;
+    bmh.biXPelsPerMeter = 10;
+    bmh.biYPelsPerMeter = 10;
+
+  BITMAPINFO
+    bmi                 = { };
+    bmi.bmiHeader       = bmh;
+
+  HDC hdcScreen = GetDC (nullptr);
+  HDC hdcDIB    = CreateCompatibleDC (hdcScreen);
+
+  void* bitplane = nullptr;
+
+  HBITMAP
+    hBitmap =
+      CreateDIBSection ( hdcDIB, &bmi, DIB_RGB_COLORS,
+          &bitplane, nullptr, 0 );
+
+  bool copied = false;
+
+  if ( hBitmap     != nullptr &&
+       hBitmapCopy != nullptr &&
+       bitplane    != nullptr )
+  {
+    memcpy ( bitplane,
+               pImage->pixels,
+        static_cast <size_t> (_bpc / 8) *
+        static_cast <size_t> (_width  ) *
+        static_cast <size_t> (_height )
+           );
+
+    HDC hdcSrc = CreateCompatibleDC (hdcScreen);
+    HDC hdcDst = CreateCompatibleDC (hdcScreen);
+
+    auto hbmpSrc = (HBITMAP)SelectObject (hdcSrc, hBitmap);
+    auto hbmpDst = (HBITMAP)SelectObject (hdcDst, hBitmapCopy);
+
+    copied =
+      BitBlt (hdcDst, 0, 0, _width,
+                            _height, hdcSrc, 0, 0, SRCCOPY);
+
+    SelectObject     (hdcSrc, hbmpSrc);
+    SelectObject     (hdcDst, hbmpDst);
+
+    DeleteDC         (hdcSrc);
+    DeleteDC         (hdcDst);
+  }
+
+  DeleteDC  (hdcDIB);
+  ReleaseDC (nullptr, hdcScreen);
+
+  if (hBitmap != nullptr)
+    DeleteBitmap (hBitmap);
+
+  if (! copied && hBitmapCopy != nullptr)
+  {
+    DeleteBitmap (hBitmapCopy);
+    hBitmapCopy = nullptr;
+  }
+
+  return hBitmapCopy;
+}
+
+// Puts the cached copy on the clipboard (which must be open, by SKIV or the program pasting) in its format
+static bool
+SKIV_Clipboard_Render (UINT format)
+{
+  auto& cache = SKIV_ClipboardCache;
+
+  if (! cache.active)
+  {
+    PLOG_WARNING << "Asked to render clipboard format " << format << ", but no copy is waiting to be!";
+    return false;
+  }
+
+  bool success = false;
+
+  if (format == CF_HDROP && cache.as_hdr_png)
+  {
+    if (! cache.path_saved)
+    {
+      if (SUCCEEDED (SKIV_Image_SaveToDisk_HDR (*cache.image.GetImages ( ), cache.path.c_str ( ))))
+      {
+        PLOG_VERBOSE << "SKIF_Image_SaveToDisk_HDR ( ): SUCCEEDED";
+        cache.path_saved = true;
+        cache.image.Release ( ); // Only its path is needed from now on
+      }
+
+      else
+        PLOG_ERROR << "SKIF_Image_SaveToDisk_HDR ( ): FAILED";
+    }
+
+    if (cache.path_saved)
+    {
+      if (HGLOBAL hGlobal = SKIV_Clipboard_MakeHDROP (cache.path); hGlobal != NULL)
+      {
+        success = (SetClipboardData (CF_HDROP, hGlobal) != NULL);
+
+        // The system owns it once it is on the clipboard
+        if (! success)
+          GlobalFree (hGlobal);
+      }
+    }
+  }
+
+  else if (format == CF_BITMAP && ! cache.as_hdr_png)
+  {
+    const DirectX::Image* pImage = cache.image.GetImages ( );
+
+    DirectX::ScratchImage tonemapped_sdr;
+
+    if (cache.tonemap)
+    {
+      if (SUCCEEDED (SKIV_Image_TonemapToSDR (*pImage, tonemapped_sdr, cache.max_nits, cache.sdr_nits)))
+        pImage = tonemapped_sdr.GetImage (0,0,0);
+      else
+        PLOG_INFO << "SKIV_Image_TonemapToSDR ( ): FAILED!";
+    }
+
+    if (HBITMAP hBitmap = SKIV_Clipboard_MakeBitmap (pImage); hBitmap != nullptr)
+    {
+      success = (SetClipboardData (CF_BITMAP, hBitmap) != NULL);
+
+      // The system owns it once it is on the clipboard
+      if (! success)
+        DeleteBitmap (hBitmap);
+    }
+  }
+
+  else
+    PLOG_WARNING << "Asked to render clipboard format " << format << ", which the copy does not offer!";
+
+  if (success)
+    cache.rendered = true;
+
+  PLOG_VERBOSE << "Rendered clipboard format " << ((format == CF_HDROP) ? "CF_HDROP" : (format == CF_BITMAP) ? "CF_BITMAP" : "?")
+               << ((success) ? ": SUCCEEDED" : ": FAILED");
+
+  return success;
+}
+
+// Empties the clipboard and offers the copy on it in its format, rendered only once it is asked for
+static bool
+SKIV_Clipboard_Offer (skiv_clipboard_cache_s&& copy)
+{
+  extern HWND SKIF_Notify_hWnd;
+
+  const UINT format =
+    (copy.as_hdr_png) ? CF_HDROP : CF_BITMAP;
+
+  if (SKIF_Notify_hWnd == NULL || ! SKIV_Clipboard_Open (SKIF_Notify_hWnd))
+  {
+    PLOG_ERROR << "Failed to open the clipboard!";
+    return false;
+  }
+
+  bool offered = false;
+
+  // Sends WM_DESTROYCLIPBOARD to the clipboard's owner: SKIV too, which clears the cache. So it is filled after.
+  if (EmptyClipboard ( ))
+  {
+    SKIV_ClipboardCache          = std::move (copy);
+    SKIV_ClipboardCache.active   = true;
+    SKIV_ClipboardCache.rendered = false;
+
+    // NULL: delayed rendering
+    SetClipboardData (format, NULL);
+
+    // SetClipboardData (format, NULL) returns NULL also when it succeeds: whether the format is offered tells instead
+    offered = (IsClipboardFormatAvailable (format) != FALSE);
+
+    if (! offered)
+      SKIV_ClipboardCache = { };
+  }
+
+  CloseClipboard ( );
+
+  PLOG_VERBOSE << "Offered clipboard format " << ((format == CF_HDROP) ? "CF_HDROP" : "CF_BITMAP")
+               << " for delayed rendering" << ((offered) ? ": SUCCEEDED" : ": FAILED");
+
+  return offered;
+}
+
+// WM_RENDERFORMAT: a program pastes the copy (and has opened the clipboard)
+void
+SKIV_Image_RenderClipboardFormat (UINT format)
+{
+  PLOG_VERBOSE << "WM_RENDERFORMAT: " << format;
+
+  SKIV_Clipboard_Render (format);
+}
+
+// WM_RENDERALLFORMATS: SKIV exits while it may still own the clipboard, so the copy is put on it now (to stay pasteable)
+void
+SKIV_Image_RenderAllClipboardFormats (HWND hWndOwner)
+{
+  PLOG_VERBOSE << "WM_RENDERALLFORMATS";
+
+  if (! SKIV_ClipboardCache.active || SKIV_ClipboardCache.rendered)
+    return;
+
+  if (OpenClipboard (hWndOwner))
+  {
+    // Another program may have taken the clipboard over since
+    if (GetClipboardOwner ( ) == hWndOwner)
+      SKIV_Clipboard_Render ((SKIV_ClipboardCache.as_hdr_png) ? CF_HDROP : CF_BITMAP);
+
+    CloseClipboard ( );
+  }
+}
+
+// WM_DESTROYCLIPBOARD: the clipboard was emptied (by another copy, SKIV's own too), so the cached copy is not needed anymore
+void
+SKIV_Image_ClearClipboardCache (void)
+{
+  if (SKIV_ClipboardCache.active)
+  {
+    SKIV_ClipboardCache = { };
+    PLOG_VERBOSE << "The copy waiting to be put on the clipboard has been cleared.";
+  }
+}
+
+bool SKIV_Image_CopyToClipboard (const DirectX::Image* pImage, bool isHDR, SKIV_CaptureData capture_data)
+{
+using namespace DirectX;
+
+  if (pImage == nullptr)
+    return false;
+
+  static SKIF_CommonPathsCache& _path_cache = SKIF_CommonPathsCache::GetInstance ( );
+  static SKIF_RegistrySettings& _registry   = SKIF_RegistrySettings::GetInstance ( );
+
+  // Retrieve local time first
+  SYSTEMTIME st;
+  GetLocalTime (&st);
+
+  bool isPersistent = (capture_data._mode != CaptureMode_None);
+  std::wstring wsPNGPath  = (isPersistent) ? _path_cache.skiv_screenshots : _path_cache.skiv_temp;
+  std::wstring wsFilename = _registry.wsScreenshotsPattern;
+  size_t pos = std::wstring::npos;
+  static const std::wstring
+    pApp  = L"<app>",
+    pExe  = L"<exe>",
+    pPro  = L"<pro>",
+    pWnd  = L"<win>",
+    pDate = L"<date>",
+    pTime = L"<time>";
+
+  if (! isPersistent)
+    SKIF_Util_Files_PruneToLatestN (_path_cache.skiv_temp, 10);
+
+  // Process path
+
+  // Windows-style folder separators -- applied to the pattern itself *before*
+  //   any token substitution, so only separators the user typed create folders
+  std::replace (wsFilename.begin(), wsFilename.end(), L'/', L'\\');
+
+  // Substituted values must never introduce folder separators of their own
+  //   (e.g. locale short dates such as 11/15/2026, or window titles "A / B")
+  auto _sanitizeValue = [](std::wstring value) -> std::wstring {
+    std::replace (value.begin(), value.end(), L'/',  L'-');
+    std::replace (value.begin(), value.end(), L'\\', L'-');
+    return value;
+  };
+
+  // Automatic app name population...
+  pos = wsFilename.find (pApp);
+  if (pos != std::wstring::npos)
+  {
+    if (! capture_data._names.custom.empty())
+      wsFilename.replace (pos, pApp.length(), _sanitizeValue (capture_data._names.custom));
+    else if (! capture_data._names.product.empty())
+      wsFilename.replace (pos, pApp.length(), _sanitizeValue (capture_data._names.product));
+    else if (! capture_data._names.executable.empty())
+      wsFilename.replace (pos, pApp.length(), _sanitizeValue (capture_data._names.executable));
+    else
+      wsFilename.replace (pos, pApp.length(), L"unknown");
+  }
+
+  // Product name
+  pos = wsFilename.find (pPro);
+  if (pos != std::wstring::npos)
+    wsFilename.replace (pos, pPro.length(), (capture_data._names.product.empty()) ? L"unknown" : _sanitizeValue (capture_data._names.product));
+
+  // Executable name
+  pos = wsFilename.find (pExe);
+  if (pos != std::wstring::npos)
+    wsFilename.replace (pos, pExe.length(), (capture_data._names.executable.empty()) ? L"unknown" : _sanitizeValue (capture_data._names.executable));
+
+  // Window title
+  pos = wsFilename.find (pWnd);
+  if (pos != std::wstring::npos)
+    wsFilename.replace (pos, pWnd.length(), (capture_data._names.window.empty()) ? L"unknown" : _sanitizeValue (capture_data._names.window));
+
+  // Locale-aware date
+  pos = wsFilename.find (pDate);
+  if (pos != std::wstring::npos)
+  {
+    wchar_t dateBuffer[100];
+    if (GetDateFormatEx (LOCALE_NAME_USER_DEFAULT, DATE_SHORTDATE, &st, NULL, dateBuffer, 100, NULL))
+      wsFilename.replace (pos, pDate.length(), _sanitizeValue (dateBuffer));
+  }
+
+  // Locale-aware time
+  pos = wsFilename.find (pTime);
+  if (pos != std::wstring::npos)
+  {
+    wchar_t timeBuffer[100];
+    if (GetTimeFormatEx (LOCALE_NAME_USER_DEFAULT, 0, &st, NULL, timeBuffer, 100))
+      wsFilename.replace (pos, pTime.length(), _sanitizeValue (timeBuffer));
+  }
+
+  // Replace : with .
+  std::replace (wsFilename.begin(), wsFilename.end(), L':', L'.');
+
+  auto _stripInvalidCharacters = [](wchar_t tval) {
+    static const std::unordered_set <wchar_t> invalid_file_char =
+    { L':', L'*',  L'?', L'\"', L'<',  L'>', L'|', };
+
+    return (invalid_file_char.find(tval) != invalid_file_char.end());
+  };
+
+  wsFilename.erase (std::remove_if (wsFilename.begin(), wsFilename.end(), _stripInvalidCharacters), wsFilename.end());
+
+  // Strip trailing spaces from name, these are usually the result of
+  //   deleting one of the non-useable characters above.
+  wsFilename.erase (wsFilename.find_last_not_of (L' ') + 1);
+
+  wsPNGPath += wsFilename + L".png";
+
+  // Create any missing folders...
+  std::error_code       ec;
+  std::filesystem::path p = wsPNGPath;
+  if (! std::filesystem::exists         (p.parent_path(), ec))
+    std::filesystem::create_directories (p.parent_path(), ec);
+
+  int snipping_tonemap_mode = _registry._SnippingTonemapsHDR;
+
+  if (_registry._SnippingTonemapsHDR == 2)
+  {
+    XMVECTOR maxLum = XMVectorZero ();
+
+    EvaluateImage ( *pImage,
+    [&](const XMVECTOR* pixels, size_t width, size_t y)
+    {
+      UNREFERENCED_PARAMETER(y);
+
+      for (size_t j = 0; j < width; ++j)
+      {
+        XMVECTOR v = *pixels++;
+
+        v =
+          XMVector3Transform (v, c_from709toXYZ);
+
+        maxLum =
+          XMVectorReplicate (XMVectorGetY (XMVectorMax (v, maxLum)));
+      }
+    });
+
+    POINT          ptCursor = { };
+    GetCursorPos (&ptCursor);
+
+    HMONITOR hMon =
+      MonitorFromPoint (ptCursor, MONITOR_DEFAULTTONEAREST);
+
+    float mastering_sdr_nits = SKIF_Util_GetSDRWhiteLevel (hMon);
+
+    if (XMVectorGetY (maxLum) > std::max (1.0f, (mastering_sdr_nits * 1.00333f) / 80.0f))
+         snipping_tonemap_mode = 0;
+    else snipping_tonemap_mode = 1;
+  }
+
+  skiv_clipboard_cache_s copy;
+
+  // HDR: an HDR PNG, of which the clipboard gets the path
+  if (isHDR && (! snipping_tonemap_mode))
+  {
+    copy.as_hdr_png = true;
+    copy.path       = wsPNGPath;
+
+    // Saved to disk (or to be selected in File Explorer): now, as asked. Otherwise only once a program pastes it.
+    if (isPersistent || capture_data._select)
+    {
+      if (FAILED (SKIV_Image_SaveToDisk_HDR (*pImage, wsPNGPath.c_str())))
+      {
+        PLOG_VERBOSE << "SKIF_Image_SaveToDisk_HDR ( ): FAILED";
+        return false;
+      }
+
+      PLOG_VERBOSE << "SKIF_Image_SaveToDisk_HDR ( ): SUCCEEDED";
+
+      copy.path_saved = true;
+
+      if (capture_data._select)
+        SKIF_Util_FileExplorer_SelectFile (wsPNGPath.c_str());
+    }
+
+    else if (FAILED (copy.image.InitializeFromImage (*pImage)))
+    {
+      PLOG_ERROR << "Failed to keep a copy of the image for the clipboard!";
+      return false;
+    }
+  }
+
+  // SDR (or HDR tone mapped to it): a bitmap
+  else
+  {
+    copy.as_hdr_png = false;
+    copy.tonemap    = (snipping_tonemap_mode && isHDR);
+    copy.max_nits   = SKIV_DesktopImage._max_display_nits;
+    copy.sdr_nits   = SKIV_DesktopImage._sdr_display_nits;
+
+    const DirectX::Image* pSDR = pImage;
+
+    // Saved to disk: now, as asked (tone mapped first), and the clipboard gets the image as it was saved
+    DirectX::ScratchImage tonemapped_sdr;
+
+    if (isPersistent)
+    {
+      if (copy.tonemap)
+      {
+        if (SUCCEEDED (SKIV_Image_TonemapToSDR (*pImage, tonemapped_sdr, copy.max_nits, copy.sdr_nits)))
+          pSDR = tonemapped_sdr.GetImage (0,0,0);
+        else
+          PLOG_INFO << "SKIV_Image_TonemapToSDR ( ): FAILED!";
+
+        copy.tonemap = false;
+      }
+
+      if (SUCCEEDED (SKIV_Image_SaveToDisk_SDR (*pSDR, wsPNGPath.c_str(), false)))
+      {
+        PLOG_VERBOSE << "SKIV_Image_SaveToDisk_SDR ( ): SUCCEEDED!";
+
+        if (capture_data._select)
+          SKIF_Util_FileExplorer_SelectFile (wsPNGPath.c_str());
+      } else
+        PLOG_VERBOSE << "SKIV_Image_SaveToDisk_SDR ( ): FAILED";
+    }
+
+    if (FAILED (copy.image.InitializeFromImage (*pSDR)))
+    {
+      PLOG_ERROR << "Failed to keep a copy of the image for the clipboard!";
+      return false;
+    }
+  }
+
+  return
+    SKIV_Clipboard_Offer (std::move (copy));
+}
+// Raises the current thread's priority for a while (it is restored after). Only the thread's: never the process's,
+//   which efficiency mode sets (see SKIV.cpp), and which another thread changing it meanwhile would leave wrong.
+class SKIV_ScopedThreadPriority
+{
+public:
+  SKIV_ScopedThreadPriority (int prio = THREAD_PRIORITY_TIME_CRITICAL) {
+    orig_prio_ =
+      GetThreadPriority (GetCurrentThread ());
+
+    SetThreadPriority (GetCurrentThread  (), prio);
+  };
+
+  ~SKIV_ScopedThreadPriority (void) {
+    SetThreadPriority (GetCurrentThread  (), orig_prio_);
+  }
+
+private:
+  int orig_prio_;
+};
+
+#include <iostream>
+
 HRESULT
-SKIV_Image_TonemapToSDR (const DirectX::Image& image, DirectX::ScratchImage& final_sdr)
+SKIV_Image_TonemapToSDR (const DirectX::Image& image, DirectX::ScratchImage& final_sdr, float mastering_max_nits, float mastering_sdr_nits)
 {
   SKIV_ScopedThreadPriority _;
 
-  using namespace DirectX;
+  DWORD dwStart = SKIF_Util_timeGetTime1 ();
 
-  // Abort if not dealing with a HDR image
-  if (image.format != DXGI_FORMAT_R16G16B16A16_FLOAT &&
-      image.format != DXGI_FORMAT_R32G32B32A32_FLOAT)
-    return E_ABORT;
+  PLOG_INFO << "SKIV_Image_TonemapToSDR ( ): Begin";
+
+  using namespace DirectX;
 
   XMVECTOR maxLum = XMVectorZero          (),
            minLum = XMVectorSplatInfinity ();
 
-  double lumTotal    = 0.0;
-  double logLumTotal = 0.0;
-  double N           = 0.0;
+  bool is_hdr = false;
 
   ScratchImage scrgb;
-  if (FAILED ( scrgb.InitializeFromImage (image)))
-    return E_INVALIDARG;
 
-  ScratchImage tonemapped_hdr;
-  ScratchImage tonemapped_copy;
-
-  EvaluateImage ( scrgb.GetImages     (),
-                  scrgb.GetImageCount (),
-                  scrgb.GetMetadata   (),
-  [&](const XMVECTOR* pixels, size_t width, size_t y)
+  if (image.format == DXGI_FORMAT_R16G16B16A16_FLOAT ||
+      image.format == DXGI_FORMAT_R32G32B32A32_FLOAT)
   {
-    UNREFERENCED_PARAMETER(y);
+    is_hdr = true;
 
-    for (size_t j = 0; j < width; ++j)
-    {
-      XMVECTOR v = *pixels;
+    if (FAILED (scrgb.InitializeFromImage (image)))
+      return E_INVALIDARG;
+  }
 
-      v =
-        XMVector3Transform (v, c_from709toXYZ);
+  if (is_hdr)
+  {
+    bool needs_tonemapping = false;
 
-      maxLum =
-        XMVectorReplicate (XMVectorGetY (XMVectorMax (v, maxLum)));
+    ScratchImage tonemapped_hdr;
+    ScratchImage tonemapped_copy;
 
-      minLum =
-        XMVectorReplicate (XMVectorGetY (XMVectorMin (v, minLum)));
+    PLOG_INFO << "SKIV_Image_TonemapToSDR ( ): EvaluateImageBegin";
 
-      logLumTotal +=
-        log2 ( std::max (0.000001, static_cast <double> (std::max (0.0f, XMVectorGetY (v)))) );
-          lumTotal +=               static_cast <double> (std::max (0.0f, XMVectorGetY (v)));
-      ++N;
-
-      v = XMVectorMax (g_XMZero, v);
-  
-      pixels++;
-    }
-  });
-
-  //SK_LOGi0 ( L"Min Luminance: %f, Max Luminance: %f", std::max (0.0f, XMVectorGetY (minLum)) * 80.0f,
-  //                                                                    XMVectorGetY (maxLum)  * 80.0f );
-  //
-  //SK_LOGi0 ( L"Mean Luminance (arithmetic, geometric): %f, %f", 80.0 *      ( lumTotal    / N ),
-  //                                                              80.0 * exp2 ( logLumTotal / N ) );
-
-  // After tonemapping, re-normalize the image to preserve peak white,
-  //   this is important in cases where the maximum luminance was < 1000 nits
-  XMVECTOR maxTonemappedRGB = g_XMZero;
-
-  // If it's too bright, don't bother trying to tonemap the full range...
-  static constexpr float _maxNitsToTonemap = 10000.0f/80.0f;
-
-  const float maxYInPQ =
-    SKIV_Image_LinearToPQY (std::min (_maxNitsToTonemap, XMVectorGetY (maxLum))),
-              SDR_YInPQ =
-    SKIV_Image_LinearToPQY (                                              1.25f);
-
-  TransformImage ( scrgb.GetImages     (),
+    EvaluateImage ( scrgb.GetImages     (),
                     scrgb.GetImageCount (),
                     scrgb.GetMetadata   (),
-    [&](XMVECTOR* outPixels, const XMVECTOR* inPixels, size_t width, size_t y)
+    [&](const XMVECTOR* pixels, size_t width, size_t y)
     {
       UNREFERENCED_PARAMETER(y);
 
-      auto TonemapHDR = [](float L, float Lc, float Ld) -> float
+      for (size_t j = 0; j < width; ++j)
       {
-        float a = (  Ld / pow (Lc, 2.0f));
-        float b = (1.0f / Ld);
+        XMVECTOR v = *pixels++;
 
-        return
-          L * (1 + a * L) / (1 + b * L);
-      };
+        v =
+          XMVector3Transform (v, c_from709toXYZ);
 
-      static const XMVECTOR vLumaRescale =
-        XMVectorReplicate (1.0f/1.6f);
+        maxLum =
+          XMVectorReplicate (XMVectorGetY (XMVectorMax (v, maxLum)));
+
+        minLum =
+          XMVectorReplicate (XMVectorGetY (XMVectorMin (v, minLum)));
+      }
+    });
+
+    if (XMVectorGetY (maxLum) > std::max (1.0f, (mastering_sdr_nits * 1.00333f) / 80.0f))
+    {
+      needs_tonemapping = true;
+    }
+
+    const float fLumRange =
+      XMVectorGetY (maxLum) - XMVectorGetY (minLum);
+
+    auto        luminance_freq = std::make_unique <uint32_t []> (65536);
+    ZeroMemory (luminance_freq.get (),     sizeof (uint32_t)  *  65536);
+
+    EvaluateImage ( *scrgb.GetImage (0,0,0),
+    [&](const XMVECTOR* pixels, size_t width, size_t y)
+    {
+      UNREFERENCED_PARAMETER(y);
 
       for (size_t j = 0; j < width; ++j)
       {
-        XMVECTOR value = inPixels [j];
+        XMVECTOR v = *pixels++;
 
-        value =
-          XMVectorMultiply (value, vLumaRescale);
+        v =
+          XMVectorMax (g_XMZero, XMVector3Transform (v, c_from709toXYZ));
 
-        XMVECTOR ICtCp =
-          SKIV_Image_Rec709toICtCp (value);
-
-        float Y_in  = std::max (XMVectorGetX (ICtCp), 0.0f);
-        float Y_out = 1.0f;
-
-        Y_out =
-          TonemapHDR (Y_in, maxYInPQ, SDR_YInPQ);
-
-        if (Y_out + Y_in > 0.0f)
-        {
-          float I0      = XMVectorGetX (ICtCp);
-          float I1      = 0.0f;
-          float I_scale = 0.0f;
-
-          ICtCp.m128_f32 [0] *=
-            std::max ((Y_out / Y_in), 0.0f);
-
-          I1 = XMVectorGetX (ICtCp);
-
-          if (I0 != 0.0f && I1 != 0.0f)
-          {
-            I_scale =
-              std::min (I0 / I1, I1 / I0);
-          }
-
-          ICtCp.m128_f32 [1] *= I_scale;
-          ICtCp.m128_f32 [2] *= I_scale;
-        }
-
-        value =
-          SKIV_Image_ICtCptoRec709 (ICtCp);
-
-        maxTonemappedRGB =
-          XMVectorMax (maxTonemappedRGB, XMVectorMax (value, g_XMZero));
-
-        outPixels [j] = XMVectorSaturate (value);
+        luminance_freq [
+          std::clamp ( (int)
+            std::roundf (
+              (XMVectorGetY (v) - XMVectorGetY (minLum))     /
+                                                 (fLumRange / 65536.0f) ),
+                                                           0, 65535 ) ]++;
       }
-    }, tonemapped_hdr
-  );
+    });
 
-  float fMaxR = XMVectorGetX (maxTonemappedRGB);
-  float fMaxG = XMVectorGetY (maxTonemappedRGB);
-  float fMaxB = XMVectorGetZ (maxTonemappedRGB);
+          double percent  = 100.0;
+    const double img_size = (double)image.width *
+                            (double)image.height;
 
-  if (( fMaxR <  1.0f ||
-        fMaxG <  1.0f ||
-        fMaxB <  1.0f ) &&
-      ( fMaxR >= 1.0f ||
-        fMaxG >= 1.0f ||
-        fMaxB >= 1.0f ))
-  {
-#ifdef GAMUT_MAPPING_WARNING
-    SK_LOGi0 (
-      L"After tone mapping, maximum RGB was %4.2fR %4.2fG %4.2fB -- "
-      L"SDR image will be normalized to min (R|G|B) and clipped.",
-        fMaxR, fMaxG, fMaxB
-    );
-#endif
+    for (auto i = 65535; i >= 0; --i)
+    {
+      percent -=
+        100.0 * ((double)luminance_freq [i] / img_size);
 
-    float fSmallestComp =
-      std::min ({fMaxR, fMaxG, fMaxB});
-
-    float fRescale =
-      (1.0f / fSmallestComp);
-
-    XMVECTOR vNormalizationScale =
-      XMVectorReplicate (fRescale);
-
-    TransformImage (*tonemapped_hdr.GetImages (),
-      [&]( _Out_writes_ (width)       XMVECTOR* outPixels,
-            _In_reads_  (width) const XMVECTOR* inPixels,
-                                      size_t    width,
-                                      size_t )
+      if (percent <= 99.94)
       {
+        maxLum =
+          XMVectorReplicate (XMVectorGetY (minLum) + (fLumRange * ((float)i / 65536.0f)));
+
+        break;
+      }
+    }
+
+    PLOG_INFO << "SKIV_Image_TonemapToSDR ( ): EvaluateImageEnd";
+
+    // After tonemapping, re-normalize the image to preserve peak white,
+    //   this is important in cases where the maximum luminance was < 1000 nits
+    XMVECTOR maxTonemappedRGB = g_XMZero;
+
+    // If it's too bright, don't bother trying to tonemap the full range...
+    const float _maxNitsToTonemap = (mastering_max_nits != 0.0f ? mastering_max_nits
+                                                                : 1500.0f) / 80.0f;
+
+    const float SDR_YInPQ =
+      SKIV_Image_LinearToPQY (1.5f);
+
+    const float  maxYInPQ =
+      std::max (SDR_YInPQ,
+        SKIV_Image_LinearToPQY (std::min (_maxNitsToTonemap, XMVectorGetY (maxLum)))
+      );
+
+    TransformImage ( scrgb.GetImages     (),
+                     scrgb.GetImageCount (),
+                     scrgb.GetMetadata   (),
+      [&](XMVECTOR* outPixels, const XMVECTOR* inPixels, size_t width, size_t y)
+      {
+        UNREFERENCED_PARAMETER(y);
+
+        auto TonemapHDR = [](float L, float Lc, float Ld) -> float
+        {
+          float a = (  Ld / pow (Lc, 2.0f));
+          float b = (1.0f / Ld);
+
+          return
+            L * (1 + a * L) / (1 + b * L);
+        };
+
         for (size_t j = 0; j < width; ++j)
         {
-          XMVECTOR value =
-            inPixels [j];
-          outPixels [j] =
-            XMVectorSaturate (
-              XMVectorMultiply (value, vNormalizationScale)
-            );
+          XMVECTOR value = inPixels [j];
+
+          if (needs_tonemapping)
+          {
+            XMVECTOR ICtCp =
+              SKIV_Image_Rec709toICtCp (value);
+
+            float Y_in  = std::max (XMVectorGetX (ICtCp), 0.0f);
+            float Y_out = 1.0f;
+
+            Y_out =
+              TonemapHDR (Y_in, maxYInPQ, SDR_YInPQ);
+
+            if (Y_out + Y_in > 0.0f)
+            {
+              ICtCp.m128_f32 [0] =
+                std::pow (Y_in, 1.18f);
+
+              float I0      = XMVectorGetX (ICtCp);
+              float I1      = 0.0f;
+              float I_scale = 0.0f;
+
+              ICtCp.m128_f32 [0] *=
+                std::max ((Y_out / Y_in), 0.0f);
+
+              I1 = XMVectorGetX (ICtCp);
+
+              if (I0 != 0.0f && I1 != 0.0f)
+              {
+                I_scale =
+                  std::min (I0 / I1, I1 / I0);
+              }
+
+              ICtCp.m128_f32 [1] *= I_scale;
+              ICtCp.m128_f32 [2] *= I_scale;
+            }
+
+            value =
+              SKIV_Image_ICtCptoRec709 (ICtCp);
+
+            maxTonemappedRGB =
+              XMVectorMax (maxTonemappedRGB, XMVectorMax (value, g_XMZero));
+          }
+
+          else
+          {
+            value /= (mastering_sdr_nits * 0.0125f);
+          }
+
+          outPixels [j] = XMVectorSaturate (value);
         }
-      }, tonemapped_copy
+      }, tonemapped_hdr
     );
+    PLOG_INFO << "SKIV_Image_TonemapToSDR ( ): TransformImageEnd";
 
-    std::swap (tonemapped_hdr, tonemapped_copy);
+#if 0
+    float fMaxR = XMVectorGetX (maxTonemappedRGB);
+    float fMaxG = XMVectorGetY (maxTonemappedRGB);
+    float fMaxB = XMVectorGetZ (maxTonemappedRGB);
+
+    if (( fMaxR <  1.0f ||
+          fMaxG <  1.0f ||
+          fMaxB <  1.0f ) &&
+        ( fMaxR >= 1.0f ||
+          fMaxG >= 1.0f ||
+          fMaxB >= 1.0f ))
+    {
+#ifdef GAMUT_MAPPING_WARNING
+      SK_LOGi0 (
+        L"After tone mapping, maximum RGB was %4.2fR %4.2fG %4.2fB -- "
+        L"SDR image will be normalized to min (R|G|B) and clipped.",
+          fMaxR, fMaxG, fMaxB
+      );
+#endif
+
+      float fSmallestComp =
+        std::min ({fMaxR, fMaxG, fMaxB});
+
+      float fRescale =
+        (1.0f / fSmallestComp);
+
+      XMVECTOR vNormalizationScale =
+        XMVectorReplicate (fRescale);
+
+      PLOG_INFO << "SKIV_Image_TonemapToSDR ( ): TransformImageBegin";
+      TransformImage (*tonemapped_hdr.GetImages (),
+        [&]( _Out_writes_ (width)       XMVECTOR* outPixels,
+              _In_reads_  (width) const XMVECTOR* inPixels,
+                                        size_t    width,
+                                        size_t )
+        {
+          for (size_t j = 0; j < width; ++j)
+          {
+            XMVECTOR value =
+             inPixels [j];
+            outPixels [j] =
+              XMVectorSaturate (
+                XMVectorMultiply (value, vNormalizationScale)
+              );
+          }
+        }, tonemapped_copy
+      );
+      PLOG_INFO << "SKIV_Image_TonemapToSDR ( ): TransformImageEnd";
+
+      std::swap (tonemapped_hdr, tonemapped_copy);
+    }
+#endif
+
+    PLOG_INFO << "SKIV_Image_TonemapToSDR ( ): ConvertBegin";
+    if (FAILED (DirectX::Convert (*tonemapped_hdr.GetImages (), DXGI_FORMAT_B8G8R8X8_UNORM_SRGB,
+                                  (TEX_FILTER_FLAGS)0x200000FF, 1.0f, final_sdr)))
+    {
+      return E_UNEXPECTED;
+    }
+    PLOG_INFO << "SKIV_Image_TonemapToSDR ( ): ConvertEnd";
   }
 
-  if (FAILED (DirectX::Convert (*tonemapped_hdr.GetImages (), DXGI_FORMAT_B8G8R8X8_UNORM_SRGB,
-                                (TEX_FILTER_FLAGS)0x200000FF, 1.0f, final_sdr)))
-  {
-    return E_UNEXPECTED;
-  }
+  DWORD dwEnd = SKIF_Util_timeGetTime1 ();
+
+  PLOG_INFO << "SKIV_Image_TonemapToSDR ( ): End";
+  PLOG_INFO << "Operation took " << dwEnd - dwStart << "ms";
 
   return S_OK;
 }
@@ -1116,14 +1881,13 @@ SKIV_Image_TonemapToSDR (const DirectX::Image& image, DirectX::ScratchImage& fin
 HRESULT
 SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileName, const bool force_sRGB)
 {
+  static SKIF_RegistrySettings& _registry =
+    SKIF_RegistrySettings::GetInstance();
   using namespace DirectX;
 
-  const Image* pImage = &image;
-
-  // If this is a HDR image, we need to tonemap it to SDR first
-  DirectX::ScratchImage tonemapped_sdr;
-  if (SUCCEEDED (SKIV_Image_TonemapToSDR (*pImage, tonemapped_sdr)))
-    pImage = tonemapped_sdr.GetImage (0,0,0);
+  ScratchImage
+    scratch_image;
+    scratch_image.InitializeFromImage (image);
 
   wchar_t* wszExtension =
     PathFindExtensionW (wszFileName);
@@ -1131,13 +1895,44 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
   wchar_t wszImplicitFileName [MAX_PATH] = { };
   wcscpy (wszImplicitFileName, wszFileName);
 
+
   // For silly users who don't give us filenames...
   if (! wszExtension)
   {
-    PathAddExtension (wszImplicitFileName, defaultSDRFileExt.c_str ());
+    PathAddExtensionW (wszImplicitFileName, defaultSDRFileExt.c_str () );
     wszExtension =
       PathFindExtensionW (wszImplicitFileName);
   }
+
+
+  using namespace DirectX;
+
+//float mastering_max_nits = out_desc1.MaxLuminance;
+//float mastering_sdr_nits = SKIF_Util_GetSDRWhiteLevel (out_desc1.Monitor);
+
+  const Image* pOutputImage = scratch_image.GetImages ();
+
+  XMVECTOR maxLum   = XMVectorZero          (),
+           minLum   = XMVectorSplatInfinity (),
+           maxICtCp = XMVectorZero          ();
+
+  bool is_hdr = false;
+
+  ScratchImage scrgb;
+  ScratchImage final_sdr;
+
+  if (image.format == DXGI_FORMAT_R16G16B16A16_FLOAT ||
+      image.format == DXGI_FORMAT_R32G32B32A32_FLOAT)
+  {
+    is_hdr = true;
+
+    if (FAILED (scrgb.InitializeFromImage (*scratch_image.GetImages ())))
+      return E_INVALIDARG;
+  }
+
+  bool bPrefer10bpcAs48bpp = false;
+  bool bPrefer10bpcAs32bpp = false;
+  bool bPrefer32bppAlpha   = false;
 
   GUID      wic_codec;
   WIC_FLAGS wic_flags = WIC_FLAGS_DITHER_DIFFUSION | (force_sRGB ? WIC_FLAGS_FORCE_SRGB : WIC_FLAGS_NONE);
@@ -1146,35 +1941,509 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
       StrStrIW (wszExtension, L"jpeg"))
   {
     wic_codec = GetWICCodec (WIC_CODEC_JPEG);
+
+    if (DirectX::BitsPerColor (image.format) == 10 ||
+        DirectX::BitsPerColor (image.format) == 16)
+    {
+      if (! is_hdr)
+      {
+        if (FAILED (scrgb.InitializeFromImage (*scratch_image.GetImages ())))
+          return E_INVALIDARG;
+
+        TransformImage ( *scratch_image.GetImages (),
+           [&]( _Out_writes_ (width)       XMVECTOR* outPixels,
+                 _In_reads_  (width) const XMVECTOR* inPixels,
+                                           size_t    width,
+                                           size_t )
+          {
+            for (size_t j = 0; j < width; ++j)
+            {
+              XMVECTOR value =
+               inPixels [j];
+              outPixels [j] =
+                XMColorRGBToSRGB (
+                  XMVectorSaturate (value)
+                );
+            }
+          }, scrgb
+        );
+
+        pOutputImage = scrgb.GetImages ();
+      }
+    }
   }
 
   else if (StrStrIW (wszExtension, L"png"))
   {
-    wic_codec = GetWICCodec (WIC_CODEC_PNG);
+    wic_codec           = GetWICCodec (WIC_CODEC_PNG);
+    //bPrefer10bpcAs48bpp = is_hdr;
+
+    //placing IsAlphaAllOpaque here to not slow down image load
+    bPrefer32bppAlpha = !scratch_image.IsAlphaAllOpaque();
+
+    wic_flags |= WIC_FLAGS_FORCE_SRGB;
+    wic_flags |= WIC_FLAGS_DEFAULT_SRGB;
+
+    if (DirectX::BitsPerColor (image.format) == 10 ||
+        DirectX::BitsPerColor (image.format) == 16)
+    {
+      if (! is_hdr)
+      {
+        bPrefer10bpcAs48bpp = true;
+
+        if (FAILED (scrgb.InitializeFromImage (*scratch_image.GetImages ())))
+          return E_INVALIDARG;
+
+        TransformImage ( *scratch_image.GetImages (),
+           [&]( _Out_writes_ (width)       XMVECTOR* outPixels,
+                 _In_reads_  (width) const XMVECTOR* inPixels,
+                                           size_t    width,
+                                           size_t )
+          {
+            for (size_t j = 0; j < width; ++j)
+            {
+              XMVECTOR value =
+               inPixels [j];
+              outPixels [j] =
+                XMColorRGBToSRGB (
+                  XMVectorSaturate (value)
+                );
+            }
+          }, scrgb
+        );
+
+        pOutputImage = scrgb.GetImages ();
+      }
+    }
   }
 
   else if (StrStrIW (wszExtension, L"bmp"))
   {
     wic_codec = GetWICCodec (WIC_CODEC_BMP);
+
+    if (DirectX::BitsPerColor (image.format) == 10 ||
+        DirectX::BitsPerColor (image.format) == 16)
+    {
+      if (! is_hdr)
+      {
+        if (FAILED (Convert (*scratch_image.GetImages (), DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, DirectX::TEX_FILTER_DEFAULT, 0.0f, scrgb)))
+          return E_INVALIDARG;
+
+        pOutputImage = scrgb.GetImages ();
+      }
+    }
   }
 
   else if (StrStrIW (wszExtension, L"tiff"))
   {
-    wic_codec = GetWICCodec (WIC_CODEC_TIFF);
+    wic_codec           = GetWICCodec (WIC_CODEC_TIFF);
+    bPrefer10bpcAs48bpp = false; // ?
+    bPrefer10bpcAs32bpp = false; // ?
+    bPrefer32bppAlpha = !scratch_image.IsAlphaAllOpaque();
+
+    if (DirectX::BitsPerColor (image.format) == 10 ||
+        DirectX::BitsPerColor (image.format) == 16)
+    {
+      if (! is_hdr)
+      {
+        if (FAILED (scrgb.InitializeFromImage (*scratch_image.GetImages ())))
+          return E_INVALIDARG;
+
+        TransformImage ( *scratch_image.GetImages (),
+           [&]( _Out_writes_ (width)       XMVECTOR* outPixels,
+                 _In_reads_  (width) const XMVECTOR* inPixels,
+                                           size_t    width,
+                                           size_t )
+          {
+            for (size_t j = 0; j < width; ++j)
+            {
+              XMVECTOR value =
+               inPixels [j];
+              outPixels [j] =
+                value;
+            }
+          }, scrgb
+        );
+
+        pOutputImage = scrgb.GetImages ();
+      }
+    }
   }
 
   // Probably ignore this
-  else if (StrStrIW (wszExtension, L"hdp"))
+  else if (StrStrIW (wszExtension, L"hdp") ||
+           StrStrIW (wszExtension, L"jxr"))
   {
-    wic_codec = GetWICCodec (WIC_CODEC_WMP);
+    wic_codec         = GetWICCodec (WIC_CODEC_WMP);
+    bPrefer32bppAlpha = !scratch_image.IsAlphaAllOpaque();
+    //jxr as format support alpha
+    //we will try to handle that
+    if (bPrefer32bppAlpha) {
+      bPrefer10bpcAs32bpp = false; //10 bit formats are bad for alpha
+
+      //dither flag causing jxr alpha to dissappear
+      //this doesn't happen to other wic codecs, only to jxr
+      wic_flags &= ~WIC_FLAGS_DITHER_DIFFUSION;
+    }
+    else
+      bPrefer10bpcAs32bpp = is_hdr;
   }
 
-  // AVIF technically works for SDR... do we want to support it?
-  //  If we do, WIC won't help us, however.
+  else if (StrStrIW(wszExtension, L"avif")) {
+
+  }
 
   else
   {
     return E_UNEXPECTED;
+  }
+
+  if (is_hdr)
+  {
+    if (bPrefer10bpcAs48bpp ||
+        bPrefer10bpcAs32bpp)
+    {
+      wic_flags |= WIC_FLAGS_FORCE_SRGB;
+    }
+
+    ScratchImage tonemapped_hdr;
+    ScratchImage tonemapped_copy;
+
+    PLOG_INFO << "SKIV_Image_TonemapToSDR ( ): EvaluateImageBegin";
+
+    EvaluateImage ( scrgb.GetImages     (),
+                    scrgb.GetImageCount (),
+                    scrgb.GetMetadata   (),
+    [&](const XMVECTOR* pixels, size_t width, size_t y)
+    {
+      UNREFERENCED_PARAMETER(y);
+
+      for (size_t j = 0; j < width; ++j)
+      {
+        XMVECTOR v = *pixels++;
+
+        v =
+          XMVector3Transform (v, c_from709toXYZ);
+
+        maxLum =
+          XMVectorReplicate (XMVectorGetY (XMVectorMax (v, maxLum)));
+
+        minLum =
+          XMVectorReplicate (XMVectorGetY (XMVectorMin (v, minLum)));
+      }
+    });
+
+    minLum = XMVectorMax (g_XMZero, minLum);
+
+    auto        luminance_freq = std::make_unique <uint32_t []> (65536);
+    ZeroMemory (luminance_freq.get (),     sizeof (uint32_t)  *  65536);
+
+    const float fLumRange =
+      XMVectorGetY (maxLum) -
+      XMVectorGetY (minLum);
+
+    EvaluateImage ( scrgb.GetImages     (),
+                    scrgb.GetImageCount (),
+                    scrgb.GetMetadata   (),
+    [&](const XMVECTOR* pixels, size_t width, size_t y)
+    {
+      UNREFERENCED_PARAMETER(y);
+
+      for (size_t j = 0; j < width; ++j)
+      {
+        XMVECTOR v = *pixels++;
+
+        v =
+          XMVectorMax (g_XMZero, XMVector3Transform (v, c_from709toXYZ));
+
+        luminance_freq [
+          std::clamp ( (int)
+            std::roundf (
+              (XMVectorGetY (v) - XMVectorGetY (minLum)) /
+                                              (fLumRange / 65536.0f) ),
+                                                        0, 65535 ) ]++;
+      }
+    });
+
+          double percent  = 100.0;
+    const double img_size = (double)scrgb.GetMetadata ().width *
+                            (double)scrgb.GetMetadata ().height;
+
+    for (auto i = 65535; i >= 0; --i)
+    {
+      percent -=
+        100.0 * ((double)luminance_freq [i] / img_size);
+
+      if (percent <= 99.94)
+      {
+        PLOG_INFO << "99.94th percentile luminance: " <<
+          80.0f * (XMVectorGetY (minLum) + (fLumRange * ((float)i / 65536.0f)))
+                                                      << " nits";
+
+        maxLum =
+          XMVectorReplicate (
+            XMVectorGetY (minLum) + (fLumRange * ((float)i / 65536.0f))
+          );
+
+        break;
+      }
+    }
+
+    PLOG_INFO << "SKIV_Image_TonemapToSDR ( ): EvaluateImageEnd";
+
+    // After tonemapping, re-normalize the image to preserve peak white,
+    //   this is important in cases where the maximum luminance was < 1000 nits
+    XMVECTOR maxTonemappedRGB = g_XMZero;
+
+    // If it's too bright, don't bother trying to tonemap the full range...
+    const float _maxNitsToTonemap = 125.0f;
+
+    const float SDR_YInPQ =
+      SKIV_Image_LinearToPQY (1.5f);
+
+    const float  maxYInPQ =
+      std::max (SDR_YInPQ,
+        SKIV_Image_LinearToPQY (std::min (_maxNitsToTonemap, XMVectorGetY (maxLum)))
+      );
+
+    bool needs_tonemapping = false;
+
+    //if (SKIV_Image_LinearToPQY (XMVectorGetY (maxLum)) > SDR_YInPQ)
+    {
+      needs_tonemapping = true;
+    }
+
+    TransformImage ( scrgb.GetImages     (),
+                     scrgb.GetImageCount (),
+                     scrgb.GetMetadata   (),
+      [&](XMVECTOR* outPixels, const XMVECTOR* inPixels, size_t width, size_t y)
+      {
+        UNREFERENCED_PARAMETER(y);
+
+        auto TonemapHDR = [](float L, float Lc, float Ld) -> float
+        {
+          float a = (  Ld / pow (Lc, 2.0f));
+          float b = (1.0f / Ld);
+
+          return
+            L * (1 + a * L) / (1 + b * L);
+        };
+
+        for (size_t j = 0; j < width; ++j)
+        {
+          XMVECTOR value = inPixels [j];
+
+          float originalW = XMVectorGetW(value);
+
+          if (needs_tonemapping)
+          {
+          XMVECTOR ICtCp =
+            SKIV_Image_Rec709toICtCp (value);
+
+          float Y_in  = std::max (XMVectorGetX (ICtCp), 0.0f);
+          float Y_out = 1.0f;
+
+          Y_out =
+            TonemapHDR (Y_in, maxYInPQ, SDR_YInPQ);
+
+          if (Y_out + Y_in > 0.0f)
+          {
+            ICtCp.m128_f32 [0] =
+              std::pow (Y_in, 1.18f);
+
+            float I0      = XMVectorGetX (ICtCp);
+            float I1      = 0.0f;
+            float I_scale = 0.0f;
+
+            ICtCp.m128_f32 [0] *=
+              std::max ((Y_out / Y_in), 0.0f);
+
+            I1 = XMVectorGetX (ICtCp);
+
+            if (I0 != 0.0f && I1 != 0.0f)
+            {
+              I_scale =
+                std::min (I0 / I1, I1 / I0);
+            }
+
+            ICtCp.m128_f32 [1] *= I_scale;
+            ICtCp.m128_f32 [2] *= I_scale;
+          }
+
+          value =
+            SKIV_Image_ICtCptoRec709 (ICtCp);
+
+          maxTonemappedRGB =
+            XMVectorMax (maxTonemappedRGB, XMVectorMax (value, g_XMZero));
+          }
+
+          value = XMVectorSetW(value, originalW);
+
+          if (bPrefer10bpcAs48bpp || bPrefer10bpcAs32bpp)
+               outPixels [j] = XMVectorSaturate (value);
+          else outPixels [j] = XMVectorSaturate (value);
+        }
+      }, tonemapped_hdr
+    );
+
+    float fMaxR = XMVectorGetX (maxTonemappedRGB);
+    float fMaxG = XMVectorGetY (maxTonemappedRGB);
+    float fMaxB = XMVectorGetZ (maxTonemappedRGB);
+
+    if (false)
+        //( fMaxR <  1.0f ||
+        //  fMaxG <  1.0f ||
+        //  fMaxB <  1.0f ) &&
+        //( fMaxR >= 1.0f ||
+        //  fMaxG >= 1.0f ||
+        //  fMaxB >= 1.0f ))
+    {
+#ifdef GAMUT_MAPPING_WARNING
+      SK_LOGi0 (
+        L"After tone mapping, maximum RGB was %4.2fR %4.2fG %4.2fB -- "
+        L"SDR image will be normalized to min (R|G|B) and clipped.",
+          fMaxR, fMaxG, fMaxB
+      );
+#endif
+
+      float fSmallestComp =
+        std::min ({fMaxR, fMaxG, fMaxB});
+
+      float fRescale =
+        (1.0f / fSmallestComp);
+
+      XMVECTOR vNormalizationScale =
+        XMVectorReplicate (fRescale);
+
+      PLOG_INFO << "SKIV_Image_TonemapToSDR ( ): TransformImageBegin";
+      TransformImage (*tonemapped_hdr.GetImages (),
+        [&]( _Out_writes_ (width)       XMVECTOR* outPixels,
+              _In_reads_  (width) const XMVECTOR* inPixels,
+                                        size_t    width,
+                                        size_t )
+        {
+          for (size_t j = 0; j < width; ++j)
+          {
+            XMVECTOR value =
+             inPixels [j];
+            outPixels [j] =
+              XMVectorSaturate (
+                XMVectorMultiply (value, vNormalizationScale)
+              );
+          }
+        }, tonemapped_copy
+      );
+
+      std::swap (tonemapped_hdr, tonemapped_copy);
+    }
+
+    if (FAILED (DirectX::Convert (*tonemapped_hdr.GetImages (), bPrefer10bpcAs48bpp ? DXGI_FORMAT_R16G16B16A16_UNORM :
+                                                                bPrefer10bpcAs32bpp ? DXGI_FORMAT_R10G10B10A2_UNORM  :
+                                                                bPrefer32bppAlpha   ? DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+                                                                                      DXGI_FORMAT_B8G8R8X8_UNORM_SRGB,
+                                  (TEX_FILTER_FLAGS)0x200000FF, 1.0f, final_sdr)))
+    {
+      return E_UNEXPECTED;
+    }
+
+    pOutputImage =
+      final_sdr.GetImages ();
+  }
+
+  if (StrStrIW(wszExtension, L"avif"))
+  {
+    // Ensure the AVIF library functions are available
+    extern bool isAVIFEncoderAvailable(void);
+    if (!isAVIFEncoderAvailable())
+      return E_NOTIMPL;
+
+    uint32_t width = static_cast <uint32_t> (image.width);
+    uint32_t height = static_cast <uint32_t> (image.height);
+
+    // --- SDR Specific AVIF Settings ---
+    // use 8-bit depth for SDR
+    int bit_depth = 8;
+    // YUV 4:4:4 is highest quality
+    avifPixelFormat yuv_format = AVIF_PIXEL_FORMAT_YUV444;
+
+    avifResult rgbToYuvResult = AVIF_RESULT_NO_CONTENT;
+    avifResult addResult = AVIF_RESULT_NO_CONTENT;
+    avifResult encodeResult = AVIF_RESULT_NO_CONTENT;
+
+    avifRWData avifOutput = AVIF_DATA_EMPTY;
+    avifRGBImage rgb = { };
+    avifEncoder* encoder = nullptr;
+
+    avifImage* avif_image = SK_avifImageCreate(width, height, bit_depth, yuv_format);
+
+    if (avif_image != nullptr) {
+      // SDR Colorimetry (BT.709 / sRGB)
+      avif_image->colorPrimaries = AVIF_COLOR_PRIMARIES_BT709;
+      avif_image->transferCharacteristics = AVIF_TRANSFER_CHARACTERISTICS_SRGB;
+      avif_image->matrixCoefficients = AVIF_MATRIX_COEFFICIENTS_BT709;
+      avif_image->yuvRange = AVIF_RANGE_FULL;
+
+      SK_avifRGBImageSetDefaults(&rgb, avif_image);
+      rgb.rowBytes = static_cast<uint32_t>(pOutputImage->rowPitch);
+      rgb.depth = 8;
+      rgb.ignoreAlpha = scratch_image.IsAlphaAllOpaque();
+
+      //maybe there's a better way to handle format
+      if (image.format == DXGI_FORMAT_R8G8B8A8_UNORM ||
+        image.format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB)
+        rgb.format = AVIF_RGB_FORMAT_RGBA;
+      else
+        rgb.format = AVIF_RGB_FORMAT_BGRA;
+      rgb.pixels = (uint8_t*)pOutputImage->pixels;
+
+      // RGB data to YUV
+      rgbToYuvResult = SK_avifImageRGBToYUV(avif_image, &rgb);
+
+      if (rgbToYuvResult == AVIF_RESULT_OK) {
+        encoder = SK_avifEncoderCreate();
+        if (encoder != nullptr) {
+          SYSTEM_INFO     si = { };
+          GetSystemInfo(&si);
+          // encoder settings
+          encoder->quality = _registry.avif.quality;
+          encoder->qualityAlpha = _registry.avif.quality;
+          encoder->speed = _registry.avif.speed;
+          encoder->timescale = 1;
+          encoder->minQuantizer = AVIF_QUANTIZER_BEST_QUALITY;
+          encoder->maxQuantizer = AVIF_QUANTIZER_WORST_QUALITY;
+          encoder->codecChoice = AVIF_CODEC_CHOICE_AUTO;
+          encoder->repetitionCount = AVIF_REPETITION_COUNT_INFINITE;
+#ifdef _M_X64
+          encoder->maxThreads = std::min(64U, std::min((UINT)si.dwNumberOfProcessors, (UINT)__popcnt64(si.dwActiveProcessorMask)));
+#endif
+          addResult = SK_avifEncoderAddImage(encoder, avif_image, 1, AVIF_ADD_IMAGE_FLAG_SINGLE);
+          encodeResult = SK_avifEncoderFinish(encoder, &avifOutput);
+        }
+      }
+    }
+
+
+    if (rgbToYuvResult != AVIF_RESULT_OK || addResult != AVIF_RESULT_OK || encodeResult != AVIF_RESULT_OK) {
+      // Optional: Add logging for error codes here
+      PLOG_ERROR << "avif conversion failed";
+    }
+
+    if (encodeResult == AVIF_RESULT_OK) {
+      // Write the encoded data to disk
+      FILE* fAVIF = _wfopen(wszImplicitFileName, L"wb");
+      if (fAVIF != nullptr) {
+        fwrite(avifOutput.data, 1, avifOutput.size, fAVIF);
+        fclose(fAVIF);
+      }
+    }
+
+    //cleanup
+    if (avif_image != nullptr) SK_avifImageDestroy(avif_image);
+    if (encoder != nullptr) SK_avifEncoderDestroy(encoder);
+
+    //SK_avifRGBImageFreePixels(&rgb);
+
+    return (encodeResult == AVIF_RESULT_OK) ? S_OK : E_FAIL;
   }
 
   ///DirectX::TexMetadata              orig_tex_metadata;
@@ -1185,22 +2454,440 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
   ///});
 
   return
-    DirectX::SaveToWICFile (*pImage, wic_flags, wic_codec,
-                      wszImplicitFileName, nullptr, SK_WIC_SetMaximumQuality);
+    DirectX::SaveToWICFile (*pOutputImage, wic_flags, wic_codec,
+                      wszImplicitFileName, bPrefer10bpcAs48bpp ? &GUID_WICPixelFormat48bppRGB       :
+                                           bPrefer10bpcAs32bpp ? &GUID_WICPixelFormat32bppBGR101010 :
+                                           bPrefer32bppAlpha   ? &GUID_WICPixelFormat32bppBGRA      :
+                                                                 &GUID_WICPixelFormat24bppBGR, SK_WIC_SetMaximumQuality);
 }
+
+
+#include <ultrahdr/ultrahdr_api.h>
+
+using uhdr_create_encoder_pfn                = uhdr_codec_private_t*    (*)(void);
+using uhdr_enc_set_quality_pfn               = uhdr_error_info_t        (*)(uhdr_codec_private_t* enc, int quality,           uhdr_img_label_t intent);
+using uhdr_enc_set_raw_image_pfn             = uhdr_error_info_t        (*)(uhdr_codec_private_t* enc, uhdr_raw_image_t* img, uhdr_img_label_t intent);
+using uhdr_enc_set_output_format_pfn         = uhdr_error_info_t        (*)(uhdr_codec_private_t* enc, uhdr_codec_t media_type);
+using uhdr_encode_pfn                        = uhdr_error_info_t        (*)(uhdr_codec_private_t* enc);
+using uhdr_get_encoded_stream_pfn            = uhdr_compressed_image_t* (*)(uhdr_codec_private_t* enc);
+using uhdr_release_encoder_pfn               = void                     (*)(uhdr_codec_private_t* enc);
+using uhdr_enc_set_min_max_content_boost_pfn = uhdr_error_info_t        (*)(uhdr_codec_private_t* enc, float min_boost, float max_boost);
+using uhdr_enc_set_preset_pfn                = uhdr_error_info_t        (*)(uhdr_codec_private_t* enc, uhdr_enc_preset_t preset);
+
+using is_uhdr_image_pfn                      = int                      (*)(void* data, int size);
+
+using uhdr_create_decoder_pfn                = uhdr_codec_private_t*    (*)(void);
+using uhdr_release_decoder_pfn               = void                     (*)(uhdr_codec_private_t* dec);
+using uhdr_dec_set_image_pfn                 = uhdr_error_info_t        (*)(uhdr_codec_private_t* dec, uhdr_compressed_image_t* img);
+using uhdr_dec_set_out_color_transfer_pfn    = uhdr_error_info_t        (*)(uhdr_codec_private_t* dec, uhdr_color_transfer_t ct);
+using uhdr_dec_set_out_img_format_pfn        = uhdr_error_info_t        (*)(uhdr_codec_private_t* dec, uhdr_img_fmt_t fmt);
+using uhdr_dec_set_out_max_display_boost_pfn = uhdr_error_info_t        (*)(uhdr_codec_private_t* dec, float display_boost);
+using uhdr_dec_probe_pfn                     = uhdr_error_info_t        (*)(uhdr_codec_private_t* dec);
+using uhdr_decode_pfn                        = uhdr_error_info_t        (*)(uhdr_codec_private_t* dec);
+using uhdr_get_decoded_image_pfn             = uhdr_raw_image_t*        (*)(uhdr_codec_private_t* dec);
+using uhdr_get_gain_map_image_pfn            = uhdr_raw_image_t*        (*)(uhdr_codec_private_t* dec);
+using uhdr_dec_get_gain_map_metadata_pfn     = uhdr_gainmap_metadata_t* (*)(uhdr_codec_private_t* dec);
+
+uhdr_create_encoder_pfn                sk_uhdr_create_encoder                = nullptr;
+uhdr_enc_set_quality_pfn               sk_uhdr_enc_set_quality               = nullptr;
+uhdr_enc_set_raw_image_pfn             sk_uhdr_enc_set_raw_image             = nullptr;
+uhdr_enc_set_output_format_pfn         sk_uhdr_enc_set_output_format         = nullptr;
+uhdr_encode_pfn                        sk_uhdr_encode                        = nullptr;
+uhdr_get_encoded_stream_pfn            sk_uhdr_get_encoded_stream            = nullptr;
+uhdr_release_encoder_pfn               sk_uhdr_release_encoder               = nullptr;
+uhdr_enc_set_min_max_content_boost_pfn sk_uhdr_enc_set_min_max_content_boost = nullptr;
+uhdr_enc_set_preset_pfn                sk_uhdr_enc_set_preset                = nullptr;
+
+is_uhdr_image_pfn                      sk_is_uhdr_image                      = nullptr;
+
+uhdr_create_decoder_pfn                sk_uhdr_create_decoder                = nullptr;
+uhdr_release_decoder_pfn               sk_uhdr_release_decoder               = nullptr;
+uhdr_dec_set_image_pfn                 sk_uhdr_dec_set_image                 = nullptr;
+uhdr_dec_set_out_color_transfer_pfn    sk_uhdr_dec_set_out_color_transfer    = nullptr;
+uhdr_dec_set_out_img_format_pfn        sk_uhdr_dec_set_out_img_format        = nullptr;
+uhdr_dec_set_out_max_display_boost_pfn sk_uhdr_dec_set_out_max_display_boost = nullptr;
+uhdr_dec_probe_pfn                     sk_uhdr_dec_probe                     = nullptr;
+uhdr_decode_pfn                        sk_uhdr_decode                        = nullptr;
+uhdr_get_decoded_image_pfn             sk_uhdr_get_decoded_image             = nullptr;
+uhdr_get_gain_map_image_pfn            sk_uhdr_get_gain_map_image            = nullptr;
+uhdr_dec_get_gain_map_metadata_pfn     sk_uhdr_dec_get_gain_map_metadata     = nullptr;
+
+bool isUHDRCodecAvailable (void)
+{
+  static HMODULE hModUHDR = nullptr;
+
+  static const wchar_t* wszPluginArch =
+    SK_RunLHIfBitness ( 64, LR"(x64\)",
+                            LR"(x86\)" );
+
+  static const wchar_t* wszDownloadURL =
+    SK_RunLHIfBitness ( 64, LR"(https://sk-data.special-k.info/addon/ImageCodecs/libuhdr/x64/uhdr.dll)",
+                            LR"(https://sk-data.special-k.info/addon/ImageCodecs/libuhdr/x86/uhdr.dll)" );
+
+  SK_RunOnce (
+  {
+    SKIF_RegistrySettings& _registry =
+      SKIF_RegistrySettings::GetInstance ();
+
+    std::wstring path_to_sk =
+      _registry.regKVPathSpecialK.getData ();
+
+    std::error_code                            ec;
+    if (! std::filesystem::exists (path_to_sk, ec))
+    {
+      path_to_sk =
+        SKIF_CommonPathsCache::GetInstance ().my_documents.path;
+
+      path_to_sk += LR"(\My Mods\SpecialK\)";
+    }
+
+    if (std::filesystem::exists (path_to_sk, ec))
+    {
+      path_to_sk += LR"(\PlugIns\ThirdParty\Image Codecs\libultrahdr\)";
+      path_to_sk += wszPluginArch;
+
+      std::filesystem::create_directories
+                                  (path_to_sk, ec);
+      if (std::filesystem::exists (path_to_sk, ec))
+      {
+        std::wstring path_to_uhdr = path_to_sk + L"uhdr.dll";
+
+        if (! std::filesystem::exists (path_to_uhdr, ec))
+          SKIF_Util_GetWebResource (wszDownloadURL, path_to_uhdr);
+
+        hModUHDR = LoadLibraryW (path_to_uhdr.c_str ());
+
+        if (hModUHDR != nullptr)
+        {
+          PLOG_INFO << "Loaded Ultra HDR from: " << path_to_sk;
+        }
+      }
+    }
+
+    if (hModUHDR == nullptr)
+    {
+      hModUHDR = LoadLibraryW (L"uhdr.dll");
+
+      if (hModUHDR != nullptr)
+      {
+        PLOG_INFO << "Loaded Ultra HDR from default DLL search path";
+      }
+    }
+
+    if (hModUHDR != nullptr)
+    {
+      sk_uhdr_create_encoder                = (uhdr_create_encoder_pfn)               GetProcAddress (hModUHDR, "uhdr_create_encoder");
+      sk_uhdr_enc_set_quality               = (uhdr_enc_set_quality_pfn)              GetProcAddress (hModUHDR, "uhdr_enc_set_quality");
+      sk_uhdr_enc_set_raw_image             = (uhdr_enc_set_raw_image_pfn)            GetProcAddress (hModUHDR, "uhdr_enc_set_raw_image");
+      sk_uhdr_enc_set_output_format         = (uhdr_enc_set_output_format_pfn)        GetProcAddress (hModUHDR, "uhdr_enc_set_output_format");
+      sk_uhdr_encode                        = (uhdr_encode_pfn)                       GetProcAddress (hModUHDR, "uhdr_encode");
+      sk_uhdr_get_encoded_stream            = (uhdr_get_encoded_stream_pfn)           GetProcAddress (hModUHDR, "uhdr_get_encoded_stream");
+      sk_uhdr_release_encoder               = (uhdr_release_encoder_pfn)              GetProcAddress (hModUHDR, "uhdr_release_encoder");
+      sk_uhdr_enc_set_min_max_content_boost = (uhdr_enc_set_min_max_content_boost_pfn)GetProcAddress (hModUHDR, "uhdr_enc_set_min_max_content_boost");
+      sk_uhdr_enc_set_preset                = (uhdr_enc_set_preset_pfn)               GetProcAddress (hModUHDR, "uhdr_enc_set_preset");
+
+      sk_is_uhdr_image                      = (is_uhdr_image_pfn)                     GetProcAddress (hModUHDR, "is_uhdr_image");
+
+      sk_uhdr_create_decoder                = (uhdr_create_decoder_pfn)               GetProcAddress (hModUHDR, "uhdr_create_decoder");
+      sk_uhdr_release_decoder               = (uhdr_release_decoder_pfn)              GetProcAddress (hModUHDR, "uhdr_release_decoder");
+      sk_uhdr_dec_set_image                 = (uhdr_dec_set_image_pfn)                GetProcAddress (hModUHDR, "uhdr_dec_set_image");
+      sk_uhdr_dec_set_out_color_transfer    = (uhdr_dec_set_out_color_transfer_pfn)   GetProcAddress (hModUHDR, "uhdr_dec_set_out_color_transfer");
+      sk_uhdr_dec_set_out_img_format        = (uhdr_dec_set_out_img_format_pfn)       GetProcAddress (hModUHDR, "uhdr_dec_set_out_img_format");
+      sk_uhdr_dec_set_out_max_display_boost = (uhdr_dec_set_out_max_display_boost_pfn)GetProcAddress (hModUHDR, "uhdr_dec_set_out_max_display_boost");
+      sk_uhdr_dec_probe                     = (uhdr_dec_probe_pfn)                    GetProcAddress (hModUHDR, "uhdr_dec_probe");
+      sk_uhdr_decode                        = (uhdr_decode_pfn)                       GetProcAddress (hModUHDR, "uhdr_decode");
+      sk_uhdr_get_decoded_image             = (uhdr_get_decoded_image_pfn)            GetProcAddress (hModUHDR, "uhdr_get_decoded_image");
+      sk_uhdr_get_gain_map_image            = (uhdr_get_gain_map_image_pfn)           GetProcAddress (hModUHDR, "uhdr_get_gain_map_image");
+      sk_uhdr_dec_get_gain_map_metadata     = (uhdr_dec_get_gain_map_metadata_pfn)    GetProcAddress (hModUHDR, "uhdr_dec_get_gain_map_metadata");
+
+      return true;
+    }
+
+    return false;
+  });
+
+  const bool supported =
+    (hModUHDR != nullptr);
+
+  if (! supported)
+  {
+    ImGuiToast toast = {
+      ImGuiToastType::Warning, 3333,
+        "UltraHDR Unsupported because Special K is not Installed",
+        "Please install Special K and run SKIV again to view UltraHDR images.\r\n\t"
+        "> You may also manually place (a 64-bit version of) uhdr.dll in SKIV's directory."
+    };
+  }
+
+  return supported;
+}
+
+void
+SKIV_Image_SaveToDisk_UltraHDR (const DirectX::Image& image, const wchar_t* wszFileName)
+{
+  if (! isUHDRCodecAvailable ())
+    return;
+
+  uhdr_raw_image raw_hdr;
+
+  switch (image.format)
+  {
+    default:
+    //case DXGI_FORMAT_R16G16B16A16_FLOAT:
+    //  raw_hdr.fmt = UHDR_IMG_FMT_64bppRGBAHalfFloat;
+    //  raw_hdr.cg  = UHDR_CG_BT_709;
+    //  raw_hdr.ct  = UHDR_CT_LINEAR;
+    //  break;
+    case DXGI_FORMAT_R10G10B10A2_UNORM:
+      raw_hdr.fmt = UHDR_IMG_FMT_32bppRGBA1010102;
+      raw_hdr.cg  = UHDR_CG_BT_2100;
+      raw_hdr.ct  = UHDR_CT_PQ;
+      break;
+  }
+
+  raw_hdr.range = UHDR_CR_FULL_RANGE;
+  raw_hdr.w     = static_cast <unsigned int> (image.width);
+  raw_hdr.h     = static_cast <unsigned int> (image.height);
+
+  using namespace DirectX;
+
+  DirectX::ScratchImage temp_image;
+  DirectX::ScratchImage hdr10_image;
+
+  // Convert to HDR10
+  if (image.format == DXGI_FORMAT_R16G16B16A16_FLOAT)
+  {
+    DirectX::TransformImage (image,
+      [&](XMVECTOR* outPixels, const XMVECTOR* inPixels, size_t width, size_t y)
+      {
+        std::ignore = y;
+
+        for (size_t j = 0; j < width; ++j)
+        {
+          XMVECTOR value = inPixels [j];
+
+          outPixels [j] =
+            SKIV_Image_LinearToPQ (
+              XMVectorMax (g_XMZero, XMVector3Transform (value, c_scRGBtoBt2100))
+            );
+        }
+      },temp_image
+    );
+
+    DirectX::Convert (*temp_image.GetImages (), DXGI_FORMAT_R10G10B10A2_UNORM, DirectX::TEX_FILTER_DEFAULT, 1.0f, hdr10_image);
+  }
+
+  raw_hdr.planes [UHDR_PLANE_PACKED] =                             hdr10_image.GetImage (0,0,0)->pixels;
+  raw_hdr.stride [UHDR_PLANE_PACKED] = static_cast <unsigned int> (hdr10_image.GetImage (0,0,0)->rowPitch / sizeof (uint32_t));
+
+  temp_image.Release ();
+
+#if 1
+  SKIV_Image_SaveToDisk_SDR (image, L"temp_image.jpg", false);
+
+  DirectX::TexMetadata                                                  meta;
+  LoadFromWICFile (L"temp_image.jpg", DirectX::WIC_FLAGS_DEFAULT_SRGB | DirectX::WIC_FLAGS_FORCE_SRGB, &meta, temp_image);
+
+  DeleteFileW (L"temp_image.jpg");
+
+  DirectX::ScratchImage sdr_image;
+  DirectX::Convert (*temp_image.GetImages (), DXGI_FORMAT_R8G8B8A8_UNORM, DirectX::TEX_FILTER_SRGB, 1.0f, sdr_image);
+
+  uhdr_raw_image raw_sdr;
+
+  raw_sdr.fmt   = UHDR_IMG_FMT_32bppRGBA8888;
+  raw_sdr.cg    = UHDR_CG_BT_709;
+  raw_sdr.ct    = UHDR_CT_SRGB;
+  raw_sdr.range = UHDR_CR_FULL_RANGE;
+  raw_sdr.w     = static_cast <unsigned int> (image.width);
+  raw_sdr.h     = static_cast <unsigned int> (image.height);
+
+  raw_sdr.planes [UHDR_PLANE_PACKED] =                             sdr_image.GetImage (0,0,0)->pixels;
+  raw_sdr.stride [UHDR_PLANE_PACKED] = static_cast <unsigned int> (sdr_image.GetImage (0,0,0)->rowPitch / sizeof (uint32_t));
+#endif
+
+  auto encoder =
+    sk_uhdr_create_encoder ();
+
+  auto
+  err = sk_uhdr_enc_set_quality   (encoder, 100,      UHDR_BASE_IMG);
+  err = sk_uhdr_enc_set_quality   (encoder, 100,      UHDR_GAIN_MAP_IMG);
+
+  err = sk_uhdr_enc_set_raw_image (encoder, &raw_hdr, UHDR_HDR_IMG);
+
+  PLOG_ERROR_IF (err.error_code != UHDR_CODEC_OK) << "uhdr_enc_set_raw_image (...) failed: " << err.error_code << " (" << err.detail << ")";
+
+  err = sk_uhdr_enc_set_raw_image (encoder, &raw_sdr, UHDR_SDR_IMG);
+
+  PLOG_ERROR_IF (err.error_code != UHDR_CODEC_OK) << "uhdr_enc_set_raw_image (...) failed: " << err.error_code << " (" << err.detail << ")";
+
+  err = sk_uhdr_enc_set_output_format (encoder, UHDR_CODEC_JPG);
+
+  using uhdr_enc_set_min_max_content_boost_pfn = uhdr_error_info_t (*)(uhdr_codec_private_t* enc, float min_boost, float max_boost);
+      ((uhdr_enc_set_min_max_content_boost_pfn)GetProcAddress (GetModuleHandle (L"uhdr.dll"), "uhdr_enc_set_min_max_content_boost"))(encoder, 1000.0f, 1000.0f);
+
+  using uhdr_enc_set_preset_pfn = uhdr_error_info_t (*)(uhdr_codec_private_t* enc, uhdr_enc_preset_t preset);
+      ((uhdr_enc_set_preset_pfn)GetProcAddress (GetModuleHandle (L"uhdr.dll"), "uhdr_enc_set_preset"))(encoder, UHDR_USAGE_BEST_QUALITY);
+
+  PLOG_ERROR_IF (err.error_code != UHDR_CODEC_OK) << "sk_uhdr_enc_set_output_format (...) failed: " << err.error_code << " (" << err.detail << ")";
+
+  err = sk_uhdr_encode (encoder);
+
+  PLOG_ERROR_IF (err.error_code != UHDR_CODEC_OK) << "sk_uhdr_encode (...) failed: " << err.error_code << " (" << err.detail << ")";
+
+  auto img =
+    sk_uhdr_get_encoded_stream (encoder);
+
+  if (img != nullptr)
+  {
+    FILE* fJPEG =
+      _wfopen (wszFileName, L"wb");
+
+    if (fJPEG != nullptr)
+    {
+      fwrite (img->data, img->data_sz, 1, fJPEG);
+      fclose (                            fJPEG);
+    }
+  }
+
+  sk_uhdr_release_encoder (encoder);
+}
+
+bool
+SKIV_Image_IsUltraHDR (const wchar_t* wszFileName)
+{
+  if (! isUHDRCodecAvailable ())
+    return false;
+
+  FILE* fImageFile =
+    _wfopen (wszFileName, L"rb");
+
+  if (fImageFile != nullptr)
+  {
+    fseek (            fImageFile, 0, SEEK_END);
+    auto size = ftell (fImageFile);
+    auto data =
+      std::make_unique <uint8_t []> (size);
+
+    rewind (                      fImageFile);
+    fread  (data.get (), 1, size, fImageFile);
+    fclose (                      fImageFile);
+
+    return
+      sk_is_uhdr_image (data.get (), size) != 0;
+  }
+
+  return false;
+}
+
+bool
+SKIV_Image_IsUltraHDR (void* data, int size)
+{
+  if (! isUHDRCodecAvailable ())
+    return false;
+
+  return
+    sk_is_uhdr_image (data, size) != 0;
+}
+
+HRESULT
+SKIV_Image_LoadUltraHDR (DirectX::ScratchImage& image, void* data, int size)
+{
+  if (! sk_uhdr_create_decoder)
+    return E_NOTIMPL;
+
+  auto decoder =
+    sk_uhdr_create_decoder ();
+
+  if (! decoder)
+    return E_UNEXPECTED;
+
+  uhdr_compressed_image_t uhdr_image;
+
+  uhdr_image.data     = data;
+  uhdr_image.data_sz  = size;
+  uhdr_image.capacity = size;
+  uhdr_image.cg       = UHDR_CG_BT_709;//UHDR_CG_UNSPECIFIED;
+  uhdr_image.ct       = UHDR_CT_LINEAR;//UHDR_CT_UNSPECIFIED;
+  uhdr_image.range    = UHDR_CR_FULL_RANGE;//UHDR_CR_UNSPECIFIED;
+
+  sk_uhdr_dec_set_image              (decoder, &uhdr_image);
+  sk_uhdr_dec_probe                  (decoder);
+  sk_uhdr_dec_set_out_color_transfer (decoder, UHDR_CT_LINEAR);
+  sk_uhdr_dec_set_out_img_format     (decoder, UHDR_IMG_FMT_64bppRGBAHalfFloat);
+  sk_uhdr_decode                     (decoder);
+
+  auto decoded_img =
+    sk_uhdr_get_decoded_image        (decoder);
+
+  if (! decoded_img)
+    return E_UNEXPECTED;
+
+  DirectX::Image img;
+
+  img.pixels   = (uint8_t *)decoded_img->planes [UHDR_PLANE_PACKED];
+  img.rowPitch =            decoded_img->stride [UHDR_PLANE_PACKED] * sizeof (uint16_t) * 4;
+  img.width    =            decoded_img->w;
+  img.height   =            decoded_img->h;
+  img.format   = DXGI_FORMAT_R16G16B16A16_FLOAT;
+
+  DirectX::ScratchImage
+    unscaled_image;
+    unscaled_image.InitializeFromImage (img);
+
+  auto metadata =
+    sk_uhdr_dec_get_gain_map_metadata (decoder);
+
+  DirectX::TransformImage (*unscaled_image.GetImage (0,0,0),
+    [&](DirectX::XMVECTOR* outPixels, const DirectX::XMVECTOR* inPixels, size_t width, size_t y)
+    {
+      using namespace DirectX;
+      XMVECTOR scale = XMVectorSet(metadata->hdr_capacity_max,
+                                   metadata->hdr_capacity_max,
+                                   metadata->hdr_capacity_max,
+                                   1.0f);//UHDR is still a jpeg so no alpha
+
+      for (size_t j = 0; j < width; ++j)
+      {
+        XMVECTOR value = inPixels [j];
+
+        outPixels[j] = XMVectorMultiply(value, scale);
+      }
+
+      UNREFERENCED_PARAMETER(y);
+    }, image);
+
+  sk_uhdr_release_decoder (decoder);
+
+  return S_OK;
+}
+
+void sk_avif_add_icc_to_image (avifImage* img);
 
 HRESULT
 SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileName)
 {
+  SKIF_RegistrySettings& _registry =
+    SKIF_RegistrySettings::GetInstance ();
+
   using namespace DirectX;
+
+  ScratchImage
+    scratch_image;
+  scratch_image.InitializeFromImage(image);
+
+  bool hasAlpha = !scratch_image.IsAlphaAllOpaque();
 
   const Image* pOutputImage = &image;
 
-  if (image.format != DXGI_FORMAT_R16G16B16A16_FLOAT &&
+  if (image.format != DXGI_FORMAT_R10G10B10A2_UNORM  &&
+      image.format != DXGI_FORMAT_R16G16B16A16_FLOAT &&
       image.format != DXGI_FORMAT_R32G32B32A32_FLOAT)
   {
     // SKIV always uses scRGB internally for HDR, any other format
     //   can't be HDR...
+    PLOG_ERROR << "Unsupported HDR image format: %d", image.format;
+
     return E_NOTIMPL;
   }
 
@@ -1213,7 +2900,7 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
   // For doofus users who don't give us filenames...
   if (! wszExtension)
   {
-    PathAddExtension (wszImplicitFileName, defaultHDRFileExt.c_str());
+    PathAddExtensionW (wszImplicitFileName, defaultHDRFileExt.c_str () );
     wszExtension =
       PathFindExtensionW (wszImplicitFileName);
   }
@@ -1225,29 +2912,640 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
     wic_codec = GetWICCodec (WIC_CODEC_WMP);
   }
 
+#ifdef OpenEXR
+#ifdef _M_X64
+  else if (StrStrIW (wszExtension, L"exr"))
+  {
+    using namespace DirectX;
+
+    if (SUCCEEDED (SaveToEXRFile (image, wszImplicitFileName)))
+    {
+      return S_OK;
+    }
+  }
+#endif
+#endif
+
+  else if (StrStrIW (wszExtension, L"hdr"))
+  {
+    using namespace DirectX;
+
+    if (SUCCEEDED (SaveToHDRFile (image, wszImplicitFileName)))
+    {
+      return S_OK;
+    }
+  }
+
   else if (StrStrIW (wszExtension, L"png"))
   {
     DirectX::ScratchImage                  png_img;
     if (SKIV_HDR_ConvertImageToPNG (image, png_img))
     {
-      if (SKIV_HDR_SavePNGToDisk (wszImplicitFileName, png_img.GetImages (), &image, nullptr, true))
+      if (SKIV_HDR_SavePNGToDisk (wszImplicitFileName, png_img.GetImages (), &image, nullptr, true, hasAlpha))
       {
         return S_OK;
       }
     }
   }
 
-  else if (StrStrIW (wszExtension, L"avif") ||
-           StrStrIW (wszExtension, L"hdr")  ||
-           StrStrIW (wszExtension, L"jxl"))
+  else if (StrStrIW (wszExtension, L"jxl"))
   {
-    // Not yet, sorry...
-    return E_NOTIMPL;
+    extern bool isJXLDecoderAvailable (void);
+    if (!       isJXLDecoderAvailable ())
+      return E_NOTIMPL;
+
+    static HMODULE hModJXL;
+    SK_RunOnce (   hModJXL = LoadLibraryW (L"jxl.dll"));
+
+    static HMODULE hModJXLThreads;
+    SK_RunOnce (   hModJXLThreads = LoadLibraryW (L"jxl_threads.dll"));
+
+    using JxlEncoderCreate_pfn                               = JxlEncoder*              (*)(const JxlMemoryManager* memory_manager);
+    using JxlEncoderDestroy_pfn                              = void                     (*)(JxlEncoder* enc);
+    using JxlEncoderCloseInput_pfn                           = void                     (*)(JxlEncoder* enc);
+    using JxlEncoderProcessOutput_pfn                        = JxlEncoderStatus         (*)(JxlEncoder* enc, uint8_t** next_out, size_t* avail_out);
+    using JxlEncoderFrameSettingsCreate_pfn                  = JxlEncoderFrameSettings* (*)(JxlEncoder* enc, const JxlEncoderFrameSettings* source);
+    using JxlEncoderInitBasicInfo_pfn                        = void                     (*)(JxlBasicInfo* info);
+    using JxlEncoderSetBasicInfo_pfn                         = JxlEncoderStatus         (*)(JxlEncoder* enc, const JxlBasicInfo* info);
+    using JxlEncoderAddImageFrame_pfn                        = JxlEncoderStatus         (*)(const JxlEncoderFrameSettings* frame_settings, const JxlPixelFormat* pixel_format, const void* buffer, size_t size);
+    using JxlEncoderSetColorEncoding_pfn                     = JxlEncoderStatus         (*)(JxlEncoder* enc, const JxlColorEncoding* color);
+    using JxlEncoderFrameSettingsSetOption_pfn               = JxlEncoderStatus         (*)(JxlEncoderFrameSettings *frame_settings, JxlEncoderFrameSettingId option, int64_t value);
+    using JxlEncoderSetParallelRunner_pfn                    = JxlEncoderStatus         (*)(JxlEncoder* enc, JxlParallelRunner parallel_runner, void* parallel_runner_opaque);
+
+    using JxlThreadParallelRunner_pfn                        = JxlParallelRetCode       (*)(void* runner_opaque, void* jpegxl_opaque, JxlParallelRunInit init, JxlParallelRunFunction func, uint32_t start_range, uint32_t end_range);
+    using JxlThreadParallelRunnerCreate_pfn                  = void*                    (*)(const JxlMemoryManager* memory_manager, size_t num_worker_threads);
+    using JxlThreadParallelRunnerDestroy_pfn                 = void                     (*)(void* runner_opaque);
+    using JxlThreadParallelRunnerDefaultNumWorkerThreads_pfn = size_t                   (*)(void);
+
+    static JxlEncoderCreate_pfn                 jxlEncoderCreate                 = (JxlEncoderCreate_pfn)                GetProcAddress (hModJXL, "JxlEncoderCreate");
+    static JxlEncoderDestroy_pfn                jxlEncoderDestroy                = (JxlEncoderDestroy_pfn)               GetProcAddress (hModJXL, "JxlEncoderDestroy");
+    static JxlEncoderCloseInput_pfn             jxlEncoderCloseInput             = (JxlEncoderCloseInput_pfn)            GetProcAddress (hModJXL, "JxlEncoderCloseInput");
+    static JxlEncoderProcessOutput_pfn          jxlEncoderProcessOutput          = (JxlEncoderProcessOutput_pfn)         GetProcAddress (hModJXL, "JxlEncoderProcessOutput");
+    static JxlEncoderFrameSettingsCreate_pfn    jxlEncoderFrameSettingsCreate    = (JxlEncoderFrameSettingsCreate_pfn)   GetProcAddress (hModJXL, "JxlEncoderFrameSettingsCreate");
+    static JxlEncoderInitBasicInfo_pfn          jxlEncoderInitBasicInfo          = (JxlEncoderInitBasicInfo_pfn)         GetProcAddress (hModJXL, "JxlEncoderInitBasicInfo");
+    static JxlEncoderSetBasicInfo_pfn           jxlEncoderSetBasicInfo           = (JxlEncoderSetBasicInfo_pfn)          GetProcAddress (hModJXL, "JxlEncoderSetBasicInfo");
+    static JxlEncoderAddImageFrame_pfn          jxlEncoderAddImageFrame          = (JxlEncoderAddImageFrame_pfn)         GetProcAddress (hModJXL, "JxlEncoderAddImageFrame");
+    static JxlEncoderSetColorEncoding_pfn       jxlEncoderSetColorEncoding       = (JxlEncoderSetColorEncoding_pfn)      GetProcAddress (hModJXL, "JxlEncoderSetColorEncoding");
+    static JxlEncoderFrameSettingsSetOption_pfn jxlEncoderFrameSettingsSetOption = (JxlEncoderFrameSettingsSetOption_pfn)GetProcAddress (hModJXL, "JxlEncoderFrameSettingsSetOption");
+    static JxlEncoderSetParallelRunner_pfn      jxlEncoderSetParallelRunner      = (JxlEncoderSetParallelRunner_pfn)     GetProcAddress (hModJXL, "JxlEncoderSetParallelRunner");
+
+    static JxlThreadParallelRunner_pfn                        jxlThreadParallelRunner                        = (JxlThreadParallelRunner_pfn)                       GetProcAddress (hModJXLThreads, "JxlThreadParallelRunner");
+    static JxlThreadParallelRunnerCreate_pfn                  jxlThreadParallelRunnerCreate                  = (JxlThreadParallelRunnerCreate_pfn)                 GetProcAddress (hModJXLThreads, "JxlThreadParallelRunnerCreate");
+    static JxlThreadParallelRunnerDestroy_pfn                 jxlThreadParallelRunnerDestroy                 = (JxlThreadParallelRunnerDestroy_pfn)                GetProcAddress (hModJXLThreads, "JxlThreadParallelRunnerDestroy");
+    static JxlThreadParallelRunnerDefaultNumWorkerThreads_pfn jxlThreadParallelRunnerDefaultNumWorkerThreads = (JxlThreadParallelRunnerDefaultNumWorkerThreads_pfn)GetProcAddress (hModJXLThreads, "JxlThreadParallelRunnerDefaultNumWorkerThreads");
+
+    using JxlEncoderSetFrameLossless_pfn    = JxlEncoderStatus (*)(JxlEncoderFrameSettings *frame_settings, JXL_BOOL lossless);
+    using JxlEncoderSetFrameDistance_pfn    = JxlEncoderStatus (*)(JxlEncoderFrameSettings *frame_settings, float distance);
+    using JxlEncoderSetFrameBitDepth_pfn    = JxlEncoderStatus (*)(JxlEncoderFrameSettings *frame_settings, const JxlBitDepth *bit_depth);
+    using JxlEncoderDistanceFromQuality_pfn = float            (*)(float quality);
+
+    static JxlEncoderSetFrameLossless_pfn    jxlEncoderSetFrameLossless    = (JxlEncoderSetFrameLossless_pfn)   GetProcAddress (hModJXL, "JxlEncoderSetFrameLossless");
+    static JxlEncoderSetFrameDistance_pfn    jxlEncoderSetFrameDistance    = (JxlEncoderSetFrameDistance_pfn)   GetProcAddress (hModJXL, "JxlEncoderSetFrameDistance");
+    static JxlEncoderSetFrameBitDepth_pfn    jxlEncoderSetFrameBitDepth    = (JxlEncoderSetFrameBitDepth_pfn)   GetProcAddress (hModJXL, "JxlEncoderSetFrameBitDepth");
+    static JxlEncoderDistanceFromQuality_pfn jxlEncoderDistanceFromQuality = (JxlEncoderDistanceFromQuality_pfn)GetProcAddress (hModJXL, "JxlEncoderDistanceFromQuality");
+
+    bool succeeded = false;
+
+    if ( jxlEncoderCreate                               == nullptr ||
+         jxlThreadParallelRunnerCreate                  == nullptr ||
+         jxlThreadParallelRunnerDefaultNumWorkerThreads == nullptr )
+    {
+      PLOG_ERROR << "JPEG XL library unavailable";
+      return E_NOINTERFACE;
+    }
+
+    auto jxl_encoder = jxlEncoderCreate              (nullptr);
+    auto jxl_runner  = jxlThreadParallelRunnerCreate (nullptr,
+      jxlThreadParallelRunnerDefaultNumWorkerThreads ());
+
+    for (;;)
+    {
+      if ( jxl_encoder == nullptr ||
+           jxl_runner  == nullptr )
+        break;
+
+      if ( JXL_ENC_SUCCESS !=
+             jxlEncoderSetParallelRunner ( jxl_encoder,
+                                             jxlThreadParallelRunner,
+                                               jxl_runner ) )
+      {
+        PLOG_ERROR << "JxlEncoderSetParallelRunner failed";
+        break;
+      }
+
+      JxlDataType type = JXL_TYPE_FLOAT;
+      size_t      size = sizeof (float);
+
+      const uint32_t channels = hasAlpha ? 4 : 3;
+
+      std::vector <float> fp_pixels (image.width * image.height * channels);
+
+      auto fp_pixel_comp =
+        fp_pixels.begin ();
+
+      EvaluateImage ( image,
+        [&](const XMVECTOR* pixels, size_t width, size_t y)
+        {
+          UNREFERENCED_PARAMETER(y);
+
+          for (size_t j = 0; j < width; ++j)
+          {
+            XMVECTOR v =
+              *pixels++;
+
+            *fp_pixel_comp++ = XMVectorGetX (v);
+            *fp_pixel_comp++ = XMVectorGetY (v);
+            *fp_pixel_comp++ = XMVectorGetZ (v);
+
+            if (hasAlpha)
+              *fp_pixel_comp++ = XMVectorGetW(v);
+          }
+        }
+      );
+
+      JxlPixelFormat pixel_format =
+        { channels, type, JXL_NATIVE_ENDIAN, 0 };
+
+      JxlBasicInfo              basic_info = { };
+      jxlEncoderInitBasicInfo (&basic_info);
+
+      const bool bLossless = (_registry.jxl.quality == 100);
+
+      basic_info.xsize                    = static_cast <uint32_t> (image.width);
+      basic_info.ysize                    = static_cast <uint32_t> (image.height);
+      basic_info.bits_per_sample          = static_cast <uint32_t> (DirectX::BitsPerColor (image.format));
+      basic_info.exponent_bits_per_sample =                         DirectX::BitsPerColor (image.format) == 32 ? 8 : 5;
+      basic_info.uses_original_profile    = bLossless ? JXL_TRUE : JXL_FALSE;
+
+      basic_info.num_color_channels       = 3;
+      basic_info.num_extra_channels       = hasAlpha ? 1 : 0;
+
+      if ( JXL_ENC_SUCCESS !=
+             jxlEncoderSetBasicInfo ( jxl_encoder, &basic_info) )
+      {
+        PLOG_ERROR << "JxlEncoderSetBasicInfo failed";
+        break;
+      }
+
+      JxlColorEncoding color_encoding = { };
+
+      color_encoding.color_space       = JXL_COLOR_SPACE_RGB;
+      color_encoding.white_point       = JXL_WHITE_POINT_D65;
+      color_encoding.primaries         = JXL_PRIMARIES_SRGB;
+      color_encoding.transfer_function = JXL_TRANSFER_FUNCTION_LINEAR;
+      color_encoding.rendering_intent  = JXL_RENDERING_INTENT_PERCEPTUAL;
+
+      if ( JXL_ENC_SUCCESS !=
+             jxlEncoderSetColorEncoding (jxl_encoder, &color_encoding) )
+      {
+        PLOG_ERROR << "JxlEncoderSetColorEncoding failed";
+        break;
+      }
+
+      JxlEncoderFrameSettings* frame_settings =
+        jxlEncoderFrameSettingsCreate (jxl_encoder, nullptr);
+
+      jxlEncoderSetFrameLossless       (frame_settings, bLossless ? JXL_TRUE : JXL_FALSE);
+      jxlEncoderSetFrameDistance       (frame_settings, jxlEncoderDistanceFromQuality ((float)_registry.jxl.quality));
+      jxlEncoderFrameSettingsSetOption (frame_settings, JXL_ENC_FRAME_SETTING_EFFORT,         _registry.jxl.speed);
+
+      if ( JXL_ENC_SUCCESS !=
+             jxlEncoderAddImageFrame ( frame_settings, &pixel_format,
+               static_cast <const void *> (fp_pixels.data ()),
+                                    size * fp_pixels.size () ) )
+      {
+        PLOG_ERROR << "JxlEncoderAddImageFrame failed";
+        break;
+      }
+
+      jxlEncoderCloseInput (jxl_encoder);
+
+      std::vector <uint8_t> output (64);
+
+      uint8_t* next_out  = output.data ();
+      size_t   avail_out = output.size () - (next_out - output.data ());
+
+      JxlEncoderStatus process_result = JXL_ENC_NEED_MORE_OUTPUT;
+
+      while (process_result == JXL_ENC_NEED_MORE_OUTPUT)
+      {
+        process_result =
+          jxlEncoderProcessOutput (jxl_encoder, &next_out, &avail_out);
+
+        if (process_result == JXL_ENC_NEED_MORE_OUTPUT)
+        {
+          size_t offset = next_out - output.data ();
+
+          output.resize (output.size () * 2);
+
+          next_out  = output.data () + offset;
+          avail_out = output.size () - offset;
+        }
+      }
+
+      output.resize (next_out - output.data ());
+
+      if (JXL_ENC_SUCCESS != process_result)
+      {
+        PLOG_ERROR << "JxlEncoderProcessOutput failed";
+        break;
+      }
+
+      FILE* fOutput =
+        _wfopen (wszImplicitFileName, L"wb");
+
+      if (fOutput != nullptr)
+      {
+        fwrite (output.data (), output.size (), 1, fOutput);
+        fclose (fOutput);
+
+        PLOG_VERBOSE << "JPEG XL Encode Finished";
+
+        succeeded = true;
+      }
+
+      break;
+    }
+
+    if (jxl_encoder != nullptr)
+      jxlEncoderDestroy (jxl_encoder);
+
+    if (jxl_runner != nullptr)
+      jxlThreadParallelRunnerDestroy (jxl_runner);
+
+    return
+      succeeded ? S_OK : E_FAIL;
+  }
+
+  else if (StrStrIW (wszExtension, L"avif"))
+  {
+    extern bool isAVIFEncoderAvailable (void);
+    if (!       isAVIFEncoderAvailable ())
+      return E_NOTIMPL;
+
+    using namespace DirectX;
+
+    uint32_t width  = static_cast <uint32_t> (image.width);
+    uint32_t height = static_cast <uint32_t> (image.height);
+
+    int             bit_depth  = 10;
+    avifPixelFormat yuv_format = AVIF_PIXEL_FORMAT_YUV444;
+
+    const int yuv_subsampling = 444;
+    switch (  yuv_subsampling )
+    {
+      default:
+        //config.screenshots.avif.yuv_subsampling = 444; // Write a valid value to INI
+        [[fallthrough]];
+      case 444:
+        yuv_format = AVIF_PIXEL_FORMAT_YUV444;
+        break;
+      case 422:
+        yuv_format = AVIF_PIXEL_FORMAT_YUV422;
+        break;
+      case 420:
+        yuv_format = AVIF_PIXEL_FORMAT_YUV420;
+        break;
+      case 400: // lol
+        yuv_format = AVIF_PIXEL_FORMAT_YUV400;
+        break;
+    }
+
+    if (image.format == DXGI_FORMAT_R16G16B16A16_FLOAT ||
+        image.format == DXGI_FORMAT_R32G32B32A32_FLOAT)
+    {
+      bit_depth =
+        std::clamp (_registry.avif.hdr_bitdepth, 8, 12);
+
+      // 8, 10, 12... nothing else.
+      if ( bit_depth == 9 ||
+           bit_depth == 11 )
+           bit_depth++;
+    }
+
+    avifResult rgbToYuvResult = AVIF_RESULT_NO_CONTENT;
+    avifResult addResult      = AVIF_RESULT_NO_CONTENT;
+    avifResult encodeResult   = AVIF_RESULT_NO_CONTENT;
+
+    avifRWData   avifOutput = AVIF_DATA_EMPTY;
+    avifRGBImage rgb        = { };
+    avifEncoder* encoder    = nullptr;
+    avifImage*   avif_image =
+      SK_avifImageCreate (width, height, bit_depth, yuv_format);
+
+    if (avif_image != nullptr)
+    {
+      avif_image->yuvRange = AVIF_RANGE_FULL;
+
+      switch (image.format)
+      {
+        case DXGI_FORMAT_R10G10B10A2_UNORM:
+        case DXGI_FORMAT_R16G16B16A16_FLOAT:
+        case DXGI_FORMAT_R32G32B32A32_FLOAT:
+          avif_image->colorPrimaries          = AVIF_COLOR_PRIMARIES_BT2020;
+          avif_image->transferCharacteristics = AVIF_TRANSFER_CHARACTERISTICS_SMPTE2084;
+          avif_image->matrixCoefficients      = AVIF_MATRIX_COEFFICIENTS_BT2020_NCL;
+          break;
+        default:
+          return E_UNEXPECTED;
+      }
+
+      SK_avifRGBImageSetDefaults (&rgb, avif_image);
+
+      rgb.depth       = bit_depth;
+      rgb.ignoreAlpha = hasAlpha ? false : true;
+      rgb.isFloat     = false;
+      rgb.format      = hasAlpha ? AVIF_RGB_FORMAT_RGBA : AVIF_RGB_FORMAT_RGB;
+
+      SK_avifRGBImageAllocatePixels (&rgb);
+
+      switch (image.format)
+      {
+        case DXGI_FORMAT_R10G10B10A2_UNORM:
+        {
+          uint16_t* rgb_pixels = (uint16_t *)rgb.pixels;
+
+          EvaluateImage ( image,
+          [&](const DirectX::XMVECTOR* pixels, size_t width, size_t y)
+          {
+            UNREFERENCED_PARAMETER(y);
+
+            for (size_t j = 0; j < width; ++j)
+            {
+              DirectX::XMVECTOR v = *pixels++;
+
+              float alpha = hasAlpha ? std::clamp(DirectX::XMVectorGetW(v), 0.0f, 1.0f) : 1.0f;
+
+              *(rgb_pixels++) = static_cast <uint16_t> (std::min (1023, static_cast <int> (XMVectorGetX (v) * 1024.0f)));
+              *(rgb_pixels++) = static_cast <uint16_t> (std::min (1023, static_cast <int> (XMVectorGetY (v) * 1024.0f)));
+              *(rgb_pixels++) = static_cast <uint16_t> (std::min (1023, static_cast <int> (XMVectorGetZ (v) * 1024.0f)));
+
+              if (hasAlpha)
+                *(rgb_pixels++) = static_cast <uint16_t>(std::round(alpha * 1023.0f));
+            }
+          } );
+        } break;
+
+        case DXGI_FORMAT_R16G16B16A16_FLOAT:
+        case DXGI_FORMAT_R32G32B32A32_FLOAT:
+        {
+          uint16_t* rgb16_pixels = (uint16_t *)rgb.pixels;
+          uint8_t*  rgb8_pixels  = (uint8_t  *)rgb.pixels;
+
+          float N          =       0.0f;
+          float fLumAccum  =       0.0f;
+          float fMaxLum    =       0.0f;
+          float fMinLum    = 5240320.0f;
+
+          EvaluateImage ( image,
+            [&](const XMVECTOR* pixels, size_t width, size_t y)
+            {
+              UNREFERENCED_PARAMETER(y);
+
+              float fScanlineLum = 0.0f;
+
+              switch (image.format)
+              {
+                case DXGI_FORMAT_R10G10B10A2_UNORM:
+                {
+                  for (size_t j = 0; j < width; ++j)
+                  {
+                    XMVECTOR v =
+                      *pixels++;
+
+                    v =
+                      XMVector3Transform (
+                        SKIV_Image_PQToLinear (XMVectorSaturate (v)), c_from2020toXYZ
+                      );
+
+                    const float fLum =
+                      XMVectorGetY (v);
+
+                    fMaxLum =
+                      std::max (fMaxLum, fLum);
+
+                    fMinLum =
+                      std::min (fMinLum, fLum);
+
+                    fScanlineLum += fLum;
+                  }
+                } break;
+
+                case DXGI_FORMAT_R16G16B16A16_FLOAT:
+                case DXGI_FORMAT_R32G32B32A32_FLOAT:
+                {
+                  for (size_t j = 0; j < width; ++j)
+                  {
+                    XMVECTOR v =
+                      *pixels++;
+
+                    v =
+                      XMVector3Transform (v, c_from709toXYZ);
+
+                    const float fLum =
+                      XMVectorGetY (v);
+
+                    fMaxLum =
+                      std::max (fMaxLum, fLum);
+
+                    fMinLum =
+                      std::min (fMinLum, fLum);
+
+                    fScanlineLum += fLum;
+                  }
+                } break;
+
+                default:
+                  break;
+              }
+
+              fLumAccum +=
+                (fScanlineLum / static_cast <float> (width));
+              ++N;
+            }
+          );
+
+          if (N > 0.0)
+          {
+            // 0 nits - 10k nits (limit imposed by PQ)
+            fMinLum = std::clamp (fMinLum, 0.0f,    125.0f);
+            fMaxLum = std::clamp (fMaxLum, fMinLum, 125.0f);
+
+            const float fLumRange =
+                    (fMaxLum - fMinLum);
+
+            auto        luminance_freq = std::make_unique <uint32_t []> (65536);
+            ZeroMemory (luminance_freq.get (),     sizeof (uint32_t)  *  65536);
+
+            EvaluateImage ( image,
+            [&](const XMVECTOR* pixels, size_t width, size_t y)
+            {
+              UNREFERENCED_PARAMETER(y);
+
+              for (size_t j = 0; j < width; ++j)
+              {
+                XMVECTOR v = *pixels++;
+
+                v =
+                  XMVectorMax (g_XMZero, XMVector3Transform (v, c_from709toXYZ));
+
+                luminance_freq [
+                  std::clamp ( (int)
+                    std::roundf (
+                      (XMVectorGetY (v) - fMinLum)     /
+                                            (fLumRange / 65536.0f) ),
+                                                      0, 65535 ) ]++;
+              }
+            });
+
+                  double percent  = 100.0;
+            const double img_size = (double)image.width *
+                                    (double)image.height;
+
+            for (auto i = 65535; i >= 0; --i)
+            {
+              percent -=
+                100.0 * ((double)luminance_freq [i] / img_size);
+
+              if (percent <= 99.5)
+              {
+                fMaxLum =
+                  fMinLum + (fLumRange * ((float)i / 65536.0f));
+
+                break;
+              }
+            }
+
+            avif_image->clli.maxCLL =
+              static_cast <uint16_t> (80.0f * fMaxLum);
+            avif_image->clli.maxPALL =
+              static_cast <uint16_t> (80.0f * (fLumAccum / N));
+          }
+
+          const float fMaxVal =
+            _registry.avif.hdr_bitdepth ==  8 ?  256.0f :
+            _registry.avif.hdr_bitdepth == 10 ? 1024.0f :
+            _registry.avif.hdr_bitdepth == 12 ? 4096.0f :
+                                                4096.0f;
+
+          const float fClampVal =
+            _registry.avif.hdr_bitdepth ==  8 ?  255.0f :
+            _registry.avif.hdr_bitdepth == 10 ? 1023.0f :
+            _registry.avif.hdr_bitdepth == 12 ? 4095.0f :
+                                                4095.0f;
+
+          XMVECTOR vMaxVal =
+            XMVectorReplicate (fMaxVal);
+          XMVECTOR vClampVal =
+            XMVectorReplicate (fClampVal);
+
+          EvaluateImage ( image,
+          [&](_In_reads_ (width) const XMVECTOR* pixels, size_t width, size_t y)
+          {
+            UNREFERENCED_PARAMETER (y);
+
+            for (size_t j = 0; j < width; ++j)
+            {
+              XMVECTOR value = pixels [j];
+
+              float alpha = hasAlpha ? std::clamp(DirectX::XMVectorGetW(value), 0.0f, 1.0f) : 1.0f;
+
+              value =
+                XMVectorSaturate (
+                  SKIV_Image_LinearToPQ (
+                    XMVector3Transform (value, c_scRGBtoBt2100)
+                  )
+                );
+
+              value =
+                XMVectorMin (XMVectorMultiply (value, vMaxVal), vClampVal);
+
+              if (bit_depth > 8)
+              {
+                *(rgb16_pixels++) = static_cast <uint16_t> (DirectX::XMVectorGetX (value));
+                *(rgb16_pixels++) = static_cast <uint16_t> (DirectX::XMVectorGetY (value));
+                *(rgb16_pixels++) = static_cast <uint16_t> (DirectX::XMVectorGetZ (value));
+                if (hasAlpha)
+                  *(rgb16_pixels++) = static_cast <uint16_t> (std::round(alpha * fClampVal));
+              }
+
+              else
+              {
+                *(rgb8_pixels++) = static_cast <uint8_t> (DirectX::XMVectorGetX (value));
+                *(rgb8_pixels++) = static_cast <uint8_t> (DirectX::XMVectorGetY (value));
+                *(rgb8_pixels++) = static_cast <uint8_t> (DirectX::XMVectorGetZ (value));
+                if (hasAlpha)
+                  *(rgb16_pixels++) = static_cast <uint16_t> (std::round(alpha * fClampVal));
+              }
+            }
+          } );
+        } break;
+      }
+
+      rgbToYuvResult =
+        SK_avifImageRGBToYUV (avif_image, &rgb);
+    }
+
+    if (rgbToYuvResult == AVIF_RESULT_OK)
+    {
+      encoder =
+        SK_avifEncoderCreate ();
+
+      if (encoder != nullptr)
+      {
+        SYSTEM_INFO     si = { };
+        GetSystemInfo (&si);
+
+        encoder->quality         = _registry.avif.quality;
+        encoder->qualityAlpha    = _registry.avif.quality; // N/A?
+        encoder->timescale       = 1;
+        encoder->repetitionCount = AVIF_REPETITION_COUNT_INFINITE;
+#ifdef _M_X64
+        encoder->maxThreads      = std::min (64U, std::min ((UINT)si.dwNumberOfProcessors, (UINT)__popcnt64 (si.dwActiveProcessorMask)));
+#endif
+        encoder->minQuantizer    = AVIF_QUANTIZER_BEST_QUALITY;
+        encoder->maxQuantizer    = AVIF_QUANTIZER_WORST_QUALITY;
+        encoder->codecChoice     = AVIF_CODEC_CHOICE_AUTO;
+        encoder->speed           = _registry.avif.speed;
+
+        sk_avif_add_icc_to_image                       (avif_image);
+        addResult    = SK_avifEncoderAddImage (encoder, avif_image, 1, AVIF_ADD_IMAGE_FLAG_SINGLE);
+        encodeResult = SK_avifEncoderFinish   (encoder, &avifOutput);
+      }
+    }
+
+    if ( rgbToYuvResult != AVIF_RESULT_OK ||
+         addResult      != AVIF_RESULT_OK ||
+         encodeResult   != AVIF_RESULT_OK )
+    {
+      PLOG_ERROR << L"rgbToYUV: " << rgbToYuvResult << L" addImage: " << addResult << L" encode: " << encodeResult;
+    }
+
+    if (encodeResult == AVIF_RESULT_OK)
+    {
+      FILE* fAVIF =
+        _wfopen (wszImplicitFileName, L"wb");
+
+      if (fAVIF != nullptr)
+      {
+        fwrite (avifOutput.data, 1, avifOutput.size, fAVIF);
+        fclose (fAVIF);
+      }
+    }
+
+    if (avif_image != nullptr) SK_avifImageDestroy   (avif_image);
+    if (encoder    != nullptr) SK_avifEncoderDestroy (encoder);
+
+    SK_avifRGBImageFreePixels (&rgb);
+
+    return
+      ( encodeResult == AVIF_RESULT_OK ) ? S_OK : E_FAIL;
   }
 
   else
   {
     // What the hell is this?
+    PLOG_ERROR << "Unknown encoder format for file extension '" << wszExtension << "'";
     return E_UNEXPECTED;
   }
 
@@ -1256,57 +3554,24 @@ SKIV_Image_SaveToDisk_HDR (const DirectX::Image& image, const wchar_t* wszFileNa
                       wszImplicitFileName, nullptr, SK_WIC_SetMaximumQuality);
 }
 
-HRESULT
-SKIV_Image_CaptureDesktop (const POINT point)
+// Duplicates a display (Desktop Duplication) into desktop: a copy of its image (as the display has it: before its rotation,
+//   which is kept), where it is on the desktop, and its light levels
+static HRESULT
+_SKIV_DuplicateOutput (ID3D11Device* pDevice, ID3D11DeviceContext* pDevCtx, IDXGIOutput* pOutput, skiv_image_desktop_s& desktop)
 {
-  SKIV_ClipboardImage.clear();
+  desktop.clear ();
 
-  auto pDevice =
-    SKIF_D3D11_GetDevice ();
+  DXGI_OUTPUT_DESC  out_desc  = { };
+  DXGI_OUTPUT_DESC1 out_desc1 = { };
 
-  if (! pDevice)
-    return E_NOT_VALID_STATE;
+  pOutput->GetDesc (&out_desc);
 
-  CComPtr <IDXGIFactory> pFactory;
-  CreateDXGIFactory (IID_IDXGIFactory, (void **)&pFactory.p);
+  CComQIPtr <IDXGIOutput6> pOutput6 (pOutput);
 
-  if (! pFactory)
-    return E_NOTIMPL;
+  if (pOutput6.p != nullptr)
+    pOutput6->GetDesc1 (&out_desc1);
 
-  CComPtr <IDXGIAdapter> pAdapter;
-  UINT                  uiAdapter = 0;
-
-  CComPtr <IDXGIOutput> pCursorOutput;
-
-  while (SUCCEEDED (pFactory->EnumAdapters (uiAdapter++, &pAdapter.p)))
-  {
-    CComPtr <IDXGIOutput> pOutput;
-    UINT                 uiOutput = 0;
-
-    while (SUCCEEDED (pAdapter->EnumOutputs (uiOutput++, &pOutput)))
-    {
-      DXGI_OUTPUT_DESC   out_desc;
-      pOutput->GetDesc (&out_desc);
-
-      if (out_desc.AttachedToDesktop && PtInRect (&out_desc.DesktopCoordinates, point))
-      {
-        pCursorOutput = pOutput;
-        break;
-      }
-
-      pOutput = nullptr;
-    }
-
-    if (pCursorOutput != nullptr)
-      break;
-
-    pAdapter = nullptr;
-  }
-
-  if (! pCursorOutput)
-    return E_UNEXPECTED;
-
-  CComQIPtr <IDXGIOutput5> pOutput5 (pCursorOutput);
+  CComQIPtr <IDXGIOutput5> pOutput5 (pOutput);
   CComQIPtr <IDXGIOutput1> pOutput1; // Always DXGI_FORMAT_B8G8R8A8_UNORM
 
   // Down-level interfaces support duplication, but for HDR we want Output5
@@ -1314,10 +3579,13 @@ SKIV_Image_CaptureDesktop (const POINT point)
   {
     PLOG_VERBOSE << "IDXGIOutput5 is unavailable, falling back to using IDXGIOutput1.";
 
-    pOutput1 = pCursorOutput;
+    pOutput1 = pOutput;
 
     if (! pOutput1)
+    {
+      PLOG_ERROR << "IDXGIOutput1 is not implemented by the current system.";
       return E_NOTIMPL;
+    }
   }
 
   // The ordering goes from the highest prioritized format to the lowest
@@ -1341,10 +3609,8 @@ SKIV_Image_CaptureDesktop (const POINT point)
   static constexpr int num_sdr_formats = 4;
   static constexpr int num_all_formats = 7;
 
-  HMONITOR hMon = MonitorFromPoint (point, MONITOR_DEFAULTTONEAREST);
-
   extern bool SKIF_Util_IsHDRActive (HMONITOR hMonitor);
-  bool bHDR = SKIF_Util_IsHDRActive (hMon);
+  bool bHDR = SKIF_Util_IsHDRActive (out_desc.Monitor);
 
   CComPtr <IDXGIOutputDuplication> pDuplicator;
 
@@ -1356,9 +3622,16 @@ SKIV_Image_CaptureDesktop (const POINT point)
     pOutput1->DuplicateOutput  (pDevice, &pDuplicator.p);
 
   if (! pDuplicator)
+  {
+    PLOG_ERROR << "Unable to acquire an IDXGIOutputDuplication interface.";
     return E_NOTIMPL;
+  }
 
+  DXGI_OUTDUPL_DESC       dup_desc   = { };
   DXGI_OUTDUPL_FRAME_INFO frame_info = { };
+
+  pDuplicator->GetDesc (&dup_desc);
+
   CComPtr <IDXGIResource> pDuplicatedResource;
   DWORD timeout = SKIF_Util_timeGetTime1 ( ) + 5000;
 
@@ -1382,6 +3655,9 @@ SKIV_Image_CaptureDesktop (const POINT point)
                                                          capture_formats, &pDuplicator.p);
       else if (pOutput1)
         pOutput1->DuplicateOutput  (pDevice, &pDuplicator.p);
+
+      if (! pDuplicator)
+        break;
     }
 
     else if (FAILED (hr))
@@ -1401,22 +3677,32 @@ SKIV_Image_CaptureDesktop (const POINT point)
   }
 
   // This means the timeout was reached without a successful capture
-  if (! frame_info.LastPresentTime.QuadPart)
+  if (! frame_info.LastPresentTime.QuadPart || ! pDuplicator)
+  {
+    PLOG_ERROR << "Capture timeout encountered.";
     return E_UNEXPECTED;
+  }
 
   if (! pDuplicatedResource)
+  {
+    PLOG_ERROR << "No resource captured.";
+    pDuplicator->ReleaseFrame ();
     return E_UNEXPECTED;
+  }
 
   CComQIPtr <IDXGISurface>    pSurface       (pDuplicatedResource);
   CComQIPtr <ID3D11Texture2D> pDuplicatedTex (pSurface);
 
   if (! pDuplicatedTex)
-    return E_NOTIMPL;
+  {
+    PLOG_ERROR << "Failed to get a D3D11 texture for the duplicated DXGI surface.";
+    pDuplicator->ReleaseFrame ();
+    return E_NOINTERFACE;
+  }
 
   DXGI_SURFACE_DESC   surfDesc;
   pSurface->GetDesc (&surfDesc);
 
-  CComPtr <ID3D11Texture2D> pStagingTex;
   CComPtr <ID3D11Texture2D> pDesktopImage; // For rendering during snipping
 
   // DXGI_FORMAT_B8G8R8A8_UNORM (Windows 8.1 fallback code)
@@ -1425,8 +3711,9 @@ SKIV_Image_CaptureDesktop (const POINT point)
 
   D3D11_TEXTURE2D_DESC
     texDesc                = { };
-    texDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-    texDesc.Usage          = D3D11_USAGE_STAGING;
+    texDesc.CPUAccessFlags = 0x0;
+    texDesc.Usage          = D3D11_USAGE_DEFAULT;
+    texDesc.BindFlags      = D3D11_BIND_SHADER_RESOURCE;
     texDesc.ArraySize      = 1;
     texDesc.MipLevels      = 1;
     texDesc.SampleDesc     = { .Count = 1, .Quality = 0 };
@@ -1434,18 +3721,9 @@ SKIV_Image_CaptureDesktop (const POINT point)
     texDesc.Width          = surfDesc.Width;
     texDesc.Height         = surfDesc.Height;
 
-  CComPtr <ID3D11DeviceContext>  pDevCtx;
-  pDevice->GetImmediateContext (&pDevCtx);
-
-  if (pDevCtx == nullptr)
-    return E_UNEXPECTED;
-
-  texDesc.CPUAccessFlags = 0x0;
-  texDesc.Usage          = D3D11_USAGE_DEFAULT;
-  texDesc.BindFlags      = D3D11_BIND_SHADER_RESOURCE;
-
   if (FAILED (pDevice->CreateTexture2D (&texDesc, nullptr, &pDesktopImage.p)))
   {
+    PLOG_ERROR << "Failed to create a 2D texture to store a copy of the desktop.";
     pDuplicator->ReleaseFrame ();
     return E_UNEXPECTED;
   }
@@ -1458,292 +3736,1518 @@ SKIV_Image_CaptureDesktop (const POINT point)
     srvDesc.Texture2D.MostDetailedMip = 0;
 
   pDevCtx->CopyResource             (pDesktopImage, pDuplicatedTex);
-  pDevice->CreateShaderResourceView (pDesktopImage, &srvDesc, &SKIV_ClipboardImage._srv);
+  pDevice->CreateShaderResourceView (pDesktopImage, &srvDesc, &desktop._srv);
+
+  desktop._rotation    = dup_desc.Rotation;
+  desktop._desktop_pos =
+    ImVec2 (static_cast <float> (out_desc.DesktopCoordinates.left),
+            static_cast <float> (out_desc.DesktopCoordinates.top));
+  desktop._max_display_nits = out_desc1.MaxLuminance;
+  desktop._sdr_display_nits = SKIF_Util_GetSDRWhiteLevel (out_desc.Monitor);
+
+  PLOG_VERBOSE << "Captured the display at " << out_desc.DesktopCoordinates.left << "," << out_desc.DesktopCoordinates.top
+               << " (" << surfDesc.Width << "x" << surfDesc.Height << ", rotation " << static_cast <int> (dup_desc.Rotation)
+               << "); max display nits: " << desktop._max_display_nits << ", SDR display nits: " << desktop._sdr_display_nits;
 
   pDevCtx->Flush ();
 
   pDuplicator->ReleaseFrame ();
 
-  SKIV_ClipboardImage.process ();
+  if (! desktop.process ())
+  {
+    PLOG_ERROR << "Failed to process desktop image.";
+    return E_FAIL;
+  }
 
   return S_OK;
 }
 
-void
-SKIV_Image_SetClipboard (ImRect capture_area, bool displayCapture)
+HRESULT
+SKIV_Image_CaptureDesktop (DirectX::ScratchImage& image, POINT point, int flags)
 {
-  // Fixes snipping rectangles on non-primary (origin != 0,0) displays
-  auto _AdjustCaptureAreaRelativeToDisplayOrigin = [&](void)
+  SKIV_DesktopImage.clear ();
+  SKIV_DesktopImages.clear ();
+
+  std::ignore = image;
+
+  const bool allDisplays = (flags & SKIV_CaptureDesktop_AllDisplays);
+
+  HRESULT res = E_NOT_VALID_STATE;
+
+  auto pDevice =
+    SKIF_D3D11_GetDevice ();
+
+  if (! pDevice)
   {
-    HMONITOR hMonCaptured =
-      MonitorFromPoint ({ static_cast <long> (capture_area.Min.x),
-                          static_cast <long> (capture_area.Min.y) }, MONITOR_DEFAULTTONEAREST);
+    PLOG_ERROR << "No D3D11 device is available for Desktop Duplication.";
+    return res;
+  }
 
-    MONITORINFO                    minfo = { .cbSize = sizeof (MONITORINFO) };
-    GetMonitorInfo (hMonCaptured, &minfo);
+  CComPtr <ID3D11DeviceContext>  pDevCtx;
+  pDevice->GetImmediateContext (&pDevCtx);
 
-    capture_area.Min.x -= minfo.rcMonitor.left;
-    capture_area.Max.x -= minfo.rcMonitor.left;
-
-    capture_area.Min.y -= minfo.rcMonitor.top;
-    capture_area.Max.y -= minfo.rcMonitor.top;
-  };
-
-  if (displayCapture)
-    _AdjustCaptureAreaRelativeToDisplayOrigin ();
-
-  else if (capture_area.GetArea () == 0)
-    capture_area = ImRect (ImVec2 (0, 0), SKIV_ClipboardImage._resolution);
-
-  const size_t
-    x      = static_cast <size_t> (std::max (0.0f, capture_area.Min.x)),
-    y      = static_cast <size_t> (std::max (0.0f, capture_area.Min.y)),
-    width  = static_cast <size_t> (std::max (0.0f, capture_area.GetWidth  ())),
-    height = static_cast <size_t> (std::max (0.0f, capture_area.GetHeight ()));
-
-  SKIV_ClipboardImage._selection =
-    DirectX::Rect (x,y, width,height);
-
-#ifdef _DEBUG
-  PLOG_VERBOSE << "SKIV_ClipboardImage._selection: \n"
-               << x     << "," << y      << "\n"
-               << width << "x" << height;
-#endif
-
-  // Set up delayed rendering to the clipboard
-  if (OpenClipboard (SKIF_Notify_hWnd))
+  if (pDevCtx == nullptr)
   {
-    if (EmptyClipboard ( ))
+    PLOG_ERROR << "No D3D11 Immediate Device Context.";
+    return E_UNEXPECTED;
+  }
+
+  extern HRESULT SKIF_DXGI_CreateDXGIFactory1 (REFIID riid, void **ppFactory);
+
+  CComPtr <IDXGIFactory> pFactory;
+  SKIF_DXGI_CreateDXGIFactory1 (__uuidof (IDXGIFactory1), (void **)&pFactory.p);
+
+  if (! pFactory)
+  {
+    PLOG_ERROR << "DXGI Factory creation failed.";
+    return E_NOTIMPL;
+  }
+
+  SKIF_Util_UpdateMonitors ();
+
+  // The displays: the one at the point (under the cursor), and the others too if asked for
+  CComPtr <IDXGIAdapter> pAdapter;
+  UINT                   uiAdapter    = 0;
+  bool                   pointCovered = false;
+  HRESULT                pointResult  = E_UNEXPECTED;
+
+  while (SUCCEEDED (pFactory->EnumAdapters (uiAdapter++, &pAdapter.p)))
+  {
+    CComPtr <IDXGIOutput> pOutput;
+    UINT                  uiOutput = 0;
+
+    while (SUCCEEDED (pAdapter->EnumOutputs (uiOutput++, &pOutput.p)))
     {
-      // Clipboard formats that contain the most information should be placed on the clipboard first, followed by less descriptive formats.
-      // A window pasting information from the clipboard typically retrieves a clipboard object in the first format it recognizes.
-      // Because clipboard formats are enumerated in the order they are placed on the clipboard, the first recognized format is also the most descriptive.
-      SetClipboardData (CF_UNICODETEXT, NULL);
-      SetClipboardData (CF_HDROP,       NULL);
-      SetClipboardData (CF_BITMAP,      NULL);
+      DXGI_OUTPUT_DESC   out_desc = { };
+      pOutput->GetDesc (&out_desc);
 
-      PLOG_VERBOSE << "Clipboard formats have been set up for delayed rendering.";
+      const bool atPoint = (PtInRect (&out_desc.DesktopCoordinates, point) != FALSE);
+
+      if (out_desc.AttachedToDesktop && (atPoint || allDisplays))
+      {
+        skiv_image_desktop_s desktop;
+        const HRESULT hr = _SKIV_DuplicateOutput (pDevice, pDevCtx, pOutput, desktop);
+
+        if (atPoint)
+        {
+          pointCovered = true;
+          pointResult  = hr;
+        }
+
+        if (SUCCEEDED (hr))
+        {
+          if (atPoint)
+            SKIV_DesktopImage = desktop;
+
+          SKIV_DesktopImages.push_back (desktop);
+        }
+
+        else
+          PLOG_WARNING << "Could not capture the display at " << out_desc.DesktopCoordinates.left << "," << out_desc.DesktopCoordinates.top;
+      }
+
+      pOutput = nullptr;
     }
 
-    CloseClipboard ( );
+    pAdapter = nullptr;
   }
+
+  if (! pointCovered)
+  {
+    PLOG_ERROR << "Unable to find an attached desktop output under the cursor.";
+    SKIV_DesktopImages.clear ();
+    return E_UNEXPECTED;
+  }
+
+  // The display at the point is needed (window and screen captures, and the snipping toolbar)
+  if (FAILED (pointResult))
+  {
+    SKIV_DesktopImage.clear ();
+    SKIV_DesktopImages.clear ();
+    return pointResult;
+  }
+
+  PLOG_VERBOSE << "Captured " << SKIV_DesktopImages.size ( ) << " display(s)";
+
+
+  return S_OK;
+}
+
+// The size of a captured display on the desktop: its image's, turned by its rotation
+ImVec2
+skiv_image_desktop_s::desktopSize (void) const
+{
+  return (_rotation == DXGI_MODE_ROTATION_ROTATE90 ||
+          _rotation == DXGI_MODE_ROTATION_ROTATE270) ? ImVec2 (_resolution.y, _resolution.x)
+                                                     : _resolution;
 }
 
 void
-SKIV_Image_RenderToClipboard (UINT clipboard_format)
+SKIV_Image_CaptureRegion (SKIV_CaptureData capture_data)
 {
-  PLOG_VERBOSE << ((clipboard_format == CF_BITMAP)      ? "CF_BITMAP"      :
-                   (clipboard_format == CF_HDROP)       ? "CF_HDROP"       :
-                   (clipboard_format == CF_UNICODETEXT) ? "CF_UNICODETEXT" :
-                                                          "Unknown clipboard format");
+  // The region, in whole pixels of the desktop
+  const ImRect region (ImFloor (capture_data._rect.Min), ImFloor (capture_data._rect.Max + ImVec2 (0.5f, 0.5f)));
+
+  if (region.GetWidth ( ) < 1.0f || region.GetHeight ( ) < 1.0f)
+    return;
 
   extern CComPtr <ID3D11Device>
     SKIF_D3D11_GetDevice (bool bWait);
 
   auto pDevice = SKIF_D3D11_GetDevice (false);
 
-  if (! pDevice)
+  if (pDevice == nullptr)
     return;
 
   CComPtr <ID3D11DeviceContext>  pDevCtx;
   pDevice->GetImmediateContext (&pDevCtx.p);
 
-  if (!SKIV_ClipboardImage._res)
+  // Its parts on each display captured: cropped out of that display's image (which is as the display has it, before its
+  //   rotation: the part of it there is turned to the desktop's orientation)
+  struct piece_s {
+    DirectX::ScratchImage       image;
+    ImRect                      rect;    // On the desktop
+    const skiv_image_desktop_s* display;
+  };
+
+  std::vector <piece_s> pieces;
+
+  for (const auto& display : SKIV_DesktopImages)
   {
-    PLOG_VERBOSE << "SKIV_ClipboardImage._res is nullptr ?";
-  }
+    if (display._res == nullptr)
+      continue;
 
-  DirectX::ScratchImage captured_img;
-  // Fails when capturing in HDR mode, changing to SDR mode, and then pasting into Paint
-  HRESULT hr = DirectX::CaptureTexture (pDevice, pDevCtx, SKIV_ClipboardImage._res, captured_img);
-  if (FAILED (hr))
-  {
-    PLOG_WARNING.printf ("Unexpected failure: %ws (HRESULT=%x)", _com_error(hr).ErrorMessage(), hr);
-    return;
-  }
+    const ImVec2 size    = display.desktopSize ( );
+    const ImRect on_desk (display._desktop_pos, display._desktop_pos + size);
 
-  DirectX::ScratchImage subrect;
-  if (FAILED (subrect.Initialize2D (captured_img.GetMetadata ().format, SKIV_ClipboardImage._selection.w, SKIV_ClipboardImage._selection.h, 1, 1)))
-  {
-    PLOG_VERBOSE << "subrect.Initialize2D       ( ): FAILED";
-    return;
-  }
+    ImRect part = region;
+    part.ClipWithFull (on_desk);
 
-  if (FAILED (DirectX::CopyRectangle (*captured_img.GetImages (), SKIV_ClipboardImage._selection,
-                                              *subrect.GetImages (), DirectX::TEX_FILTER_DEFAULT, 0, 0)))
-  {
-    PLOG_VERBOSE << "DirectX::CopyRectangle     ( ): FAILED";
-    return;
-  }
+    if (part.GetWidth ( ) < 1.0f || part.GetHeight ( ) < 1.0f)
+      continue;
 
-  static SKIF_CommonPathsCache& _path_cache = SKIF_CommonPathsCache::GetInstance ( );
-  static SKIF_RegistrySettings& _registry   = SKIF_RegistrySettings::GetInstance ( );
+    // The part relative to the display, and where it is in its image
+    const ImVec2 r0 = part.Min - display._desktop_pos,
+                 r1 = part.Max - display._desktop_pos;
 
-  const DirectX::Image* pImage =
-    subrect.GetImages ();
+    ImVec2 t0, t1;
 
-  static const std::wstring wsPNGPath =
-    std::wstring (_path_cache.skiv_temp)
-                + L"SKIV_Clipboard"
-                + ((SKIV_ClipboardImage._hdr_image) ? L"_HDR10" : L"")
-                + L".png";
-
-  bool success = false;
-
-  if ((clipboard_format == CF_UNICODETEXT || clipboard_format == CF_HDROP)
-       && ! SKIV_ClipboardImage._exported)
-  {
-    SKIV_ClipboardImage._exported = true;
-    if (SKIV_ClipboardImage._hdr_image && (! _registry._SnippingTonemapsHDR))
-      SKIV_Image_SaveToDisk_HDR (*pImage, wsPNGPath.c_str());
-    else
-      SKIV_Image_SaveToDisk_SDR (*pImage, wsPNGPath.c_str(), false);
-  }
-
-  if (clipboard_format == CF_UNICODETEXT)
-  {
-    HGLOBAL hGlobal = GlobalAlloc (GMEM_MOVEABLE, (wsPNGPath.size() + 1)  * sizeof (wchar_t));
-
-    if (hGlobal)
+    switch (display._rotation)
     {
-      wchar_t* pszDestination = static_cast<wchar_t*> (GlobalLock (hGlobal));
+      case DXGI_MODE_ROTATION_ROTATE90:  // Its image is turned 90 degrees clockwise onto the desktop
+        t0 = ImVec2 (r0.y,          size.x - r1.x);
+        t1 = ImVec2 (r1.y,          size.x - r0.x);
+        break;
+      case DXGI_MODE_ROTATION_ROTATE180:
+        t0 = ImVec2 (size.x - r1.x, size.y - r1.y);
+        t1 = ImVec2 (size.x - r0.x, size.y - r0.y);
+        break;
+      case DXGI_MODE_ROTATION_ROTATE270: // ... 90 degrees counter-clockwise
+        t0 = ImVec2 (size.y - r1.y, r0.x);
+        t1 = ImVec2 (size.y - r0.y, r1.x);
+        break;
+      default:
+        t0 = r0;
+        t1 = r1;
+        break;
+    }
 
-      if (pszDestination != nullptr)
+    DirectX::ScratchImage whole;
+
+    if (FAILED (DirectX::CaptureTexture (pDevice, pDevCtx, display._res, whole)))
+    {
+      PLOG_WARNING << "DirectX::CaptureTexture    ( ): FAILED";
+      continue;
+    }
+
+    const size_t tx = static_cast <size_t> (t0.x),             ty = static_cast <size_t> (t0.y),
+                 tw = static_cast <size_t> (t1.x - t0.x),      th = static_cast <size_t> (t1.y - t0.y);
+
+    piece_s piece;
+    piece.rect    = part;
+    piece.display = &display;
+
+    DirectX::ScratchImage cropped;
+
+    if (FAILED (cropped.Initialize2D (whole.GetMetadata ( ).format, tw, th, 1, 1)) ||
+        FAILED (DirectX::CopyRectangle (*whole.GetImages ( ), DirectX::Rect (tx, ty, tw, th), *cropped.GetImages ( ), DirectX::TEX_FILTER_DEFAULT, 0, 0)))
+    {
+      PLOG_WARNING << "DirectX::CopyRectangle     ( ): FAILED";
+      continue;
+    }
+
+    const DirectX::TEX_FR_FLAGS rotate =
+      (display._rotation == DXGI_MODE_ROTATION_ROTATE90)  ? DirectX::TEX_FR_ROTATE90  :
+      (display._rotation == DXGI_MODE_ROTATION_ROTATE180) ? DirectX::TEX_FR_ROTATE180 :
+      (display._rotation == DXGI_MODE_ROTATION_ROTATE270) ? DirectX::TEX_FR_ROTATE270 : DirectX::TEX_FR_ROTATE0;
+
+    if (rotate != DirectX::TEX_FR_ROTATE0)
+    {
+      if (FAILED (DirectX::FlipRotate (*cropped.GetImages ( ), rotate, piece.image)))
       {
-        memcpy (pszDestination, wsPNGPath.data(), (wsPNGPath.length() + 1) * sizeof (wchar_t));
-        GlobalUnlock (hGlobal);
-
-        success = SetClipboardData (CF_UNICODETEXT, hGlobal);
+        PLOG_WARNING << "DirectX::FlipRotate        ( ): FAILED";
+        continue;
       }
+    }
 
-      if (! success)
-        GlobalFree (hGlobal);
+    else
+      piece.image = std::move (cropped);
+
+    pieces.push_back (std::move (piece));
+  }
+
+  if (pieces.empty ( ))
+  {
+    PLOG_WARNING << "The region is on none of the displays captured";
+    return;
+  }
+
+  // One display (or several of the same format): as they are. Displays of different formats (HDR and SDR): made scRGB,
+  //   SDR ones at the HDR ones' SDR white level (as an HDR display shows SDR content). HDR10 (PQ) captures do not mix:
+  //     only the largest part is kept then.
+  bool  hdr     = false,
+        same    = true;
+  float sdrNits = 80.0f, maxNits = 0.0f;
+  const piece_s* largest = &pieces.front ( );
+
+  for (const auto& piece : pieces)
+  {
+    same &= (piece.image.GetMetadata ( ).format == pieces.front ( ).image.GetMetadata ( ).format);
+
+    if (piece.display->_hdr_image)
+    {
+      hdr     = true;
+      sdrNits = std::max (sdrNits, piece.display->_sdr_display_nits);
+      maxNits = std::max (maxNits, piece.display->_max_display_nits);
+    }
+
+    if (piece.rect.GetArea ( ) > largest->rect.GetArea ( ))
+      largest = &piece;
+  }
+
+  if (! same)
+  {
+    for (const auto& piece : pieces)
+    {
+      if (piece.image.GetMetadata ( ).format == DXGI_FORMAT_R10G10B10A2_UNORM)
+      {
+        PLOG_WARNING << "The region spans displays of different formats, one of them HDR10: only its largest part is captured";
+
+        piece_s kept;
+        kept.rect    = largest->rect;
+        kept.display = largest->display;
+
+        if (FAILED (kept.image.InitializeFromImage (*largest->image.GetImages ( ))))
+          return;
+
+        pieces.clear ( );
+        pieces.push_back (std::move (kept));
+        same = true;
+        hdr  = pieces.front ( ).display->_hdr_image;
+        break;
+      }
     }
   }
 
-  // This is immediately triggered by File Explorer in Windows 11 after a capture
-  else if (clipboard_format == CF_HDROP)
+  const ImRect  bounds = (pieces.size ( ) == 1) ? pieces.front ( ).rect : region;
+  DXGI_FORMAT   format = pieces.front ( ).image.GetMetadata ( ).format;
+
+  if (! same)
   {
-    int clpSize = sizeof (DROPFILES);
+    format = DXGI_FORMAT_R16G16B16A16_FLOAT;
 
-    clpSize += sizeof (wchar_t) * static_cast <int> (wcslen ((const wchar_t *)wsPNGPath.c_str()) + 1);
-    clpSize += sizeof (wchar_t);
+    for (auto& piece : pieces)
+    {
+      const DXGI_FORMAT from = piece.image.GetMetadata ( ).format;
 
-    HGLOBAL hGlobal =
-      (HDROP)GlobalAlloc (GHND, clpSize);
+      if (from == format)
+        continue;
 
-    DROPFILES* df =
-      (DROPFILES *)GlobalLock (hGlobal);
+      // SDR: its values are sRGB encoded (whether its format says so or not): made linear, at the SDR white level
+      const bool sdr = (DirectX::BitsPerColor (from) <= 8);
 
-    df->pFiles = sizeof (DROPFILES);
-    df->fWide  = TRUE;
+      if (sdr && DirectX::MakeSRGB (from) != from)
+        piece.image.OverrideFormat (DirectX::MakeSRGB (from));
 
-    wcscpy ((wchar_t*)&df [1], (const wchar_t *)wsPNGPath.c_str());
-    GlobalUnlock (hGlobal);
+      DirectX::ScratchImage converted;
 
-    success = SetClipboardData (CF_HDROP, hGlobal);
+      if (FAILED (DirectX::Convert (*piece.image.GetImages ( ), format, DirectX::TEX_FILTER_DEFAULT, 0.0f, converted)))
+      {
+        PLOG_WARNING << "DirectX::Convert           ( ): FAILED";
+        return;
+      }
 
-    if (! success)
-      GlobalFree (hGlobal);
+      if (sdr)
+      {
+        const float scale = sdrNits / 80.0f;
+
+        DirectX::ScratchImage scaled;
+
+        if (SUCCEEDED (DirectX::TransformImage (*converted.GetImages ( ),
+              [&](DirectX::XMVECTOR* out, const DirectX::XMVECTOR* in, size_t width, size_t)
+              {
+                for (size_t i = 0; i < width; i++)
+                  out [i] = DirectX::XMVectorSelect (in [i], DirectX::XMVectorScale (in [i], scale), DirectX::g_XMSelect1110);
+              }, scaled)))
+          converted = std::move (scaled);
+      }
+
+      piece.image = std::move (converted);
+    }
   }
 
-  else if (clipboard_format == CF_BITMAP)
-  {
-    // If this is a HDR image, we need to tonemap it to SDR first
-    DirectX::ScratchImage tonemapped_sdr;
-    if (SUCCEEDED (SKIV_Image_TonemapToSDR (*pImage, tonemapped_sdr)))
-      pImage = tonemapped_sdr.GetImage (0,0,0);
+  // The image of the region: its parts where they are in it (opaque black where it is on no display: between displays
+  //   of different sizes)
+  DirectX::ScratchImage composed;
+  const DirectX::Image* final = nullptr;
 
-    else if (SKIV_ClipboardImage._hdr_image)
+  if (pieces.size ( ) == 1)
+    final = pieces.front ( ).image.GetImages ( );
+
+  else
+  {
+    const size_t width  = static_cast <size_t> (bounds.GetWidth  ( )),
+                 height = static_cast <size_t> (bounds.GetHeight ( ));
+
+    if (FAILED (composed.Initialize2D (format, width, height, 1, 1)))
     {
-      PLOG_ERROR << "Failed to convert HDR to SDR image!";
+      PLOG_WARNING << "composed.Initialize2D      ( ): FAILED";
       return;
     }
 
-    const int
-        _bpc    =
-      (int)(DirectX::BitsPerPixel (pImage->format)),
-        _width  =
-      (int)(                       pImage->width),
-        _height =
-      (int)(                       pImage->height);
+    DirectX::ScratchImage black;
 
-    DirectX::ScratchImage swizzled_sdr;
-
-    // Swizzle the image and handle gamma if necessary
-    if (pImage->format != DXGI_FORMAT_B8G8R8X8_UNORM_SRGB)
+    if (SUCCEEDED (black.Initialize2D (DXGI_FORMAT_R32G32B32A32_FLOAT, width, height, 1, 1)))
     {
-      if (SUCCEEDED (DirectX::Convert (*pImage, DXGI_FORMAT_B8G8R8X8_UNORM_SRGB, DirectX::TEX_FILTER_DEFAULT, 0.0f, swizzled_sdr)))
-        pImage = swizzled_sdr.GetImage (0,0,0);
-    }
-    ////SK_ReleaseAssert (pImage->format == DXGI_FORMAT_B8G8R8X8_UNORM ||
-    ////                  pImage->format == DXGI_FORMAT_B8G8R8A8_UNORM ||
-    ////                  pImage->format == DXGI_FORMAT_B8G8R8X8_UNORM_SRGB);
+      float* px = reinterpret_cast <float*> (black.GetPixels ( ));
 
-    HBITMAP hBitmapCopy =
-        CreateBitmap (
-          _width, _height, 1,
-            _bpc, pImage->pixels
-        );
+      for (size_t i = 0; i < width * height; i++)
+      {
+        px [i * 4 + 0] = px [i * 4 + 1] = px [i * 4 + 2] = 0.0f;
+        px [i * 4 + 3] = 1.0f;
+      }
 
-    BITMAPINFOHEADER
-      bmh                 = { };
-      bmh.biSize          = sizeof (BITMAPINFOHEADER);
-      bmh.biWidth         =   _width;
-      bmh.biHeight        =  -_height;
-      bmh.biPlanes        =  1;
-      bmh.biBitCount      = (WORD)_bpc;
-      bmh.biCompression   = BI_RGB;
-      bmh.biXPelsPerMeter = 10;
-      bmh.biYPelsPerMeter = 10;
+      DirectX::ScratchImage converted;
 
-    BITMAPINFO
-      bmi                 = { };
-      bmi.bmiHeader       = bmh;
-
-    HDC hdcDIB =
-      CreateCompatibleDC (GetDC (nullptr));
-
-    void* bitplane = nullptr;
-
-    HBITMAP
-      hBitmap =
-        CreateDIBSection ( hdcDIB, &bmi, DIB_RGB_COLORS,
-            &bitplane, nullptr, 0 );
-    memcpy ( bitplane,
-                pImage->pixels,
-        static_cast <size_t> (_bpc / 8) *
-        static_cast <size_t> (_width  ) *
-        static_cast <size_t> (_height )
-            );
-
-    HDC hdcSrc = CreateCompatibleDC (GetDC (nullptr));
-    HDC hdcDst = CreateCompatibleDC (GetDC (nullptr));
-
-    if ( hBitmap     != nullptr &&
-         hBitmapCopy != nullptr )
-    {
-      auto hbmpSrc = (HBITMAP)SelectObject (hdcSrc, hBitmap);
-      auto hbmpDst = (HBITMAP)SelectObject (hdcDst, hBitmapCopy);
-
-      BitBlt (hdcDst, 0, 0, _width,
-                            _height, hdcSrc, 0, 0, SRCCOPY);
-
-      SelectObject     (hdcSrc, hbmpSrc);
-      SelectObject     (hdcDst, hbmpDst);
-      if (SetClipboardData (CF_BITMAP, hBitmapCopy))
-        hBitmapCopy = nullptr;
+      if (SUCCEEDED (DirectX::Convert (*black.GetImages ( ), format, DirectX::TEX_FILTER_DEFAULT, 0.0f, converted)))
+        memcpy (composed.GetPixels ( ), converted.GetPixels ( ), std::min (composed.GetPixelsSize ( ), converted.GetPixelsSize ( )));
     }
 
-    DeleteDC         (hdcSrc);
-    DeleteDC         (hdcDst);
-    DeleteDC         (hdcDIB);
-
-    if ( hBitmap     != nullptr &&
-         hBitmapCopy != nullptr )
+    for (const auto& piece : pieces)
     {
-      DeleteBitmap   (hBitmap);
-      DeleteBitmap   (hBitmapCopy);
+      const DirectX::Image* src = piece.image.GetImages ( );
+
+      if (FAILED (DirectX::CopyRectangle (*src, DirectX::Rect (0, 0, src->width, src->height), *composed.GetImages ( ),
+                                          DirectX::TEX_FILTER_DEFAULT, static_cast <size_t> (piece.rect.Min.x - bounds.Min.x),
+                                                                       static_cast <size_t> (piece.rect.Min.y - bounds.Min.y))))
+      {
+        PLOG_WARNING << "DirectX::CopyRectangle     ( ): FAILED";
+        return;
+      }
+    }
+
+    final = composed.GetImages ( );
+  }
+
+  PLOG_VERBOSE << "Captured a region of " << static_cast <int> (bounds.GetWidth ( )) << "x" << static_cast <int> (bounds.GetHeight ( ))
+               << " from " << pieces.size ( ) << " display(s)" << ((hdr) ? " (HDR)" : "");
+
+  // The light levels it is tone mapped by (to SDR, if asked to be): the HDR displays'
+  if (hdr && maxNits > 0.0f)
+  {
+    SKIV_DesktopImage._max_display_nits = maxNits;
+    SKIV_DesktopImage._sdr_display_nits = sdrNits;
+  }
+
+  if (SKIV_Image_CopyToClipboard (final, hdr, capture_data))
+  {
+    PLOG_VERBOSE << "SKIV_Image_CopyToClipboard ( ): SUCCEEDED";
+
+    ImGui::InsertNotification (
+      {
+        ImGuiToastType::Success,
+        3000,
+        "Copied image to clipboard", ""
+      }
+    );
+  }
+
+  else {
+    ImGui::InsertNotification (
+      {
+        ImGuiToastType::Error,
+        3000,
+        "Failed to copy image to clipboard", ""
+      }
+    );
+    PLOG_WARNING << "SKIV_Image_CopyToClipboard ( ): FAILED";
+  }
+}
+
+
+avifImageCreate_pfn            SK_avifImageCreate            = nullptr;
+avifRGBImageSetDefaults_pfn    SK_avifRGBImageSetDefaults    = nullptr;
+avifRGBImageAllocatePixels_pfn SK_avifRGBImageAllocatePixels = nullptr;
+avifImageRGBToYUV_pfn          SK_avifImageRGBToYUV          = nullptr;
+avifImageYUVToRGB_pfn          SK_avifImageYUVToRGB          = nullptr;
+avifImageSetProfileICC_pfn     SK_avifImageSetProfileICC     = nullptr;
+avifEncoderCreate_pfn          SK_avifEncoderCreate          = nullptr;
+avifEncoderAddImage_pfn        SK_avifEncoderAddImage        = nullptr;
+avifEncoderFinish_pfn          SK_avifEncoderFinish          = nullptr;
+avifImageDestroy_pfn           SK_avifImageDestroy           = nullptr;
+avifEncoderDestroy_pfn         SK_avifEncoderDestroy         = nullptr;
+avifRGBImageFreePixels_pfn     SK_avifRGBImageFreePixels     = nullptr;
+
+avifDecoderCreate_pfn          SK_avifDecoderCreate          = nullptr;
+avifDecoderDestroy_pfn         SK_avifDecoderDestroy         = nullptr;
+
+avifDecoderRead_pfn            SK_avifDecoderRead            = nullptr;
+avifDecoderReadMemory_pfn      SK_avifDecoderReadMemory      = nullptr;
+avifDecoderSetIOMemory_pfn     SK_avifDecoderSetIOMemory     = nullptr;
+avifDecoderParse_pfn           SK_avifDecoderParse           = nullptr;
+avifDecoderNextImage_pfn       SK_avifDecoderNextImage       = nullptr;
+
+bool
+isAVIFEncoderAvailable (void)
+{
+  static bool init = false;
+
+  SK_RunOnce (
+  {
+    static const wchar_t* wszPluginArch =
+      SK_RunLHIfBitness ( 64, LR"(x64\)",
+                              LR"(x86\)" );
+
+    static const wchar_t* wszDownloadURL =
+      SK_RunLHIfBitness ( 64, LR"(https://sk-data.special-k.info/addon/ImageCodecs/libavif/libavif_x64.dll)",
+                              LR"(https://sk-data.special-k.info/addon/ImageCodecs/libavif/libavif_x86.dll)" );
+
+    SKIF_RegistrySettings& _registry =
+      SKIF_RegistrySettings::GetInstance ();
+
+    std::filesystem::path avif_dll =
+      _registry.regKVPathSpecialK.getData ();
+
+    std::error_code                          ec;
+    if (! std::filesystem::exists (avif_dll, ec))
+    {
+      avif_dll =
+        SKIF_CommonPathsCache::GetInstance ().my_documents.path;
+
+      avif_dll /= LR"(My Mods\SpecialK\)";
+    }
+
+    avif_dll /=
+     LR"(PlugIns\ThirdParty\Image Codecs\libavif\)";
+
+    std::filesystem::create_directories (avif_dll, ec);
+
+    avif_dll /= SK_RunLHIfBitness (64, LR"(libavif_x64.dll)",
+                                       LR"(libavif_x86.dll)");
+
+    if (! std::filesystem::exists (avif_dll, ec))
+    {
+      SKIF_Util_GetWebResource (wszDownloadURL, avif_dll.wstring ());
+    }
+
+    HMODULE hModAVIF =
+      LoadLibraryW (avif_dll.c_str ());
+
+    if (hModAVIF != 0)
+    {
+      SK_avifImageCreate            = (avifImageCreate_pfn)           GetProcAddress (hModAVIF, "avifImageCreate");
+      SK_avifRGBImageSetDefaults    = (avifRGBImageSetDefaults_pfn)   GetProcAddress (hModAVIF, "avifRGBImageSetDefaults");
+      SK_avifRGBImageAllocatePixels = (avifRGBImageAllocatePixels_pfn)GetProcAddress (hModAVIF, "avifRGBImageAllocatePixels");
+      SK_avifImageRGBToYUV          = (avifImageRGBToYUV_pfn)         GetProcAddress (hModAVIF, "avifImageRGBToYUV");
+      SK_avifImageYUVToRGB          = (avifImageYUVToRGB_pfn)         GetProcAddress (hModAVIF, "avifImageYUVToRGB");
+      SK_avifImageSetProfileICC     = (avifImageSetProfileICC_pfn)    GetProcAddress (hModAVIF, "avifImageSetProfileICC");
+      SK_avifEncoderCreate          = (avifEncoderCreate_pfn)         GetProcAddress (hModAVIF, "avifEncoderCreate");
+      SK_avifEncoderAddImage        = (avifEncoderAddImage_pfn)       GetProcAddress (hModAVIF, "avifEncoderAddImage");
+      SK_avifEncoderFinish          = (avifEncoderFinish_pfn)         GetProcAddress (hModAVIF, "avifEncoderFinish");
+      SK_avifImageDestroy           = (avifImageDestroy_pfn)          GetProcAddress (hModAVIF, "avifImageDestroy");
+      SK_avifEncoderDestroy         = (avifEncoderDestroy_pfn)        GetProcAddress (hModAVIF, "avifEncoderDestroy");
+      SK_avifRGBImageFreePixels     = (avifRGBImageFreePixels_pfn)    GetProcAddress (hModAVIF, "avifRGBImageFreePixels");
+
+      SK_avifDecoderCreate          = (avifDecoderCreate_pfn)         GetProcAddress (hModAVIF, "avifDecoderCreate");
+      SK_avifDecoderDestroy         = (avifDecoderDestroy_pfn)        GetProcAddress (hModAVIF, "avifDecoderDestroy");
+
+      SK_avifDecoderRead            = (avifDecoderRead_pfn)           GetProcAddress (hModAVIF, "avifDecoderRead");
+      SK_avifDecoderReadMemory      = (avifDecoderReadMemory_pfn)     GetProcAddress (hModAVIF, "avifDecoderReadMemory");
+      SK_avifDecoderSetIOMemory     = (avifDecoderSetIOMemory_pfn)    GetProcAddress (hModAVIF, "avifDecoderSetIOMemory");
+      SK_avifDecoderParse           = (avifDecoderParse_pfn)          GetProcAddress (hModAVIF, "avifDecoderParse");
+      SK_avifDecoderNextImage       = (avifDecoderNextImage_pfn)      GetProcAddress (hModAVIF, "avifDecoderNextImage");
+
+      init =
+        ( SK_avifImageCreate            != nullptr &&
+          SK_avifRGBImageSetDefaults    != nullptr &&
+          SK_avifRGBImageAllocatePixels != nullptr &&
+          SK_avifImageRGBToYUV          != nullptr &&
+          SK_avifImageSetProfileICC     != nullptr &&
+          SK_avifEncoderCreate          != nullptr &&
+          SK_avifEncoderAddImage        != nullptr &&
+          SK_avifEncoderFinish          != nullptr &&
+          SK_avifImageDestroy           != nullptr &&
+          SK_avifEncoderDestroy         != nullptr &&
+          SK_avifRGBImageFreePixels     != nullptr &&
+          SK_avifDecoderCreate          != nullptr &&
+          SK_avifDecoderDestroy         != nullptr &&
+          SK_avifDecoderRead            != nullptr &&
+          SK_avifDecoderReadMemory      != nullptr &&
+          SK_avifImageYUVToRGB          != nullptr &&
+          SK_avifDecoderSetIOMemory     != nullptr &&
+          SK_avifDecoderParse           != nullptr &&
+          SK_avifDecoderNextImage       != nullptr );
+
+      // The AVIF DLL is out-of-date, delete it and attempt to reacquire.
+      if (! init)
+      {
+        FreeLibrary (hModAVIF);
+        DeleteFileW (avif_dll.c_str ());
+      }
+    }
+  });
+
+  return init;
+}
+
+void sk_avif_add_icc_to_image (avifImage* img)
+{
+  if (! SK_avifImageSetProfileICC)
+    return;
+
+  // Array size is 4344
+  static const uint8_t RGB_D65_202_Rel_PeQ []  = {
+    0x00, 0x00, 0x10, 0xf8, 0x6a, 0x78, 0x6c, 0x20, 0x04, 0x40, 0x00, 0x00, 0x6d, 0x6e, 0x74, 0x72,
+    0x52, 0x47, 0x42, 0x20, 0x4c, 0x61, 0x62, 0x20, 0x07, 0xe3, 0x00, 0x0c, 0x00, 0x01, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x61, 0x63, 0x73, 0x70, 0x41, 0x50, 0x50, 0x4c, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0xf6, 0xd6, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0xd3, 0x2d,
+    0x6a, 0x78, 0x6c, 0x20, 0x1d, 0x75, 0x49, 0x8e, 0x1a, 0xf4, 0xbb, 0x57, 0x36, 0x0b, 0x8a, 0xef,
+    0x18, 0x30, 0x2c, 0x83, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x0a, 0x64, 0x65, 0x73, 0x63, 0x00, 0x00, 0x00, 0xfc, 0x00, 0x00, 0x00, 0x44,
+    0x63, 0x70, 0x72, 0x74, 0x00, 0x00, 0x01, 0x40, 0x00, 0x00, 0x00, 0x24, 0x77, 0x74, 0x70, 0x74,
+    0x00, 0x00, 0x01, 0x64, 0x00, 0x00, 0x00, 0x14, 0x63, 0x68, 0x61, 0x64, 0x00, 0x00, 0x01, 0x78,
+    0x00, 0x00, 0x00, 0x2c, 0x63, 0x69, 0x63, 0x70, 0x00, 0x00, 0x01, 0xa4, 0x00, 0x00, 0x00, 0x0c,
+    0x72, 0x58, 0x59, 0x5a, 0x00, 0x00, 0x01, 0xb0, 0x00, 0x00, 0x00, 0x14, 0x67, 0x58, 0x59, 0x5a,
+    0x00, 0x00, 0x01, 0xc4, 0x00, 0x00, 0x00, 0x14, 0x62, 0x58, 0x59, 0x5a, 0x00, 0x00, 0x01, 0xd8,
+    0x00, 0x00, 0x00, 0x14, 0x41, 0x32, 0x42, 0x30, 0x00, 0x00, 0x01, 0xec, 0x00, 0x00, 0x0e, 0xbc,
+    0x42, 0x32, 0x41, 0x30, 0x00, 0x00, 0x10, 0xa8, 0x00, 0x00, 0x00, 0x50, 0x6d, 0x6c, 0x75, 0x63,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x0c, 0x65, 0x6e, 0x55, 0x53,
+    0x00, 0x00, 0x00, 0x26, 0x00, 0x00, 0x00, 0x1c, 0x00, 0x52, 0x00, 0x47, 0x00, 0x42, 0x00, 0x5f,
+    0x00, 0x44, 0x00, 0x36, 0x00, 0x35, 0x00, 0x5f, 0x00, 0x32, 0x00, 0x30, 0x00, 0x32, 0x00, 0x5f,
+    0x00, 0x52, 0x00, 0x65, 0x00, 0x6c, 0x00, 0x5f, 0x00, 0x50, 0x00, 0x65, 0x00, 0x51, 0x00, 0x00,
+    0x6d, 0x6c, 0x75, 0x63, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x0c,
+    0x65, 0x6e, 0x55, 0x53, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x1c, 0x00, 0x43, 0x00, 0x43,
+    0x00, 0x30, 0x00, 0x00, 0x58, 0x59, 0x5a, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf6, 0xd6,
+    0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0xd3, 0x2d, 0x73, 0x66, 0x33, 0x32, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x01, 0x0c, 0x40, 0x00, 0x00, 0x05, 0xdd, 0xff, 0xff, 0xf3, 0x2a, 0x00, 0x00, 0x07, 0x92,
+    0x00, 0x00, 0xfd, 0x90, 0xff, 0xff, 0xfb, 0xa3, 0xff, 0xff, 0xfd, 0xa3, 0x00, 0x00, 0x03, 0xdb,
+    0x00, 0x00, 0xc0, 0x81, 0x63, 0x69, 0x63, 0x70, 0x00, 0x00, 0x00, 0x00, 0x09, 0x10, 0x00, 0x01,
+    0x58, 0x59, 0x5a, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xac, 0x68, 0x00, 0x00, 0x47, 0x6f,
+    0xff, 0xff, 0xff, 0x82, 0x58, 0x59, 0x5a, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2a, 0x69,
+    0x00, 0x00, 0xac, 0xe3, 0x00, 0x00, 0x07, 0xad, 0x58, 0x59, 0x5a, 0x20, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x20, 0x07, 0x00, 0x00, 0x0b, 0xae, 0x00, 0x00, 0xcc, 0x13, 0x6d, 0x66, 0x74, 0x31,
+    0x00, 0x00, 0x00, 0x00, 0x03, 0x03, 0x09, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03,
+    0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13,
+    0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20, 0x21, 0x22, 0x23,
+    0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f, 0x30, 0x31, 0x32, 0x33,
+    0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f, 0x40, 0x41, 0x42, 0x43,
+    0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f, 0x50, 0x51, 0x52, 0x53,
+    0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5a, 0x5b, 0x5c, 0x5d, 0x5e, 0x5f, 0x60, 0x61, 0x62, 0x63,
+    0x64, 0x65, 0x66, 0x67, 0x68, 0x69, 0x6a, 0x6b, 0x6c, 0x6d, 0x6e, 0x6f, 0x70, 0x71, 0x72, 0x73,
+    0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7a, 0x7b, 0x7c, 0x7d, 0x7e, 0x7f, 0x80, 0x81, 0x82, 0x83,
+    0x84, 0x85, 0x86, 0x87, 0x88, 0x89, 0x8a, 0x8b, 0x8c, 0x8d, 0x8e, 0x8f, 0x90, 0x91, 0x92, 0x93,
+    0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9a, 0x9b, 0x9c, 0x9d, 0x9e, 0x9f, 0xa0, 0xa1, 0xa2, 0xa3,
+    0xa4, 0xa5, 0xa6, 0xa7, 0xa8, 0xa9, 0xaa, 0xab, 0xac, 0xad, 0xae, 0xaf, 0xb0, 0xb1, 0xb2, 0xb3,
+    0xb4, 0xb5, 0xb6, 0xb7, 0xb8, 0xb9, 0xba, 0xbb, 0xbc, 0xbd, 0xbe, 0xbf, 0xc0, 0xc1, 0xc2, 0xc3,
+    0xc4, 0xc5, 0xc6, 0xc7, 0xc8, 0xc9, 0xca, 0xcb, 0xcc, 0xcd, 0xce, 0xcf, 0xd0, 0xd1, 0xd2, 0xd3,
+    0xd4, 0xd5, 0xd6, 0xd7, 0xd8, 0xd9, 0xda, 0xdb, 0xdc, 0xdd, 0xde, 0xdf, 0xe0, 0xe1, 0xe2, 0xe3,
+    0xe4, 0xe5, 0xe6, 0xe7, 0xe8, 0xe9, 0xea, 0xeb, 0xec, 0xed, 0xee, 0xef, 0xf0, 0xf1, 0xf2, 0xf3,
+    0xf4, 0xf5, 0xf6, 0xf7, 0xf8, 0xf9, 0xfa, 0xfb, 0xfc, 0xfd, 0xfe, 0xff, 0x00, 0x01, 0x02, 0x03,
+    0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13,
+    0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20, 0x21, 0x22, 0x23,
+    0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f, 0x30, 0x31, 0x32, 0x33,
+    0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f, 0x40, 0x41, 0x42, 0x43,
+    0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f, 0x50, 0x51, 0x52, 0x53,
+    0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5a, 0x5b, 0x5c, 0x5d, 0x5e, 0x5f, 0x60, 0x61, 0x62, 0x63,
+    0x64, 0x65, 0x66, 0x67, 0x68, 0x69, 0x6a, 0x6b, 0x6c, 0x6d, 0x6e, 0x6f, 0x70, 0x71, 0x72, 0x73,
+    0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7a, 0x7b, 0x7c, 0x7d, 0x7e, 0x7f, 0x80, 0x81, 0x82, 0x83,
+    0x84, 0x85, 0x86, 0x87, 0x88, 0x89, 0x8a, 0x8b, 0x8c, 0x8d, 0x8e, 0x8f, 0x90, 0x91, 0x92, 0x93,
+    0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9a, 0x9b, 0x9c, 0x9d, 0x9e, 0x9f, 0xa0, 0xa1, 0xa2, 0xa3,
+    0xa4, 0xa5, 0xa6, 0xa7, 0xa8, 0xa9, 0xaa, 0xab, 0xac, 0xad, 0xae, 0xaf, 0xb0, 0xb1, 0xb2, 0xb3,
+    0xb4, 0xb5, 0xb6, 0xb7, 0xb8, 0xb9, 0xba, 0xbb, 0xbc, 0xbd, 0xbe, 0xbf, 0xc0, 0xc1, 0xc2, 0xc3,
+    0xc4, 0xc5, 0xc6, 0xc7, 0xc8, 0xc9, 0xca, 0xcb, 0xcc, 0xcd, 0xce, 0xcf, 0xd0, 0xd1, 0xd2, 0xd3,
+    0xd4, 0xd5, 0xd6, 0xd7, 0xd8, 0xd9, 0xda, 0xdb, 0xdc, 0xdd, 0xde, 0xdf, 0xe0, 0xe1, 0xe2, 0xe3,
+    0xe4, 0xe5, 0xe6, 0xe7, 0xe8, 0xe9, 0xea, 0xeb, 0xec, 0xed, 0xee, 0xef, 0xf0, 0xf1, 0xf2, 0xf3,
+    0xf4, 0xf5, 0xf6, 0xf7, 0xf8, 0xf9, 0xfa, 0xfb, 0xfc, 0xfd, 0xfe, 0xff, 0x00, 0x01, 0x02, 0x03,
+    0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13,
+    0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20, 0x21, 0x22, 0x23,
+    0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f, 0x30, 0x31, 0x32, 0x33,
+    0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f, 0x40, 0x41, 0x42, 0x43,
+    0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f, 0x50, 0x51, 0x52, 0x53,
+    0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5a, 0x5b, 0x5c, 0x5d, 0x5e, 0x5f, 0x60, 0x61, 0x62, 0x63,
+    0x64, 0x65, 0x66, 0x67, 0x68, 0x69, 0x6a, 0x6b, 0x6c, 0x6d, 0x6e, 0x6f, 0x70, 0x71, 0x72, 0x73,
+    0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7a, 0x7b, 0x7c, 0x7d, 0x7e, 0x7f, 0x80, 0x81, 0x82, 0x83,
+    0x84, 0x85, 0x86, 0x87, 0x88, 0x89, 0x8a, 0x8b, 0x8c, 0x8d, 0x8e, 0x8f, 0x90, 0x91, 0x92, 0x93,
+    0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9a, 0x9b, 0x9c, 0x9d, 0x9e, 0x9f, 0xa0, 0xa1, 0xa2, 0xa3,
+    0xa4, 0xa5, 0xa6, 0xa7, 0xa8, 0xa9, 0xaa, 0xab, 0xac, 0xad, 0xae, 0xaf, 0xb0, 0xb1, 0xb2, 0xb3,
+    0xb4, 0xb5, 0xb6, 0xb7, 0xb8, 0xb9, 0xba, 0xbb, 0xbc, 0xbd, 0xbe, 0xbf, 0xc0, 0xc1, 0xc2, 0xc3,
+    0xc4, 0xc5, 0xc6, 0xc7, 0xc8, 0xc9, 0xca, 0xcb, 0xcc, 0xcd, 0xce, 0xcf, 0xd0, 0xd1, 0xd2, 0xd3,
+    0xd4, 0xd5, 0xd6, 0xd7, 0xd8, 0xd9, 0xda, 0xdb, 0xdc, 0xdd, 0xde, 0xdf, 0xe0, 0xe1, 0xe2, 0xe3,
+    0xe4, 0xe5, 0xe6, 0xe7, 0xe8, 0xe9, 0xea, 0xeb, 0xec, 0xed, 0xee, 0xef, 0xf0, 0xf1, 0xf2, 0xf3,
+    0xf4, 0xf5, 0xf6, 0xf7, 0xf8, 0xf9, 0xfa, 0xfb, 0xfc, 0xfd, 0xfe, 0xff, 0x00, 0x80, 0x80, 0x00,
+    0x81, 0x7d, 0x02, 0x87, 0x67, 0x0a, 0x9e, 0x47, 0x23, 0xb5, 0x25, 0x48, 0xc4, 0x06, 0x65, 0xaf,
+    0x1a, 0x71, 0xa8, 0x22, 0x76, 0xa5, 0x26, 0x04, 0x7b, 0x82, 0x04, 0x7c, 0x7f, 0x06, 0x82, 0x69,
+    0x0e, 0x99, 0x4a, 0x25, 0xb2, 0x27, 0x49, 0xc3, 0x07, 0x65, 0xaf, 0x1a, 0x72, 0xa8, 0x22, 0x76,
+    0xa5, 0x26, 0x1e, 0x5a, 0x93, 0x1f, 0x5b, 0x90, 0x20, 0x62, 0x7a, 0x25, 0x7b, 0x59, 0x34, 0x9d,
+    0x31, 0x50, 0xb9, 0x0c, 0x68, 0xac, 0x1c, 0x72, 0xa7, 0x23, 0x77, 0xa5, 0x26, 0x4f, 0x36, 0xb0,
+    0x4f, 0x37, 0xac, 0x50, 0x3b, 0x98, 0x52, 0x4c, 0x76, 0x58, 0x6f, 0x49, 0x68, 0x9b, 0x1c, 0x71,
+    0xa3, 0x22, 0x76, 0xa4, 0x25, 0x78, 0xa4, 0x27, 0x8e, 0x0f, 0xcd, 0x8e, 0x0f, 0xca, 0x8e, 0x11,
+    0xbc, 0x8f, 0x1a, 0x9f, 0x91, 0x31, 0x71, 0x95, 0x64, 0x3a, 0x8a, 0x8e, 0x33, 0x80, 0x9c, 0x2c,
+    0x7b, 0xa1, 0x29, 0xc5, 0x00, 0xe4, 0xc5, 0x00, 0xe3, 0xc5, 0x00, 0xdc, 0xc5, 0x00, 0xc8, 0xc6,
+    0x00, 0xa4, 0xc7, 0x1a, 0x6d, 0xb5, 0x6e, 0x4f, 0x9a, 0x8a, 0x3d, 0x86, 0x99, 0x30, 0xe5, 0x23,
+    0xb4, 0xe5, 0x23, 0xb4, 0xe5, 0x23, 0xb3, 0xe5, 0x23, 0xb1, 0xe5, 0x24, 0xaa, 0xe6, 0x28, 0x98,
+    0xe7, 0x32, 0x70, 0xc4, 0x73, 0x59, 0x9f, 0x8a, 0x40, 0xf0, 0x51, 0x99, 0xf0, 0x51, 0x99, 0xf0,
+    0x51, 0x99, 0xf0, 0x51, 0x98, 0xf0, 0x51, 0x97, 0xf0, 0x52, 0x95, 0xf0, 0x54, 0x8c, 0xf2, 0x5b,
+    0x77, 0xc8, 0x74, 0x5c, 0xf2, 0x59, 0x94, 0xf2, 0x59, 0x94, 0xf2, 0x59, 0x94, 0xf2, 0x59, 0x94,
+    0xf2, 0x59, 0x94, 0xf2, 0x5a, 0x93, 0xf2, 0x5a, 0x91, 0xf3, 0x5c, 0x8a, 0xf5, 0x63, 0x79, 0x02,
+    0x84, 0x81, 0x02, 0x85, 0x7e, 0x04, 0x8b, 0x68, 0x0c, 0xa1, 0x48, 0x24, 0xb6, 0x26, 0x48, 0xc5,
+    0x07, 0x65, 0xaf, 0x1a, 0x71, 0xa8, 0x22, 0x76, 0xa5, 0x26, 0x05, 0x7f, 0x83, 0x05, 0x80, 0x80,
+    0x07, 0x86, 0x6a, 0x10, 0x9c, 0x4b, 0x26, 0xb2, 0x28, 0x49, 0xc3, 0x07, 0x65, 0xaf, 0x1a, 0x72,
+    0xa8, 0x22, 0x76, 0xa5, 0x26, 0x1f, 0x5f, 0x94, 0x20, 0x60, 0x91, 0x21, 0x67, 0x7b, 0x26, 0x7d,
+    0x5a, 0x35, 0x9e, 0x31, 0x50, 0xba, 0x0c, 0x68, 0xac, 0x1c, 0x72, 0xa7, 0x23, 0x77, 0xa5, 0x26,
+    0x4f, 0x39, 0xb0, 0x4f, 0x3a, 0xad, 0x50, 0x3e, 0x98, 0x52, 0x4e, 0x77, 0x59, 0x70, 0x49, 0x68,
+    0x9b, 0x1c, 0x71, 0xa3, 0x22, 0x76, 0xa4, 0x25, 0x78, 0xa4, 0x27, 0x8e, 0x10, 0xcd, 0x8e, 0x11,
+    0xca, 0x8e, 0x13, 0xbd, 0x8f, 0x1b, 0x9f, 0x91, 0x32, 0x72, 0x96, 0x64, 0x3a, 0x8a, 0x8e, 0x33,
+    0x81, 0x9c, 0x2c, 0x7c, 0xa1, 0x29, 0xc5, 0x00, 0xe4, 0xc5, 0x00, 0xe3, 0xc5, 0x00, 0xdc, 0xc5,
+    0x00, 0xc8, 0xc6, 0x00, 0xa4, 0xc7, 0x1a, 0x6d, 0xb5, 0x6e, 0x4f, 0x9a, 0x8a, 0x3d, 0x86, 0x9a,
+    0x30, 0xe5, 0x23, 0xb4, 0xe5, 0x23, 0xb4, 0xe5, 0x23, 0xb3, 0xe5, 0x23, 0xb1, 0xe5, 0x24, 0xaa,
+    0xe6, 0x28, 0x98, 0xe7, 0x32, 0x70, 0xc4, 0x73, 0x59, 0x9f, 0x8a, 0x40, 0xf0, 0x51, 0x99, 0xf0,
+    0x51, 0x99, 0xf0, 0x51, 0x99, 0xf0, 0x51, 0x98, 0xf0, 0x51, 0x97, 0xf0, 0x52, 0x95, 0xf0, 0x54,
+    0x8c, 0xf2, 0x5b, 0x77, 0xc8, 0x74, 0x5c, 0xf2, 0x59, 0x94, 0xf2, 0x59, 0x94, 0xf2, 0x59, 0x94,
+    0xf2, 0x59, 0x94, 0xf2, 0x59, 0x94, 0xf2, 0x5a, 0x93, 0xf2, 0x5a, 0x91, 0xf3, 0x5c, 0x8a, 0xf5,
+    0x63, 0x79, 0x0d, 0x9e, 0x89, 0x0e, 0x9f, 0x86, 0x0f, 0xa2, 0x70, 0x17, 0xaa, 0x50, 0x2b, 0xb9,
+    0x2b, 0x4b, 0xc6, 0x09, 0x66, 0xb0, 0x1b, 0x72, 0xa8, 0x23, 0x76, 0xa5, 0x26, 0x11, 0x99, 0x8b,
+    0x11, 0x9a, 0x88, 0x13, 0x9c, 0x72, 0x1b, 0xa5, 0x52, 0x2d, 0xb6, 0x2c, 0x4c, 0xc5, 0x09, 0x66,
+    0xaf, 0x1b, 0x72, 0xa8, 0x23, 0x76, 0xa5, 0x26, 0x27, 0x7c, 0x99, 0x27, 0x7c, 0x96, 0x28, 0x80,
+    0x80, 0x2d, 0x8c, 0x5e, 0x39, 0xa4, 0x34, 0x53, 0xbb, 0x0e, 0x69, 0xad, 0x1c, 0x73, 0xa7, 0x23,
+    0x77, 0xa5, 0x26, 0x52, 0x4d, 0xb2, 0x52, 0x4e, 0xaf, 0x53, 0x51, 0x9a, 0x55, 0x5c, 0x79, 0x5b,
+    0x77, 0x4b, 0x6a, 0x9e, 0x1d, 0x72, 0xa4, 0x23, 0x76, 0xa4, 0x26, 0x78, 0xa4, 0x27, 0x8f, 0x1a,
+    0xce, 0x8f, 0x1b, 0xcb, 0x8f, 0x1c, 0xbd, 0x90, 0x24, 0xa0, 0x92, 0x38, 0x72, 0x96, 0x67, 0x3b,
+    0x8b, 0x8f, 0x33, 0x81, 0x9c, 0x2d, 0x7c, 0xa1, 0x29, 0xc5, 0x00, 0xe4, 0xc5, 0x00, 0xe3, 0xc5,
+    0x00, 0xdd, 0xc5, 0x00, 0xc9, 0xc6, 0x01, 0xa4, 0xc7, 0x1d, 0x6e, 0xb6, 0x6f, 0x50, 0x9a, 0x8a,
+    0x3d, 0x86, 0x9a, 0x30, 0xe5, 0x23, 0xb4, 0xe5, 0x23, 0xb4, 0xe5, 0x23, 0xb3, 0xe5, 0x23, 0xb1,
+    0xe5, 0x25, 0xab, 0xe6, 0x28, 0x98, 0xe7, 0x32, 0x70, 0xc4, 0x73, 0x59, 0x9f, 0x8a, 0x40, 0xf0,
+    0x51, 0x99, 0xf0, 0x51, 0x99, 0xf0, 0x51, 0x99, 0xf0, 0x51, 0x98, 0xf0, 0x51, 0x97, 0xf0, 0x52,
+    0x95, 0xf1, 0x55, 0x8c, 0xf2, 0x5b, 0x77, 0xc8, 0x74, 0x5c, 0xf2, 0x59, 0x94, 0xf2, 0x59, 0x94,
+    0xf2, 0x59, 0x94, 0xf2, 0x59, 0x94, 0xf2, 0x59, 0x94, 0xf2, 0x5a, 0x93, 0xf2, 0x5a, 0x91, 0xf3,
+    0x5c, 0x8a, 0xf5, 0x63, 0x79, 0x30, 0xb6, 0xa1, 0x31, 0xb6, 0x9e, 0x31, 0xb7, 0x87, 0x35, 0xba,
+    0x64, 0x40, 0xc3, 0x39, 0x57, 0xcb, 0x11, 0x6a, 0xb1, 0x1d, 0x73, 0xa8, 0x24, 0x77, 0xa6, 0x26,
+    0x32, 0xb3, 0xa2, 0x32, 0xb4, 0x9f, 0x33, 0xb4, 0x88, 0x37, 0xb8, 0x65, 0x41, 0xc2, 0x3a, 0x58,
+    0xca, 0x11, 0x6a, 0xb1, 0x1e, 0x73, 0xa8, 0x24, 0x77, 0xa6, 0x26, 0x3d, 0xa3, 0xa9, 0x3e, 0xa3,
+    0xa5, 0x3e, 0xa5, 0x8f, 0x41, 0xa9, 0x6c, 0x4a, 0xb5, 0x40, 0x5d, 0xc2, 0x15, 0x6d, 0xae, 0x1f,
+    0x74, 0xa8, 0x24, 0x77, 0xa5, 0x26, 0x5e, 0x79, 0xba, 0x5e, 0x79, 0xb7, 0x5e, 0x7b, 0xa2, 0x60,
+    0x80, 0x80, 0x65, 0x8f, 0x52, 0x71, 0xa8, 0x22, 0x76, 0xa6, 0x25, 0x77, 0xa5, 0x26, 0x78, 0xa4,
+    0x27, 0x93, 0x3b, 0xd1, 0x93, 0x3b, 0xce, 0x93, 0x3c, 0xc1, 0x94, 0x41, 0xa3, 0x96, 0x50, 0x76,
+    0x9a, 0x73, 0x3d, 0x8d, 0x91, 0x35, 0x82, 0x9d, 0x2d, 0x7c, 0xa2, 0x29, 0xc6, 0x02, 0xe5, 0xc6,
+    0x02, 0xe4, 0xc6, 0x03, 0xde, 0xc7, 0x06, 0xca, 0xc7, 0x0f, 0xa5, 0xc8, 0x28, 0x6f, 0xb7, 0x71,
+    0x50, 0x9a, 0x8b, 0x3e, 0x87, 0x9a, 0x30, 0xe5, 0x25, 0xb5, 0xe5, 0x25, 0xb4, 0xe5, 0x25, 0xb4,
+    0xe5, 0x25, 0xb2, 0xe6, 0x26, 0xab, 0xe6, 0x2a, 0x99, 0xe8, 0x34, 0x70, 0xc4, 0x73, 0x59, 0x9f,
+    0x8a, 0x41, 0xf0, 0x51, 0x99, 0xf0, 0x51, 0x99, 0xf0, 0x51, 0x99, 0xf0, 0x51, 0x98, 0xf0, 0x52,
+    0x97, 0xf0, 0x52, 0x95, 0xf1, 0x55, 0x8c, 0xf2, 0x5c, 0x77, 0xc8, 0x75, 0x5c, 0xf2, 0x59, 0x94,
+    0xf2, 0x59, 0x94, 0xf2, 0x59, 0x94, 0xf2, 0x59, 0x94, 0xf2, 0x5a, 0x94, 0xf2, 0x5a, 0x93, 0xf2,
+    0x5a, 0x91, 0xf3, 0x5c, 0x8a, 0xf5, 0x63, 0x79, 0x62, 0xd4, 0xc3, 0x62, 0xd4, 0xc0, 0x62, 0xd4,
+    0xa9, 0x64, 0xd6, 0x84, 0x69, 0xda, 0x55, 0x74, 0xd8, 0x24, 0x77, 0xb5, 0x26, 0x78, 0xaa, 0x27,
+    0x78, 0xa6, 0x27, 0x63, 0xd3, 0xc4, 0x63, 0xd3, 0xc0, 0x63, 0xd3, 0xa9, 0x65, 0xd5, 0x85, 0x6a,
+    0xd9, 0x55, 0x75, 0xd8, 0x25, 0x77, 0xb5, 0x26, 0x78, 0xaa, 0x27, 0x78, 0xa6, 0x27, 0x68, 0xcb,
+    0xc6, 0x68, 0xcb, 0xc3, 0x68, 0xcc, 0xac, 0x6a, 0xcd, 0x88, 0x6e, 0xd2, 0x58, 0x78, 0xd2, 0x27,
+    0x79, 0xb3, 0x27, 0x79, 0xa9, 0x27, 0x79, 0xa6, 0x27, 0x7b, 0xb0, 0xcf, 0x7b, 0xb0, 0xcb, 0x7b,
+    0xb1, 0xb6, 0x7c, 0xb3, 0x93, 0x7f, 0xb9, 0x64, 0x86, 0xc0, 0x30, 0x80, 0xac, 0x2c, 0x7c, 0xa6,
+    0x29, 0x7a, 0xa5, 0x28, 0x9f, 0x76, 0xdb, 0x9f, 0x76, 0xd8, 0x9f, 0x76, 0xca, 0xa0, 0x79, 0xad,
+    0xa1, 0x80, 0x80, 0xa5, 0x93, 0x45, 0x94, 0x99, 0x3a, 0x86, 0x9e, 0x30, 0x7d, 0xa2, 0x2a, 0xca,
+    0x2c, 0xe9, 0xca, 0x2c, 0xe8, 0xca, 0x2c, 0xe1, 0xca, 0x2e, 0xcd, 0xca, 0x34, 0xa9, 0xcb, 0x46,
+    0x73, 0xba, 0x78, 0x53, 0x9d, 0x8d, 0x3f, 0x88, 0x9a, 0x31, 0xe7, 0x2b, 0xb7, 0xe7, 0x2b, 0xb7,
+    0xe7, 0x2b, 0xb7, 0xe7, 0x2b, 0xb5, 0xe7, 0x2c, 0xae, 0xe7, 0x2f, 0x9b, 0xe9, 0x38, 0x71, 0xc5,
+    0x75, 0x5a, 0xa0, 0x8b, 0x41, 0xf0, 0x53, 0x99, 0xf0, 0x53, 0x99, 0xf0, 0x53, 0x99, 0xf0, 0x53,
+    0x99, 0xf0, 0x53, 0x98, 0xf0, 0x54, 0x95, 0xf1, 0x56, 0x8d, 0xf3, 0x5d, 0x78, 0xc8, 0x75, 0x5c,
+    0xf2, 0x5a, 0x94, 0xf2, 0x5a, 0x94, 0xf2, 0x5a, 0x94, 0xf2, 0x5a, 0x94, 0xf2, 0x5a, 0x94, 0xf2,
+    0x5a, 0x93, 0xf2, 0x5b, 0x91, 0xf3, 0x5d, 0x8a, 0xf5, 0x63, 0x79, 0x9d, 0xf0, 0xcd, 0x9d, 0xf0,
+    0xcb, 0x9d, 0xf0, 0xc2, 0x9d, 0xf0, 0xaa, 0x9f, 0xf3, 0x81, 0xa4, 0xfb, 0x45, 0x93, 0xbf, 0x39,
+    0x85, 0xad, 0x2f, 0x7d, 0xa7, 0x2a, 0x9d, 0xef, 0xcd, 0x9d, 0xef, 0xcc, 0x9d, 0xef, 0xc2, 0x9e,
+    0xf0, 0xaa, 0x9f, 0xf3, 0x81, 0xa5, 0xfb, 0x45, 0x93, 0xbf, 0x39, 0x85, 0xad, 0x2f, 0x7d, 0xa7,
+    0x2a, 0x9f, 0xec, 0xcf, 0x9f, 0xec, 0xcd, 0x9f, 0xed, 0xc4, 0x9f, 0xed, 0xac, 0xa1, 0xf0, 0x82,
+    0xa6, 0xf8, 0x46, 0x94, 0xbe, 0x3a, 0x85, 0xad, 0x30, 0x7d, 0xa7, 0x2a, 0xa6, 0xe1, 0xda, 0xa6,
+    0xe1, 0xd8, 0xa6, 0xe2, 0xcd, 0xa7, 0xe3, 0xb3, 0xa8, 0xe6, 0x88, 0xac, 0xee, 0x4b, 0x99, 0xb8,
+    0x3d, 0x88, 0xaa, 0x31, 0x7e, 0xa6, 0x2b, 0xb8, 0xbd, 0xf0, 0xb8, 0xbd, 0xee, 0xb8, 0xbd, 0xe0,
+    0xb8, 0xbe, 0xc3, 0xb9, 0xc0, 0x98, 0xbb, 0xc8, 0x5d, 0xa7, 0xa9, 0x46, 0x90, 0xa3, 0x37, 0x82,
+    0xa3, 0x2d, 0xd3, 0x73, 0xf2, 0xd3, 0x73, 0xf1, 0xd3, 0x73, 0xea, 0xd3, 0x74, 0xd7, 0xd3, 0x77,
+    0xb4, 0xd4, 0x80, 0x80, 0xc4, 0x8b, 0x59, 0xa4, 0x93, 0x44, 0x8b, 0x9c, 0x34, 0xea, 0x3b, 0xc4,
+    0xea, 0x3b, 0xc4, 0xea, 0x3b, 0xc3, 0xea, 0x3c, 0xc1, 0xeb, 0x3d, 0xb8, 0xeb, 0x3f, 0xa3, 0xec,
+    0x46, 0x73, 0xc9, 0x7b, 0x5c, 0xa2, 0x8d, 0x43, 0xf1, 0x56, 0x99, 0xf1, 0x56, 0x99, 0xf1, 0x56,
+    0x99, 0xf1, 0x56, 0x99, 0xf1, 0x57, 0x98, 0xf1, 0x57, 0x95, 0xf2, 0x5a, 0x8d, 0xf4, 0x60, 0x78,
+    0xc9, 0x77, 0x5d, 0xf2, 0x5b, 0x94, 0xf2, 0x5b, 0x94, 0xf2, 0x5b, 0x94, 0xf2, 0x5b, 0x94, 0xf2,
+    0x5b, 0x94, 0xf3, 0x5b, 0x93, 0xf3, 0x5c, 0x91, 0xf3, 0x5e, 0x8a, 0xf5, 0x64, 0x79, 0xb8, 0xce,
+    0xa0, 0xb8, 0xce, 0x9f, 0xb8, 0xce, 0x9f, 0xb8, 0xce, 0x9c, 0xb9, 0xce, 0x94, 0xbb, 0xcf, 0x7f,
+    0xc1, 0xd3, 0x58, 0xa1, 0xb5, 0x42, 0x8a, 0xaa, 0x33, 0xb8, 0xce, 0xa0, 0xb8, 0xce, 0x9f, 0xb8,
+    0xce, 0x9f, 0xb8, 0xce, 0x9c, 0xb9, 0xce, 0x94, 0xbb, 0xcf, 0x7f, 0xc1, 0xd3, 0x58, 0xa1, 0xb5,
+    0x42, 0x8a, 0xaa, 0x33, 0xb8, 0xcd, 0xa0, 0xb8, 0xcd, 0xa0, 0xb8, 0xcd, 0x9f, 0xb9, 0xcd, 0x9c,
+    0xb9, 0xcd, 0x94, 0xbb, 0xcf, 0x80, 0xc1, 0xd2, 0x58, 0xa1, 0xb4, 0x43, 0x8a, 0xaa, 0x33, 0xbb,
+    0xc9, 0xa0, 0xbb, 0xc9, 0xa0, 0xbb, 0xc9, 0x9f, 0xbb, 0xca, 0x9d, 0xbc, 0xca, 0x95, 0xbe, 0xcb,
+    0x81, 0xc3, 0xcf, 0x59, 0xa3, 0xb3, 0x44, 0x8b, 0xa9, 0x33, 0xc3, 0xbf, 0xa2, 0xc3, 0xbf, 0xa1,
+    0xc3, 0xbf, 0xa1, 0xc3, 0xbf, 0x9f, 0xc4, 0xc0, 0x97, 0xc5, 0xc1, 0x84, 0xca, 0xc6, 0x5e, 0xa8,
+    0xae, 0x47, 0x8d, 0xa7, 0x35, 0xd6, 0xa6, 0xa7, 0xd6, 0xa6, 0xa7, 0xd6, 0xa6, 0xa7, 0xd6, 0xa7,
+    0xa5, 0xd6, 0xa7, 0x9e, 0xd7, 0xa9, 0x8d, 0xda, 0xb0, 0x68, 0xb6, 0xa0, 0x50, 0x95, 0xa0, 0x3a,
+    0xf2, 0x72, 0xff, 0xf2, 0x72, 0xff, 0xf2, 0x72, 0xfd, 0xf2, 0x72, 0xf4, 0xf2, 0x73, 0xde, 0xf2,
+    0x76, 0xb9, 0xf2, 0x80, 0x80, 0xd2, 0x88, 0x62, 0xa9, 0x92, 0x47, 0xf4, 0x61, 0x9a, 0xf4, 0x61,
+    0x9a, 0xf4, 0x61, 0x9a, 0xf4, 0x61, 0x9a, 0xf4, 0x61, 0x99, 0xf5, 0x62, 0x97, 0xf5, 0x63, 0x8f,
+    0xf7, 0x69, 0x7a, 0xcd, 0x7c, 0x5f, 0xf3, 0x5e, 0x94, 0xf3, 0x5e, 0x94, 0xf3, 0x5e, 0x94, 0xf3,
+    0x5e, 0x94, 0xf3, 0x5e, 0x94, 0xf4, 0x5e, 0x93, 0xf4, 0x5f, 0x91, 0xf4, 0x61, 0x8b, 0xf6, 0x66,
+    0x7a, 0xc5, 0xbf, 0x97, 0xc5, 0xbf, 0x97, 0xc5, 0xbf, 0x96, 0xc5, 0xbf, 0x96, 0xc5, 0xbf, 0x94,
+    0xc6, 0xbf, 0x8e, 0xc8, 0xbf, 0x7f, 0xce, 0xc1, 0x60, 0xa5, 0xb1, 0x45, 0xc5, 0xbe, 0x97, 0xc5,
+    0xbe, 0x97, 0xc5, 0xbf, 0x96, 0xc5, 0xbf, 0x96, 0xc5, 0xbf, 0x94, 0xc6, 0xbf, 0x8e, 0xc8, 0xbf,
+    0x7f, 0xce, 0xc1, 0x60, 0xa5, 0xb1, 0x45, 0xc5, 0xbe, 0x97, 0xc5, 0xbe, 0x97, 0xc5, 0xbe, 0x96,
+    0xc5, 0xbe, 0x96, 0xc5, 0xbe, 0x94, 0xc6, 0xbf, 0x8e, 0xc8, 0xbf, 0x7f, 0xce, 0xc1, 0x60, 0xa6,
+    0xb1, 0x45, 0xc6, 0xbd, 0x97, 0xc6, 0xbd, 0x97, 0xc6, 0xbd, 0x96, 0xc6, 0xbd, 0x96, 0xc6, 0xbd,
+    0x94, 0xc7, 0xbd, 0x8e, 0xc9, 0xbe, 0x80, 0xce, 0xc0, 0x61, 0xa6, 0xb0, 0x46, 0xc8, 0xba, 0x97,
+    0xc8, 0xba, 0x97, 0xc8, 0xba, 0x97, 0xc8, 0xba, 0x96, 0xc9, 0xba, 0x94, 0xc9, 0xba, 0x8f, 0xcb,
+    0xbb, 0x81, 0xd1, 0xbd, 0x62, 0xa8, 0xae, 0x47, 0xd0, 0xb0, 0x97, 0xd0, 0xb0, 0x97, 0xd0, 0xb0,
+    0x97, 0xd0, 0xb0, 0x97, 0xd0, 0xb0, 0x95, 0xd1, 0xb0, 0x90, 0xd2, 0xb1, 0x83, 0xd7, 0xb4, 0x66,
+    0xad, 0xaa, 0x4a, 0xe2, 0x9b, 0x98, 0xe2, 0x9b, 0x98, 0xe2, 0x9b, 0x98, 0xe2, 0x9b, 0x98, 0xe2,
+    0x9b, 0x97, 0xe2, 0x9b, 0x93, 0xe3, 0x9d, 0x89, 0xe6, 0xa0, 0x70, 0xba, 0x9d, 0x53, 0xfd, 0x78,
+    0xaa, 0xfd, 0x78, 0xaa, 0xfd, 0x78, 0xaa, 0xfd, 0x78, 0xaa, 0xfd, 0x78, 0xa9, 0xfd, 0x79, 0xa7,
+    0xfd, 0x7a, 0xa0, 0xfd, 0x80, 0x80, 0xd5, 0x87, 0x65, 0xf6, 0x67, 0x95, 0xf6, 0x67, 0x95, 0xf6,
+    0x67, 0x95, 0xf6, 0x67, 0x95, 0xf6, 0x67, 0x94, 0xf6, 0x67, 0x94, 0xf6, 0x68, 0x92, 0xf7, 0x69,
+    0x8c, 0xf8, 0x6e, 0x7b, 0xc9, 0xb9, 0x94, 0xc9, 0xb9, 0x94, 0xc9, 0xb9, 0x94, 0xc9, 0xb9, 0x94,
+    0xc9, 0xb9, 0x93, 0xca, 0xb9, 0x92, 0xca, 0xb9, 0x8d, 0xcc, 0xba, 0x80, 0xd2, 0xbb, 0x63, 0xc9,
+    0xb9, 0x94, 0xc9, 0xb9, 0x94, 0xc9, 0xb9, 0x94, 0xc9, 0xb9, 0x94, 0xc9, 0xb9, 0x93, 0xca, 0xb9,
+    0x92, 0xca, 0xb9, 0x8d, 0xcc, 0xba, 0x80, 0xd2, 0xbb, 0x63, 0xc9, 0xb9, 0x94, 0xc9, 0xb9, 0x94,
+    0xc9, 0xb9, 0x94, 0xc9, 0xb9, 0x94, 0xc9, 0xb9, 0x93, 0xca, 0xb9, 0x92, 0xca, 0xb9, 0x8d, 0xcc,
+    0xba, 0x80, 0xd2, 0xbb, 0x63, 0xca, 0xb9, 0x94, 0xca, 0xb9, 0x94, 0xca, 0xb9, 0x94, 0xca, 0xb9,
+    0x94, 0xca, 0xb9, 0x93, 0xca, 0xb9, 0x92, 0xcb, 0xb9, 0x8d, 0xcc, 0xb9, 0x80, 0xd2, 0xba, 0x63,
+    0xca, 0xb8, 0x94, 0xca, 0xb8, 0x94, 0xca, 0xb8, 0x94, 0xca, 0xb8, 0x94, 0xca, 0xb8, 0x93, 0xcb,
+    0xb8, 0x92, 0xcb, 0xb8, 0x8d, 0xcd, 0xb8, 0x80, 0xd3, 0xba, 0x64, 0xcd, 0xb4, 0x94, 0xcd, 0xb4,
+    0x94, 0xcd, 0xb4, 0x94, 0xcd, 0xb4, 0x94, 0xcd, 0xb4, 0x93, 0xcd, 0xb5, 0x92, 0xce, 0xb5, 0x8d,
+    0xd0, 0xb5, 0x81, 0xd5, 0xb7, 0x65, 0xd4, 0xac, 0x94, 0xd4, 0xac, 0x94, 0xd4, 0xac, 0x94, 0xd4,
+    0xac, 0x94, 0xd4, 0xac, 0x94, 0xd4, 0xac, 0x92, 0xd5, 0xac, 0x8e, 0xd6, 0xad, 0x83, 0xdb, 0xaf,
+    0x69, 0xe5, 0x98, 0x95, 0xe5, 0x98, 0x95, 0xe5, 0x98, 0x95, 0xe5, 0x98, 0x95, 0xe5, 0x98, 0x94,
+    0xe5, 0x98, 0x93, 0xe5, 0x99, 0x90, 0xe6, 0x9a, 0x88, 0xe9, 0x9d, 0x72, 0xfe, 0x7c, 0x96, 0xfe,
+    0x7c, 0x96, 0xfe, 0x7c, 0x96, 0xfe, 0x7c, 0x96, 0xfe, 0x7c, 0x95, 0xfe, 0x7c, 0x95, 0xfe, 0x7c,
+    0x93, 0xfe, 0x7d, 0x8e, 0xff, 0x80, 0x80, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+    0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
+    0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28,
+    0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38,
+    0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f, 0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48,
+    0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f, 0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58,
+    0x59, 0x5a, 0x5b, 0x5c, 0x5d, 0x5e, 0x5f, 0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68,
+    0x69, 0x6a, 0x6b, 0x6c, 0x6d, 0x6e, 0x6f, 0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77, 0x78,
+    0x79, 0x7a, 0x7b, 0x7c, 0x7d, 0x7e, 0x7f, 0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88,
+    0x89, 0x8a, 0x8b, 0x8c, 0x8d, 0x8e, 0x8f, 0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98,
+    0x99, 0x9a, 0x9b, 0x9c, 0x9d, 0x9e, 0x9f, 0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7, 0xa8,
+    0xa9, 0xaa, 0xab, 0xac, 0xad, 0xae, 0xaf, 0xb0, 0xb1, 0xb2, 0xb3, 0xb4, 0xb5, 0xb6, 0xb7, 0xb8,
+    0xb9, 0xba, 0xbb, 0xbc, 0xbd, 0xbe, 0xbf, 0xc0, 0xc1, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7, 0xc8,
+    0xc9, 0xca, 0xcb, 0xcc, 0xcd, 0xce, 0xcf, 0xd0, 0xd1, 0xd2, 0xd3, 0xd4, 0xd5, 0xd6, 0xd7, 0xd8,
+    0xd9, 0xda, 0xdb, 0xdc, 0xdd, 0xde, 0xdf, 0xe0, 0xe1, 0xe2, 0xe3, 0xe4, 0xe5, 0xe6, 0xe7, 0xe8,
+    0xe9, 0xea, 0xeb, 0xec, 0xed, 0xee, 0xef, 0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0xf8,
+    0xf9, 0xfa, 0xfb, 0xfc, 0xfd, 0xfe, 0xff, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+    0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
+    0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28,
+    0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38,
+    0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f, 0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48,
+    0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f, 0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58,
+    0x59, 0x5a, 0x5b, 0x5c, 0x5d, 0x5e, 0x5f, 0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68,
+    0x69, 0x6a, 0x6b, 0x6c, 0x6d, 0x6e, 0x6f, 0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77, 0x78,
+    0x79, 0x7a, 0x7b, 0x7c, 0x7d, 0x7e, 0x7f, 0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88,
+    0x89, 0x8a, 0x8b, 0x8c, 0x8d, 0x8e, 0x8f, 0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98,
+    0x99, 0x9a, 0x9b, 0x9c, 0x9d, 0x9e, 0x9f, 0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7, 0xa8,
+    0xa9, 0xaa, 0xab, 0xac, 0xad, 0xae, 0xaf, 0xb0, 0xb1, 0xb2, 0xb3, 0xb4, 0xb5, 0xb6, 0xb7, 0xb8,
+    0xb9, 0xba, 0xbb, 0xbc, 0xbd, 0xbe, 0xbf, 0xc0, 0xc1, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7, 0xc8,
+    0xc9, 0xca, 0xcb, 0xcc, 0xcd, 0xce, 0xcf, 0xd0, 0xd1, 0xd2, 0xd3, 0xd4, 0xd5, 0xd6, 0xd7, 0xd8,
+    0xd9, 0xda, 0xdb, 0xdc, 0xdd, 0xde, 0xdf, 0xe0, 0xe1, 0xe2, 0xe3, 0xe4, 0xe5, 0xe6, 0xe7, 0xe8,
+    0xe9, 0xea, 0xeb, 0xec, 0xed, 0xee, 0xef, 0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0xf8,
+    0xf9, 0xfa, 0xfb, 0xfc, 0xfd, 0xfe, 0xff, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+    0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
+    0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28,
+    0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38,
+    0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f, 0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48,
+    0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f, 0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58,
+    0x59, 0x5a, 0x5b, 0x5c, 0x5d, 0x5e, 0x5f, 0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68,
+    0x69, 0x6a, 0x6b, 0x6c, 0x6d, 0x6e, 0x6f, 0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77, 0x78,
+    0x79, 0x7a, 0x7b, 0x7c, 0x7d, 0x7e, 0x7f, 0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88,
+    0x89, 0x8a, 0x8b, 0x8c, 0x8d, 0x8e, 0x8f, 0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98,
+    0x99, 0x9a, 0x9b, 0x9c, 0x9d, 0x9e, 0x9f, 0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7, 0xa8,
+    0xa9, 0xaa, 0xab, 0xac, 0xad, 0xae, 0xaf, 0xb0, 0xb1, 0xb2, 0xb3, 0xb4, 0xb5, 0xb6, 0xb7, 0xb8,
+    0xb9, 0xba, 0xbb, 0xbc, 0xbd, 0xbe, 0xbf, 0xc0, 0xc1, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7, 0xc8,
+    0xc9, 0xca, 0xcb, 0xcc, 0xcd, 0xce, 0xcf, 0xd0, 0xd1, 0xd2, 0xd3, 0xd4, 0xd5, 0xd6, 0xd7, 0xd8,
+    0xd9, 0xda, 0xdb, 0xdc, 0xdd, 0xde, 0xdf, 0xe0, 0xe1, 0xe2, 0xe3, 0xe4, 0xe5, 0xe6, 0xe7, 0xe8,
+    0xe9, 0xea, 0xeb, 0xec, 0xed, 0xee, 0xef, 0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0xf8,
+    0xf9, 0xfa, 0xfb, 0xfc, 0xfd, 0xfe, 0xff, 0x00, 0x6d, 0x42, 0x41, 0x20, 0x00, 0x00, 0x00, 0x00,
+    0x03, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x70, 0x61, 0x72, 0x61, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x70, 0x61, 0x72, 0x61, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x70, 0x61, 0x72, 0x61, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00
+  };
+
+  SK_avifImageSetProfileICC ( img,
+            RGB_D65_202_Rel_PeQ,
+    sizeof (RGB_D65_202_Rel_PeQ) );
+}
+
+
+// Image Directory
+void
+skiv_image_directory_s::reset (void)
+{
+  PLOG_VERBOSE << "reset _current_folder!";
+
+  folder_path.clear();
+  fileList.clear();
+  watch.reset();
+}
+
+void
+skiv_image_directory_s::fl_s::setImage (const std::wstring& path)
+{
+  _it = _list.begin();
+
+  if (_list.empty())
+    return;
+
+  _it = std::find_if (_list.begin(), _list.end(), [&](const fd_s& file) { return file.path == path; });
+}
+
+std::wstring
+skiv_image_directory_s::fl_s::nextImage (void)
+{
+  if (_list.empty())
+    return L"";
+
+  static SKIF_RegistrySettings& _registry =
+         SKIF_RegistrySettings::GetInstance ();
+
+  if (_it == std::prev (_list.end()) || _it == _list.end())
+  {
+    if (_registry.bLoopImages)
+      _it = _list.begin();
+    else
+      return L"";
+  }
+  else
+    std::advance (_it,  1);
+
+  return _it->path;
+}
+
+std::wstring
+skiv_image_directory_s::fl_s::prevImage (void)
+{
+  if (_list.empty())
+    return L"";
+
+  static SKIF_RegistrySettings& _registry =
+         SKIF_RegistrySettings::GetInstance ();
+
+  if (_it == _list.begin())
+  {
+    if (_registry.bLoopImages)
+      _it = std::prev (_list.end());
+    else
+      return L"";
+  }
+  else
+    std::advance (_it, -1);
+
+  return _it->path;
+}
+
+std::wstring
+skiv_image_directory_s::fl_s::peek (int offset)
+{
+  if (_list.empty ( ) || _it == _list.end ( ) || offset == 0)
+    return L"";
+
+  static SKIF_RegistrySettings& _registry =
+         SKIF_RegistrySettings::GetInstance ();
+
+  auto it = _it;
+
+  for (int step = 0; step < std::abs (offset); step++)
+  {
+    if (offset > 0)
+    {
+      if (it == std::prev (_list.end ( )))
+      {
+        if (! _registry.bLoopImages)
+          return L"";
+
+        it = _list.begin ( );
+      }
+      else
+        std::advance (it, 1);
+    }
+
+    else
+    {
+      if (it == _list.begin ( ))
+      {
+        if (! _registry.bLoopImages)
+          return L"";
+
+        it = std::prev (_list.end ( ));
+      }
+      else
+        std::advance (it, -1);
+    }
+
+    // Around the folder and back to the current one
+    if (it == _it)
+      return L"";
+  }
+
+  return it->path;
+}
+
+std::wstring
+skiv_image_directory_s::fl_s::deleteImage (void)
+{
+  if (_list.empty())
+    return L"";
+
+  static SKIF_RegistrySettings& _registry =
+         SKIF_RegistrySettings::GetInstance ();
+
+  fileDeleted = true;
+
+  // .erase() returns the iterator following the last removed element.
+  // 1) If pos refers to the last element, then the end() iterator is returned.
+  _it = _list.erase (_it);
+
+  // It was the folder's only image: no image, as an empty folder has (its placeholder entry). Otherwise _it would point
+  //   at nothing (end ( ) of an empty list, or before its start), which crashed as soon as it was used (its path here, then
+  //     getActiveFile ( ), activeIndex ( ) for the carousel, ...): e.g. deleting an image pasted from the clipboard (the
+  //       only one in SKIV's temp folder).
+  if (_list.empty ( ))
+  {
+    clear ( );
+
+    PLOG_DEBUG << "Deleted file. It was the folder's only image";
+
+    return L"";
+  }
+
+  if (_it == _list.end())
+  {
+    if (_registry.bLoopImages)
+      _it = _list.begin();
+    else
+      _it = std::prev (_list.end());
+  }
+
+  PLOG_DEBUG << "Deleted file. New path: " << _it->path;
+
+  return _it->path;
+}
+
+// Find the position of the image in the current folder
+void
+skiv_image_directory_s::fl_s::updateFileIterator (const std::wstring& path)
+{
+  // If the file was removed from File Explorer, reset to first item
+  // TODO: Fix proper file tracking so we can detect removed files and just go to one of the nearby ones
+  _it = std::find_if (_list.begin(), _list.end(), [&](const fd_s& file) { return file.path == path; });
+
+  if (_it == _list.end())
+    _it = _list.begin();
+}
+
+int
+skiv_image_directory_s::workerThread (bool runThread)
+{
+  struct worker_thread_s {
+    bool                    _changed = false;
+    std::wstring            _path;
+    std::vector<fd_s>       _fileList;
+    std::vector<SORTCOLUMN> _sortColumns;
+    HANDLE        hWorker    = NULL;
+    unsigned int  sWorker    = 0;
+  };
+
+  static worker_thread_s* pthread_data = nullptr;
+  static std::wstring pending;
+
+  // Only run one worker at once
+  if (runThread || ! pending.empty())
+  {
+    // Add new stuff to the pending cache.
+    pending = folder_path;
+
+    if (pthread_data == nullptr)
+    {
+      pthread_data = new worker_thread_s;
+
+      // Swap over the pending path, with copies of our existing data...
+      pthread_data->_path        = pending;
+      pthread_data->_fileList    = fileList.getList();
+      pthread_data->_sortColumns = sortColumns;
+
+      HANDLE hWorkerThread = (HANDLE)
+      _beginthreadex (nullptr, 0x0, [](void* _input) -> unsigned
+      {
+        SKIF_Util_SetThreadDescription (GetCurrentThread (), L"SKIV_FolderWorker");
+
+        // Is this combo really appropriate for this thread?
+        //SKIF_Util_SetThreadPowerThrottling (GetCurrentThread (), 1); // Enable EcoQoS for this thread
+        //SetThreadPriority (GetCurrentThread (), THREAD_MODE_BACKGROUND_BEGIN);
+
+        PLOG_VERBOSE << "SKIV_FolderWorker thread started!";
+
+        DWORD start = SKIF_Util_timeGetTime1();
+
+        worker_thread_s* _data = static_cast<worker_thread_s*>(_input);
+
+        _data->_changed = updateFolderData (_data->_fileList, _data->_sortColumns, _data->_path);
+
+        PLOG_VERBOSE << "Thread [SKIF_LibraryWorker] took " << (SKIF_Util_timeGetTime1() - start) << " ms to complete!";
+
+        PLOG_VERBOSE << "SKIF_LibraryWorker thread stopped!";
+
+        //SetThreadPriority (GetCurrentThread (), THREAD_MODE_BACKGROUND_END);
+
+        return 0;
+      }, pthread_data, 0x0, nullptr);
+
+      bool threadCreated = (hWorkerThread != NULL);
+
+      if (threadCreated)
+      {
+        pthread_data->hWorker = hWorkerThread;
+        pthread_data->sWorker = 1;
+      }
+      else // Someting went wrong during thread creation, so free up the memory we allocated earlier
+      {
+        delete pthread_data;
+        pthread_data = nullptr;
+      }
     }
   }
+
+  // Only check our work if processNewWork is unset
+  if (! runThread && pthread_data != nullptr && pthread_data->sWorker == 1 && WaitForSingleObject (pthread_data->hWorker, 0) == WAIT_OBJECT_0)
+  {
+    int state = 1;
+
+    // Only swap in the data if it is fresh
+    if (pending == pthread_data->_path)
+    {
+      if (pthread_data->_changed)
+      {
+        state       = 2;
+        fileList.setList(pthread_data->_fileList);
+        sortColumns = pthread_data->_sortColumns;
+
+        PLOG_VERBOSE << "Swapped in the new folder data!";
+      }
+
+      pending.clear();
+    }
+
+    CloseHandle (pthread_data->hWorker);
+    pthread_data->hWorker = NULL;
+    pthread_data->sWorker = 2;
+    pthread_data->_path.clear();
+    pthread_data->_fileList.clear();
+
+    delete pthread_data;
+    pthread_data = nullptr;
+
+    return state;
+  }
+
+  return 0;
+}
+
+// Retrieve all files in the folder, and identify our current place among them...
+bool
+skiv_image_directory_s::updateFolderData (std::vector<fd_s>& list, std::vector<SORTCOLUMN>& sortColumns, const std::wstring& path)
+{
+  HANDLE        hFind = INVALID_HANDLE_VALUE;
+  WIN32_FIND_DATA ffd = { };
+
+  std::vector<fd_s> newList;
+  std::vector<fd_s> oldList = list;
+  list.clear();
+
+  PLOG_DEBUG << "Discovering ... " << (path + LR"(\*.*)");
+
+  DWORD temp_time = SKIF_Util_timeGetTime1();
+
+  // This excludes the . and .. items
+  auto _isValid = [](const wchar_t* str) -> bool
+  { return (! ((str[0] == '.') && ((str[1] == '\0') || (str[1] == '.' && str[2] == '\0')))); };
+
+  hFind =
+    FindFirstFileExW ((path + LR"(\*.*)").c_str(), FindExInfoBasic, &ffd, FindExSearchNameMatch, NULL, FIND_FIRST_EX_LARGE_FETCH);
+
+  if (INVALID_HANDLE_VALUE != hFind)
+  {
+    if (_isValid (ffd.cFileName))
+      newList.push_back ({ ffd.cFileName, path + LR"(\)" + ffd.cFileName, ffd });
+
+    while (FindNextFile (hFind, &ffd))
+      if (_isValid (ffd.cFileName))
+        newList.push_back ({ ffd.cFileName, path + LR"(\)" + ffd.cFileName, ffd });
+
+    FindClose (hFind);
+  }
+
+  PLOG_VERBOSE << "Operation [FindFirstFileExW/FindNextFile] took " << (SKIF_Util_timeGetTime1() - temp_time) << " ms.";
+
+  if (! newList.empty())
+  {
+    extern bool isExtensionSupported (const std::wstring extension);
+
+    // Filter out unsupported file formats using their file extension
+    for (auto& file : newList)
+      if (isExtensionSupported (std::filesystem::path(file.filename).extension().wstring()))
+        list.push_back (file);
+  }
+
+  bool  changed = (list.size() != oldList.size());
+  if (! changed)
+  {
+    // Normalize sort order (A-Z)
+    sortByFilename (oldList);
+    sortByFilename (list);
+
+    // Have an item changed?
+    for (size_t i = 0; i < list.size(); i++)
+    {
+      if (list[i].path != oldList[i].path)
+      {
+        changed = true;
+        break;
+      }
+    }
+  }
+
+  // Update sort order (SortColumns)
+  if (changed)
+  {
+    PLOG_DEBUG << "Found " << list.size() << " supported images in the folder.";
+    updateSortOrder (list, sortColumns, path);
+  }
+
+  return changed;
+}
+
+
+#pragma comment(lib, "Propsys.lib")
+
+#include <propsys.h>
+#include <propkey.h>
+#include <propvarutil.h>
+
+static std::wstring
+PropertyKeyToString (const PROPERTYKEY& key)
+{
+  PWSTR pszName = nullptr;
+
+  if (SUCCEEDED(PSGetNameFromPropertyKey(key, &pszName)))
+  {
+    std::wstring result(pszName);
+    CoTaskMemFree(pszName);
+    return result;
+  }
+
+  return L"(unknown)";
+}
+
+static bool
+GetPropertyValue (const std::wstring&  path,
+                  const PROPERTYKEY&   key,
+                        PROPVARIANT*  pVar)
+{
+  CComPtr<IPropertyStore> spStore;
+
+  HRESULT hr = SHGetPropertyStoreFromParsingName(
+      path.c_str(),
+      NULL,
+      GPS_FASTPROPERTIESONLY, // GPS_FASTPROPERTIESONLY / GPS_DEFAULT
+      IID_PPV_ARGS (&spStore));
+
+  if (FAILED(hr))
+  {
+    _com_error err(hr);
+    PLOG_ERROR << "Failed with path: " << path << ", error: " << SK_WideCharToUTF8(err.ErrorMessage());
+    return false;
+  }
+
+  return SUCCEEDED(spStore->GetValue(key, pVar));
+}
+
+static int
+ComparePropVariants (const PROPVARIANT& a, const PROPVARIANT& b)
+{
+  return PropVariantCompare(a, b);
+}
+
+static bool
+GetFolderSortColumns (std::vector<SORTCOLUMN>& sortColumns, const std::wstring& path)
+{
+  sortColumns.clear();
+
+  CComPtr<IShellWindows> spWindows;
+  if (FAILED (spWindows.CoCreateInstance (CLSID_ShellWindows)))
+    return false;
+
+  long count = 0;
+  spWindows->get_Count (&count);
+
+  struct c_s {
+    HWND                    hWnd = NULL;
+    std::vector<SORTCOLUMN> sortColumns;
+  };
+
+  std::vector<c_s> candidates;
+
+  for (long i = 0; i < count; ++i)
+  {
+    CComVariant vtIndex(i);
+    CComPtr<IDispatch> spDisp;
+
+    if (FAILED (spWindows->Item (vtIndex, &spDisp)) || !spDisp)
+      continue;
+
+    CComPtr<IWebBrowserApp> spBrowser;
+    if (FAILED (spDisp->QueryInterface (IID_PPV_ARGS(&spBrowser))))
+      continue;
+
+    // Get location URL (file:///C:/...)
+    BSTR bstrURL;
+    if (FAILED (spBrowser->get_LocationURL (&bstrURL)))
+      continue;
+
+    std::wstring url(bstrURL, SysStringLen (bstrURL));
+    SysFreeString   (bstrURL);
+
+    // Convert URL → path
+    wchar_t wszPath[MAX_PATH];
+    DWORD size = MAX_PATH;
+    if (FAILED (PathCreateFromUrlW (url.c_str(), wszPath, &size, 0)))
+      continue;
+
+    // Compare with target path
+    if (_wcsicmp (wszPath, path.c_str()) != 0)
+      continue;
+
+    // Found matching Explorer window
+    CComPtr<IServiceProvider> spSP;
+    if (FAILED (spBrowser->QueryInterface (IID_PPV_ARGS(&spSP))))
+      continue;
+
+    CComPtr<IShellBrowser> spShellBrowser;
+    if (FAILED (spSP->QueryService (SID_STopLevelBrowser, IID_PPV_ARGS(&spShellBrowser))))
+      continue;
+
+    CComPtr<IShellView> spView;
+    if (FAILED (spShellBrowser->QueryActiveShellView (&spView)))
+      continue;
+
+    CComPtr<IFolderView2> spFV2;
+    if (FAILED (spView->QueryInterface (IID_PPV_ARGS(&spFV2))))
+      continue;
+
+    // We have a candidate
+    c_s item;
+
+    // Retrieve the window HWND
+    spBrowser->get_HWND ((SHANDLE_PTR*)& item.hWnd);
+
+    // Get sort columns
+    int sortColumnCount = 0;
+    if (SUCCEEDED (spFV2->GetSortColumnCount (&sortColumnCount)))
+    {
+      item.sortColumns = std::vector<SORTCOLUMN> (sortColumnCount);
+
+      if (SUCCEEDED (spFV2->GetSortColumns (item.sortColumns.data(), sortColumnCount)))
+      {
+        for (int col = 0; col < sortColumnCount; ++col)
+        {
+          PROPERTYKEY key         = item.sortColumns[col].propkey;
+          SORTDIRECTION direction = item.sortColumns[col].direction;
+
+          PLOG_VERBOSE << "Column " << col << " [" << PropertyKeyToString(key) << "], direction: " << (direction == SORT_ASCENDING ? "ASC" : "DESC");
+        }
+
+        candidates.push_back (std::move (item));
+      }
+    }
+  }
+
+  if (! candidates.empty())
+  {
+    // Walk downard through the Z-order
+    for (HWND wnd = GetWindow (candidates[0].hWnd, GW_HWNDFIRST); wnd != NULL; wnd = GetNextWindow (wnd, GW_HWNDNEXT))
+    {
+      auto it = std::find_if (candidates.begin(), candidates.end(), [&](const c_s& c) { return c.hWnd == wnd; } );
+
+      if (it == candidates.end())
+        continue;
+
+      sortColumns = it->sortColumns;
+
+      //PLOG_VERBOSE << "Found sort columns!";
+
+      /*
+      for (int col = 0; col < sortColumns.size(); ++col)
+      {
+        PROPERTYKEY key         = sortColumns[col].propkey;
+        SORTDIRECTION direction = sortColumns[col].direction;
+
+        PLOG_VERBOSE << "Column " << col << " [" << PropertyKeyToString(key) << "], direction: " << (direction == SORT_ASCENDING ? "ASC" : "DESC");
+      }
+      */
+
+      return true;
+    }
+  }
+
+  return false;
+}
+
+void
+skiv_image_directory_s::updateSortOrder (std::vector<fd_s>& list, std::vector<SORTCOLUMN>& sortColumns, const std::wstring& path)
+{
+  if (GetFolderSortColumns  (sortColumns, path))
+       sortByColumns  (list, sortColumns);
+  else sortByFilename (list);
+}
+
+void
+skiv_image_directory_s::sortByFilename (std::vector<fd_s>& list)
+{
+  std::sort (list.begin(),
+             list.end  (),
+    []( const fd_s& a,
+        const fd_s& b ) -> int
+    {
+      return StrCmpLogicalW (a.filename.c_str(), b.filename.c_str()) < 0;
+    }
+  );
+}
+
+void
+skiv_image_directory_s::sortByColumns (std::vector<fd_s>& list, const std::vector<SORTCOLUMN>& sortColumns)
+{
+  if (sortColumns.empty())
+    return sortByFilename (list);
+
+  struct cf_s
+  {
+    fd_s                     file;
+    std::vector<PROPVARIANT> values;
+  };
+  std::vector<cf_s> cache;
+
+  DWORD temp_time         = SKIF_Util_timeGetTime1();
+  DWORD sum_time_parsing  = 0;
+  DWORD sum_time_getvalue = 0;
+
+  // Cache the properties of all files
+  CComPtr<IBindCtx>            bindCtx;
+  CComPtr<IFileSystemBindData> spFSBD = new FileSystemBindData();
+
+  HRESULT hr = CreateBindCtx (0, &bindCtx);
+
+  if (FAILED (hr))
+  {
+    _com_error err(hr);
+    PLOG_ERROR << "Operation [CreateBindCtx] failed with error: " << SK_WideCharToUTF8 (err.ErrorMessage());
+    return sortByFilename (list);
+  }
+
+  for (const auto& file : list)
+  {
+    cf_s item;
+    item.file = file;
+    item.values.resize (sortColumns.size());
+
+    // This file property needs to be declared in the loop
+    CComPtr<IPropertyStore> spStore;
+
+    DWORD tmp = SKIF_Util_timeGetTime1();
+
+    spFSBD->SetFindData(&file.ffd); // Always returns S_OK claims the docs
+    hr = bindCtx->RegisterObjectParam (STR_FILE_SYS_BIND_DATA, spFSBD);
+
+    if (FAILED (hr))
+    {
+      _com_error err(hr);
+      PLOG_ERROR << "Operation [RegisterObjectParam] failed with error: " << SK_WideCharToUTF8 (err.ErrorMessage());
+    }
+
+    // Using GPS_FASTPROPERTIESONLY speeds up the performance here a lot... but it also means that all sort methods will not be supported.
+    // For example, "System.ItemDate" (sort by Date) will not work and will instead mirror "System.ItemModified" (Date Modified)
+    hr = SHGetPropertyStoreFromParsingName (file.path.c_str(), bindCtx, GPS_FASTPROPERTIESONLY | GPS_BESTEFFORT | GPS_NO_OPLOCK, IID_PPV_ARGS(&spStore));
+    sum_time_parsing += (SKIF_Util_timeGetTime1() - tmp);
+
+    if (FAILED (hr))
+    {
+      _com_error err(hr);
+      PLOG_ERROR << "Failed to retrieve properties for path: " << file.path;
+      PLOG_ERROR << "Error: " << SK_WideCharToUTF8 (err.ErrorMessage());
+      continue;
+    }
+
+    for (size_t i = 0; i < sortColumns.size(); ++i)
+    {
+      PropVariantInit (&item.values[i]);
+      DWORD tmp2 = SKIF_Util_timeGetTime1();
+      spStore->GetValue (sortColumns[i].propkey, &item.values[i]);
+      sum_time_getvalue += (SKIF_Util_timeGetTime1() - tmp2);
+    }
+
+    cache.push_back (std::move(item));
+  }
+
+  PLOG_VERBOSE << "Operation [SHGetPropertyStoreFromParsingName] took " << sum_time_parsing << " ms.";
+  PLOG_VERBOSE << "Operation [IPropertyStore::GetValue] took " << sum_time_getvalue << " ms.";
+
+  temp_time = SKIF_Util_timeGetTime1();
+
+  std::sort (cache.begin(), cache.end(),
+    [&](const cf_s& a, const cf_s& b)
+    {
+      for (size_t i = 0; i < sortColumns.size(); ++i)
+      {
+        int cmp = PropVariantCompare(a.values[i], b.values[i]);
+
+        if (cmp != 0)
+        {
+          if (sortColumns[i].direction == SORT_DESCENDING)
+            cmp = -cmp;
+
+          return cmp < 0;
+        }
+      }
+      return false;
+    }
+  );
+
+  PLOG_VERBOSE << "Operation [SortItems] took " << (SKIF_Util_timeGetTime1() - temp_time) << " ms.";
+
+  list.clear();
+
+  for (auto& item : cache)
+  {
+    list.push_back (item.file);
+
+    for (auto& v : item.values)
+      PropVariantClear (&v);
+  }
+
+  PLOG_VERBOSE << "Operation took ~" << (sum_time_parsing + sum_time_getvalue) << " ms.";
 }

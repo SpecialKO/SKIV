@@ -46,6 +46,30 @@
     <Filter Include="Header Files\Packages_Misc">
       <UniqueIdentifier>{9fb4cf13-f304-4e2c-a64a-0fb28fa175f2}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Header Files\Image Libraries">
+      <UniqueIdentifier>{3d9dc276-86da-47f9-beee-7572c951dd38}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\Image Libraries\JPEG XL">
+      <UniqueIdentifier>{b68e057a-f235-4746-9d17-5c2431038e75}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\Image Libraries\AVIF">
+      <UniqueIdentifier>{aa2b7146-a0df-4d19-a1a4-b7a46f0f796b}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\Image Libraries\Ultra HDR">
+      <UniqueIdentifier>{63e02f49-c14d-4686-afae-bdd84df79d80}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\Image Libraries\OpenEXR">
+      <UniqueIdentifier>{295a3518-939e-4628-be1a-4aa8a0e5db1c}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\Packages_Misc">
+      <UniqueIdentifier>{89db2a07-06bc-44ae-b6a3-b9bfb4a369ff}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\Packages_Misc\libwebp">
+      <UniqueIdentifier>{4f74a996-f2cc-5b04-95d5-e1a81299a0f3}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\Packages_Misc\lcms2">
+      <UniqueIdentifier>{9c2f3e1a-6d4b-4a7e-8f15-2b8c0d7e4a31}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\imgui\imconfig.h">
@@ -76,6 +100,9 @@
       <Filter>Header Files\UI Tabs</Filter>
     </ClInclude>
     <ClInclude Include="include\utility\fsutil.h">
+      <Filter>Header Files\Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="include\utility\l10n.h">
       <Filter>Header Files\Utility</Filter>
     </ClInclude>
     <ClInclude Include="include\SKIV.h">
@@ -177,8 +204,326 @@
     <ClInclude Include="include\utility\image.h">
       <Filter>Header Files\Utility</Filter>
     </ClInclude>
+    <ClInclude Include="include\utility\image_decode.h">
+      <Filter>Header Files\Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="include\utility\image_store.h">
+      <Filter>Header Files\Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="packages_misc\DirectXTexEXR.h">
+      <Filter>Header Files\Packages_Misc</Filter>
+    </ClInclude>
+    <ClInclude Include="include\jxl\cms.h">
+      <Filter>Header Files\Image Libraries\JPEG XL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\jxl\cms_interface.h">
+      <Filter>Header Files\Image Libraries\JPEG XL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\jxl\codestream_header.h">
+      <Filter>Header Files\Image Libraries\JPEG XL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\jxl\color_encoding.h">
+      <Filter>Header Files\Image Libraries\JPEG XL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\jxl\compressed_icc.h">
+      <Filter>Header Files\Image Libraries\JPEG XL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\jxl\decode.h">
+      <Filter>Header Files\Image Libraries\JPEG XL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\jxl\decode_cxx.h">
+      <Filter>Header Files\Image Libraries\JPEG XL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\jxl\encode.h">
+      <Filter>Header Files\Image Libraries\JPEG XL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\jxl\encode_cxx.h">
+      <Filter>Header Files\Image Libraries\JPEG XL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\jxl\gain_map.h">
+      <Filter>Header Files\Image Libraries\JPEG XL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\jxl\memory_manager.h">
+      <Filter>Header Files\Image Libraries\JPEG XL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\jxl\parallel_runner.h">
+      <Filter>Header Files\Image Libraries\JPEG XL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\jxl\resizable_parallel_runner.h">
+      <Filter>Header Files\Image Libraries\JPEG XL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\jxl\resizable_parallel_runner_cxx.h">
+      <Filter>Header Files\Image Libraries\JPEG XL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\jxl\stats.h">
+      <Filter>Header Files\Image Libraries\JPEG XL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\jxl\thread_parallel_runner.h">
+      <Filter>Header Files\Image Libraries\JPEG XL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\jxl\thread_parallel_runner_cxx.h">
+      <Filter>Header Files\Image Libraries\JPEG XL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\jxl\types.h">
+      <Filter>Header Files\Image Libraries\JPEG XL</Filter>
+    </ClInclude>
+    <ClInclude Include="include\avif\internal.h">
+      <Filter>Header Files\Image Libraries\AVIF</Filter>
+    </ClInclude>
+    <ClInclude Include="include\avif\avif.h">
+      <Filter>Header Files\Image Libraries\AVIF</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ultrahdr\editorhelper.h">
+      <Filter>Header Files\Image Libraries\Ultra HDR</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ultrahdr\gainmapmath.h">
+      <Filter>Header Files\Image Libraries\Ultra HDR</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ultrahdr\gainmapmetadata.h">
+      <Filter>Header Files\Image Libraries\Ultra HDR</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ultrahdr\icc.h">
+      <Filter>Header Files\Image Libraries\Ultra HDR</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ultrahdr\jpegdecoderhelper.h">
+      <Filter>Header Files\Image Libraries\Ultra HDR</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ultrahdr\jpegencoderhelper.h">
+      <Filter>Header Files\Image Libraries\Ultra HDR</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ultrahdr\jpegr.h">
+      <Filter>Header Files\Image Libraries\Ultra HDR</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ultrahdr\jpegrutils.h">
+      <Filter>Header Files\Image Libraries\Ultra HDR</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ultrahdr\multipictureformat.h">
+      <Filter>Header Files\Image Libraries\Ultra HDR</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ultrahdr\ultrahdr.h">
+      <Filter>Header Files\Image Libraries\Ultra HDR</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ultrahdr\ultrahdr_api.h">
+      <Filter>Header Files\Image Libraries\Ultra HDR</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ultrahdr\ultrahdrcommon.h">
+      <Filter>Header Files\Image Libraries\Ultra HDR</Filter>
+    </ClInclude>
+    <ClInclude Include="include\MinHook.h">
+      <Filter>Header Files\Utility</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="packages_misc\lcms2\src\cmsalpha.c">
+      <Filter>Source Files\Packages_Misc\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmscam02.c">
+      <Filter>Source Files\Packages_Misc\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmscgats.c">
+      <Filter>Source Files\Packages_Misc\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmscnvrt.c">
+      <Filter>Source Files\Packages_Misc\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmserr.c">
+      <Filter>Source Files\Packages_Misc\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsgamma.c">
+      <Filter>Source Files\Packages_Misc\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsgmt.c">
+      <Filter>Source Files\Packages_Misc\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmshalf.c">
+      <Filter>Source Files\Packages_Misc\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsintrp.c">
+      <Filter>Source Files\Packages_Misc\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsio0.c">
+      <Filter>Source Files\Packages_Misc\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsio1.c">
+      <Filter>Source Files\Packages_Misc\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmslut.c">
+      <Filter>Source Files\Packages_Misc\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsmd5.c">
+      <Filter>Source Files\Packages_Misc\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsmtrx.c">
+      <Filter>Source Files\Packages_Misc\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsnamed.c">
+      <Filter>Source Files\Packages_Misc\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsopt.c">
+      <Filter>Source Files\Packages_Misc\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmspack.c">
+      <Filter>Source Files\Packages_Misc\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmspcs.c">
+      <Filter>Source Files\Packages_Misc\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsplugin.c">
+      <Filter>Source Files\Packages_Misc\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsps2.c">
+      <Filter>Source Files\Packages_Misc\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmssamp.c">
+      <Filter>Source Files\Packages_Misc\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmssm.c">
+      <Filter>Source Files\Packages_Misc\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmstypes.c">
+      <Filter>Source Files\Packages_Misc\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsvirt.c">
+      <Filter>Source Files\Packages_Misc\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmswtpnt.c">
+      <Filter>Source Files\Packages_Misc\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\lcms2\src\cmsxform.c">
+      <Filter>Source Files\Packages_Misc\lcms2</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dec\alpha_dec.c">
+      <Filter>Source Files\Packages_Misc\libwebp</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dec\buffer_dec.c">
+      <Filter>Source Files\Packages_Misc\libwebp</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dec\frame_dec.c">
+      <Filter>Source Files\Packages_Misc\libwebp</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dec\idec_dec.c">
+      <Filter>Source Files\Packages_Misc\libwebp</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dec\io_dec.c">
+      <Filter>Source Files\Packages_Misc\libwebp</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dec\quant_dec.c">
+      <Filter>Source Files\Packages_Misc\libwebp</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dec\tree_dec.c">
+      <Filter>Source Files\Packages_Misc\libwebp</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dec\vp8_dec.c">
+      <Filter>Source Files\Packages_Misc\libwebp</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dec\vp8l_dec.c">
+      <Filter>Source Files\Packages_Misc\libwebp</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dec\webp_dec.c">
+      <Filter>Source Files\Packages_Misc\libwebp</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\demux\anim_decode.c">
+      <Filter>Source Files\Packages_Misc\libwebp</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\demux\demux.c">
+      <Filter>Source Files\Packages_Misc\libwebp</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dsp\alpha_processing.c">
+      <Filter>Source Files\Packages_Misc\libwebp</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dsp\alpha_processing_sse2.c">
+      <Filter>Source Files\Packages_Misc\libwebp</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dsp\alpha_processing_sse41.c">
+      <Filter>Source Files\Packages_Misc\libwebp</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dsp\cpu.c">
+      <Filter>Source Files\Packages_Misc\libwebp</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dsp\dec.c">
+      <Filter>Source Files\Packages_Misc\libwebp</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dsp\dec_clip_tables.c">
+      <Filter>Source Files\Packages_Misc\libwebp</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dsp\dec_sse2.c">
+      <Filter>Source Files\Packages_Misc\libwebp</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dsp\dec_sse41.c">
+      <Filter>Source Files\Packages_Misc\libwebp</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dsp\filters.c">
+      <Filter>Source Files\Packages_Misc\libwebp</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dsp\filters_sse2.c">
+      <Filter>Source Files\Packages_Misc\libwebp</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dsp\lossless.c">
+      <Filter>Source Files\Packages_Misc\libwebp</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dsp\lossless_avx2.c">
+      <Filter>Source Files\Packages_Misc\libwebp</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dsp\lossless_sse2.c">
+      <Filter>Source Files\Packages_Misc\libwebp</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dsp\lossless_sse41.c">
+      <Filter>Source Files\Packages_Misc\libwebp</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dsp\rescaler.c">
+      <Filter>Source Files\Packages_Misc\libwebp</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dsp\rescaler_sse2.c">
+      <Filter>Source Files\Packages_Misc\libwebp</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dsp\upsampling.c">
+      <Filter>Source Files\Packages_Misc\libwebp</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dsp\upsampling_sse2.c">
+      <Filter>Source Files\Packages_Misc\libwebp</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dsp\upsampling_sse41.c">
+      <Filter>Source Files\Packages_Misc\libwebp</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dsp\yuv.c">
+      <Filter>Source Files\Packages_Misc\libwebp</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dsp\yuv_sse2.c">
+      <Filter>Source Files\Packages_Misc\libwebp</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\dsp\yuv_sse41.c">
+      <Filter>Source Files\Packages_Misc\libwebp</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\utils\bit_reader_utils.c">
+      <Filter>Source Files\Packages_Misc\libwebp</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\utils\color_cache_utils.c">
+      <Filter>Source Files\Packages_Misc\libwebp</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\utils\filters_utils.c">
+      <Filter>Source Files\Packages_Misc\libwebp</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\utils\huffman_utils.c">
+      <Filter>Source Files\Packages_Misc\libwebp</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\utils\palette.c">
+      <Filter>Source Files\Packages_Misc\libwebp</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\utils\quant_levels_dec_utils.c">
+      <Filter>Source Files\Packages_Misc\libwebp</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\utils\random_utils.c">
+      <Filter>Source Files\Packages_Misc\libwebp</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\utils\rescaler_utils.c">
+      <Filter>Source Files\Packages_Misc\libwebp</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\utils\thread_utils.c">
+      <Filter>Source Files\Packages_Misc\libwebp</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\libwebp\src\utils\utils.c">
+      <Filter>Source Files\Packages_Misc\libwebp</Filter>
+    </ClCompile>
     <ClCompile Include="src\imgui\imgui.cpp">
       <Filter>Source Files\ImGui</Filter>
     </ClCompile>
@@ -227,6 +572,9 @@
     <ClCompile Include="src\imgui\imgui_tables.cpp">
       <Filter>Source Files\ImGui</Filter>
     </ClCompile>
+    <ClCompile Include="src\imgui\imgui_demo.cpp">
+      <Filter>Source Files\ImGui</Filter>
+    </ClCompile>
     <ClCompile Include="src\imgui\imgui_impl_dx11.cpp">
       <Filter>Source Files\ImGui</Filter>
     </ClCompile>
@@ -235,6 +583,30 @@
     </ClCompile>
     <ClCompile Include="src\utility\image.cpp">
       <Filter>Source Files\Utility</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utility\image_decode.cpp">
+      <Filter>Source Files\Utility</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utility\image_store.cpp">
+      <Filter>Source Files\Utility</Filter>
+    </ClCompile>
+    <ClCompile Include="src\MinHook\buffer.c">
+      <Filter>Source Files\Utility</Filter>
+    </ClCompile>
+    <ClCompile Include="src\MinHook\hook.c">
+      <Filter>Source Files\Utility</Filter>
+    </ClCompile>
+    <ClCompile Include="src\MinHook\trampoline.c">
+      <Filter>Source Files\Utility</Filter>
+    </ClCompile>
+    <ClCompile Include="src\MinHook\hde\hde32.c">
+      <Filter>Source Files\Utility</Filter>
+    </ClCompile>
+    <ClCompile Include="src\MinHook\hde\hde64.c">
+      <Filter>Source Files\Utility</Filter>
+    </ClCompile>
+    <ClCompile Include="packages_misc\DirectXTexEXR.cpp">
+      <Filter>Source Files\Packages_Misc</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -254,6 +626,9 @@
     <FxCompile Include="resources\shaders\imgui_vtx_shader.hlsl">
       <Filter>Resource Files\Shaders</Filter>
     </FxCompile>
+    <FxCompile Include="resources\shaders\avif_yuv_cs.hlsl">
+      <Filter>Resource Files\Shaders</Filter>
+    </FxCompile>
   </ItemGroup>
   <ItemGroup>
     <Manifest Include="resources\appcompat.manifest">
@@ -261,6 +636,7 @@
     </Manifest>
   </ItemGroup>
   <ItemGroup>
+    <None Include="packages.config" />
     <None Include="resources\shaders\colorspaces.hlsli">
       <Filter>Resource Files\Shaders</Filter>
     </None>
@@ -274,10 +650,7 @@
       <Filter>Resource Files\Shaders</Filter>
     </None>
     <None Include="post_build.bat">
-      <Filter>Resource Files</Filter>
-    </None>
-    <None Include="packages.config">
-      <Filter>Resource Files</Filter>
+      <Filter>Source Files</Filter>
     </None>
   </ItemGroup>
 </Project>

@@ -15,7 +15,7 @@ public:
   {
     m_hWnd              = hWnd;
     m_ulRefCount        = 1;
-    
+
     // CLSCTX_INPROC_SERVER
     if (FAILED (CoCreateInstance (CLSID_DragDropHelper, NULL, CLSCTX_INPROC_SERVER,
                                    IID_IDropTargetHelper, reinterpret_cast<LPVOID *>(&m_pDropTargetHelper))))
@@ -113,7 +113,7 @@ public:
 
               if (m_pDropTargetHelper != nullptr)
                 m_pDropTargetHelper->DragEnter (m_hWnd, pDataObj, reinterpret_cast<LPPOINT>(&pt), *pdwEffect);
-              
+
               pEnumFormatEtc->Release();
               return S_OK;
             }
@@ -276,8 +276,8 @@ struct SKIF_DropTargetObject
 {
   static SKIF_DropTargetObject& GetInstance (void)
   {
-    static SKIF_DropTargetObject instance;
-    return instance;
+      static SKIF_DropTargetObject instance;
+      return instance;
   }
 
   void Revoke (HWND hWnd)
@@ -307,7 +307,7 @@ struct SKIF_DropTargetObject
     {
       m_hWnd       = hWnd;
       m_DropTarget = new DropTarget (m_hWnd);
-            
+
       if (FAILED (RegisterDragDrop (m_hWnd, m_DropTarget)))
         Revoke (m_hWnd);
     }
