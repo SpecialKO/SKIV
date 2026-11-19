@@ -20,6 +20,7 @@
 // SKIV's stb_image reports what it found in a PNG through these (the viewer defines them)
 thread_local stbi__context::iccp_s SKIV_STBI_ICCP;
 thread_local bool                  SKIV_STBI_srgb;
+thread_local bool                  SKIV_STBI_RawCMYK;
 thread_local stbi__context::cicp_s SKIV_STBI_CICP;
 thread_local stbi__context::sbit_s SKIV_STBI_SBIT;
 thread_local stbi__result_info     SKIV_STBI_ResultInfo;
@@ -45,6 +46,7 @@ thread_local stbi__result_info     SKIV_STBI_ResultInfo;
 
 #include <thread>
 
+#include "../../include/utility/color_source.h"
 #include "../../src/utility/animated_images.inl"
 #include "../../src/utility/color_source.inl"
 #include "../../src/utility/color_convert.inl"
@@ -103,7 +105,7 @@ ReadFile (const fs::path& path)
   return data;
 }
 
-struct frame_s   { uint32_t delay = 0; std::vector <uint8_t> rgba; };
+struct frame_s   { uint32_t delay = 0; std::vector <uint8_t> rgba; }; // delay: microseconds
 struct decoded_s { int result = -1; uint32_t width = 0, height = 0; std::vector <frame_s> frames; };
 
 // Decodes the frames of an animated image as the viewer does (_OpenAnimatedImage, then its decoder). stopAfter: onFrame returns
@@ -171,6 +173,7 @@ ReadExpected (const fs::path& folder)
     {
       frame_s f;
       s >> f.delay;
+      f.delay *= 1000; // expected.txt has milliseconds; the decoders give microseconds
       out.back ( ).frames.push_back (f);
     }
   }
@@ -941,7 +944,7 @@ main (int argc, char** argv)
     for (size_t i = 0; i < std::min (got.frames.size ( ), e.frames.size ( )); i++)
     {
       Check (got.frames [i].delay == e.frames [i].delay, e.name, "frame " + std::to_string (i) + ": delay " +
-                                    std::to_string (got.frames [i].delay) + " ms, expected " + std::to_string (e.frames [i].delay));
+                                    std::to_string (got.frames [i].delay) + " us, expected " + std::to_string (e.frames [i].delay));
       const int difference = MaxDifference (got.frames [i].rgba, e.frames [i].rgba);
       Check (difference <= 1, e.name, "frame " + std::to_string (i) + ": pixels differ (by up to " + std::to_string (difference) + ")");
     }
@@ -971,6 +974,27 @@ main (int argc, char** argv)
 
     for (size_t i = 0; i < std::min (got.frames.size ( ), expected.frames.size ( )); i++)
       Check (got.frames [i].rgba == expected.frames [i].rgba, "apng_basic.png + gAMA", "frame " + std::to_string (i) + ": pixels differ");
+  }
+
+  // SKIV only: an RGBA APNG with a (not allowed, but written by some encoders) tRNS chunk, which stb_image refuses,
+  //   decodes as it would without one, as browsers decode it
+  {
+    const auto original = ReadFile (images / "apng_basic.png"); // Color type 6 (RGBA)
+    auto       withTRNS = original;
+
+    // tRNS, right after IHDR (8 bytes of signature, 25 of IHDR)
+    std::vector <uint8_t> chunk;
+    const uint8_t trns [6] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+    _AppendPNGChunk (chunk, "tRNS", trns, sizeof (trns));
+    withTRNS.insert (withTRNS.begin ( ) + 33, chunk.begin ( ), chunk.end ( ));
+
+    const auto expected = Decode (original);
+    const auto got      = Decode (withTRNS);
+
+    Check (got.result > 0 && got.result == expected.result, "apng_basic.png + tRNS", "decoded " + std::to_string (got.result) + " frames");
+
+    for (size_t i = 0; i < std::min (got.frames.size ( ), expected.frames.size ( )); i++)
+      Check (got.frames [i].rgba == expected.frames [i].rgba, "apng_basic.png + tRNS", "frame " + std::to_string (i) + ": pixels differ");
   }
 
   // Not animated: still images, and files that are not images at all

@@ -1,6 +1,7 @@
 // Animated images: the APNG, GIF and WebP decoders of the viewer's animated images (viewer.cpp), and
 //   IsAnimatedImageFile. Ported from SKIF (src/stores/animated_images.inl, tested there on its own by tools\image_tests);
-//     keep the two in sync. The one difference: APNG frames leave out the gAMA chunk (see _ParseAPNG).
+//     keep the two in sync. The differences: APNG frames leave out the gAMA chunk, and a tRNS chunk in an
+//     image with an alpha channel (see _ParseAPNG).
 //
 //   Include it in one file only, where stb_image is implemented: the GIF decoder uses stb_image's internal frame decoder
 //     (stbi__gif_load_next), which only exists there. Before it, that file includes:
@@ -207,6 +208,11 @@ _ParseAPNG (const uint8_t* file, size_t size, apng_s& apng)
     // SKIV's stb_image refuses PNGs with a gAMA chunk (it cannot apply it, see stb_image.h), so the frames leave it out
     //   and are shown as sRGB, as most viewers show animated PNGs
     else if (_IsChunk (type, "gAMA"))
+      { }
+
+    // A tRNS chunk is not allowed in an image with an alpha channel (color types 4 and 6), and stb_image refuses one
+    //   ("tRNS with alpha"); some encoders write it anyway, and browsers ignore it, so the frames leave it out too
+    else if (_IsChunk (type, "tRNS") && (apng.ihdr [9] & 4) != 0)
       { }
 
     // Shared by all the frames (palette, transparency, color space, ...): copied into each frame's PNG

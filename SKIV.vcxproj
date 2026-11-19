@@ -434,6 +434,7 @@
     <ClInclude Include="include\utility\droptarget.hpp" />
     <ClInclude Include="include\utility\gamepad.h" />
     <ClInclude Include="include\utility\image.h" />
+    <ClInclude Include="include\utility\color_source.h" />
     <ClInclude Include="include\utility\image_decode.h" />
     <ClInclude Include="include\utility\image_store.h" />
     <ClInclude Include="include\utility\plog_formatter.h" />

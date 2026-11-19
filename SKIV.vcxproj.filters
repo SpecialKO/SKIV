@@ -204,6 +204,9 @@
     <ClInclude Include="include\utility\image.h">
       <Filter>Header Files\Utility</Filter>
     </ClInclude>
+    <ClInclude Include="include\utility\color_source.h">
+      <Filter>Header Files\Utility</Filter>
+    </ClInclude>
     <ClInclude Include="include\utility\image_decode.h">
       <Filter>Header Files\Utility</Filter>
     </ClInclude>
