@@ -3628,6 +3628,37 @@ SKIF_UI_Tab_DrawViewer (void)
         ImGui::PopID ( ); // #HDRVisualization
       }
 
+      // HDR images: the HDR-to-SDR tone mapper (as in the settings), of the image on an SDR display and saved as SDR
+      if (cover.is_hdr)
+      {
+        ImGui::PushID ("#SDRToneMapper");
+
+        if (SKIF_ImGui_BeginMenuEx2 ("SDR Tone Mapping", ICON_FA_SUN))
+        {
+          auto _CreateMenuItem = [&](SKIV_SdrToneMapper tone_mapper, const char* label, const char* tooltip) {
+            if (ImGui::MenuItem (label, nullptr, (_registry.iSDRToneMapper == tone_mapper)) &&
+                                                  _registry.iSDRToneMapper != tone_mapper)
+            {
+              _registry.iSDRToneMapper = tone_mapper;
+              _registry.regKVSDRToneMapper.putData (_registry.iSDRToneMapper);
+            }
+
+            ImGui::SetItemTooltip ("%s", tooltip);
+          };
+
+          _CreateMenuItem (SKIV_SDR_TONEMAP_DEFAULT,   "Default",        "The image's range mapped to that of SDR (darker, by design).");
+          _CreateMenuItem (SKIV_SDR_TONEMAP_PIECEWISE, "SKIV Piecewise", "Up to half of SDR white left as is, the highlights above it compressed.");
+          _CreateMenuItem (SKIV_SDR_TONEMAP_AUTO,      "SKIV Auto Tone", "Piecewise, with the midtones of bright scenes darkened to make room.");
+
+          ImGui::Separator     ( );
+          ImGui::TextDisabled  ("%s", _registry._RendererHDREnabled ? "Used when saving as SDR (the display is in HDR)"
+                                                                     : "Used on this display, and when saving as SDR");
+          ImGui::EndMenu ( );
+        }
+
+        ImGui::PopID ( ); // #SDRToneMapper
+      }
+
       if (SKIF_ImGui_MenuItemEx2 ("Details", 0, ImGui::GetStyleColorVec4 (ImGuiCol_Text), "Ctrl+D", &_registry.bImageDetails)) // ICON_FA_BARCODE
         _registry.regKVImageDetails.putData (_registry.bImageDetails);
 
