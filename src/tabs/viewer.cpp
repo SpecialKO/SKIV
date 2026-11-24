@@ -96,7 +96,7 @@ float    SKIV_HDR_MaxLuminance          =  80.0f;
 float    SKIV_HDR_DisplayMaxLuminance   =   0.0f;
 float    SKIV_HDR_BrightnessScale       = 100.0f;
 
-float    SKIV_HDR_MaxLuminanceP99       =  80.0f;
+image_s::light_info_s SKIV_HDR_ImageLight;
 
 CComPtr <ID3D11UnorderedAccessView>
          SKIV_HDR_GamutCoverageUAV      = nullptr;
@@ -1513,10 +1513,8 @@ SKIV_Viewer_DrawCarousel (skiv_image_directory_s::fl_s& files, SKIV_ImageStore& 
         {
           extern void SKIV_ImplDX11_DrawCallback_SetHDRThumbnail (const ImDrawList*, const ImDrawCmd*);
 
-          // Its brightest, as the image shown's is taken (the 99.94th percentile, or the maximum)
-          float maxNits = std::max (1.0f, (_registry.b99thPercentileMaxCLL) ? thumbnail->light_info.p99_nits
-                                                                             : thumbnail->light_info.max_nits);
-          dl->AddCallback (SKIV_ImplDX11_DrawCallback_SetHDRThumbnail, &maxNits, sizeof (maxNits));
+          auto light = thumbnail->light_info;
+          dl->AddCallback (SKIV_ImplDX11_DrawCallback_SetHDRThumbnail, &light, sizeof (light));
         }
 
         dl->AddImage ((ImTextureID)(intptr_t)thumbnail->pRawTexSRV.p, pos, pos + size,
@@ -2116,6 +2114,16 @@ SKIF_UI_Tab_DrawViewer (void)
     ID3D11ShaderResourceView* pFrameSRV =
       SKIV_GetImageFrame (cover_old, frame_uv0, frame_uv1, false);
 
+    ImDrawList* dl = window->DrawList;
+    const bool useOwnSdrTone = !_registry._RendererHDREnabled &&
+      _registry.iSDRToneMapper != SKIV_SDR_TONEMAP_DEFAULT && SKIV_Viewer_DrawAsHDR (cover_old);
+
+    if (useOwnSdrTone)
+    {
+      extern void SKIV_ImplDX11_DrawCallback_SetHDRThumbnail (const ImDrawList*, const ImDrawCmd*);
+      dl->AddCallback (SKIV_ImplDX11_DrawCallback_SetHDRThumbnail, &cover_old.light_info, sizeof (cover_old.light_info));
+    }
+
     SKIF_ImGui_OptImage  (pFrameSRV,
                                                       ImVec2 (sizeCover_old.x,
                                                               sizeCover_old.y),
@@ -2123,6 +2131,12 @@ SKIF_UI_Tab_DrawViewer (void)
                                     SKIV_Viewer_DrawAsHDR (cover_old) ? hdr_uv1 : cover_old.is_dds ? srgb_uv1 : frame_uv1, // Bottom Right coordinates
                                     (_registry._StyleLightMode) ? ImVec4 (1.0f, 1.0f, 1.0f, fGammaCorrectedTint * AdjustAlpha (fAlphaPrev))  : ImVec4 (fTint, fTint, fTint, fAlphaPrev) // Alpha transparency
     );
+
+    if (useOwnSdrTone)
+    {
+      extern void SKIV_ImplDX11_DrawCallback_RestoreImageConstants (const ImDrawList*, const ImDrawCmd*);
+      dl->AddCallback (SKIV_ImplDX11_DrawCallback_RestoreImageConstants, nullptr);
+    }
 
     if (s_fadeOutLayout.valid)
     {
@@ -2157,9 +2171,8 @@ SKIF_UI_Tab_DrawViewer (void)
       {
         extern void SKIV_ImplDX11_DrawCallback_SetHDRThumbnail (const ImDrawList*, const ImDrawCmd*);
 
-        float maxNits = std::max (1.0f, (_registry.b99thPercentileMaxCLL) ? preview->light_info.p99_nits
-                                                                           : preview->light_info.max_nits);
-        dl->AddCallback (SKIV_ImplDX11_DrawCallback_SetHDRThumbnail, &maxNits, sizeof (maxNits));
+        auto light = preview->light_info;
+        dl->AddCallback (SKIV_ImplDX11_DrawCallback_SetHDRThumbnail, &light, sizeof (light));
       }
 
       dl->AddImage ((ImTextureID)(intptr_t)preview->pRawTexSRV.p, pos, pos + size,
@@ -2185,7 +2198,7 @@ SKIF_UI_Tab_DrawViewer (void)
   SKIV_HDR_GamutCoverageSRV = (bIsHDR)             ? cover.pGamutCoverageSRV : nullptr;
 
   SKIV_HDR_MaxCLL          = cover.light_info.max_cll;
-  SKIV_HDR_MaxLuminanceP99 = cover.light_info.p99_nits;
+  SKIV_HDR_ImageLight     = cover.light_info;
   SKIV_HDR_MaxLuminance    = cover.light_info.max_nits;
 
   // For the wheel zoom (SKIV_Viewer_HandleMouseZoomPan): the image's unscaled size

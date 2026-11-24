@@ -51,3 +51,53 @@ float TonemapHDR (float L, float Lc, float Ld)
   return
     L * (1 + a * L) / (1 + b * L);
 }
+
+float MapShoulder (float input, float4 curve)
+{
+  float p = min (input, curve.y);
+  float white = LinearToPQY (1.5f);
+  float intensity = pow (abs (p), 0.18f) * TonemapHDR (p, curve.y, white);
+  return curve.x + (intensity - curve.z) * curve.w;
+}
+
+float3 TonemapSDRWithShoulder (float3 rgb, float brightness, uint mode, float4 curve, float3 auto_tone)
+{
+  const float sdr_white = 203.0f / 80.0f;
+  const float shoulder = 0.5f * sdr_white;
+  const float knee_pq = curve.x;
+
+  if (mode == 2) // SKIV Auto Tone: luminance mapping after the adaptive midtone curve.
+  {
+    float y = Rec709_to_XYZ (rgb).y;
+    if (auto_tone.x > 0.0f)
+    {
+      float p = LinearToPQY (min (y, DEFAULT_MAX_PQ));
+      float weight = p < auto_tone.y ? smoothstep (0.25f, auto_tone.y, p)
+                                    : 1.0f - smoothstep (auto_tone.y, auto_tone.z, p);
+      brightness *= exp2 (-auto_tone.x * weight);
+    }
+
+    rgb *= brightness;
+    y *= brightness;
+    if (y > shoulder)
+    {
+      float mapped = MapShoulder (LinearToPQY (min (y, DEFAULT_MAX_PQ)), curve);
+      rgb *= PQToLinear (mapped.xxx, DEFAULT_MAX_PQ).x / y;
+    }
+  }
+  else
+  {
+    // SKIV Piecewise: leave the lower range intact and retain SKIV's ICtCp chroma scaling.
+    rgb *= brightness;
+    float3 ictcp = Rec709toICtCp (rgb);
+    if (ictcp.x > knee_pq)
+    {
+      float mapped = MapShoulder (ictcp.x, curve);
+      ictcp.yz *= min (mapped / ictcp.x, ictcp.x / mapped);
+      ictcp.x = mapped;
+      rgb = ICtCptoRec709 (ictcp);
+    }
+  }
+
+  return saturate (rgb / sdr_white);
+}

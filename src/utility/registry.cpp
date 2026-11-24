@@ -317,6 +317,9 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
   if (regKVHDRToneMapType.hasData(&hKey))
     iHDRToneMapType        =   regKVHDRToneMapType         .getData (&hKey);
 
+  if (regKVSDRToneMapper.hasData(&hKey))
+    iSDRToneMapper        =   regKVSDRToneMapper         .getData (&hKey);
+
   if (regKVUIMode.hasData(&hKey))
     iUIMode                =   regKVUIMode                 .getData (&hKey);
 

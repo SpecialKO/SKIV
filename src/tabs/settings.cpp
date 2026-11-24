@@ -431,6 +431,31 @@ SKIF_UI_Tab_DrawSettings (void)
 
     ImGui::TreePop         ( );
 
+    ImGui::Spacing         ( );
+
+    ImGui::TextColored     (ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info), ICON_FA_LIGHTBULB);
+    SKIF_ImGui_SetHoverTip ("Used when displaying or exporting HDR images in SDR.");
+    ImGui::SameLine        ( );
+    ImGui::TextColored (
+      ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextCaption),
+        "HDR-to-SDR tone mapper:"
+    );
+    ImGui::TreePush        ("SDRToneMapper");
+
+    static const char* ToneMappers [] = { "Default", "SKIV Piecewise", "SKIV Auto Tone" };
+    int toneMapper = _registry.iSDRToneMapper;
+    if (toneMapper < 0 || toneMapper >= IM_ARRAYSIZE (ToneMappers))
+      toneMapper = 0;
+    if (ImGui::GetContentRegionAvail().x > 725.0f)
+      ImGui::SetNextItemWidth (500.0f);
+
+    if (ImGui::Combo ("###_registry.iSDRToneMapper", &toneMapper, ToneMappers, IM_ARRAYSIZE (ToneMappers)))
+    {
+      _registry.iSDRToneMapper = toneMapper;
+      _registry.regKVSDRToneMapper.putData (toneMapper);
+    }
+    ImGui::TreePop         ( );
+
     // nb:  Prefernece needs implementation
     //
 #if 0

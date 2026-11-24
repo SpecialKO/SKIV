@@ -37,6 +37,7 @@
 #include <ImGuiNotify.hpp>
 #include <utility/utility.h>      // FileSignature
 #include <utility/color_source.h> // color_source_s
+#include <utility/sdr_tone_map.h>
 
 // What a DDS file says about its texture, as read from its header(s) and DirectXTex's metadata: for the details panel
 //   (texture modders want to know its exact format, mips, array/cube layout, alpha mode, and the kind of header it has)
@@ -167,6 +168,7 @@ struct image_s {
     float avg_nits     = 0.0f;
     float p99_nits     = 0.0f;
     bool  isHDR        = false;
+    SKIV_SdrTone::AutoCurve auto_tone;
   } light_info;
 
   struct gamut_info_s {

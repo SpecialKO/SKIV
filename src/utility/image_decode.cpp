@@ -3976,6 +3976,7 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
     ZeroMemory (luminance_freq.get (),     sizeof (uint32_t)  *  65536);
 
     double dLumAccum = 0.0;
+    SKIV_SdrTone::AutoStats autoStats;
 
     static constexpr float FLT16_MIN = 0.0000000894069671630859375f;
 
@@ -4080,6 +4081,9 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
         fMinLum =
           std::min (fMinLum, fLum);
 
+        if (image.is_hdr)
+          autoStats.Add (fLum, XMVectorGetW (v));
+
         dScanlineLum +=
           std::max (0.0, static_cast <double> (fLum));
 
@@ -4097,8 +4101,9 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
     fMinLum = std::clamp (fMinLum, 0.0f,    125.0f);
     fMaxLum = std::clamp (fMaxLum, fMinLum, 125.0f);
 
-    const float fLumRange =
-            (fMaxLum - fMinLum);
+    // A flat image falls into the first bin, including when it is completely black.
+    const float fLumRange = fMaxLum - fMinLum;
+    const float binWidth = fLumRange / 65536.0f;
 
     EvaluateImage ( pImg->GetImages     (),
                     pImg->GetImageCount (),
@@ -4114,12 +4119,9 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
         v =
           XMVectorMax (g_XMZero, XMVector3Transform (v, c_from709toXYZ));
 
-        luminance_freq [
-          std::clamp ( (int)
-            std::roundf (
-              (XMVectorGetY (v) - fMinLum) /
-                                    (fLumRange / 65536.0f) ),
-                                              0, 65535 ) ]++;
+        const float luminance = std::min (fMaxLum, std::max (fMinLum, XMVectorGetY (v)));
+        const int bin = binWidth > 0.0f ? static_cast<int> (std::round ( (luminance - fMinLum) / binWidth )) : 0;
+        ++luminance_freq [std::min (bin, 65535)];
       }
     });
 
@@ -4165,6 +4167,7 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
     if (fMaxLum99 <= 0.01f)
         fMaxLum99  = fMaxLum;
 
+    image.light_info.auto_tone    = autoStats.Curve ();
     image.light_info.max_cll      = fMaxCLL;
     image.light_info.max_cll_name = cMaxChannel;
     image.light_info.max_nits     = std::max (0.0f, fMaxLumActual * 80.0f); // scRGB

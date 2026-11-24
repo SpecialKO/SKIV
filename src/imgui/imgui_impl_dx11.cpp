@@ -67,6 +67,7 @@
 #include <format>
 #include <atlbase.h>
 #include <utility/registry.h>
+#include <utility/image_decode.h>
 #include <plog/Log.h>
 #include <tabs/viewer.h>
 
@@ -175,7 +176,11 @@ struct PIXEL_CONSTANT_BUFFER_DX11 {
 
   float    alpha_toggle; // 4 byte
   float    checkerboard_toggle; //4 byte
-  float    padding[2];   // 8 byte (make it divisible by 16)
+  uint32_t sdr_tonemap_type;
+  float    padding;
+
+  float    sdr_shoulder_curve [4]; // knee PQ, peak PQ, curve offset and scale
+  float    sdr_auto_tone      [4]; // strength (EV), center PQ, high PQ, padding
 };
 #endif
 
@@ -335,14 +340,13 @@ static void ImGui_ImplDX11_DrawCallback_ResetRenderState(const ImDrawList*, cons
 static void ImGui_ImplDX11_DrawCallback_SetSamplerLinear(const ImDrawList*, const ImDrawCmd*)       { ImGui_ImplDX11_Data* bd = ImGui_ImplDX11_GetBackendData(); bd->RenderState->DeviceContext->PSSetSamplers(0, 1, &bd->pTexSamplerLinear); }
 static void ImGui_ImplDX11_DrawCallback_SetSamplerNearest(const ImDrawList*, const ImDrawCmd*)      { ImGui_ImplDX11_Data* bd = ImGui_ImplDX11_GetBackendData(); bd->RenderState->DeviceContext->PSSetSamplers(0, 1, &bd->pTexSamplerNearest); }
 #ifdef SKIF_D3D11
-// SKIV: the pixel shader constants of images (pPixelConstantBuffer, which every draw binds unless it draws text or the
-//   gamut chart): for content whose brightest is maxContentLuminance (nits), shown with this visualization. Of the image
-//     shown, for the frame (RenderDrawData); of a thumbnail, while it is drawn (SKIV_ImplDX11_DrawCallback_SetHDRThumbnail).
-static float s_imageDisplayMaxLuminance = 203.0f; // The frame's (the viewport being rendered), nits
-static float s_imageMaxContentLuminance =  80.0f; // The image shown's, nits
+// Image draws use the current image's light levels, or the thumbnail's while its draw callback is active.
+static float s_imageDisplayMaxLuminance = 203.0f; // The viewport being rendered, in nits.
+extern image_s::light_info_s SKIV_HDR_ImageLight;
 
 static bool
-SKIV_ImplDX11_WriteImageConstants (ID3D11DeviceContext* ctx, float maxContentLuminance, uint32_t visualization)
+SKIV_ImplDX11_WriteImageConstants (ID3D11DeviceContext* ctx, const image_s::light_info_s& light,
+                                  uint32_t visualization, bool thumbnail = false)
 {
   static SKIF_RegistrySettings& _registry = SKIF_RegistrySettings::GetInstance ( );
 
@@ -374,6 +378,9 @@ SKIV_ImplDX11_WriteImageConstants (ID3D11DeviceContext* ctx, float maxContentLum
   static_assert((sizeof(PIXEL_CONSTANT_BUFFER_DX11) % 16) == 0, "Constant Buffer size must be 16-byte aligned");
 
   const float display_max_luminance = s_imageDisplayMaxLuminance;
+  float maxContentLuminance = _registry.b99thPercentileMaxCLL ? light.p99_nits : light.max_nits;
+  if (thumbnail)
+    maxContentLuminance = std::max (1.0f, maxContentLuminance);
 
   *pix_constant_buffer = PIXEL_CONSTANT_BUFFER_DX11 ();
   pix_constant_buffer->font_dims [0]               = 0.0f;
@@ -407,19 +414,40 @@ SKIV_ImplDX11_WriteImageConstants (ID3D11DeviceContext* ctx, float maxContentLum
     pix_constant_buffer->tonemap_type = SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY;
   }
 
+  const int sdrMode = _registry.iSDRToneMapper;
+  if (light.isHDR && (sdrMode == SKIV_SDR_TONEMAP_PIECEWISE || sdrMode == SKIV_SDR_TONEMAP_AUTO))
+  {
+    const auto tone = sdrMode == SKIV_SDR_TONEMAP_AUTO ? light.auto_tone : SKIV_SdrTone::AutoCurve {};
+    // The auto curve is monotonic, so it also maps the measured percentile peak.
+    const float peak = light.p99_nits / 80.0f;
+    const SKIV_SdrTone::ShoulderCurve curve (peak * tone.Gain (peak) *
+      std::max (pix_constant_buffer->brightness, 0.001f));
+    pix_constant_buffer->sdr_tonemap_type       = sdrMode;
+    pix_constant_buffer->sdr_shoulder_curve [0] = curve.knee_pq;
+    pix_constant_buffer->sdr_shoulder_curve [1] = curve.peak_pq;
+    pix_constant_buffer->sdr_shoulder_curve [2] = curve.offset;
+    pix_constant_buffer->sdr_shoulder_curve [3] = curve.scale;
+    pix_constant_buffer->sdr_auto_tone [0]      = tone.strength;
+    pix_constant_buffer->sdr_auto_tone [1]      = tone.center;
+    pix_constant_buffer->sdr_auto_tone [2]      = tone.high;
+  }
+
   ctx->Unmap ( bd->pPixelConstantBuffer, 0 );
   return true;
 }
 
-// SKIV: the image constants of an HDR thumbnail, for the draws after it: its own brightest (nits, a float in the callback's
-//   data, see ImDrawList::AddCallback), without a visualization. SKIV_ImplDX11_DrawCallback_RestoreImageConstants sets
-//     back those of the image shown.
+// Set an HDR thumbnail's light levels for its draw, then restore the main image's constants.
 void SKIV_ImplDX11_DrawCallback_SetHDRThumbnail(const ImDrawList*, const ImDrawCmd* cmd)
 {
   ImGui_ImplDX11_Data* bd = ImGui_ImplDX11_GetBackendData();
 
-  if (cmd->UserCallbackData != nullptr && cmd->UserCallbackDataSize >= static_cast <int> (sizeof (float)))
-    SKIV_ImplDX11_WriteImageConstants (bd->RenderState->DeviceContext, *static_cast <const float*> (cmd->UserCallbackData), 0 /* SKIV_HDR_VISUALIZTION_NONE */);
+  if (cmd->UserCallbackData != nullptr && cmd->UserCallbackDataSize == static_cast<int> (sizeof (image_s::light_info_s)))
+  {
+    // ImGui stores callback payloads in a byte buffer with no alignment guarantee.
+    image_s::light_info_s light;
+    memcpy (&light, cmd->UserCallbackData, sizeof (light));
+    SKIV_ImplDX11_WriteImageConstants (bd->RenderState->DeviceContext, light, 0, true);
+  }
 }
 
 void SKIV_ImplDX11_DrawCallback_RestoreImageConstants(const ImDrawList*, const ImDrawCmd*)
@@ -427,7 +455,7 @@ void SKIV_ImplDX11_DrawCallback_RestoreImageConstants(const ImDrawList*, const I
   ImGui_ImplDX11_Data* bd = ImGui_ImplDX11_GetBackendData();
   extern uint32_t SKIV_HDR_VisualizationId;
 
-  SKIV_ImplDX11_WriteImageConstants (bd->RenderState->DeviceContext, s_imageMaxContentLuminance, SKIV_HDR_VisualizationId);
+  SKIV_ImplDX11_WriteImageConstants (bd->RenderState->DeviceContext, SKIV_HDR_ImageLight, SKIV_HDR_VisualizationId);
 }
 
 // SKIV: linear, from all the mip levels (the other samplers take the top one only): for the thumbnails carousel, whose
@@ -729,7 +757,6 @@ void ImGui_ImplDX11_RenderDrawData (ImDrawData *draw_data)
     const ImTextureData* font_tex = ImGui::GetIO ().Fonts->TexData;
 
     extern float SKIV_HDR_SDRWhite;
-    extern float SKIV_HDR_MaxLuminance;
     extern float SKIV_HDR_GamutHue_Rec709    [4];
     extern float SKIV_HDR_GamutHue_DciP3     [4];
     extern float SKIV_HDR_GamutHue_Rec2020   [4];
@@ -740,12 +767,8 @@ void ImGui_ImplDX11_RenderDrawData (ImDrawData *draw_data)
     extern float SKIV_HDR_DisplayMaxLuminance;
     extern float SKIV_HDR_BrightnessScale;
 
-    extern float SKIV_HDR_MaxLuminanceP99;
-
-    float MaxContentLuminance =
-      _registry.b99thPercentileMaxCLL ?
-             SKIV_HDR_MaxLuminanceP99 :
-             SKIV_HDR_MaxLuminance;
+    float MaxContentLuminance = _registry.b99thPercentileMaxCLL ?
+      SKIV_HDR_ImageLight.p99_nits : SKIV_HDR_ImageLight.max_nits;
 
     if (SKIV_HDR_DisplayMaxLuminance != display_max_luminance)
       display_max_luminance = SKIV_HDR_DisplayMaxLuminance;
@@ -782,9 +805,8 @@ void ImGui_ImplDX11_RenderDrawData (ImDrawData *draw_data)
 
     // The images' (the image shown, as the frame's; a thumbnail's set its own, see SKIV_ImplDX11_DrawCallback_SetHDRThumbnail)
     s_imageDisplayMaxLuminance = display_max_luminance;
-    s_imageMaxContentLuminance = MaxContentLuminance;
 
-    if (! SKIV_ImplDX11_WriteImageConstants (ctx, MaxContentLuminance, SKIV_HDR_VisualizationId))
+    if (! SKIV_ImplDX11_WriteImageConstants (ctx, SKIV_HDR_ImageLight, SKIV_HDR_VisualizationId))
       return;
 
     if (FAILED (ctx->Map (bd->pGamutConstantBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_resource)))
