@@ -3628,7 +3628,7 @@ SKIF_UI_Tab_DrawViewer (void)
         ImGui::PopID ( ); // #HDRVisualization
       }
 
-      // HDR images: the HDR-to-SDR tone mapper (as in the settings), of the image on an SDR display and saved as SDR
+      // HDR images: the HDR-to-SDR tone mapper (as in the settings), of the image on an SDR display, and saved or copied as SDR
       if (cover.is_hdr)
       {
         ImGui::PushID ("#SDRToneMapper");
@@ -3651,8 +3651,8 @@ SKIF_UI_Tab_DrawViewer (void)
           _CreateMenuItem (SKIV_SDR_TONEMAP_AUTO,      "SKIV Auto Tone", "Piecewise, with the midtones of bright scenes darkened to make room.");
 
           ImGui::Separator     ( );
-          ImGui::TextDisabled  ("%s", _registry._RendererHDREnabled ? "Used when saving as SDR (the display is in HDR)"
-                                                                     : "Used on this display, and when saving as SDR");
+          ImGui::TextDisabled  ("%s", _registry._RendererHDREnabled ? "Used when saving or copying as SDR (the display is in HDR)"
+                                                                     : "Used on this display, and when saving or copying as SDR");
           ImGui::EndMenu ( );
         }
 

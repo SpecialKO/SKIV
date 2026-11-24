@@ -435,11 +435,10 @@ SKIF_UI_Tab_DrawSettings (void)
     ImGui::Spacing         ( );
 
     ImGui::TextColored     (ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info), ICON_FA_LIGHTBULB);
-    SKIF_ImGui_SetHoverTip ("How HDR images are shown on an SDR display, and saved as SDR images.\n\n"
+    SKIF_ImGui_SetHoverTip ("How HDR images are shown on an SDR display, and saved or copied as SDR images.\n\n"
                             "Default: The image's range mapped to that of SDR (darker, by design).\n"
                             "SKIV Piecewise: Up to half of SDR white left as is, the highlights above it compressed.\n"
-                            "SKIV Auto Tone: Piecewise, with the midtones of bright scenes darkened to make room.\n\n"
-                            "Screen captures copied as SDR are not affected.");
+                            "SKIV Auto Tone: Piecewise, with the midtones of bright scenes darkened to make room.");
     ImGui::SameLine        ( );
     ImGui::TextColored (
       ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextCaption),

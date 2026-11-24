@@ -26,7 +26,8 @@
 #include <vector>
 #include <DirectXPackedVector.h>
 
-// The HDR-to-SDR tone mappers (of HDR images shown on an SDR display, and saved as SDR). Mirrored by the
+// The HDR-to-SDR tone mappers (of HDR images shown on an SDR display, saved as SDR, and of screen captures copied or
+//   saved as SDR). Mirrored by the
 //   SKIV_SDR_TONEMAP_* constants of tone_mapping.hlsli.
 enum SKIV_SdrToneMapper
 {
