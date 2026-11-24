@@ -340,9 +340,12 @@ static void ImGui_ImplDX11_DrawCallback_ResetRenderState(const ImDrawList*, cons
 static void ImGui_ImplDX11_DrawCallback_SetSamplerLinear(const ImDrawList*, const ImDrawCmd*)       { ImGui_ImplDX11_Data* bd = ImGui_ImplDX11_GetBackendData(); bd->RenderState->DeviceContext->PSSetSamplers(0, 1, &bd->pTexSamplerLinear); }
 static void ImGui_ImplDX11_DrawCallback_SetSamplerNearest(const ImDrawList*, const ImDrawCmd*)      { ImGui_ImplDX11_Data* bd = ImGui_ImplDX11_GetBackendData(); bd->RenderState->DeviceContext->PSSetSamplers(0, 1, &bd->pTexSamplerNearest); }
 #ifdef SKIF_D3D11
-// Image draws use the current image's light levels, or the thumbnail's while its draw callback is active.
-static float s_imageDisplayMaxLuminance = 203.0f; // The viewport being rendered, in nits.
-extern image_s::light_info_s SKIV_HDR_ImageLight;
+// SKIV: the pixel shader constants of images (pPixelConstantBuffer, which every draw binds unless it draws text or the
+//   gamut chart): for content of these light levels (its brightest, and the auto tone curve of SKIV Auto Tone), shown with
+//     this visualization. Of the image shown (SKIV_HDR_ImageLight), for the frame (RenderDrawData); of a thumbnail, or of
+//       the image being faded out, while it is drawn (SKIV_ImplDX11_DrawCallback_SetHDRThumbnail).
+static float s_imageDisplayMaxLuminance = 203.0f; // The frame's (the viewport being rendered), nits
+extern image_s::light_info_s SKIV_HDR_ImageLight; // The image shown's
 
 static bool
 SKIV_ImplDX11_WriteImageConstants (ID3D11DeviceContext* ctx, const image_s::light_info_s& light,
@@ -378,6 +381,8 @@ SKIV_ImplDX11_WriteImageConstants (ID3D11DeviceContext* ctx, const image_s::ligh
   static_assert((sizeof(PIXEL_CONSTANT_BUFFER_DX11) % 16) == 0, "Constant Buffer size must be 16-byte aligned");
 
   const float display_max_luminance = s_imageDisplayMaxLuminance;
+
+  // Its brightest (nits): the 99.94th percentile, or the maximum. Of a thumbnail, at least 1 nit.
   float maxContentLuminance = _registry.b99thPercentileMaxCLL ? light.p99_nits : light.max_nits;
   if (thumbnail)
     maxContentLuminance = std::max (1.0f, maxContentLuminance);
@@ -414,12 +419,14 @@ SKIV_ImplDX11_WriteImageConstants (ID3D11DeviceContext* ctx, const image_s::ligh
     pix_constant_buffer->tonemap_type = SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY;
   }
 
+  // SKIV Piecewise / Auto Tone (used by the shader on an SDR display only, see TonemapSDRWithShoulder): its shoulder
+  //   ends at the brightest after the auto curve and the brightness scale (the auto curve is monotonic, so it maps the
+  //     brightest to the brightest)
   const int sdrMode = _registry.iSDRToneMapper;
   if (light.isHDR && (sdrMode == SKIV_SDR_TONEMAP_PIECEWISE || sdrMode == SKIV_SDR_TONEMAP_AUTO))
   {
     const auto tone = sdrMode == SKIV_SDR_TONEMAP_AUTO ? light.auto_tone : SKIV_SdrTone::AutoCurve {};
-    // The auto curve is monotonic, so it also maps the measured percentile peak.
-    const float peak = light.p99_nits / 80.0f;
+    const float peak = maxContentLuminance / 80.0f;
     const SKIV_SdrTone::ShoulderCurve curve (peak * tone.Gain (peak) *
       std::max (pix_constant_buffer->brightness, 0.001f));
     pix_constant_buffer->sdr_tonemap_type       = sdrMode;
@@ -436,14 +443,17 @@ SKIV_ImplDX11_WriteImageConstants (ID3D11DeviceContext* ctx, const image_s::ligh
   return true;
 }
 
-// Set an HDR thumbnail's light levels for its draw, then restore the main image's constants.
+// SKIV: the image constants of an HDR thumbnail (or of the image being faded out), for the draws after it: its own light
+//   levels (an image_s::light_info_s in the callback's data, see ImDrawList::AddCallback), without a visualization.
+//     SKIV_ImplDX11_DrawCallback_RestoreImageConstants sets back those of the image shown.
 void SKIV_ImplDX11_DrawCallback_SetHDRThumbnail(const ImDrawList*, const ImDrawCmd* cmd)
 {
   ImGui_ImplDX11_Data* bd = ImGui_ImplDX11_GetBackendData();
 
   if (cmd->UserCallbackData != nullptr && cmd->UserCallbackDataSize == static_cast<int> (sizeof (image_s::light_info_s)))
   {
-    // ImGui stores callback payloads in a byte buffer with no alignment guarantee.
+    // Copied out, as ImGui keeps the callback's data in a byte buffer (of no alignment)
+    static_assert (std::is_trivially_copyable_v <image_s::light_info_s>);
     image_s::light_info_s light;
     memcpy (&light, cmd->UserCallbackData, sizeof (light));
     SKIV_ImplDX11_WriteImageConstants (bd->RenderState->DeviceContext, light, 0, true);

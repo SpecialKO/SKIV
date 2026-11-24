@@ -23,12 +23,17 @@
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
+#include <DirectXPackedVector.h>
 
+// The HDR-to-SDR tone mappers (of HDR images shown on an SDR display, and saved as SDR). Mirrored by the
+//   SKIV_SDR_TONEMAP_* constants of tone_mapping.hlsli.
 enum SKIV_SdrToneMapper
 {
-  SKIV_SDR_TONEMAP_DEFAULT = 0,
-  SKIV_SDR_TONEMAP_PIECEWISE,
-  SKIV_SDR_TONEMAP_AUTO
+  SKIV_SDR_TONEMAP_DEFAULT   = 0, // SKIV's own: the content's range mapped to that of SDR (darker, by design)
+  SKIV_SDR_TONEMAP_PIECEWISE = 1, // Below the shoulder (half of SDR white) left as is, above it compressed into SDR white
+  SKIV_SDR_TONEMAP_AUTO      = 2, // Piecewise, after midtones darkened by up to 1.2 EV for images that need it
+  SKIV_SDR_TONEMAP_COUNT
 };
 
 namespace SKIV_SdrTone
@@ -75,30 +80,57 @@ namespace SKIV_SdrTone
     }
   };
 
+  // The statistics the auto curve is made of, of the visible pixels (weighted by their alpha). Add runs for every pixel of
+  //   every HDR image decoded (whichever tone mapper is selected, as it can be changed while the image is shown), so it
+  //     only bins the pixel: by its luminance as a half float (whose 11 bits of precision are plenty for a mean in PQ),
+  //       and Curve converts each bin to PQ once.
   struct AutoStats
   {
-    double visible = 0.0, sum_pq = 0.0, hdr_area = 0.0, excess_pq = 0.0;
+    std::vector <double> weights = std::vector <double> (0x8000); // Positive half floats (no sign bit)
 
     void Add (float luminance, float alpha)
     {
       if (! std::isfinite (alpha) || alpha <= 0.0f || ! std::isfinite (luminance))
         return;
 
-      static const double shoulder_pq = ToPQ (Shoulder);
-      const double p = luminance > 0.0f ? ToPQ (luminance) : 0.0;
-      const double weight = std::min (alpha, 1.0f);
-      visible += weight;
-      sum_pq += weight * p;
-      if (luminance > SDRWhite)
-        hdr_area += weight;
-      excess_pq += weight * std::max (p - shoulder_pq, 0.0);
+      const DirectX::PackedVector::HALF bin =
+        DirectX::PackedVector::XMConvertFloatToHalf (std::clamp (luminance, 0.0f, PQPeak));
+
+      weights [bin & 0x7FFF] += std::min (alpha, 1.0f);
     }
 
     AutoCurve Curve () const
     {
+      const double shoulder_pq = ToPQ (Shoulder);
+
+      double visible = 0.0, sum_pq = 0.0, hdr_area = 0.0, excess_pq = 0.0;
+
+      for (size_t bin = 0; bin < weights.size (); ++bin)
+      {
+        const double weight = weights [bin];
+
+        if (weight == 0.0)
+          continue;
+
+        const float  luminance = DirectX::PackedVector::XMConvertHalfToFloat (static_cast <DirectX::PackedVector::HALF> (bin));
+        const double p         = luminance > 0.0f ? ToPQ (luminance) : 0.0;
+
+        visible   += weight;
+        sum_pq    += weight * p;
+        excess_pq += weight * std::max (p - shoulder_pq, 0.0);
+
+        if (luminance > SDRWhite)
+          hdr_area += weight;
+      }
+
       if (visible == 0.0)
         return {};
 
+      // How much to darken (strength, in EV) is the product of three gates, each 0..1 (tuned on JXRConverter's test images):
+      //   hdr_gate:      1-8% of the image is brighter than SDR white (no HDR highlights, nothing to make room for)
+      //   daylight_gate: its mean is a bright one, in PQ (dim and night scenes are left alone)
+      //   pressure:      how far above the shoulder its pixels are, on average
+      //  The darkening peaks at 'center' (in PQ, a brighter one for brighter images) and fades out by 0.25 and by 'high'.
       const float mean = static_cast <float> (sum_pq / visible);
       const float hdr_gate = Smooth (0.01f, 0.08f, static_cast <float> (hdr_area / visible));
       const float daylight_gate = Smooth (0.395f, 0.470f, mean);

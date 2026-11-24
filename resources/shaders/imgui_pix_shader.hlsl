@@ -76,11 +76,11 @@ cbuffer imgui_cbuffer : register (b0)
 
   float  alpha_toggle; // 4 byte
   float  checkerboard_toggle; //4 byte
-  uint   sdr_tonemap_type;
-  float  padding;
+  uint   sdr_tonemap_type;   // 4 byte, SKIV_SDR_TONEMAP_*
+  float  padding;            // 4 byte (make it divisible by 16)
 
-  float4 sdr_shoulder_curve;
-  float4 sdr_auto_tone;
+  float4 sdr_shoulder_curve; // knee PQ, peak PQ, curve offset and scale
+  float4 sdr_auto_tone;      // strength (EV), center PQ, high PQ, (unused)
 };
 
 sampler   sampler0 : register (s0);
@@ -336,7 +336,8 @@ float4 main (PS_INPUT input) : SV_Target
 
   if (input.hdr_img)
   {
-    if (! isHDR && sdr_tonemap_type != 0 && hdr_visualization == SKIV_VISUALIZATION_NONE)
+    // An HDR image on an SDR display, with SKIV Piecewise or Auto Tone (see TonemapSDRWithShoulder)
+    if (! isHDR && sdr_tonemap_type != SKIV_SDR_TONEMAP_DEFAULT && hdr_visualization == SKIV_VISUALIZATION_NONE)
     {
       out_col.rgb = TonemapSDRWithShoulder (out_col.rgb, max (user_brightness_scale, 0.001f),
                                            sdr_tonemap_type, sdr_shoulder_curve, sdr_auto_tone.xyz);

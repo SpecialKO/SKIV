@@ -1513,6 +1513,7 @@ SKIV_Viewer_DrawCarousel (skiv_image_directory_s::fl_s& files, SKIV_ImageStore& 
         {
           extern void SKIV_ImplDX11_DrawCallback_SetHDRThumbnail (const ImDrawList*, const ImDrawCmd*);
 
+          // Its own light levels (copied by AddCallback): its brightest is taken as the image shown's is
           auto light = thumbnail->light_info;
           dl->AddCallback (SKIV_ImplDX11_DrawCallback_SetHDRThumbnail, &light, sizeof (light));
         }
@@ -2114,6 +2115,7 @@ SKIF_UI_Tab_DrawViewer (void)
     ID3D11ShaderResourceView* pFrameSRV =
       SKIV_GetImageFrame (cover_old, frame_uv0, frame_uv1, false);
 
+    // SKIV Piecewise / Auto Tone (on an SDR display): of its own light levels, not of the image shown (the frame's)
     ImDrawList* dl = window->DrawList;
     const bool useOwnSdrTone = !_registry._RendererHDREnabled &&
       _registry.iSDRToneMapper != SKIV_SDR_TONEMAP_DEFAULT && SKIV_Viewer_DrawAsHDR (cover_old);

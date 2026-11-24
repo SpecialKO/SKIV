@@ -26,6 +26,11 @@ static const uint SKIV_TONEMAP_TYPE_INFINITE_ROLLOFF   = 0x2;
 static const uint SKIV_TONEMAP_TYPE_NORMALIZE_TO_CLL   = 0x4;
 static const uint SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY = 0x8;
 
+// The HDR-to-SDR tone mappers, see SKIV_SdrToneMapper (sdr_tone_map.h)
+static const uint SKIV_SDR_TONEMAP_DEFAULT             = 0;
+static const uint SKIV_SDR_TONEMAP_PIECEWISE           = 1;
+static const uint SKIV_SDR_TONEMAP_AUTO                = 2;
+
 float TonemapNone (float L)
 {
   return L;
@@ -52,6 +57,8 @@ float TonemapHDR (float L, float Lc, float Ld)
     L * (1 + a * L) / (1 + b * L);
 }
 
+// SKIV Piecewise / Auto Tone: the shoulder of SKIV_SdrTone::ShoulderCurve (sdr_tone_map.h), of PQ in and out. Its curve
+//   is made on the CPU: (knee PQ, peak PQ, offset, scale), from the knee (half of SDR white) to the content's peak.
 float MapShoulder (float input, float4 curve)
 {
   float p = min (input, curve.y);
@@ -60,13 +67,15 @@ float MapShoulder (float input, float4 curve)
   return curve.x + (intensity - curve.z) * curve.w;
 }
 
+// SKIV Piecewise / Auto Tone, of scRGB (rgb) to linear SDR (1.0 at 203 nits, SDR white). The CPU side of it is
+//   SKIV_Image_ApplyShoulderToneMap (image.cpp), for HDR images saved as SDR.
 float3 TonemapSDRWithShoulder (float3 rgb, float brightness, uint mode, float4 curve, float3 auto_tone)
 {
   const float sdr_white = 203.0f / 80.0f;
   const float shoulder = 0.5f * sdr_white;
   const float knee_pq = curve.x;
 
-  if (mode == 2) // SKIV Auto Tone: luminance mapping after the adaptive midtone curve.
+  if (mode == SKIV_SDR_TONEMAP_AUTO) // Luminance mapping after the adaptive midtone curve.
   {
     float y = Rec709_to_XYZ (rgb).y;
     if (auto_tone.x > 0.0f)
