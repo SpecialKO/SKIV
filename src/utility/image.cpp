@@ -1382,7 +1382,7 @@ using namespace DirectX;
     pApp  = L"<app>",
     pExe  = L"<exe>",
     pPro  = L"<pro>",
-    pWnd  = L"<win>",
+    pWnd  = L"<wnd>",
     pDate = L"<date>",
     pTime = L"<time>";
 
