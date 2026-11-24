@@ -171,12 +171,12 @@ SKIF_UI_Tab_DrawSettings (void)
       ImGui::InsertNotification ({ ImGuiToastType::Success, 1000, "Saved", ""});
     }
 
-    if (StrStrA (pattern, "<app>")  == NULL &&
-        StrStrA (pattern, "<pro>")  == NULL &&
-        StrStrA (pattern, "<exe>")  == NULL &&
-        StrStrA (pattern, "<wnd>")  == NULL &&
-        StrStrA (pattern, "<date>") == NULL &&
-        StrStrA (pattern, "<time>") == NULL)
+    if (strstr  (pattern, "<app>")  == NULL &&
+        strstr  (pattern, "<pro>")  == NULL &&
+        strstr  (pattern, "<exe>")  == NULL &&
+        strstr  (pattern, "<wnd>")  == NULL &&
+        strstr  (pattern, "<date>") == NULL &&
+        strstr  (pattern, "<time>") == NULL)
     {
       ImGui::TextColored (ImGui::GetStyleColorVec4 (ImGuiCol_SKIF_Yellow), ICON_FA_TRIANGLE_EXCLAMATION);
       ImGui::SameLine    ( );
