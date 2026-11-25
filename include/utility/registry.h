@@ -327,6 +327,10 @@ struct SKIF_RegistrySettings {
     SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(HDR Tonemap Type)" );
 
+  KeyValue <int> regKVSDRToneMapper =
+    SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
+                         LR"(SDR Tone Mapper)" );
+
   KeyValue <int> regKVUIMode =
     SKIF_MakeRegKeyI ( LR"(SOFTWARE\Kaldaien\Special K\Viewer\)",
                          LR"(UI Mode)" );
@@ -482,6 +486,7 @@ struct SKIF_RegistrySettings {
   int iHDRMode                 =   2;   // 0 = Disabled,                    1 = HDR10 (10 bpc),         2 = scRGB (16 bpc)
   int iHDRBrightness           = 203; // HDR reference white for BT.2408
   int iHDRToneMapType          =   8;   // 0 = Do Nothing,                  1 = Clip Luminance,         8 = Map to Display
+  int iSDRToneMapper           =   0;   // 0 = Default,                     1 = SKIV Piecewise,         2 = SKIV Auto Tone
   int iUIMode                  =   1;   // 0 = Safe Mode (BitBlt),          1 = Normal,                 2 = VRR Compatibility
   int iDiagnostics             =   1;   // 0 = None,                        1 = Normal,                 2 = Enhanced (not actually used yet)
   int iUIWidth                 =   0; //  0 = None (default)

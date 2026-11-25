@@ -317,6 +317,9 @@ SKIF_RegistrySettings::SKIF_RegistrySettings (void)
   if (regKVHDRToneMapType.hasData(&hKey))
     iHDRToneMapType        =   regKVHDRToneMapType         .getData (&hKey);
 
+  if (regKVSDRToneMapper.hasData(&hKey))
+    iSDRToneMapper         =   std::clamp (regKVSDRToneMapper.getData (&hKey), 0, 2);
+
   if (regKVUIMode.hasData(&hKey))
     iUIMode                =   regKVUIMode                 .getData (&hKey);
 

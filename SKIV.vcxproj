@@ -436,6 +436,7 @@
     <ClInclude Include="include\utility\image.h" />
     <ClInclude Include="include\utility\color_source.h" />
     <ClInclude Include="include\utility\image_decode.h" />
+    <ClInclude Include="include\utility\sdr_tone_map.h" />
     <ClInclude Include="include\utility\image_store.h" />
     <ClInclude Include="include\utility\plog_formatter.h" />
     <ClInclude Include="packages_misc\html_coder.hpp" />

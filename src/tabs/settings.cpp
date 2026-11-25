@@ -12,6 +12,7 @@
 
 #include <utility/fsutil.h>
 #include <utility/registry.h>
+#include <utility/sdr_tone_map.h>
 #include <utility/updater.h>
 #include <utility/gamepad.h>
 #include "../../version.h"
@@ -429,6 +430,35 @@ SKIF_UI_Tab_DrawSettings (void)
       ImGui::EndCombo  ( );
     }
 
+    ImGui::TreePop         ( );
+
+    ImGui::Spacing         ( );
+
+    ImGui::TextColored     (ImGui::GetStyleColorVec4(ImGuiCol_SKIF_Info), ICON_FA_LIGHTBULB);
+    SKIF_ImGui_SetHoverTip ("How HDR images are shown on an SDR display, and saved or copied as SDR images.\n\n"
+                            "Default: The image's range mapped to that of SDR (darker, by design).\n"
+                            "SKIV Piecewise: Up to half of SDR white left as is, the highlights above it compressed.\n"
+                            "SKIV Auto Tone: Piecewise, with the midtones of bright scenes darkened to make room.");
+    ImGui::SameLine        ( );
+    ImGui::TextColored (
+      ImGui::GetStyleColorVec4(ImGuiCol_SKIF_TextCaption),
+        "HDR-to-SDR tone mapper:"
+    );
+    ImGui::TreePush        ("SDRToneMapper");
+
+    static const char* ToneMappers [] = { "Default", "SKIV Piecewise", "SKIV Auto Tone" };
+    static_assert (IM_ARRAYSIZE (ToneMappers) == SKIV_SDR_TONEMAP_COUNT);
+
+    int toneMapper = _registry.iSDRToneMapper;
+
+    if (ImGui::GetContentRegionAvail().x > 725.0f)
+      ImGui::SetNextItemWidth (500.0f);
+
+    if (ImGui::Combo ("###_registry.iSDRToneMapper", &toneMapper, ToneMappers, IM_ARRAYSIZE (ToneMappers)))
+    {
+      _registry.iSDRToneMapper = toneMapper;
+      _registry.regKVSDRToneMapper.putData (toneMapper);
+    }
     ImGui::TreePop         ( );
 
     // nb:  Prefernece needs implementation

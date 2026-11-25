@@ -76,7 +76,11 @@ cbuffer imgui_cbuffer : register (b0)
 
   float  alpha_toggle; // 4 byte
   float  checkerboard_toggle; //4 byte
-  float2 padding;      // 8 byte (make it divisible by 16)
+  uint   sdr_tonemap_type;   // 4 byte, SKIV_SDR_TONEMAP_*
+  float  padding;            // 4 byte (make it divisible by 16)
+
+  float4 sdr_shoulder_curve; // knee PQ, peak PQ, curve offset and scale
+  float4 sdr_auto_tone;      // strength (EV), center PQ, high PQ, (unused)
 };
 
 sampler   sampler0 : register (s0);
@@ -332,79 +336,87 @@ float4 main (PS_INPUT input) : SV_Target
 
   if (input.hdr_img)
   {
-    uint implied_tonemap_type =
-      (hdr_visualization == SKIV_VISUALIZATION_GAMUT) ? SKIV_TONEMAP_TYPE_NONE
-                                                      :      tonemap_type;
-
-    out_col.rgb *=
-      (hdr_visualization != SKIV_VISUALIZATION_NONE) ? 1.0f
-                                                     :
-                       isHDR ? user_brightness_scale :
-                          max (user_brightness_scale, 0.001f);
-
-
-    // If it's too bright, don't bother trying to tonemap the full range...
-    static const float _maxNitsToTonemap = 10000.0f;
-
-    float dML = LinearToPQY ( display_max_luminance);
-    float cML = LinearToPQY (min (hdr_max_luminance, _maxNitsToTonemap));
-
-    if (implied_tonemap_type != SKIV_TONEMAP_TYPE_NONE && (! isHDR))
-    {   implied_tonemap_type  = SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY;
-        dML = LinearToPQY (1.5f);
-    }
-
-    else if (implied_tonemap_type == SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY)
+    // An HDR image on an SDR display, with SKIV Piecewise or Auto Tone (see TonemapSDRWithShoulder)
+    if (! isHDR && sdr_tonemap_type != SKIV_SDR_TONEMAP_DEFAULT && hdr_visualization == SKIV_VISUALIZATION_NONE)
     {
-      ///out_col.rgb *=
-      ///  1.0f / max (1.0f, 80.0f / (2.0f * sdr_reference_white));
+      out_col.rgb = TonemapSDRWithShoulder (out_col.rgb, max (user_brightness_scale, 0.001f),
+                                           sdr_tonemap_type, sdr_shoulder_curve, sdr_auto_tone.xyz);
     }
-
-    float3 ICtCp = Rec709toICtCp (out_col.rgb);
-    float  Y_in  = max (ICtCp.x, 0.0f);
-    float  Y_out = 1.0f;
-
-    switch (implied_tonemap_type)
-    {
-      // This tonemap type is not necessary, we always know content range
-      //SKIV_TONEMAP_TYPE_INFINITE_ROLLOFF
-
-      default:
-      case SKIV_TONEMAP_TYPE_NONE:               Y_out = TonemapNone (Y_in);            break;
-      case SKIV_TONEMAP_TYPE_CLIP:               Y_out = TonemapClip (Y_in, dML);       break;
-      case SKIV_TONEMAP_TYPE_NORMALIZE_TO_CLL:   Y_out = TonemapSDR  (Y_in, cML, 1.0f); break;
-      case SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY: Y_out = TonemapHDR  (Y_in, cML, dML);  break;
-    }
-
-    if (Y_out + Y_in > 0.0)
-    {
-      if (implied_tonemap_type == SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY)
-      {
-        if ((! isHDR))
-          ICtCp.x = pow (ICtCp.x, 1.18f);
-      }
-
-      float I0      = ICtCp.x;
-      float I_scale = 0.0f;
-
-      ICtCp.x *=
-        max ((Y_out / Y_in), 0.0f);
-
-      if (ICtCp.x != 0.0f && I0 != 0.0f)
-      {
-        I_scale =
-          min (I0 / ICtCp.x, ICtCp.x / I0);
-      }
-
-      ICtCp.yz *= I_scale;
-    }
-
     else
-      ICtCp.x = 0.0;
+    {
+      uint implied_tonemap_type =
+        (hdr_visualization == SKIV_VISUALIZATION_GAMUT) ? SKIV_TONEMAP_TYPE_NONE
+                                                        :      tonemap_type;
 
-    out_col.rgb =
-      ICtCptoRec709 (ICtCp);
+      out_col.rgb *=
+        (hdr_visualization != SKIV_VISUALIZATION_NONE) ? 1.0f
+                                                       :
+                         isHDR ? user_brightness_scale :
+                            max (user_brightness_scale, 0.001f);
 
+
+      // If it's too bright, don't bother trying to tonemap the full range...
+      static const float _maxNitsToTonemap = 10000.0f;
+
+      float dML = LinearToPQY ( display_max_luminance);
+      float cML = LinearToPQY (min (hdr_max_luminance, _maxNitsToTonemap));
+
+      if (implied_tonemap_type != SKIV_TONEMAP_TYPE_NONE && (! isHDR))
+      {   implied_tonemap_type  = SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY;
+          dML = LinearToPQY (1.5f);
+      }
+
+      else if (implied_tonemap_type == SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY)
+      {
+        ///out_col.rgb *=
+        ///  1.0f / max (1.0f, 80.0f / (2.0f * sdr_reference_white));
+      }
+
+      float3 ICtCp = Rec709toICtCp (out_col.rgb);
+      float  Y_in  = max (ICtCp.x, 0.0f);
+      float  Y_out = 1.0f;
+
+      switch (implied_tonemap_type)
+      {
+        // This tonemap type is not necessary, we always know content range
+        //SKIV_TONEMAP_TYPE_INFINITE_ROLLOFF
+
+        default:
+        case SKIV_TONEMAP_TYPE_NONE:               Y_out = TonemapNone (Y_in);            break;
+        case SKIV_TONEMAP_TYPE_CLIP:               Y_out = TonemapClip (Y_in, dML);       break;
+        case SKIV_TONEMAP_TYPE_NORMALIZE_TO_CLL:   Y_out = TonemapSDR  (Y_in, cML, 1.0f); break;
+        case SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY: Y_out = TonemapHDR  (Y_in, cML, dML);  break;
+      }
+
+      if (Y_out + Y_in > 0.0)
+      {
+        if (implied_tonemap_type == SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY)
+        {
+          if ((! isHDR))
+            ICtCp.x = pow (ICtCp.x, 1.18f);
+        }
+
+        float I0      = ICtCp.x;
+        float I_scale = 0.0f;
+
+        ICtCp.x *=
+          max ((Y_out / Y_in), 0.0f);
+
+        if (ICtCp.x != 0.0f && I0 != 0.0f)
+        {
+          I_scale =
+            min (I0 / ICtCp.x, ICtCp.x / I0);
+        }
+
+        ICtCp.yz *= I_scale;
+      }
+
+      else
+        ICtCp.x = 0.0;
+
+      out_col.rgb =
+        ICtCptoRec709 (ICtCp);
+    }
 
     // Scale the input to visualize the heat, then undo the scale so that the
     //   visualization has constant luminance.

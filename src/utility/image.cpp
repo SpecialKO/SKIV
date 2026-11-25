@@ -1,5 +1,6 @@
 #include "utility/image.h"
 #include "utility/registry.h"
+#include "utility/sdr_tone_map.h"
 #include <cstdint>
 #include <string_view>
 #include <filesystem>
@@ -1609,6 +1610,46 @@ private:
 
 #include <iostream>
 
+// SKIV Piecewise / Auto Tone (SKIV_SdrToneMapper) of a pixel, of scRGB to linear SDR (1.0 at SDR white), for HDR images
+//   saved as SDR (SKIV_Image_SaveToDisk_SDR) and screen captures copied or saved as SDR (SKIV_Image_TonemapToSDR): as
+//     TonemapSDRWithShoulder (tone_mapping.hlsli) does it for the viewer
+static DirectX::XMVECTOR
+SKIV_Image_ShoulderToneMapPixel (DirectX::FXMVECTOR in, int mode, const SKIV_SdrTone::ShoulderCurve& curve,
+                                                                   const SKIV_SdrTone::AutoCurve&     tone)
+{
+  using namespace DirectX;
+  using namespace SKIV_SdrTone;
+
+  XMVECTOR    rgb   = in;
+  const float alpha = XMVectorGetW (rgb);
+
+  // Luminance mapping after the adaptive midtone curve
+  if (mode == SKIV_SDR_TONEMAP_AUTO)
+  {
+    float y = XMVectorGetY (XMVector3Transform (rgb, c_from709toXYZ));
+    const float gain = tone.Gain (y);
+    rgb *= gain;
+    y   *= gain;
+    if (y > Shoulder)
+      rgb *= FromPQ (curve.Map (static_cast <float> (ToPQ (y)))) / y;
+  }
+
+  // Piecewise: the lower range left intact, and SKIV's ICtCp chroma scaling of the rest
+  else
+  {
+    XMVECTOR ictcp = SKIV_Image_Rec709toICtCp (rgb);
+    const float input = XMVectorGetX (ictcp);
+    if (input > curve.knee_pq)
+    {
+      const float mapped = curve.Map (input);
+      ictcp *= std::min (mapped / input, input / mapped);
+      rgb = SKIV_Image_ICtCptoRec709 (XMVectorSetX (ictcp, mapped));
+    }
+  }
+
+  return XMVectorSaturate (XMVectorSetW (rgb / SDRWhite, alpha));
+}
+
 HRESULT
 SKIV_Image_TonemapToSDR (const DirectX::Image& image, DirectX::ScratchImage& final_sdr, float mastering_max_nits, float mastering_sdr_nits)
 {
@@ -1643,6 +1684,15 @@ SKIV_Image_TonemapToSDR (const DirectX::Image& image, DirectX::ScratchImage& fin
     ScratchImage tonemapped_hdr;
     ScratchImage tonemapped_copy;
 
+    // SKIV Piecewise / Auto Tone (SKIV_Image_ShoulderToneMapPixel) instead of SKIV's own. A capture is display-referred:
+    //   scaled by 203 / the display's SDR white (so its SDR content, the desktop and UI, stays at SDR white), and of the
+    //     brightest as the viewer takes it (the 99.94th percentile below, or the maximum), of at most the display's.
+    const int   sdrToneMapper    = SKIF_RegistrySettings::GetInstance ().iSDRToneMapper;
+    const bool  bShoulderToneMap = (sdrToneMapper == SKIV_SDR_TONEMAP_PIECEWISE ||
+                                    sdrToneMapper == SKIV_SDR_TONEMAP_AUTO);
+    const float fSDRWhiteScale   = (mastering_sdr_nits > 0.0f) ? 203.0f / mastering_sdr_nits : 1.0f;
+    SKIV_SdrTone::AutoStats autoStats;
+
     PLOG_INFO << "SKIV_Image_TonemapToSDR ( ): EvaluateImageBegin";
 
     EvaluateImage ( scrgb.GetImages     (),
@@ -1656,8 +1706,13 @@ SKIV_Image_TonemapToSDR (const DirectX::Image& image, DirectX::ScratchImage& fin
       {
         XMVECTOR v = *pixels++;
 
+        const float alpha = XMVectorGetW (v);
+
         v =
           XMVector3Transform (v, c_from709toXYZ);
+
+        if (sdrToneMapper == SKIV_SDR_TONEMAP_AUTO)
+          autoStats.Add (XMVectorGetY (v) * fSDRWhiteScale, alpha);
 
         maxLum =
           XMVectorReplicate (XMVectorGetY (XMVectorMax (v, maxLum)));
@@ -1671,6 +1726,8 @@ SKIV_Image_TonemapToSDR (const DirectX::Image& image, DirectX::ScratchImage& fin
     {
       needs_tonemapping = true;
     }
+
+    const float fMaxLum = XMVectorGetY (maxLum); // The maximum (maxLum becomes the 99.94th percentile)
 
     const float fLumRange =
       XMVectorGetY (maxLum) - XMVectorGetY (minLum);
@@ -1735,6 +1792,12 @@ SKIV_Image_TonemapToSDR (const DirectX::Image& image, DirectX::ScratchImage& fin
         SKIV_Image_LinearToPQY (std::min (_maxNitsToTonemap, XMVectorGetY (maxLum)))
       );
 
+    const SKIV_SdrTone::AutoCurve     autoCurve = autoStats.Curve ();
+    const float                       peakLum   = fSDRWhiteScale *
+      std::min (_maxNitsToTonemap, SKIF_RegistrySettings::GetInstance ().b99thPercentileMaxCLL ? XMVectorGetY (maxLum)
+                                                                                                : fMaxLum);
+    const SKIV_SdrTone::ShoulderCurve shoulder (peakLum * autoCurve.Gain (peakLum));
+
     TransformImage ( scrgb.GetImages     (),
                      scrgb.GetImageCount (),
                      scrgb.GetMetadata   (),
@@ -1753,6 +1816,13 @@ SKIV_Image_TonemapToSDR (const DirectX::Image& image, DirectX::ScratchImage& fin
 
         for (size_t j = 0; j < width; ++j)
         {
+          if (needs_tonemapping && bShoulderToneMap)
+          {
+            outPixels [j] = SKIV_Image_ShoulderToneMapPixel (
+              XMVectorSetW (inPixels [j] * fSDRWhiteScale, XMVectorGetW (inPixels [j])), sdrToneMapper, shoulder, autoCurve);
+            continue;
+          }
+
           XMVECTOR value = inPixels [j];
 
           if (needs_tonemapping)
@@ -2109,6 +2179,13 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
     ScratchImage tonemapped_hdr;
     ScratchImage tonemapped_copy;
 
+    // SKIV Piecewise / Auto Tone (SKIV_Image_ShoulderToneMapPixel) instead of SKIV's own: of the brightest as the viewer
+    //   takes it (the 99.94th percentile below, or the maximum), and of the auto curve of the image's visible pixels
+    const int  sdrToneMapper    = _registry.iSDRToneMapper;
+    const bool bShoulderToneMap = (sdrToneMapper == SKIV_SDR_TONEMAP_PIECEWISE ||
+                                   sdrToneMapper == SKIV_SDR_TONEMAP_AUTO);
+    SKIV_SdrTone::AutoStats autoStats;
+
     PLOG_INFO << "SKIV_Image_TonemapToSDR ( ): EvaluateImageBegin";
 
     EvaluateImage ( scrgb.GetImages     (),
@@ -2122,8 +2199,13 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
       {
         XMVECTOR v = *pixels++;
 
+        const float alpha = XMVectorGetW (v);
+
         v =
           XMVector3Transform (v, c_from709toXYZ);
+
+        if (sdrToneMapper == SKIV_SDR_TONEMAP_AUTO)
+          autoStats.Add (XMVectorGetY (v), alpha);
 
         maxLum =
           XMVectorReplicate (XMVectorGetY (XMVectorMax (v, maxLum)));
@@ -2134,6 +2216,8 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
     });
 
     minLum = XMVectorMax (g_XMZero, minLum);
+
+    const float fMaxLum = XMVectorGetY (maxLum); // The maximum (maxLum becomes the 99.94th percentile)
 
     auto        luminance_freq = std::make_unique <uint32_t []> (65536);
     ZeroMemory (luminance_freq.get (),     sizeof (uint32_t)  *  65536);
@@ -2213,6 +2297,10 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
       needs_tonemapping = true;
     }
 
+    const SKIV_SdrTone::AutoCurve     autoCurve = autoStats.Curve ();
+    const float                       peakLum   = _registry.b99thPercentileMaxCLL ? XMVectorGetY (maxLum) : fMaxLum;
+    const SKIV_SdrTone::ShoulderCurve shoulder (peakLum * autoCurve.Gain (peakLum));
+
     TransformImage ( scrgb.GetImages     (),
                      scrgb.GetImageCount (),
                      scrgb.GetMetadata   (),
@@ -2231,6 +2319,12 @@ SKIV_Image_SaveToDisk_SDR (const DirectX::Image& image, const wchar_t* wszFileNa
 
         for (size_t j = 0; j < width; ++j)
         {
+          if (bShoulderToneMap)
+          {
+            outPixels [j] = SKIV_Image_ShoulderToneMapPixel (inPixels [j], sdrToneMapper, shoulder, autoCurve);
+            continue;
+          }
+
           XMVECTOR value = inPixels [j];
 
           float originalW = XMVectorGetW(value);
