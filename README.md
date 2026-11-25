@@ -14,13 +14,17 @@ New versions will probably be distributed through their own packaged installer o
 - HDR support
 - HDR visualization
 - Drag-n-drop support of both local and internet image links
-- Copy/paste support
-- Desktop/region screenshot capture
+- HDR-to-SDR tone mapping for SDR displays and SDR saves/copies (Default, SKIV Piecewise, SKIV Auto Tone)
+- Color management of ICC profiles and cICP, including wide gamut images
+- Animated image playback (APNG, GIF, WebP, AVIF)
+- Copy/paste support, with a Discord compatibility option for HDR PNGs
+- Desktop/region screenshot capture, across all displays
 
 ## Format support
 
 * Ultra HDR (.jpg)
 * AVIF* (.avif)
+* HEIC (.heic, decoded by Windows: may need the HEIF and HEVC Video Extensions from the Microsoft Store)
 * JPEG XL (.jxl)
 * JPEG XR (.jxr)
 * OpenEXR (.exr)
@@ -32,9 +36,10 @@ New versions will probably be distributed through their own packaged installer o
 * GIF*
 * BMP
 * TIFF
+* TGA
 * DDS
 
-*\* No animation support.*
+*\* Animations supported.*
 
 ## Command line arguments
 
@@ -80,5 +85,9 @@ New versions will probably be distributed through their own packaged installer o
 * Uses [zlib](https://github.com/madler/zlib), licensed under [the zlib license](https://raw.githubusercontent.com/madler/zlib/develop/LICENSE).
 * Uses [OpenEXR](https://github.com/AcademySoftwareFoundation/openexr), licensed under [BSD](https://raw.githubusercontent.com/AcademySoftwareFoundation/openexr/main/LICENSE.md).
 * Uses code from [win32-darkmode](https://github.com/ysc3839/win32-darkmode/), licensed under [MIT](https://github.com/ysc3839/win32-darkmode/blob/master/LICENSE).
+* Uses [Little CMS](https://github.com/mm2/Little-CMS), licensed under [MIT](https://github.com/mm2/Little-CMS/blob/master/LICENSE).
+* Uses [libwebp](https://chromium.googlesource.com/webm/libwebp), licensed under [BSD](https://chromium.googlesource.com/webm/libwebp/+/refs/heads/main/COPYING).
+* Uses [stb_image](https://github.com/nothings/stb), licensed under [MIT or public domain](https://github.com/nothings/stb/blob/master/LICENSE).
+* Uses SDR tone curves adapted from [JXRConverter](https://github.com/zmz125000/JXRConverter), licensed under [MIT](https://github.com/zmz125000/JXRConverter/blob/master/LICENSE).
 * Optionally uses [libjxl](https://github.com/libjxl/), licensed under [BSD](https://raw.githubusercontent.com/libjxl/libjxl/main/LICENSE).
 * Includes various snippets of code from [Stack Overflow](https://stackoverflow.com/), licensed under [Creative Commons Attribution-ShareAlike](https://stackoverflow.com/help/licensing).
