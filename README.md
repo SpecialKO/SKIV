@@ -1,12 +1,12 @@
 # <img src="https://sk-data.special-k.info/artwork/strangorth/24.png" width="24" alt="Animated eclipse icon for Special K Image Viewer (SKIV)"> Special K Image Viewer (SKIV)
 ![Screenshot of the app](https://sk-data.special-k.info/artwork/screens/skiv_initial.png)
 
-An experimental companion image viewer for the [Special K Injection Frontend](https://github.com/SpecialKO/SKIF) (SKIF).
+A companion image viewer for the [Special K Injection Frontend](https://github.com/SpecialKO/SKIF) (SKIF).
 Is also intended to be able to function separately, although not all planned features may be available when used in such a form.
 
 The intention is to build a simple yet advanced screenshot/image viewer tool that handles HDR images properly as well as function as a testbed for features and functionality for the main Special K project.
 
-New versions will probably be distributed through their own packaged installer once the project reaches more maturity.
+New versions may be distributed through their own packaged installer in the future.
 
 ## Features
 
@@ -62,6 +62,16 @@ New versions will probably be distributed through their own packaged installer o
 | `Ctrl+3`                  | Image Scaling: Fill the window (Fill)                   |
 | `Ctrl+W`                  | Close the currently opened image                        |
 | `Ctrl+E`                  | Browse folder / Open in File Explorer                   |
+| `Left` / `Right`          | Previous / next image in the folder.                    |
+| `Home` / `End`            | First / last image in the folder.                       |
+| `Delete`                  | Delete the opened image.                                |
+| `Ctrl+C`                  | Copy the opened image to the clipboard.                 |
+| `Ctrl+V`                  | Paste an image from the clipboard.                      |
+| `Ctrl+S`                  | Save the opened image (in the same dynamic range).      |
+| `Ctrl+X`                  | Export the opened image to SDR.                         |
+| `Ctrl+B`                  | Configure the image encoders.                           |
+| `Space`                   | Animated images: Pause / resume.                        |
+| `,` / `.`                 | Animated images: Step one frame back / ahead.           |
 | `Ctrl+Windows+Shift+P`    | Capture a screenshot of a region of the display.        |
 | `Ctrl+Windows+Shift+O`    | Capture a screenshot of the display.                    |
 | `F1`                      | Switch to the Viewer tab.                               |
