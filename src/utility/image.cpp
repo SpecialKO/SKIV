@@ -2618,7 +2618,11 @@ bool isUHDRCodecAvailable (void)
     SK_RunLHIfBitness ( 64, LR"(https://sk-data.special-k.info/addon/ImageCodecs/libuhdr/x64/uhdr.dll)",
                             LR"(https://sk-data.special-k.info/addon/ImageCodecs/libuhdr/x86/uhdr.dll)" );
 
-  SK_RunOnce (
+  // Once, by whichever thread asks first; any other thread asking meanwhile waits for it, rather than finding libultrahdr
+  //   not loaded yet, or loaded but its functions not looked up yet (an Ultra HDR image was decoded as an SDR JPEG then)
+  static std::once_flag loaded;
+
+  std::call_once (loaded, [](void)
   {
     SKIF_RegistrySettings& _registry =
       SKIF_RegistrySettings::GetInstance ();
@@ -2693,11 +2697,7 @@ bool isUHDRCodecAvailable (void)
       sk_uhdr_get_decoded_image             = (uhdr_get_decoded_image_pfn)            GetProcAddress (hModUHDR, "uhdr_get_decoded_image");
       sk_uhdr_get_gain_map_image            = (uhdr_get_gain_map_image_pfn)           GetProcAddress (hModUHDR, "uhdr_get_gain_map_image");
       sk_uhdr_dec_get_gain_map_metadata     = (uhdr_dec_get_gain_map_metadata_pfn)    GetProcAddress (hModUHDR, "uhdr_dec_get_gain_map_metadata");
-
-      return true;
     }
-
-    return false;
   });
 
   const bool supported =
@@ -4304,9 +4304,12 @@ avifDecoderNextImage_pfn       SK_avifDecoderNextImage       = nullptr;
 bool
 isAVIFEncoderAvailable (void)
 {
-  static bool init = false;
+  static bool           init = false;
+  static std::once_flag loaded;
 
-  SK_RunOnce (
+  // Once, by whichever thread asks first; any other thread asking meanwhile (thumbnails of two AVIF images, decoded at
+  //   the same time) waits for it, rather than finding libavif not loaded yet (and taking it for missing or out of date)
+  std::call_once (loaded, [](void)
   {
     static const wchar_t* wszPluginArch =
       SK_RunLHIfBitness ( 64, LR"(x64\)",

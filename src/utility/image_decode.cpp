@@ -140,7 +140,11 @@ bool isJXLDecoderAvailable (void)
     SK_RunLHIfBitness ( 64, LR"(x64\)",
                             LR"(x86\)" );
 
-  SK_RunOnce (
+  // Once, by whichever thread asks first; any other thread asking meanwhile waits for it, rather than finding libjxl not
+  //   loaded yet (and taking JPEG XL for unsupported)
+  static std::once_flag loaded;
+
+  std::call_once (loaded, [](void)
   {
     SKIF_RegistrySettings& _registry =
       SKIF_RegistrySettings::GetInstance ();
@@ -208,7 +212,7 @@ bool isJXLDecoderAvailable (void)
              hModJXLThreads   != nullptr )
         {
           PLOG_INFO << "Loaded JPEG XL DLLs from: " << path_to_sk;
-          return true;
+          return;
         }
       }
     }
@@ -228,7 +232,7 @@ bool isJXLDecoderAvailable (void)
          hModJXLThreads   != nullptr )
     {
       PLOG_INFO << "Loaded JPEG XL DLLs from default DLL search path";
-      return true;
+      return;
     }
   });
 
