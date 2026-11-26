@@ -2847,6 +2847,35 @@ SKIV_Image_SaveToDisk_UltraHDR (const DirectX::Image& image, const wchar_t* wszF
   sk_uhdr_release_encoder (encoder);
 }
 
+// Ultra HDR JPEGs of Samsung's (Galaxy S25 Ultra) carry their gain map's metadata twice: as Ultra HDR's XMP (hdrgm),
+//   and as ISO 21496-1 (APP2 segments, "urn:iso:std:iso:ts:21496:-1"). The libultrahdr SKIV loads misreads the latter
+//     ("received 0 (bad value) for field baseHdrHeadroom denominator", where Samsung's is 1), and rejects the whole image,
+//       which was shown as an SDR JPEG then. Hiding those segments (in a copy: their name made "xrn:...", so that nothing
+//         moves) has it read the XMP instead, which says the same. False if there were none.
+static bool
+_HideISOGainMapMetadata (uint8_t* data, size_t size)
+{
+  static constexpr char   urn []    = "urn:iso:std:iso:ts:21496:-1";
+  static constexpr size_t urnSize   = sizeof (urn); // (With its terminating zero, as the segment has it)
+  bool                    hidden    = false;
+
+  for (size_t i = 0; i + 4 + urnSize <= size; i++)
+  {
+    if (data [i] != 0xFF || data [i + 1] != 0xE2)
+      continue;
+
+    const size_t length = (static_cast <size_t> (data [i + 2]) << 8) | data [i + 3]; // (Of the segment, past its marker)
+
+    if (length >= 2 + urnSize && i + 2 + length <= size && memcmp (data + i + 4, urn, urnSize) == 0)
+    {
+      data [i + 4] = 'x';
+      hidden       = true;
+    }
+  }
+
+  return hidden;
+}
+
 bool
 SKIV_Image_IsUltraHDR (const wchar_t* wszFileName)
 {
@@ -2868,7 +2897,7 @@ SKIV_Image_IsUltraHDR (const wchar_t* wszFileName)
     fclose (                      fImageFile);
 
     return
-      sk_is_uhdr_image (data.get (), size) != 0;
+      SKIV_Image_IsUltraHDR (data.get (), static_cast <int> (size));
   }
 
   return false;
@@ -2880,8 +2909,17 @@ SKIV_Image_IsUltraHDR (void* data, int size)
   if (! isUHDRCodecAvailable ())
     return false;
 
+  if (sk_is_uhdr_image (data, size) != 0)
+    return true;
+
+  // Samsung's (see _HideISOGainMapMetadata)
+  if (data == nullptr || size <= 0)
+    return false;
+
+  std::vector <uint8_t> copy (static_cast <uint8_t*> (data), static_cast <uint8_t*> (data) + size);
+
   return
-    sk_is_uhdr_image (data, size) != 0;
+    _HideISOGainMapMetadata (copy.data (), copy.size ()) && sk_is_uhdr_image (copy.data (), size) != 0;
 }
 
 HRESULT
@@ -2895,6 +2933,20 @@ SKIV_Image_LoadUltraHDR (DirectX::ScratchImage& image, void* data, int size)
 
   if (! decoder)
     return E_UNEXPECTED;
+
+  // Samsung's (see _HideISOGainMapMetadata): read without their ISO 21496-1 metadata, if libultrahdr does not read it
+  std::vector <uint8_t> repaired;
+
+  if (sk_is_uhdr_image (data, size) == 0 && data != nullptr && size > 0)
+  {
+    repaired.assign (static_cast <uint8_t*> (data), static_cast <uint8_t*> (data) + size);
+
+    if (_HideISOGainMapMetadata (repaired.data (), repaired.size ()) && sk_is_uhdr_image (repaired.data (), size) != 0)
+    {
+      PLOG_INFO << "[Image Processing] Ultra HDR image read by its XMP gain map metadata, as libultrahdr misreads its ISO 21496-1 one";
+      data = repaired.data ();
+    }
+  }
 
   uhdr_compressed_image_t uhdr_image;
 
@@ -2932,6 +2984,17 @@ SKIV_Image_LoadUltraHDR (DirectX::ScratchImage& image, void* data, int size)
   auto metadata =
     sk_uhdr_dec_get_gain_map_metadata (decoder);
 
+  // The colors libultrahdr hands over are of the base image's gamut (its ICC profile: phones' photos are Display P3
+  //   mostly), not scRGB's: converted to Rec. 709 primaries (scRGB's), as they were taken for scRGB's (washed out)
+  const DirectX::XMMATRIX toScRGB =
+    (decoded_img->cg == UHDR_CG_DISPLAY_P3) ? c_fromDCIP3to709 :
+    (decoded_img->cg == UHDR_CG_BT_2100)    ? c_Bt2100toscRGB * DirectX::XMMatrixScaling (1.0f / 125.0f, 1.0f / 125.0f, 1.0f / 125.0f)
+                                            : DirectX::XMMatrixIdentity ();
+
+  PLOG_INFO << "[Image Processing] Ultra HDR image of " << ((decoded_img->cg == UHDR_CG_DISPLAY_P3) ? "Display P3" :
+                                                            (decoded_img->cg == UHDR_CG_BT_2100)    ? "Rec. 2020"  : "Rec. 709")
+            << " primaries";
+
   DirectX::TransformImage (*unscaled_image.GetImage (0,0,0),
     [&](DirectX::XMVECTOR* outPixels, const DirectX::XMVECTOR* inPixels, size_t width, size_t y)
     {
@@ -2945,7 +3008,7 @@ SKIV_Image_LoadUltraHDR (DirectX::ScratchImage& image, void* data, int size)
       {
         XMVECTOR value = inPixels [j];
 
-        outPixels[j] = XMVectorMultiply(value, scale);
+        outPixels[j] = XMVectorSetW (XMVector3Transform (XMVectorMultiply (value, scale), toScRGB), XMVectorGetW (value));
       }
 
       UNREFERENCED_PARAMETER(y);
