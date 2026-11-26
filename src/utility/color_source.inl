@@ -184,7 +184,17 @@ _ReadExifColor (const uint8_t* tiff, size_t size, color_source_s& out)
 
   uint32_t exifIFD = 0, interopIFD = 0;
 
-  walk (read32 (4), [&] (uint32_t tag, size_t entry) { if (tag == 0x8769) exifIFD = read32 (entry + 8); });
+  walk (read32 (4), [&] (uint32_t tag, size_t entry)
+  {
+    if (tag == 0x8769) exifIFD = read32 (entry + 8);
+
+    // Orientation: a SHORT, in the entry itself
+    if (tag == 0x0112)
+    {
+      const uint32_t orientation = read16 (entry + 8);
+      out.exif_orientation = (orientation >= 1 && orientation <= 8) ? static_cast <uint16_t> (orientation) : 0;
+    }
+  });
 
   walk (exifIFD, [&] (uint32_t tag, size_t entry)
   {

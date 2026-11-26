@@ -37,6 +37,8 @@ struct color_source_s {
 
   uint16_t              exif_color_space = 0;       // Exif ColorSpace: 0 if none, 1 sRGB, 2 Adobe RGB (WIC only), 65535 uncalibrated
   char                  exif_interop [4] = { };     // Exif InteroperabilityIndex: "R98" (sRGB), "R03" (Adobe RGB), "THM"
+  uint16_t              exif_orientation = 0;       // Exif Orientation (not a color: read along with them): 0 if none, else
+                                                    //   1 to 8 (1: upright; 6: to be turned 90 degrees clockwise...)
 
   bool empty (void) const
   {

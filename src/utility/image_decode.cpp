@@ -4965,6 +4965,43 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
     }
   }
 
+  // Exif orientation (JPEG, WebP: the formats whose Exif SKIV reads itself, _ReadColorSource): photos are stored as the
+  //   camera's sensor read them, and their Orientation says how to turn (and mirror) them upright, which none of the
+  //     decoders here does. Turned here, before their thumbnails and light levels. 5 and 7 are mirrored along a diagonal:
+  //       DirectXTex (WIC's flip rotator) flips before it turns (checked with an image in each of the 8 orientations).
+  if (const uint16_t orientation = image.color_source.exif_orientation;
+      orientation >= 2 && orientation <= 8 && img.GetImageCount ( ) > 0 && ! DirectX::IsCompressed (meta.format))
+  {
+    using namespace DirectX;
+
+    const TEX_FR_FLAGS flags =
+      (orientation == 2) ? TEX_FR_FLIP_HORIZONTAL                                         :
+      (orientation == 3) ? TEX_FR_ROTATE180                                               :
+      (orientation == 4) ? TEX_FR_FLIP_VERTICAL                                           :
+      (orientation == 5) ? static_cast <TEX_FR_FLAGS> (TEX_FR_ROTATE270 | TEX_FR_FLIP_HORIZONTAL) : // Transpose
+      (orientation == 6) ? TEX_FR_ROTATE90                                                :
+      (orientation == 7) ? static_cast <TEX_FR_FLAGS> (TEX_FR_ROTATE90  | TEX_FR_FLIP_HORIZONTAL) : // Transverse
+                           TEX_FR_ROTATE270;
+
+    ScratchImage turned;
+
+    if (SUCCEEDED (FlipRotate (img.GetImages ( ), img.GetImageCount ( ), img.GetMetadata ( ), flags, turned)))
+    {
+      std::swap (img, turned);
+      meta.width  = img.GetMetadata ( ).width;
+      meta.height = img.GetMetadata ( ).height;
+
+      // The size of the image a scaled down decode is of (see _LoadJPEGPreview), turned as well
+      if (orientation >= 5)
+        std::swap (image.source_size.x, image.source_size.y);
+
+      PLOG_INFO << "[Image Processing] Turned the image upright (Exif orientation " << orientation << ")";
+    }
+
+    else
+      PLOG_WARNING << "[Image Processing] Could not turn the image upright (Exif orientation " << orientation << ")";
+  }
+
   DirectX::ScratchImage* pImg  =   &img;
   DirectX::ScratchImage   converted_img;
 
