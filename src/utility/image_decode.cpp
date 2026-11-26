@@ -677,9 +677,10 @@ struct jxl_decoder_s
 };
 
 // JXL_DEC_COLOR_ENCODING: the image's own colors (into color, before scRGB is asked for: an encoded color space, whose
-//   enums are cICP's numbers, or else an ICC profile), then asks for scRGB; actual: the colors libjxl hands over then
+//   enums are cICP's numbers, or else an ICC profile), then asks for scRGB (unless linear is false: the image's own colors
+//     then, see _DecodeJXL); actual: the colors libjxl hands over then
 static void
-_JXLReadColors (const jxl_api_s& jxl, JxlDecoder* decoder, color_source_s& color, JxlColorEncoding& actual)
+_JXLReadColors (const jxl_api_s& jxl, JxlDecoder* decoder, color_source_s& color, JxlColorEncoding& actual, bool linear = true)
 {
   JxlColorEncoding original = { };
   color.origin = "JPEG XL";
@@ -721,7 +722,7 @@ _JXLReadColors (const jxl_api_s& jxl, JxlDecoder* decoder, color_source_s& color
                        .transfer_function = JXL_TRANSFER_FUNCTION_LINEAR,
                        .rendering_intent  = JXL_RENDERING_INTENT_PERCEPTUAL };
 
-  if (JXL_DEC_SUCCESS != jxl.DecoderSetPreferredColorProfile (decoder, &scrgb_encoding))
+  if (linear && JXL_DEC_SUCCESS != jxl.DecoderSetPreferredColorProfile (decoder, &scrgb_encoding))
     PLOG_ERROR << "JxlDecoderSetPreferredColorProfile failed";
 
   actual = { };
@@ -746,6 +747,12 @@ _JXLToScRGB (DirectX::ScratchImage& img, const JxlColorEncoding& actual, const c
   const bool bIsHDR10 =
     actual.primaries         == JXL_PRIMARIES_2100 &&
     actual.transfer_function == JXL_TRANSFER_FUNCTION_PQ;
+
+  // PQ of Rec. 709 or P3 primaries (an XYB image handed over in its own colors, see _DecodeJXL)
+  const bool bIsOtherPQ =
+    actual.transfer_function == JXL_TRANSFER_FUNCTION_PQ &&
+   (actual.primaries         == JXL_PRIMARIES_SRGB ||
+    actual.primaries         == JXL_PRIMARIES_P3);
 
   const bool bIsRec709Linear =
     actual.primaries         == JXL_PRIMARIES_SRGB &&
@@ -776,7 +783,7 @@ _JXLToScRGB (DirectX::ScratchImage& img, const JxlColorEncoding& actual, const c
   //       wrong colors).
   bool bConvertedHere = false;
 
-  if (! (bIsHDR10 || bIsRec709Linear || bIsHLG))
+  if (! (bIsHDR10 || bIsOtherPQ || bIsRec709Linear || bIsHLG))
   {
     cmsHPROFILE           source = _CreateSDRSourceProfile (color);
     const DirectX::Image* data   = img.GetImage (0, 0, 0);
@@ -834,6 +841,14 @@ _JXLToScRGB (DirectX::ScratchImage& img, const JxlColorEncoding& actual, const c
         {
           v =
             XMVector3Transform (SKIV_Image_PQToLinear (v), c_Bt2100toscRGB);
+        }
+
+        else if (bIsOtherPQ)
+        {
+          const XMVECTOR l = SKIV_Image_PQToLinear (v);
+
+          v = (hlgPrimaries == 1) ? XMVectorScale (l, 125.0f)
+                                  : XMVectorScale (XMVector3Transform (l, c_fromDCIP3to709), 125.0f);
         }
 
         else if (bIsHLG)
@@ -942,12 +957,15 @@ _ScanJXL (const uint8_t* data, size_t size, uint32_t& width, uint32_t& height, u
   }
 }
 
-// Decodes the frames of an animated JPEG XL image (coalesced, as they are shown), handing each over to onFrame made
-//   scRGB (half floats), with how long it is shown (microseconds), until it returns false. first: the first frame's pixels
-//     go outside of sRGB (belowZero), and above SDR white (aboveOne). How many frames were decoded, or -1 if none could be.
+using jxl_on_frame_fn = std::function <bool (const DirectX::Image&, uint32_t, bool, bool)>;
+
+// One pass of _DecodeJXL: linear, whether libjxl is asked for scRGB (see _JXLReadColors); the first skip frames are only
+//   decoded (handed over already). failed: libjxl failed on a frame (not the file breaking off, nor onFrame stopping it).
 static int
-_DecodeJXL (const uint8_t* data, size_t size, const std::function <bool (const DirectX::Image&, uint32_t, bool, bool)>& onFrame)
+_DecodeJXLPass (const uint8_t* data, size_t size, const jxl_on_frame_fn& onFrame, bool linear, int skip, bool& failed)
 {
+  failed = false;
+
   const jxl_api_s& jxl = _JXL ( );
   jxl_decoder_s    dec (jxl);
 
@@ -980,7 +998,7 @@ _DecodeJXL (const uint8_t* data, size_t size, const std::function <bool (const D
         break;
 
       case JXL_DEC_COLOR_ENCODING:
-        _JXLReadColors (jxl, dec.decoder, color, actual);
+        _JXLReadColors (jxl, dec.decoder, color, actual, linear);
         break;
 
       case JXL_DEC_FRAME:
@@ -1013,6 +1031,13 @@ _DecodeJXL (const uint8_t* data, size_t size, const std::function <bool (const D
 
       case JXL_DEC_FULL_IMAGE:
       {
+        // Handed over before (by the pass that failed)
+        if (frames < skip)
+        {
+          frames++;
+          break;
+        }
+
         bool belowZero = false,
              aboveOne  = false;
 
@@ -1029,10 +1054,40 @@ _DecodeJXL (const uint8_t* data, size_t size, const std::function <bool (const D
       case JXL_DEC_SUCCESS:
         return (frames > 0) ? frames : -1;
 
-      default: // An error, or the file breaks off: the frames it has
+      case JXL_DEC_ERROR:
+        failed = true;
+        return (frames > 0) ? frames : -1;
+
+      default: // The file breaks off: the frames it has
         return (frames > 0) ? frames : -1;
     }
   }
+}
+
+// Decodes the frames of an animated JPEG XL image (coalesced, as they are shown), handing each over to onFrame made
+//   scRGB (half floats), with how long it is shown (microseconds), until it returns false; with whether its pixels go
+//     outside of sRGB (belowZero), and above SDR white (aboveOne). How many frames were decoded, or -1 if none could be.
+//
+//   libjxl (0.10.2, as SKIV downloads it) fails on the second frame of some animations (layered ones, with alpha) when it
+//     is asked both to hand them over as scRGB (converting them itself) and to coalesce them. Those are decoded again
+//       then, in their own colors (original: from then on), which _JXLToScRGB converts (sRGB and the like with Little
+//         CMS; PQ and HLG itself).
+static int
+_DecodeJXL (const uint8_t* data, size_t size, const jxl_on_frame_fn& onFrame, bool& original)
+{
+  bool failed = false;
+  int  frames = _DecodeJXLPass (data, size, onFrame, ! original, 0, failed);
+
+  if (failed && ! original && frames > 0)
+  {
+    PLOG_WARNING << "libjxl could not decode frame " << (frames + 1) << " of the animated JPEG XL image as scRGB: decoding it "
+                    "in its own colors instead";
+
+    original = true;
+    frames   = _DecodeJXLPass (data, size, onFrame, false, frames, failed);
+  }
+
+  return frames;
 }
 
 #pragma endregion
@@ -1474,6 +1529,7 @@ struct animated_image_s
   bool                  isJXL  = false;
   color_source_s        color;   // AVIF, JPEG XL: its colors (those of the others are read from the file by _ReadColorSource)
   float                 intensity_target = 0.0f; // JPEG XL: its peak (nits)
+  mutable bool          jxlOriginal      = false; // JPEG XL: decoded in its own colors (see _DecodeJXL)
   bool                  hdr          = false;    // AVIF, APNG: of a PQ or HLG transfer (_HDRTransfer): frames of scRGB
   bool                  hlg          = false;    //   ... HLG,
   uint8_t               hdrPrimaries = 0;        //   ... and its primaries (a cICP code)
@@ -1492,7 +1548,7 @@ struct animated_image_s
 #ifdef _M_X64
     if (isJXL)
       return _DecodeJXL (file.data ( ), file.size ( ), [&](const DirectX::Image& scrgb, uint32_t delay, bool belowZero, bool aboveOne)
-        { return onFrame ({ .scrgb = &scrgb, .belowZero = belowZero, .aboveOne = aboveOne }, delay); });
+        { return onFrame ({ .scrgb = &scrgb, .belowZero = belowZero, .aboveOne = aboveOne }, delay); }, jxlOriginal);
 #endif
 
     return (isAVIF) ? _DecodeAVIF (file.data ( ), file.size ( ), [&](const avifImage* yuv, uint32_t delay) { return onFrame ({ .yuv = yuv }, delay); }) :
