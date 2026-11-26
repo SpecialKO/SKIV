@@ -635,6 +635,9 @@
     <FxCompile Include="resources\shaders\avif_yuv_cs.hlsl">
       <Filter>Resource Files\Shaders</Filter>
     </FxCompile>
+    <FxCompile Include="resources\shaders\avif_yuv_hdr_cs.hlsl">
+      <Filter>Resource Files\Shaders</Filter>
+    </FxCompile>
   </ItemGroup>
   <ItemGroup>
     <Manifest Include="resources\appcompat.manifest">

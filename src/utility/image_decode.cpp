@@ -1045,6 +1045,22 @@ _HDRTransfer (const color_source_s& cs, uint8_t& primaries, bool& hlg)
   return (transfer == 16 || transfer == 18);
 }
 
+// The matrix from an HDR image's primaries (a cICP code) to scRGB, display light 1.0 (10,000 nits) being 125 (_HDRToScRGB's)
+static DirectX::XMMATRIX
+_HDRPrimariesToScRGB (uint8_t primaries)
+{
+  using namespace DirectX;
+
+  return
+    (primaries ==  1) ? XMMatrixScaling (125.0f, 125.0f, 125.0f) :
+    (primaries == 11 ||
+     primaries == 12) ? c_fromDCIP3to709 * XMMatrixScaling (125.0f, 125.0f, 125.0f) :
+    (primaries ==  5 ||
+     primaries ==  6) ? c_from601to709   * XMMatrixScaling (125.0f, 125.0f, 125.0f) :
+    (primaries == 10) ? c_fromXYZto709   * XMMatrixScaling (125.0f, 125.0f, 125.0f)
+                      : c_Bt2100toscRGB;
+}
+
 // An HDR image's signal (PQ or HLG, as encoded: 0 to 1, of any format DirectXTex reads) made scRGB (half floats), into
 //   out: to display light (HLG: for a 1,000-nit display, see _HLGToDisplay), then its primaries (a cICP code) to scRGB's.
 //     As the still AVIF decoder converts them; primaries it does not know are taken as Rec. 2020's.
@@ -1065,14 +1081,7 @@ _HDRToScRGB (const DirectX::Image& signal, uint8_t primaries, bool hlg, DirectX:
   const float* weights = _LuminanceWeights (primaries);
 
   // To scRGB (relative to 80 nits: display light, 1.0 being 10,000 nits, times 125)
-  const XMMATRIX matrix =
-    (primaries ==  1) ? XMMatrixScaling (125.0f, 125.0f, 125.0f) :
-    (primaries == 11 ||
-     primaries == 12) ? c_fromDCIP3to709 * XMMatrixScaling (125.0f, 125.0f, 125.0f) :
-    (primaries ==  5 ||
-     primaries ==  6) ? c_from601to709   * XMMatrixScaling (125.0f, 125.0f, 125.0f) :
-    (primaries == 10) ? c_fromXYZto709   * XMMatrixScaling (125.0f, 125.0f, 125.0f)
-                      : c_Bt2100toscRGB;
+  const XMMATRIX matrix = _HDRPrimariesToScRGB (primaries);
 
   if (FAILED (TransformImage (in,
         [&](XMVECTOR* outPixels, const XMVECTOR* inPixels, size_t width, size_t y)
@@ -1487,6 +1496,7 @@ struct anim_yuv_s
   CComPtr <ID3D11UnorderedAccessView> output;
   UINT                                width  = 0,
                                       height = 0;
+  bool                                hdr    = false; // Made scRGB (avif_yuv_hdr_cs.hlsl), from PQ or HLG
 
   // Pushes its textures to be released
   void Release (void)
@@ -1509,6 +1519,8 @@ struct avif_yuv_constants_s
   float    matrix [4];
   float    alpha  [4];
   uint32_t size   [4];
+  float    hdr    [4];     // HDR: x: HLG (else PQ); yzw: its primaries' luminance
+  float    toScRGB [3][4]; //   ... the rows of the matrix from its primaries to scRGB's
 };
 
 static bool
@@ -1578,13 +1590,31 @@ _AVIFYUVConstants (const avifImage* frame, avif_yuv_constants_s& c)
 // Uploads a frame of an AVIF image sequence as libavif decoded it (its planes, as they are), and creates the texture the
 //   main thread makes it RGBA in (srv: as sRGB, as _CreateFrameTexture's). Any thread. False if it cannot be done this way
 //     (see _AVIFYUVConstants), or the textures could not be made: libavif makes it RGBA then.
+//       hdr: an HDR one (PQ, or HLG if hlg; of primaries, a cICP code), made scRGB (half floats) instead.
 static bool
-_CreateYUVFrame (ID3D11Device* pDevice, const avifImage* frame, anim_yuv_s& yuv, CComPtr <ID3D11ShaderResourceView>& srv)
+_CreateYUVFrame (ID3D11Device* pDevice, const avifImage* frame, anim_yuv_s& yuv, CComPtr <ID3D11ShaderResourceView>& srv,
+                 bool hdr = false, uint8_t primaries = 0, bool hlg = false)
 {
   avif_yuv_constants_s constants = { };
 
   if (! _AVIFYUVConstants (frame, constants))
     return false;
+
+  if (hdr)
+  {
+    const float*             weights = _LuminanceWeights (primaries);
+    DirectX::XMFLOAT4X4      m;
+    DirectX::XMStoreFloat4x4 (&m, _HDRPrimariesToScRGB (primaries));
+
+    constants.hdr [0] = (hlg) ? 1.0f : 0.0f;
+    constants.hdr [1] = weights [0];
+    constants.hdr [2] = weights [1];
+    constants.hdr [3] = weights [2];
+
+    for (int r = 0; r < 3; r++)
+      for (int c = 0; c < 4; c++)
+        constants.toScRGB [r][c] = m.m [r][c];
+  }
 
   const DXGI_FORMAT planeFormat = (frame->depth == 8) ? DXGI_FORMAT_R8_UNORM : DXGI_FORMAT_R16_UNORM;
   const UINT        width       = frame->width,
@@ -1638,13 +1668,13 @@ _CreateYUVFrame (ID3D11Device* pDevice, const avifImage* frame, anim_yuv_s& yuv,
       return false;
   }
 
-  // The texture it is made into: written as 8-bit values, read as sRGB (typeless, for its two views)
+  // The texture it is made into: written as 8-bit values, read as sRGB (typeless, for its two views); HDR: half floats
   D3D11_TEXTURE2D_DESC desc = { };
   desc.Width            = width;
   desc.Height           = height;
   desc.MipLevels        = 1;
   desc.ArraySize        = 1;
-  desc.Format           = DXGI_FORMAT_R8G8B8A8_TYPELESS;
+  desc.Format           = (hdr) ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_R8G8B8A8_TYPELESS;
   desc.SampleDesc.Count = 1;
   desc.Usage            = D3D11_USAGE_DEFAULT;
   desc.BindFlags        = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
@@ -1652,12 +1682,12 @@ _CreateYUVFrame (ID3D11Device* pDevice, const avifImage* frame, anim_yuv_s& yuv,
   CComPtr <ID3D11Texture2D> pTex;
 
   D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = { };
-  srvDesc.Format              = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+  srvDesc.Format              = (hdr) ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
   srvDesc.ViewDimension       = D3D11_SRV_DIMENSION_TEXTURE2D;
   srvDesc.Texture2D.MipLevels = 1;
 
   D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = { };
-  uavDesc.Format              = DXGI_FORMAT_R8G8B8A8_UNORM;
+  uavDesc.Format              = (hdr) ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_R8G8B8A8_UNORM;
   uavDesc.ViewDimension       = D3D11_UAV_DIMENSION_TEXTURE2D;
 
   if (FAILED (pDevice->CreateTexture2D            (&desc, nullptr, &pTex.p))        ||
@@ -1667,12 +1697,14 @@ _CreateYUVFrame (ID3D11Device* pDevice, const avifImage* frame, anim_yuv_s& yuv,
 
   yuv.width  = width;
   yuv.height = height;
+  yuv.hdr    = hdr;
   return true;
 }
 
 // Makes the frames waiting for it RGBA (avif_yuv_cs.hlsl), on the immediate context: main thread only. Their textures are
 //   drawn after (in the frame being made).
 #include <shaders/avif_yuv_cs.h>
+#include <shaders/avif_yuv_hdr_cs.h>
 
 static void
 _ConvertYUVFrames (std::vector <anim_yuv_s>& pending)
@@ -1682,7 +1714,8 @@ _ConvertYUVFrames (std::vector <anim_yuv_s>& pending)
 
   // The shader and its sampler: made for the device the frames were made on (made again after a device reset)
   static CComPtr <ID3D11Device>        s_device;
-  static CComPtr <ID3D11ComputeShader> s_shader;
+  static CComPtr <ID3D11ComputeShader> s_shader,
+                                       s_shaderHDR; // (avif_yuv_hdr_cs.hlsl)
   static CComPtr <ID3D11SamplerState>  s_sampler;
 
   CComPtr <ID3D11Device> pDevice;
@@ -1691,15 +1724,17 @@ _ConvertYUVFrames (std::vector <anim_yuv_s>& pending)
   if (pDevice.p != s_device.p)
   {
     s_device  = pDevice;
-    s_shader  = nullptr;
-    s_sampler = nullptr;
+    s_shader    = nullptr;
+    s_shaderHDR = nullptr;
+    s_sampler   = nullptr;
 
     D3D11_SAMPLER_DESC sampler = { };
     sampler.Filter   = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
     sampler.AddressU = sampler.AddressV = sampler.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
     sampler.MaxLOD   = D3D11_FLOAT32_MAX;
 
-    if (FAILED (pDevice->CreateComputeShader (avif_yuv_cs_bytecode, sizeof (avif_yuv_cs_bytecode), nullptr, &s_shader.p)) ||
+    if (FAILED (pDevice->CreateComputeShader (avif_yuv_cs_bytecode,     sizeof (avif_yuv_cs_bytecode),     nullptr, &s_shader.p))    ||
+        FAILED (pDevice->CreateComputeShader (avif_yuv_hdr_cs_bytecode, sizeof (avif_yuv_hdr_cs_bytecode), nullptr, &s_shaderHDR.p)) ||
         FAILED (pDevice->CreateSamplerState  (&sampler, &s_sampler.p)))
       PLOG_ERROR << "[Image Processing] Could not create the shader making AVIF frames RGBA";
   }
@@ -1707,13 +1742,14 @@ _ConvertYUVFrames (std::vector <anim_yuv_s>& pending)
   CComPtr <ID3D11DeviceContext> pDevCtx;
   pDevice->GetImmediateContext (&pDevCtx.p);
 
-  if (s_shader.p != nullptr && pDevCtx.p != nullptr)
+  if (s_shader.p != nullptr && s_shaderHDR.p != nullptr && pDevCtx.p != nullptr)
   {
-    pDevCtx->CSSetShader  (s_shader, nullptr, 0);
     pDevCtx->CSSetSamplers (0, 1, &s_sampler.p);
 
     for (auto& yuv : pending)
     {
+      pDevCtx->CSSetShader ((yuv.hdr) ? s_shaderHDR : s_shader, nullptr, 0);
+
       ID3D11ShaderResourceView* planes [4] = { yuv.planes [0].p, yuv.planes [1].p, yuv.planes [2].p, yuv.planes [3].p };
 
       pDevCtx->CSSetShaderResources      (0, 4, planes);
@@ -1942,10 +1978,24 @@ _StreamAnimation (std::shared_ptr <image_anim_stream_s> s, std::shared_ptr <anim
 
       lock.unlock ( );
 
-      // HDR (AVIF, APNG): made scRGB here, from their signal (PQ or HLG)
+      CComPtr <ID3D11ShaderResourceView> srv;
+      anim_yuv_s                         gpu;
+
+      // An AVIF's frame: made RGBA on the GPU (by the main thread), but for the first one (shown as soon as it is made:
+      //   pRawTexSRV), and those the GPU's way does not apply to; otherwise by libavif, on the CPU
+      bool made = (yuv != nullptr && source->gpuYUV && ! (pass == 0 && frame == 0) &&
+                   _CreateYUVFrame (source->device, yuv, gpu, srv, source->image.hdr, source->image.hdrPrimaries, source->image.hlg));
+
+      if (! made)
+      {
+        gpu.Release ( );
+        srv = nullptr;
+      }
+
+      // HDR (AVIF, APNG): made scRGB here, from their signal (PQ or HLG), if the GPU did not make it
       const DirectX::Image* scrgb = decodedFrame.scrgb;
 
-      if (scrgb == nullptr && source->image.hdr && (yuv != nullptr || decodedFrame.canvas16 != nullptr))
+      if (! made && scrgb == nullptr && source->image.hdr && (yuv != nullptr || decodedFrame.canvas16 != nullptr))
       {
         DirectX::Image signal = { };
 
@@ -1978,14 +2028,6 @@ _StreamAnimation (std::shared_ptr <image_anim_stream_s> s, std::shared_ptr <anim
         if (FAILED (source->first.InitializeFromImage (*scrgb)))
           source->first.Release ( );
       }
-
-      CComPtr <ID3D11ShaderResourceView> srv;
-      anim_yuv_s                         gpu;
-
-      // An AVIF's frame: made RGBA on the GPU (by the main thread), but for the first one (shown as soon as it is made:
-      //   pRawTexSRV), and those the GPU's way does not apply to; otherwise by libavif, on the CPU
-      bool made = (yuv != nullptr && source->gpuYUV && ! (pass == 0 && frame == 0) &&
-                   _CreateYUVFrame (source->device, yuv, gpu, srv));
 
       // A JPEG XL's frame, or an HDR one: scRGB already
       if (! made && scrgb != nullptr)
@@ -2608,8 +2650,9 @@ _LoadAnimatedImage (image_s& image, const std::function <bool (void)>& wanted)
     ((static_cast <size_t> (width) * height * ((wide) ? 8 : 4)) + 0xFFFF) & ~static_cast <size_t> (0xFFFF);
 
   // AVIF frames of sRGB (or Rec. 709) colors: made RGBA on the GPU (anim_yuv_s), by a compute shader writing 8-bit RGBA
-  //   (Direct3D 11 hardware); wide gamut ones are converted on the CPU, as before
-  source->gpuYUV = (source->image.isAVIF && ! wide && source->device->GetFeatureLevel ( ) >= D3D_FEATURE_LEVEL_11_0);
+  //   (Direct3D 11 hardware); HDR ones (PQ, HLG) too, made scRGB (half floats) by its HDR variant. Wide gamut SDR ones are
+  //     converted on the CPU, as before.
+  source->gpuYUV = (source->image.isAVIF && (! wide || source->image.hdr) && source->device->GetFeatureLevel ( ) >= D3D_FEATURE_LEVEL_11_0);
 
   auto stream = std::make_shared <image_anim_stream_s> ( );
   stream->count   = count;
