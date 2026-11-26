@@ -1,7 +1,7 @@
 // Animated images: the APNG, GIF and WebP decoders of the viewer's animated images (viewer.cpp), and
 //   IsAnimatedImageFile. Ported from SKIF (src/stores/animated_images.inl, tested there on its own by tools\image_tests);
 //     keep the two in sync. The differences: APNG frames leave out the gAMA chunk, and a tRNS chunk in an
-//     image with an alpha channel (see _ParseAPNG).
+//     image with an alpha channel (see _ParseAPNG), and can be decoded at 16 bits per channel (_DecodeAPNG16).
 //
 //   Include it in one file only, where stb_image is implemented: the GIF decoder uses stb_image's internal frame decoder
 //     (stbi__gif_load_next), which only exists there. Before it, that file includes:
@@ -230,13 +230,17 @@ _ParseAPNG (const uint8_t* file, size_t size, apng_s& apng)
   return (hasIHDR && hasACTL && apng.frames.size ( ) >= 2);
 }
 
-// Decodes the frames of an APNG, drawn onto its canvas (RGBA, width x height), and hands each one to onFrame (canvas,
-//   delay in microseconds), which returns false to stop. Returns the number of frames handed over, or -1 on an error.
+// Decodes the frames of an APNG, drawn onto its canvas (RGBA, width x height; T: uint8_t, or uint16_t for 16 bits per
+//   channel, as HDR APNGs are), and hands each one to onFrame (canvas, delay in microseconds), which returns false to stop.
+//     Returns the number of frames handed over, or -1 on an error.
+template <typename T>
 static int
-_DecodeAPNG (const apng_s& apng, const std::function <bool (const uint8_t*, uint32_t)>& onFrame)
+_DecodeAPNGFrames (const apng_s& apng, const std::function <bool (const T*, uint32_t)>& onFrame)
 {
+  static constexpr uint32_t one = (sizeof (T) == 1) ? 255 : 65535; // Opaque
+
   const size_t           stride = static_cast <size_t> (apng.width) * 4;
-  std::vector <uint8_t>  canvas   (stride * apng.height, 0), // Starts fully transparent
+  std::vector <T>        canvas   (stride * apng.height, 0), // Starts fully transparent
                          previous;                           // The canvas from before the frame (dispose op 2)
   std::vector <uint8_t>  png;
   int                    count  = 0;
@@ -258,7 +262,12 @@ _DecodeAPNG (const apng_s& apng, const std::function <bool (const uint8_t*, uint
     _AppendPNGChunk (png, "IEND", nullptr, 0);
 
     int w = 0, h = 0, channels = 0;
-    stbi_uc* pixels = stbi_load_from_memory (png.data ( ), static_cast <int> (png.size ( )), &w, &h, &channels, STBI_rgb_alpha);
+    T*  pixels = nullptr;
+
+    if constexpr (sizeof (T) == 1)
+      pixels = stbi_load_from_memory    (png.data ( ), static_cast <int> (png.size ( )), &w, &h, &channels, STBI_rgb_alpha);
+    else
+      pixels = stbi_load_16_from_memory (png.data ( ), static_cast <int> (png.size ( )), &w, &h, &channels, STBI_rgb_alpha);
 
     if (pixels == nullptr || static_cast <uint32_t> (w) != frame.width || static_cast <uint32_t> (h) != frame.height)
     {
@@ -278,29 +287,29 @@ _DecodeAPNG (const apng_s& apng, const std::function <bool (const uint8_t*, uint
     // Draw the frame onto the canvas
     for (uint32_t y = 0; y < frame.height; y++)
     {
-      const uint8_t* src = pixels + static_cast <size_t> (y) * frame.width * 4;
-      uint8_t*       dst = canvas.data ( ) + (static_cast <size_t> (frame.y) + y) * stride + static_cast <size_t> (frame.x) * 4;
+      const T* src = pixels + static_cast <size_t> (y) * frame.width * 4;
+      T*       dst = canvas.data ( ) + (static_cast <size_t> (frame.y) + y) * stride + static_cast <size_t> (frame.x) * 4;
 
       if (frame.blend == 0) // Replace
-        memcpy (dst, src, static_cast <size_t> (frame.width) * 4);
+        memcpy (dst, src, static_cast <size_t> (frame.width) * 4 * sizeof (T));
 
       else for (uint32_t x = 0; x < frame.width; x++, src += 4, dst += 4) // Alpha blend over (straight alpha)
       {
-        const uint32_t sa = src [3];
+        const uint64_t sa = src [3];
 
-        if (sa == 255)
-          memcpy (dst, src, 4);
+        if (sa == one)
+          memcpy (dst, src, 4 * sizeof (T));
 
         else if (sa != 0)
         {
-          const uint32_t u     = sa * 255,
-                         v     = (255 - sa) * dst [3],
+          const uint64_t u     = sa * one,
+                         v     = (one - sa) * dst [3],
                          alpha = u + v;
 
           for (int c = 0; c < 3; c++)
-            dst [c] = static_cast <uint8_t> ((src [c] * u + dst [c] * v + alpha / 2) / alpha);
+            dst [c] = static_cast <T> ((src [c] * u + dst [c] * v + alpha / 2) / alpha);
 
-          dst [3]   = static_cast <uint8_t> ((alpha + 127) / 255);
+          dst [3]   = static_cast <T> ((alpha + one / 2) / one);
         }
       }
     }
@@ -316,7 +325,7 @@ _DecodeAPNG (const apng_s& apng, const std::function <bool (const uint8_t*, uint
     if (dispose == 1)
     {
       for (uint32_t y = 0; y < frame.height; y++)
-        memset (canvas.data ( ) + (static_cast <size_t> (frame.y) + y) * stride + static_cast <size_t> (frame.x) * 4, 0, static_cast <size_t> (frame.width) * 4);
+        memset (canvas.data ( ) + (static_cast <size_t> (frame.y) + y) * stride + static_cast <size_t> (frame.x) * 4, 0, static_cast <size_t> (frame.width) * 4 * sizeof (T));
     }
 
     else if (dispose == 2)
@@ -324,12 +333,26 @@ _DecodeAPNG (const apng_s& apng, const std::function <bool (const uint8_t*, uint
       for (uint32_t y = 0; y < frame.height; y++)
       {
         const size_t offset = (static_cast <size_t> (frame.y) + y) * stride + static_cast <size_t> (frame.x) * 4;
-        memcpy (canvas.data ( ) + offset, previous.data ( ) + offset, static_cast <size_t> (frame.width) * 4);
+        memcpy (canvas.data ( ) + offset, previous.data ( ) + offset, static_cast <size_t> (frame.width) * 4 * sizeof (T));
       }
     }
   }
 
   return count;
+}
+
+static int
+_DecodeAPNG (const apng_s& apng, const std::function <bool (const uint8_t*, uint32_t)>& onFrame)
+{
+  return _DecodeAPNGFrames <uint8_t> (apng, onFrame);
+}
+
+// An APNG's frames of 16 bits per channel (RGBA; 8-bit ones are scaled up): for HDR APNGs (PQ, HLG), whose 8 bits per
+//   channel would band
+static int
+_DecodeAPNG16 (const apng_s& apng, const std::function <bool (const uint16_t*, uint32_t)>& onFrame)
+{
+  return _DecodeAPNGFrames <uint16_t> (apng, onFrame);
 }
 
 // The size of a GIF's canvas and how many frames it has (up to maxCount), by walking its blocks without decoding them.

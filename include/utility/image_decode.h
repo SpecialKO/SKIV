@@ -72,7 +72,7 @@ struct dds_info_s {
 // The name of a DXGI format, without its DXGI_FORMAT_ prefix ("BC7_UNORM_SRGB"), "UNKNOWN" for those not known
 const char* SKIV_DXGI_FormatName (DXGI_FORMAT format);
 
-// The frames of an animated image (APNG, GIF, WebP, AVIF), and where it is in playing them (_LoadAnimatedImage).
+// The frames of an animated image (APNG, GIF, WebP, AVIF, JPEG XL), and where it is in playing them (_LoadAnimatedImage).
 //   A thread of its own decodes the frames from the file as they are played (image_anim_stream_s, image_decode.cpp),
 //     each into a texture of its own, starting with the first: it shows as soon as that one is decoded. Those of an
 //       animation that fits keepAll's budget are all kept once decoded (the thread then ends); those of a larger one are
@@ -250,7 +250,7 @@ extern const std::initializer_list <FileSignature> supported_formats;
 bool isExtensionSupported  (const std::wstring extension);
 bool isJXLDecoderAvailable (void);
 
-// Whether the file is an animated image (APNG, GIF, WebP, or an AVIF image sequence), by its header
+// Whether the file is an animated image (APNG, GIF, WebP, JPEG XL, or an AVIF image sequence), by its header
 bool SKIV_IsAnimatedFile (const std::wstring& path);
 
 struct SKIV_DecodeRequest {

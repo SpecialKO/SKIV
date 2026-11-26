@@ -4117,7 +4117,7 @@ SKIF_UI_Tab_DrawViewer (void)
         prev_ext = type_ext;
       }
       error_label   += "\n"
-                       "Animated images are supported as APNG, GIF, WebP, and AVIF.";
+                       "Animated images are supported as APNG, GIF, WebP, AVIF, and JPEG XL.";
 
       SKIF_ImGui_InfoMessage (error_title, error_label);
     }

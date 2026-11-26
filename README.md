@@ -16,7 +16,7 @@ New versions may be distributed through their own packaged installer in the futu
 - Drag-n-drop support of both local and internet image links
 - HDR-to-SDR tone mapping for SDR displays and SDR saves/copies (Default, SKIV Piecewise, SKIV Auto Tone)
 - Color management of ICC profiles and cICP, including wide gamut images
-- Animated image playback (APNG, GIF, WebP, AVIF)
+- Animated image playback (APNG, GIF, WebP, AVIF, JPEG XL), in HDR for HDR APNG, AVIF and JPEG XL animations
 - Copy/paste support, with a Discord compatibility option for HDR PNGs
 - Desktop/region screenshot capture, across all displays
 

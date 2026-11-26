@@ -531,6 +531,580 @@ SKIV_DXGI_NumberOfChannels (DXGI_FORMAT format)
   }
 }
 
+// The frames of an animated image are decoded as it plays (_StreamAnimation). All of them are kept once decoded if
+//   together they take no more than s_animKeepBudget of video memory (and half of what Windows says is left for SKIV);
+//     otherwise they are streamed: a window of a few frames around the one shown is kept, of up to s_animStreamBudget
+//       (and from s_animMinWindow to s_animMaxWindow frames), and the file is decoded again each time it loops.
+#ifdef _WIN64
+static constexpr double   s_animKeepBudget   = 512.0 * 1024 * 1024;
+static constexpr double   s_animStreamBudget = 256.0 * 1024 * 1024;
+#else
+static constexpr double   s_animKeepBudget   = 128.0 * 1024 * 1024;
+static constexpr double   s_animStreamBudget =  64.0 * 1024 * 1024;
+#endif
+static constexpr uint32_t s_animMaxFrames    = 10000;
+static constexpr size_t   s_animMinWindow    = 4;
+static constexpr size_t   s_animMaxWindow    = 24;
+
+#ifdef _M_X64
+#pragma region JPEG XL
+
+// libjxl's functions (jxl.dll and jxl_threads.dll, which isJXLDecoderAvailable loads), looked up once they can be: used by
+//   the still image decoder (_DecodeImage) and the animated one (_DecodeJXL), on any thread
+struct jxl_api_s
+{
+  bool available = false;
+
+  decltype (&JxlDecoderCreate)                   DecoderCreate                   = nullptr;
+  decltype (&JxlDecoderDestroy)                  DecoderDestroy                  = nullptr;
+  decltype (&JxlDecoderSubscribeEvents)          DecoderSubscribeEvents          = nullptr;
+  decltype (&JxlDecoderSetInput)                 DecoderSetInput                 = nullptr;
+  decltype (&JxlDecoderCloseInput)               DecoderCloseInput               = nullptr;
+  decltype (&JxlDecoderProcessInput)             DecoderProcessInput             = nullptr;
+  decltype (&JxlDecoderGetBasicInfo)             DecoderGetBasicInfo             = nullptr;
+  decltype (&JxlDecoderGetFrameHeader)           DecoderGetFrameHeader           = nullptr;
+  decltype (&JxlDecoderImageOutBufferSize)       DecoderImageOutBufferSize       = nullptr;
+  decltype (&JxlDecoderSetImageOutBuffer)        DecoderSetImageOutBuffer        = nullptr;
+  decltype (&JxlDecoderSetParallelRunner)        DecoderSetParallelRunner        = nullptr;
+  decltype (&JxlDecoderSetPreferredColorProfile) DecoderSetPreferredColorProfile = nullptr;
+  decltype (&JxlDecoderGetColorAsEncodedProfile) DecoderGetColorAsEncodedProfile = nullptr;
+  decltype (&JxlDecoderGetICCProfileSize)        DecoderGetICCProfileSize        = nullptr; // (Optional)
+  decltype (&JxlDecoderGetColorAsICCProfile)     DecoderGetColorAsICCProfile     = nullptr; // (Optional)
+
+  decltype (&JxlResizableParallelRunnerCreate)         RunnerCreate         = nullptr;
+  decltype (&JxlResizableParallelRunnerSuggestThreads) RunnerSuggestThreads = nullptr;
+  decltype (&JxlResizableParallelRunnerSetThreads)     RunnerSetThreads     = nullptr;
+  decltype (&JxlResizableParallelRunnerDestroy)        RunnerDestroy        = nullptr;
+  decltype (&JxlResizableParallelRunner)               Runner               = nullptr;
+};
+
+// libjxl's functions; available is false (and is looked for again next time) while its DLLs cannot be loaded
+static const jxl_api_s&
+_JXL (void)
+{
+  static std::mutex lock;
+  static jxl_api_s  api;
+
+  std::lock_guard <std::mutex> guard (lock);
+
+  if (api.available)
+    return api;
+
+  const HMODULE hModJXL        = LoadLibraryW (L"jxl.dll");
+  const HMODULE hModJXLThreads = LoadLibraryW (L"jxl_threads.dll");
+
+  if (hModJXL == nullptr || hModJXLThreads == nullptr)
+    return api;
+
+#define SKIV_JXL_PROC(mod,field,name) api.field = reinterpret_cast <decltype (api.field)> (GetProcAddress (mod, name))
+  SKIV_JXL_PROC (hModJXL,        DecoderCreate,                   "JxlDecoderCreate");
+  SKIV_JXL_PROC (hModJXL,        DecoderDestroy,                  "JxlDecoderDestroy");
+  SKIV_JXL_PROC (hModJXL,        DecoderSubscribeEvents,          "JxlDecoderSubscribeEvents");
+  SKIV_JXL_PROC (hModJXL,        DecoderSetInput,                 "JxlDecoderSetInput");
+  SKIV_JXL_PROC (hModJXL,        DecoderCloseInput,               "JxlDecoderCloseInput");
+  SKIV_JXL_PROC (hModJXL,        DecoderProcessInput,             "JxlDecoderProcessInput");
+  SKIV_JXL_PROC (hModJXL,        DecoderGetBasicInfo,             "JxlDecoderGetBasicInfo");
+  SKIV_JXL_PROC (hModJXL,        DecoderGetFrameHeader,           "JxlDecoderGetFrameHeader");
+  SKIV_JXL_PROC (hModJXL,        DecoderImageOutBufferSize,       "JxlDecoderImageOutBufferSize");
+  SKIV_JXL_PROC (hModJXL,        DecoderSetImageOutBuffer,        "JxlDecoderSetImageOutBuffer");
+  SKIV_JXL_PROC (hModJXL,        DecoderSetParallelRunner,        "JxlDecoderSetParallelRunner");
+  SKIV_JXL_PROC (hModJXL,        DecoderSetPreferredColorProfile, "JxlDecoderSetPreferredColorProfile");
+  SKIV_JXL_PROC (hModJXL,        DecoderGetColorAsEncodedProfile, "JxlDecoderGetColorAsEncodedProfile");
+  SKIV_JXL_PROC (hModJXL,        DecoderGetICCProfileSize,        "JxlDecoderGetICCProfileSize");
+  SKIV_JXL_PROC (hModJXL,        DecoderGetColorAsICCProfile,     "JxlDecoderGetColorAsICCProfile");
+  SKIV_JXL_PROC (hModJXLThreads, RunnerCreate,                    "JxlResizableParallelRunnerCreate");
+  SKIV_JXL_PROC (hModJXLThreads, RunnerSuggestThreads,            "JxlResizableParallelRunnerSuggestThreads");
+  SKIV_JXL_PROC (hModJXLThreads, RunnerSetThreads,                "JxlResizableParallelRunnerSetThreads");
+  SKIV_JXL_PROC (hModJXLThreads, RunnerDestroy,                   "JxlResizableParallelRunnerDestroy");
+  SKIV_JXL_PROC (hModJXLThreads, Runner,                          "JxlResizableParallelRunner");
+#undef SKIV_JXL_PROC
+
+  api.available =
+    api.DecoderCreate         != nullptr && api.DecoderDestroy                  != nullptr && api.DecoderSubscribeEvents          != nullptr &&
+    api.DecoderSetInput       != nullptr && api.DecoderCloseInput               != nullptr && api.DecoderProcessInput             != nullptr &&
+    api.DecoderGetBasicInfo   != nullptr && api.DecoderGetFrameHeader           != nullptr && api.DecoderImageOutBufferSize       != nullptr &&
+    api.DecoderSetImageOutBuffer != nullptr && api.DecoderSetParallelRunner     != nullptr && api.DecoderSetPreferredColorProfile != nullptr &&
+    api.DecoderGetColorAsEncodedProfile != nullptr &&
+    api.RunnerCreate          != nullptr && api.RunnerSuggestThreads            != nullptr && api.RunnerSetThreads                != nullptr &&
+    api.RunnerDestroy         != nullptr && api.Runner                          != nullptr;
+
+  return api;
+}
+
+// A JPEG XL file, by its signature (a naked codestream, or the ISOBMFF-based container)
+static bool
+_IsJXL (const uint8_t* data, size_t size)
+{
+  static constexpr uint8_t container [] = { 0x00, 0x00, 0x00, 0x0C, 0x4A, 0x58, 0x4C, 0x20, 0x0D, 0x0A, 0x87, 0x0A };
+
+  return (size >= 2                  && data [0] == 0xFF && data [1] == 0x0A) ||
+         (size >= sizeof (container) && memcmp (data, container, sizeof (container)) == 0);
+}
+
+// A decoder of libjxl's, and the threads it decodes with; both destroyed with it
+struct jxl_decoder_s
+{
+  const jxl_api_s& jxl;
+  JxlDecoder*      decoder = nullptr;
+  void*            runner  = nullptr;
+
+  explicit jxl_decoder_s (const jxl_api_s& api) : jxl (api)
+  {
+    if (! jxl.available)
+      return;
+
+    decoder = jxl.DecoderCreate (nullptr);
+    runner  = jxl.RunnerCreate  (nullptr);
+
+    if (decoder != nullptr && runner != nullptr && JXL_DEC_SUCCESS != jxl.DecoderSetParallelRunner (decoder, jxl.Runner, runner))
+    {
+      jxl.DecoderDestroy (decoder);
+      decoder = nullptr;
+    }
+  }
+
+ ~jxl_decoder_s (void)
+  {
+    if (decoder != nullptr) jxl.DecoderDestroy (decoder);
+    if (runner  != nullptr) jxl.RunnerDestroy  (runner);
+  }
+
+  jxl_decoder_s            (const jxl_decoder_s&) = delete;
+  jxl_decoder_s& operator= (const jxl_decoder_s&) = delete;
+
+  explicit operator bool (void) const { return decoder != nullptr && runner != nullptr; }
+};
+
+// JXL_DEC_COLOR_ENCODING: the image's own colors (into color, before scRGB is asked for: an encoded color space, whose
+//   enums are cICP's numbers, or else an ICC profile), then asks for scRGB; actual: the colors libjxl hands over then
+static void
+_JXLReadColors (const jxl_api_s& jxl, JxlDecoder* decoder, color_source_s& color, JxlColorEncoding& actual)
+{
+  JxlColorEncoding original = { };
+  color.origin = "JPEG XL";
+
+  if (JXL_DEC_SUCCESS == jxl.DecoderGetColorAsEncodedProfile (decoder, JXL_COLOR_PROFILE_TARGET_ORIGINAL, &original) &&
+      original.color_space != JXL_COLOR_SPACE_XYB && original.color_space != JXL_COLOR_SPACE_UNKNOWN)
+  {
+    color.has_cicp   = true;
+    color.full_range = 1;
+    color.primaries  =
+      (original.color_space == JXL_COLOR_SPACE_GRAY)                                            ?  1 : // Gray: Rec. 709 white
+      (original.primaries   == JXL_PRIMARIES_P3 && original.white_point == JXL_WHITE_POINT_D65) ? 12 : // Display P3
+      (original.primaries   == JXL_PRIMARIES_CUSTOM)                                            ?  2 :
+                                          static_cast <uint8_t> (original.primaries);
+    color.transfer   =
+      (original.transfer_function == JXL_TRANSFER_FUNCTION_GAMMA) ? 2 : static_cast <uint8_t> (original.transfer_function);
+
+    if (original.transfer_function == JXL_TRANSFER_FUNCTION_GAMMA)
+      color.gamma = static_cast <uint32_t> (original.gamma * 100000.0 + 0.5);
+  }
+
+  else if (jxl.DecoderGetICCProfileSize != nullptr && jxl.DecoderGetColorAsICCProfile != nullptr)
+  {
+    size_t icc_size = 0;
+
+    if (JXL_DEC_SUCCESS == jxl.DecoderGetICCProfileSize (decoder, JXL_COLOR_PROFILE_TARGET_ORIGINAL, &icc_size) && icc_size > 0)
+    {
+      std::vector <uint8_t> icc (icc_size);
+
+      if (JXL_DEC_SUCCESS == jxl.DecoderGetColorAsICCProfile (decoder, JXL_COLOR_PROFILE_TARGET_ORIGINAL, icc.data (), icc.size ()))
+        _SetICC (color, icc.data (), icc.size ());
+    }
+  }
+
+  static constexpr JxlColorEncoding
+    scrgb_encoding = { .color_space       = JXL_COLOR_SPACE_RGB,
+                       .white_point       = JXL_WHITE_POINT_D65,
+                       .primaries         = JXL_PRIMARIES_SRGB,
+                       .transfer_function = JXL_TRANSFER_FUNCTION_LINEAR,
+                       .rendering_intent  = JXL_RENDERING_INTENT_PERCEPTUAL };
+
+  if (JXL_DEC_SUCCESS != jxl.DecoderSetPreferredColorProfile (decoder, &scrgb_encoding))
+    PLOG_ERROR << "JxlDecoderSetPreferredColorProfile failed";
+
+  actual = { };
+
+  if (JXL_DEC_SUCCESS != jxl.DecoderGetColorAsEncodedProfile (decoder, JXL_COLOR_PROFILE_TARGET_DATA, &actual))
+    PLOG_ERROR << "jxlDecoderGetColorAsEncodedProfile failed";
+}
+
+// An image as libjxl decoded it (RGBA, 32-bit floats; its colors: actual, the image's own: color) made scRGB (half floats),
+//   into out. img is converted in place on the way. belowZero: a pixel is outside of sRGB (a channel below 0); aboveOne:
+//     one goes above SDR white (a luminance over 1.0). verbose: the conversion is logged (not for each frame of an animation).
+static bool
+_JXLToScRGB (DirectX::ScratchImage& img, const JxlColorEncoding& actual, const color_source_s& color, float intensity_target,
+             DirectX::ScratchImage& out, bool& belowZero, bool& aboveOne, bool verbose)
+{
+  using namespace DirectX;
+
+  bool wcg = false;
+  bool hdr = false;
+
+  ScratchImage converted_img;
+
+  const XMVECTOR vRelativeToAbsoluteNits =
+    XMVectorReplicate (intensity_target != 255.0f ? intensity_target / 80.0f
+                                                  : 1.0f);
+
+  const bool bIsHDR10 =
+    actual.primaries         == JXL_PRIMARIES_2100 &&
+    actual.transfer_function == JXL_TRANSFER_FUNCTION_PQ;
+
+  const bool bIsRec709Linear =
+    actual.primaries         == JXL_PRIMARIES_SRGB &&
+    actual.transfer_function == JXL_TRANSFER_FUNCTION_LINEAR;
+
+  // HLG (BT.2100), as libjxl hands it over unconverted (all but XYB images): decoded for a 1,000-nit display
+  //   (_HLGToDisplay), then its primaries (Rec. 2020, Rec. 709 or P3) converted to scRGB's
+  const bool bIsHLG =
+    actual.transfer_function == JXL_TRANSFER_FUNCTION_HLG &&
+   (actual.primaries         == JXL_PRIMARIES_2100 ||
+    actual.primaries         == JXL_PRIMARIES_SRGB ||
+    actual.primaries         == JXL_PRIMARIES_P3);
+
+  const uint8_t hlgPrimaries = (actual.primaries == JXL_PRIMARIES_SRGB) ?  1 :
+                               (actual.primaries == JXL_PRIMARIES_P3)   ? 12 : 9;
+  const float*  hlgWeights   = _LuminanceWeights (hlgPrimaries);
+
+  PLOG_INFO_IF (verbose && bIsHLG) << "HLG JPEG XL image: decoded as for a 1,000-nit display";
+
+  if (verbose && actual.white_point != JXL_WHITE_POINT_D65)
+  {
+    PLOG_WARNING << "Unexpected non-D65 white point";
+  }
+
+  // libjxl converts only XYB encoded images (lossy ones) into the scRGB asked for, even with its color management
+  //   set (libjxl 0.10): any other comes as it is encoded (sRGB, Display P3...). Those are converted here (with
+  //     Little CMS, see color_convert.inl), as they were otherwise taken as scRGB (shown washed out, and of the
+  //       wrong colors).
+  bool bConvertedHere = false;
+
+  if (! (bIsHDR10 || bIsRec709Linear || bIsHLG))
+  {
+    cmsHPROFILE           source = _CreateSDRSourceProfile (color);
+    const DirectX::Image* data   = img.GetImage (0, 0, 0);
+
+    if (source != nullptr && data != nullptr)
+      bConvertedHere =
+        _ConvertToScRGB (source, TYPE_RGBA_FLT, data->pixels, data->rowPitch, data->pixels, data->rowPitch,
+                         static_cast <uint32_t> (data->width), static_cast <uint32_t> (data->height), TYPE_RGBA_FLT);
+
+    if (source != nullptr)
+      cmsCloseProfile (source);
+
+    if (! verbose)
+      ;
+    else if (bConvertedHere)
+      PLOG_INFO    << "Converted the JPEG XL image's colors (" << _DescribeColorSource (color) << ") to scRGB";
+    else
+      PLOG_WARNING << "Encoded image is neither HDR10 nor scRGB, and could not be converted ("
+                   << _DescribeColorSource (color) << ")";
+  }
+
+  if (FAILED (TransformImage (*img.GetImages (),
+        [&](      XMVECTOR* outPixels,
+            const XMVECTOR* inPixels,
+                  size_t    width,
+                  size_t    y)
+        {
+          UNREFERENCED_PARAMETER(y);
+
+          for (size_t j = 0; j < width; ++j)
+          {
+            XMVECTOR v = inPixels [j];
+            float vW = XMVectorGetW(v);
+
+            if (bIsRec709Linear || bConvertedHere)
+            {
+              v =
+                XMVectorMultiply (v, vRelativeToAbsoluteNits);
+            }
+
+            else if (bIsHDR10)
+            {
+              v =
+                XMVector3Transform (SKIV_Image_PQToLinear (v), c_Bt2100toscRGB);
+            }
+
+            else if (bIsHLG)
+            {
+              const float signal [3] = { XMVectorGetX (v), XMVectorGetY (v), XMVectorGetZ (v) };
+              float       light  [3];
+              _HLGToDisplay (signal, hlgWeights, light);
+
+              const XMVECTOR l = XMVectorSet (light [0], light [1], light [2], 0.0f);
+
+              v = (hlgPrimaries == 1)  ? XMVectorScale (l, 125.0f) :
+                  (hlgPrimaries == 12) ? XMVectorScale (XMVector3Transform (l, c_fromDCIP3to709), 125.0f)
+                                       : XMVector3Transform (l, c_Bt2100toscRGB);
+            }
+
+            // Outside of sRGB: a channel below 0 (past rounding). Above SDR white: its luminance over 1.0, as a
+            //   channel over 1.0 is also what colors outside of sRGB have (Display P3 red is 1.22 in scRGB).
+            static const XMVECTOR vRounding  = XMVectorReplicate (-0.0001f);
+            static const XMVECTOR vLuminance = XMVectorSet (0.2126f, 0.7152f, 0.0722f, 0.0f);
+
+            uint32_t xm_test_rec709 = 0x0;
+
+            if (XMVectorGreaterOrEqualR (&xm_test_rec709, XMVectorSetW (v, 1.0f), vRounding);
+                XMComparisonAnyFalse    ( xm_test_rec709))
+            {
+              wcg = true;
+            }
+
+            if (XMVectorGetX (XMVector3Dot (v, vLuminance)) > 1.001f)
+            {
+              hdr = true;
+            }
+
+            outPixels [j] = XMVectorSetW (v, vW);
+          }
+        }, converted_img)))
+    return false;
+
+  belowZero = wcg;
+  aboveOne  = hdr;
+
+  return SUCCEEDED (DirectX::Convert (*converted_img.GetImages (), DXGI_FORMAT_R16G16B16A16_FLOAT, DirectX::TEX_FILTER_DEFAULT, 0.0f, out));
+}
+
+// An animated JPEG XL image (its basic info says so): its size, how many frames it has (as libjxl coalesces them: those
+//   shown), its colors, and its intensity target. False if it is not one, or cannot be read. Frames are skipped, not decoded.
+static bool
+_ScanJXL (const uint8_t* data, size_t size, uint32_t& width, uint32_t& height, uint32_t& count, color_source_s& color,
+          float& intensity_target, uint32_t& bpc, uint32_t& channels)
+{
+  const jxl_api_s& jxl = _JXL ( );
+  jxl_decoder_s    dec (jxl);
+
+  if (! dec || JXL_DEC_SUCCESS != jxl.DecoderSubscribeEvents (dec.decoder, JXL_DEC_BASIC_INFO | JXL_DEC_COLOR_ENCODING | JXL_DEC_FRAME))
+    return false;
+
+  jxl.DecoderSetInput   (dec.decoder, data, size);
+  jxl.DecoderCloseInput (dec.decoder);
+
+  JxlColorEncoding actual = { };
+
+  color = { };
+  count = 0;
+
+  for (;;)
+  {
+    switch (jxl.DecoderProcessInput (dec.decoder))
+    {
+      case JXL_DEC_BASIC_INFO:
+      {
+        JxlBasicInfo info = { };
+
+        if (JXL_DEC_SUCCESS != jxl.DecoderGetBasicInfo (dec.decoder, &info) || ! info.have_animation)
+          return false;
+
+        width            = info.xsize;
+        height           = info.ysize;
+        intensity_target = info.intensity_target;
+        bpc              = info.bits_per_sample;
+        channels         = info.num_color_channels;
+        break;
+      }
+
+      case JXL_DEC_COLOR_ENCODING:
+        _JXLReadColors (jxl, dec.decoder, color, actual);
+        break;
+
+      case JXL_DEC_FRAME:
+        // (Past the most that can be played: no need to count further)
+        if (++count > s_animMaxFrames)
+          return true;
+        break;
+
+      case JXL_DEC_SUCCESS:
+        return true;
+
+      default: // An error, or the file breaks off
+        return (count > 0);
+    }
+  }
+}
+
+// Decodes the frames of an animated JPEG XL image (coalesced, as they are shown), handing each over to onFrame made
+//   scRGB (half floats), with how long it is shown (microseconds), until it returns false. first: the first frame's pixels
+//     go outside of sRGB (belowZero), and above SDR white (aboveOne). How many frames were decoded, or -1 if none could be.
+static int
+_DecodeJXL (const uint8_t* data, size_t size, const std::function <bool (const DirectX::Image&, uint32_t, bool, bool)>& onFrame)
+{
+  const jxl_api_s& jxl = _JXL ( );
+  jxl_decoder_s    dec (jxl);
+
+  if (! dec || JXL_DEC_SUCCESS != jxl.DecoderSubscribeEvents (dec.decoder, JXL_DEC_BASIC_INFO | JXL_DEC_COLOR_ENCODING |
+                                                                           JXL_DEC_FRAME      | JXL_DEC_FULL_IMAGE))
+    return -1;
+
+  jxl.DecoderSetInput   (dec.decoder, data, size);
+  jxl.DecoderCloseInput (dec.decoder);
+
+  static constexpr JxlPixelFormat format = { 4, JXL_TYPE_FLOAT, JXL_NATIVE_ENDIAN, 0 };
+
+  JxlBasicInfo          info   = { };
+  JxlColorEncoding      actual = { };
+  color_source_s        color;
+  DirectX::ScratchImage pixels,  // As libjxl hands a frame over (RGBA, 32-bit floats)
+                        scrgb;   //   ... made scRGB (half floats)
+  uint32_t              delay  = 0;
+  int                   frames = 0;
+
+  for (;;)
+  {
+    switch (jxl.DecoderProcessInput (dec.decoder))
+    {
+      case JXL_DEC_BASIC_INFO:
+        if (JXL_DEC_SUCCESS != jxl.DecoderGetBasicInfo (dec.decoder, &info) || info.xsize == 0 || info.ysize == 0)
+          return -1;
+
+        jxl.RunnerSetThreads (dec.runner, std::max (8U, jxl.RunnerSuggestThreads (info.xsize, info.ysize)));
+        break;
+
+      case JXL_DEC_COLOR_ENCODING:
+        _JXLReadColors (jxl, dec.decoder, color, actual);
+        break;
+
+      case JXL_DEC_FRAME:
+      {
+        JxlFrameHeader header = { };
+
+        if (JXL_DEC_SUCCESS != jxl.DecoderGetFrameHeader (dec.decoder, &header))
+          return (frames > 0) ? frames : -1;
+
+        // Ticks, of tps_denominator / tps_numerator seconds; frames of none (the last one may be) are shown for 100 ms
+        const uint64_t num = info.animation.tps_numerator,
+                       den = info.animation.tps_denominator;
+        const uint64_t us  = (num == 0) ? 0 : (static_cast <uint64_t> (header.duration) * den * 1000000) / num;
+
+        delay = (us == 0) ? 100000 : static_cast <uint32_t> (std::min <uint64_t> (us, UINT32_MAX));
+        break;
+      }
+
+      case JXL_DEC_NEED_IMAGE_OUT_BUFFER:
+      {
+        size_t needed = 0;
+
+        if ((pixels.GetImageCount ( ) == 0 &&
+             FAILED (pixels.Initialize2D (DXGI_FORMAT_R32G32B32A32_FLOAT, info.xsize, info.ysize, 1, 1))) ||
+            JXL_DEC_SUCCESS != jxl.DecoderImageOutBufferSize (dec.decoder, &format, &needed) || needed != pixels.GetPixelsSize ( ) ||
+            JXL_DEC_SUCCESS != jxl.DecoderSetImageOutBuffer  (dec.decoder, &format, pixels.GetPixels ( ), pixels.GetPixelsSize ( )))
+          return (frames > 0) ? frames : -1;
+        break;
+      }
+
+      case JXL_DEC_FULL_IMAGE:
+      {
+        bool belowZero = false,
+             aboveOne  = false;
+
+        if (! _JXLToScRGB (pixels, actual, color, info.intensity_target, scrgb, belowZero, aboveOne, frames == 0))
+          return (frames > 0) ? frames : -1;
+
+        frames++;
+
+        if (! onFrame (*scrgb.GetImage (0, 0, 0), delay, belowZero, aboveOne))
+          return frames;
+        break;
+      }
+
+      case JXL_DEC_SUCCESS:
+        return (frames > 0) ? frames : -1;
+
+      default: // An error, or the file breaks off: the frames it has
+        return (frames > 0) ? frames : -1;
+    }
+  }
+}
+
+#pragma endregion
+#endif
+
+#pragma region HDR
+
+// Whether an image's colors are HDR (a PQ or HLG transfer: its cICP, or else its ICC profile's cicp tag, by the precedence
+//   of _IsHDR10ColorSource), and its primaries (a cICP code) and whether it is HLG then
+static bool
+_HDRTransfer (const color_source_s& cs, uint8_t& primaries, bool& hlg)
+{
+  uint8_t transfer = 0;
+
+  primaries = 0;
+
+  if (cs.has_cicp && (cs.cicp_first || cs.icc.empty ( )))
+    primaries = cs.primaries,     transfer = cs.transfer;
+
+  else if (cs.icc_has_cicp)
+    primaries = cs.icc_primaries, transfer = cs.icc_transfer;
+
+  hlg = (transfer == 18);
+
+  return (transfer == 16 || transfer == 18);
+}
+
+// An HDR image's signal (PQ or HLG, as encoded: 0 to 1, of any format DirectXTex reads) made scRGB (half floats), into
+//   out: to display light (HLG: for a 1,000-nit display, see _HLGToDisplay), then its primaries (a cICP code) to scRGB's.
+//     As the still AVIF decoder converts them; primaries it does not know are taken as Rec. 2020's.
+static bool
+_HDRToScRGB (const DirectX::Image& signal, uint8_t primaries, bool hlg, DirectX::ScratchImage& out)
+{
+  using namespace DirectX;
+
+  // Transformed as 32-bit floats: the 16-bit UNORM values of a PNG keep their precision, and are not clamped (to 0 to 1)
+  ScratchImage floats, linear;
+
+  if (signal.format != DXGI_FORMAT_R32G32B32A32_FLOAT &&
+      FAILED (Convert (signal, DXGI_FORMAT_R32G32B32A32_FLOAT, TEX_FILTER_DEFAULT, 0.0f, floats)))
+    return false;
+
+  const Image& in = (floats.GetImageCount ( ) > 0) ? *floats.GetImage (0, 0, 0) : signal;
+
+  const float* weights = _LuminanceWeights (primaries);
+
+  // To scRGB (relative to 80 nits: display light, 1.0 being 10,000 nits, times 125)
+  const XMMATRIX matrix =
+    (primaries ==  1) ? XMMatrixScaling (125.0f, 125.0f, 125.0f) :
+    (primaries == 11 ||
+     primaries == 12) ? c_fromDCIP3to709 * XMMatrixScaling (125.0f, 125.0f, 125.0f) :
+    (primaries ==  5 ||
+     primaries ==  6) ? c_from601to709   * XMMatrixScaling (125.0f, 125.0f, 125.0f) :
+    (primaries == 10) ? c_fromXYZto709   * XMMatrixScaling (125.0f, 125.0f, 125.0f)
+                      : c_Bt2100toscRGB;
+
+  if (FAILED (TransformImage (in,
+        [&](XMVECTOR* outPixels, const XMVECTOR* inPixels, size_t width, size_t y)
+        {
+          UNREFERENCED_PARAMETER (y);
+
+          for (size_t j = 0; j < width; ++j)
+          {
+            XMVECTOR v = inPixels [j];
+
+            if (hlg)
+            {
+              const float s [3] = { XMVectorGetX (v), XMVectorGetY (v), XMVectorGetZ (v) };
+              float       light [3];
+
+              _HLGToDisplay (s, weights, light);
+              v = XMVectorSet (light [0], light [1], light [2], XMVectorGetW (v));
+            }
+
+            else
+              v = SKIV_Image_PQToLinear (v);
+
+            outPixels [j] = XMVectorSetW (XMVector3Transform (v, matrix), XMVectorGetW (inPixels [j]));
+          }
+        }, linear)))
+    return false;
+
+  return SUCCEEDED (Convert (*linear.GetImage (0, 0, 0), DXGI_FORMAT_R16G16B16A16_FLOAT, TEX_FILTER_DEFAULT, 0.0f, out));
+}
+
+#pragma endregion
+
 #pragma region AnimatedImages
 
 #pragma region AVIF
@@ -569,10 +1143,47 @@ _IsAVIFSequenceFile (const std::wstring& path)
   return _IsAVIFSequence (head, static_cast <size_t> (stream.gcount ( )));
 }
 
+#ifdef _M_X64
+// Whether a file is an animated JPEG XL image (its basic info says so): read by libjxl, if it is loaded (isJXLDecoderAvailable)
+static bool
+_IsJXLAnimationFile (const std::wstring& path)
+{
+  uint8_t       head [12] = { };
+  std::ifstream stream (std::filesystem::path (path), std::ios::binary);
+
+  if (! stream.read (reinterpret_cast <char*> (head), sizeof (head)) || ! _IsJXL (head, sizeof (head)))
+    return false;
+
+  const jxl_api_s& jxl = _JXL ( );
+  jxl_decoder_s    dec (jxl);
+
+  if (! dec || JXL_DEC_SUCCESS != jxl.DecoderSubscribeEvents (dec.decoder, JXL_DEC_BASIC_INFO))
+    return false;
+
+  // The basic info is in the first few KB (of the codestream, or of the container's boxes before it)
+  std::vector <char> data (64 * 1024);
+
+  stream.seekg (0);
+  stream.read  (data.data ( ), data.size ( ));
+
+  jxl.DecoderSetInput   (dec.decoder, reinterpret_cast <const uint8_t*> (data.data ( )), static_cast <size_t> (stream.gcount ( )));
+  jxl.DecoderCloseInput (dec.decoder);
+
+  JxlBasicInfo info = { };
+
+  return JXL_DEC_BASIC_INFO == jxl.DecoderProcessInput (dec.decoder) &&
+         JXL_DEC_SUCCESS    == jxl.DecoderGetBasicInfo (dec.decoder, &info) && info.have_animation;
+}
+#endif
+
 bool
 SKIV_IsAnimatedFile (const std::wstring& path)
 {
-  return IsAnimatedImageFile (path) || _IsAVIFSequenceFile (path);
+  return IsAnimatedImageFile (path) || _IsAVIFSequenceFile (path)
+#ifdef _M_X64
+    || _IsJXLAnimationFile (path)
+#endif
+    ;
 }
 
 // The decoder (libavif's), set up for the file in data; nullptr if libavif is missing or cannot parse it
@@ -601,20 +1212,26 @@ _OpenAVIF (const uint8_t* data, size_t size)
 }
 
 // The size of an AVIF image sequence, how many frames it has, and its colors (as the still AVIF decoder reads them). False
-//   if it cannot be played: not a sequence, or HDR (PQ, HLG: the frames of animated images are 8 bpc sRGB), which is shown
-//     as a still image then, by the AVIF decoder.
+//   if it cannot be played (not a sequence). HDR ones (PQ, HLG) are played in HDR: see _AVIFFrameToSignal.
 static bool
-_ScanAVIF (const uint8_t* data, size_t size, uint32_t& width, uint32_t& height, uint32_t& count, color_source_s& color)
+_ScanAVIF (const uint8_t* data, size_t size, uint32_t& width, uint32_t& height, uint32_t& count, color_source_s& color,
+           uint32_t& depth)
 {
   avifDecoder* decoder = _OpenAVIF (data, size);
 
   if (decoder == nullptr)
     return false;
 
+  // Colors only in the AV1 bitstream (no colr box): libavif knows them once a frame is decoded
+  if (decoder->image->colorPrimaries          == AVIF_COLOR_PRIMARIES_UNSPECIFIED &&
+      decoder->image->transferCharacteristics == AVIF_TRANSFER_CHARACTERISTICS_UNSPECIFIED)
+    SK_avifDecoderNextImage (decoder);
+
   const avifImage* image = decoder->image;
 
   width  = image->width;
   height = image->height;
+  depth  = image->depth;
   count  = static_cast <uint32_t> (std::max (decoder->imageCount, 0));
 
   color            = { };
@@ -628,12 +1245,42 @@ _ScanAVIF (const uint8_t* data, size_t size, uint32_t& width, uint32_t& height, 
 
   _SetICC (color, image->icc.data, image->icc.size);
 
-  const bool hdr = (_IsHDR10ColorSource (color) || color.transfer == AVIF_TRANSFER_CHARACTERISTICS_HLG);
-
-  PLOG_INFO_IF (hdr) << "Animated AVIF is HDR (" << _DescribeColorSource (color) << "): showing its first frame";
-
   SK_avifDecoderDestroy (decoder);
-  return ! hdr;
+  return true;
+}
+
+// A frame of an HDR AVIF image sequence (as libavif decodes it: YUV) as its signal, RGBA half floats (PQ or HLG, 0 to 1:
+//   made scRGB by _HDRToScRGB), into signal. False if it could not be converted.
+static bool
+_AVIFFrameToSignal (const avifImage* frame, int threads, DirectX::ScratchImage& signal)
+{
+  avifRGBImage rgb;
+  SK_avifRGBImageSetDefaults (&rgb, frame);
+  rgb.format      = AVIF_RGB_FORMAT_RGBA;
+  rgb.depth       = 16;
+  rgb.isFloat     = AVIF_TRUE;
+  rgb.ignoreAlpha = AVIF_FALSE;
+  rgb.maxThreads  = threads;
+
+  if (SK_avifRGBImageAllocatePixels (&rgb) != AVIF_RESULT_OK)
+    return false;
+
+  bool converted = (SK_avifImageYUVToRGB (frame, &rgb) == AVIF_RESULT_OK);
+
+  if (converted && (signal.GetImageCount ( ) == 0 || signal.GetMetadata ( ).width  != frame->width
+                                                  || signal.GetMetadata ( ).height != frame->height))
+    converted = SUCCEEDED (signal.Initialize2D (DXGI_FORMAT_R16G16B16A16_FLOAT, frame->width, frame->height, 1, 1));
+
+  if (converted)
+  {
+    const DirectX::Image* out = signal.GetImage (0, 0, 0);
+
+    for (uint32_t y = 0; y < frame->height; y++)
+      memcpy (out->pixels + y * out->rowPitch, rgb.pixels + static_cast <size_t> (y) * rgb.rowBytes, static_cast <size_t> (frame->width) * 8);
+  }
+
+  SK_avifRGBImageFreePixels (&rgb);
+  return converted;
 }
 
 // A frame of an AVIF image sequence (as libavif decodes it: YUV) as RGBA (8 bpc), width x height, into canvas: by libavif,
@@ -704,9 +1351,19 @@ _DecodeAVIF (const uint8_t* data, size_t size, const std::function <bool (const 
 
 #pragma endregion
 
-// An animated image (APNG, GIF, WebP, AVIF), read and parsed: its canvas, and how many frames it has. Decode ( ) hands
-//   over its frames, and how long each is shown: the canvas as it is at each (RGBA), or an AVIF's frame as libavif decodes
-//     it (YUV, canvas then being null: each of its frames is whole).
+// A frame of an animated image, as Decode ( ) hands it over: one of
+struct anim_frame_s
+{
+  const uint8_t*        canvas    = nullptr; // The canvas as it is at the frame (RGBA, 8 bpc)
+  const uint16_t*       canvas16  = nullptr; //   ... of an HDR APNG (RGBA, 16 bpc: its PQ or HLG signal)
+  const avifImage*      yuv       = nullptr; // An AVIF's frame as libavif decodes it (YUV: each of its frames is whole)
+  const DirectX::Image* scrgb     = nullptr; // A JPEG XL's frame, made scRGB (half floats; HDR ones keep their range)
+  bool                  belowZero = false,   //   ... its pixels go outside of sRGB,
+                        aboveOne  = false;   //   ... and above SDR white
+};
+
+// An animated image (APNG, GIF, WebP, AVIF, JPEG XL), read and parsed: its canvas, and how many frames it has. Decode ( )
+//   hands over its frames (anim_frame_s), and how long each is shown.
 struct animated_image_s
 {
   std::vector <uint8_t> file;
@@ -714,38 +1371,37 @@ struct animated_image_s
   bool                  isGIF  = false;
   bool                  isWebP = false;
   bool                  isAVIF = false;
-  color_source_s        color;   // AVIF: its colors (those of the others are read from the file by _ReadColorSource)
+  bool                  isJXL  = false;
+  color_source_s        color;   // AVIF, JPEG XL: its colors (those of the others are read from the file by _ReadColorSource)
+  float                 intensity_target = 0.0f; // JPEG XL: its peak (nits)
+  bool                  hdr          = false;    // AVIF, APNG: of a PQ or HLG transfer (_HDRTransfer): frames of scRGB
+  bool                  hlg          = false;    //   ... HLG,
+  uint8_t               hdrPrimaries = 0;        //   ... and its primaries (a cICP code)
+  uint32_t              bpc      = 8,            // Its bits per sample (AVIF, APNG, JPEG XL),
+                        channels = 4;            //   ... and color channels
   uint32_t              width  = 0,
                         height = 0,
                         count  = 0;
 
-  using on_frame_fn = std::function <bool (const uint8_t* canvas, const avifImage* yuv, uint32_t delay)>;
+  using on_frame_fn = std::function <bool (const anim_frame_s& frame, uint32_t delay)>;
 
   int Decode (const on_frame_fn& onFrame) const
   {
-    auto _Canvas = [&](const uint8_t* canvas, uint32_t delay) { return onFrame (canvas, nullptr, delay); };
+    auto _Canvas = [&](const uint8_t* canvas, uint32_t delay) { return onFrame ({ .canvas = canvas }, delay); };
 
-    return (isAVIF) ? _DecodeAVIF (file.data ( ), file.size ( ), [&](const avifImage* yuv, uint32_t delay) { return onFrame (nullptr, yuv, delay); }) :
+#ifdef _M_X64
+    if (isJXL)
+      return _DecodeJXL (file.data ( ), file.size ( ), [&](const DirectX::Image& scrgb, uint32_t delay, bool belowZero, bool aboveOne)
+        { return onFrame ({ .scrgb = &scrgb, .belowZero = belowZero, .aboveOne = aboveOne }, delay); });
+#endif
+
+    return (isAVIF) ? _DecodeAVIF (file.data ( ), file.size ( ), [&](const avifImage* yuv, uint32_t delay) { return onFrame ({ .yuv = yuv }, delay); }) :
            (isWebP) ? _DecodeWebP (file.data ( ), file.size ( ), _Canvas) :
-           (isGIF)  ? _DecodeGIF  (file.data ( ), file.size ( ), _Canvas)
+           (isGIF)  ? _DecodeGIF  (file.data ( ), file.size ( ), _Canvas) :
+           (hdr)    ? _DecodeAPNG16 (apng, [&](const uint16_t* canvas, uint32_t delay) { return onFrame ({ .canvas16 = canvas }, delay); })
                     : _DecodeAPNG (apng, _Canvas);
   }
 };
-
-// The frames of an animated image are decoded as it plays (_StreamAnimation). All of them are kept once decoded if
-//   together they take no more than s_animKeepBudget of video memory (and half of what Windows says is left for SKIV);
-//     otherwise they are streamed: a window of a few frames around the one shown is kept, of up to s_animStreamBudget
-//       (and from s_animMinWindow to s_animMaxWindow frames), and the file is decoded again each time it loops.
-#ifdef _WIN64
-static constexpr double   s_animKeepBudget   = 512.0 * 1024 * 1024;
-static constexpr double   s_animStreamBudget = 256.0 * 1024 * 1024;
-#else
-static constexpr double   s_animKeepBudget   = 128.0 * 1024 * 1024;
-static constexpr double   s_animStreamBudget =  64.0 * 1024 * 1024;
-#endif
-static constexpr uint32_t s_animMaxFrames    = 10000;
-static constexpr size_t   s_animMinWindow    = 4;
-static constexpr size_t   s_animMaxWindow    = 24;
 
 // Reads and parses an animated image. False if it is not one (fewer than two frames), is malformed, or is too large.
 static bool
@@ -768,10 +1424,21 @@ _OpenAnimatedImage (const std::wstring& path, animated_image_s& image)
   image.isAVIF = _IsAVIFSequence (image.file.data ( ), image.file.size ( ));
   image.isWebP = _IsWebP         (image.file.data ( ), image.file.size ( ));
   image.isGIF  = (memcmp (image.file.data ( ), "GIF8", 4) == 0);
+#ifdef _M_X64
+  image.isJXL  = _IsJXL          (image.file.data ( ), image.file.size ( ));
 
+  if (image.isJXL)
+  {
+    if (! _ScanJXL (image.file.data ( ), image.file.size ( ), image.width, image.height, image.count, image.color, image.intensity_target,
+                    image.bpc, image.channels))
+      return false;
+  }
+
+  else
+#endif
   if (image.isAVIF)
   {
-    if (! _ScanAVIF (image.file.data ( ), image.file.size ( ), image.width, image.height, image.count, image.color))
+    if (! _ScanAVIF (image.file.data ( ), image.file.size ( ), image.width, image.height, image.count, image.color, image.bpc))
       return false;
   }
 
@@ -794,6 +1461,7 @@ _OpenAnimatedImage (const std::wstring& path, animated_image_s& image)
 
     image.width  = image.apng.width;
     image.height = image.apng.height;
+    image.bpc    = image.apng.ihdr [8];
     image.count  = static_cast <uint32_t> (image.apng.frames.size ( ));
   }
 
@@ -1128,7 +1796,42 @@ struct anim_source_s
   std::shared_ptr <void>  profile;   // Wide gamut: the colors of the file (its frames are made scRGB); null: sRGB
   CComPtr <ID3D11Device>  device;
   bool                    gpuYUV  = false; // AVIF: its frames are made RGBA on the GPU (anim_yuv_s), where they can be
+
+  // JPEG XL: its first frame (scRGB), whose light levels _LoadAnimatedImage measures, and whether its pixels go outside
+  //   of sRGB, and above SDR white. Set by the thread decoding the frames, before the first one's texture is handed over.
+  DirectX::ScratchImage   first;
+  bool                    firstBelowZero = false,
+                          firstAboveOne  = false;
 };
+
+// Creates a texture (and its view) of a frame as it is (8-bpc ones as sRGB)
+static bool
+_CreateImageTexture (ID3D11Device* pDevice, const DirectX::Image& img, CComPtr <ID3D11ShaderResourceView>& srv)
+{
+  DirectX::TexMetadata meta = { };
+  meta.width     = img.width;
+  meta.height    = img.height;
+  meta.depth     = 1;
+  meta.arraySize = 1;
+  meta.mipLevels = 1;
+  meta.format    = img.format;
+  meta.dimension = DirectX::TEX_DIMENSION_TEXTURE2D;
+
+  CComPtr <ID3D11Texture2D> pTex2D;
+
+  if (FAILED (DirectX::CreateTextureEx (pDevice, &img, 1, meta, D3D11_USAGE_IMMUTABLE, D3D11_BIND_SHADER_RESOURCE, 0, 0,
+                                        DirectX::CREATETEX_FORCE_SRGB, (ID3D11Resource **)&pTex2D.p)) || pTex2D.p == nullptr)
+    return false;
+
+  D3D11_SHADER_RESOURCE_VIEW_DESC
+    srv_desc                           = { };
+    srv_desc.Format                    = DXGI_FORMAT_UNKNOWN;
+    srv_desc.ViewDimension             = D3D11_SRV_DIMENSION_TEXTURE2D;
+    srv_desc.Texture2D.MipLevels       = UINT_MAX;
+    srv_desc.Texture2D.MostDetailedMip =  0;
+
+  return SUCCEEDED (pDevice->CreateShaderResourceView (pTex2D.p, &srv_desc, &srv.p)) && srv.p != nullptr;
+}
 
 // Creates a texture (and its view) of a frame (RGBA, 8 bpc). sRGB, as the general purpose decoder (WIC) loads 8-bpc
 //   images; wide gamut ones (profile): converted to scRGB (half floats), in scratch.
@@ -1161,29 +1864,7 @@ _CreateFrameTexture (ID3D11Device* pDevice, const uint8_t* canvas, uint32_t widt
 
   img.slicePitch = img.rowPitch * height;
 
-  DirectX::TexMetadata meta = { };
-  meta.width     = width;
-  meta.height    = height;
-  meta.depth     = 1;
-  meta.arraySize = 1;
-  meta.mipLevels = 1;
-  meta.format    = img.format;
-  meta.dimension = DirectX::TEX_DIMENSION_TEXTURE2D;
-
-  CComPtr <ID3D11Texture2D> pTex2D;
-
-  if (FAILED (DirectX::CreateTextureEx (pDevice, &img, 1, meta, D3D11_USAGE_IMMUTABLE, D3D11_BIND_SHADER_RESOURCE, 0, 0,
-                                        DirectX::CREATETEX_FORCE_SRGB, (ID3D11Resource **)&pTex2D.p)) || pTex2D.p == nullptr)
-    return false;
-
-  D3D11_SHADER_RESOURCE_VIEW_DESC
-    srv_desc                           = { };
-    srv_desc.Format                    = DXGI_FORMAT_UNKNOWN;
-    srv_desc.ViewDimension             = D3D11_SRV_DIMENSION_TEXTURE2D;
-    srv_desc.Texture2D.MipLevels       = UINT_MAX;
-    srv_desc.Texture2D.MostDetailedMip =  0;
-
-  return SUCCEEDED (pDevice->CreateShaderResourceView (pTex2D.p, &srv_desc, &srv.p)) && srv.p != nullptr;
+  return _CreateImageTexture (pDevice, img, srv);
 }
 
 // The thread decoding an animated image's frames, as long as it is wanted: all of them once (keepAll), or (streamed) the
@@ -1199,6 +1880,8 @@ _StreamAnimation (std::shared_ptr <image_anim_stream_s> s, std::shared_ptr <anim
                         height = source->image.height;
   std::vector <uint8_t> scratch,
                         avifCanvas; // An AVIF's frame, made RGBA on the CPU
+  DirectX::ScratchImage hdrSignal,  // An HDR AVIF's frame as its signal (PQ, HLG),
+                        hdrFrame;   //   ... made scRGB
 
   auto _WakeMainThread = [](void) {
     PostMessage (SKIF_Notify_hWnd, WM_SKIF_IMAGE, SKIV_IMAGE_ANIMATION_FRAME, 0);
@@ -1210,9 +1893,11 @@ _StreamAnimation (std::shared_ptr <image_anim_stream_s> s, std::shared_ptr <anim
     bool   restart = false; // A frame before it is wanted
     bool   failed  = false; // A frame's texture could not be made
 
-    const int decoded = source->image.Decode ([&](const uint8_t* canvas, const avifImage* yuv, uint32_t delay) -> bool
+    const int decoded = source->image.Decode ([&](const anim_frame_s& decodedFrame, uint32_t delay) -> bool
     {
-      const size_t frame = index++;
+      const uint8_t*   canvas = decodedFrame.canvas;
+      const avifImage* yuv    = decodedFrame.yuv;
+      const size_t     frame  = index++;
 
       std::unique_lock <std::mutex> lock (s->lock);
 
@@ -1257,6 +1942,43 @@ _StreamAnimation (std::shared_ptr <image_anim_stream_s> s, std::shared_ptr <anim
 
       lock.unlock ( );
 
+      // HDR (AVIF, APNG): made scRGB here, from their signal (PQ or HLG)
+      const DirectX::Image* scrgb = decodedFrame.scrgb;
+
+      if (scrgb == nullptr && source->image.hdr && (yuv != nullptr || decodedFrame.canvas16 != nullptr))
+      {
+        DirectX::Image signal = { };
+
+        if (yuv != nullptr)
+        {
+          if (_AVIFFrameToSignal (yuv, static_cast <int> (std::clamp (std::thread::hardware_concurrency ( ), 1u, 64u)), hdrSignal))
+            signal = *hdrSignal.GetImage (0, 0, 0);
+        }
+
+        else
+        {
+          signal.width      = width;
+          signal.height     = height;
+          signal.format     = DXGI_FORMAT_R16G16B16A16_UNORM;
+          signal.rowPitch   = static_cast <size_t> (width) * 8;
+          signal.slicePitch = signal.rowPitch * height;
+          signal.pixels     = reinterpret_cast <uint8_t*> (const_cast <uint16_t*> (decodedFrame.canvas16));
+        }
+
+        if (signal.pixels != nullptr && _HDRToScRGB (signal, source->image.hdrPrimaries, source->image.hlg, hdrFrame))
+          scrgb = hdrFrame.GetImage (0, 0, 0);
+      }
+
+      // The first frame of a JPEG XL or HDR one: kept, to measure its light levels (before its texture is handed over: see below)
+      if (pass == 0 && frame == 0 && scrgb != nullptr)
+      {
+        source->firstBelowZero = decodedFrame.belowZero;
+        source->firstAboveOne  = decodedFrame.aboveOne;
+
+        if (FAILED (source->first.InitializeFromImage (*scrgb)))
+          source->first.Release ( );
+      }
+
       CComPtr <ID3D11ShaderResourceView> srv;
       anim_yuv_s                         gpu;
 
@@ -1265,7 +1987,15 @@ _StreamAnimation (std::shared_ptr <image_anim_stream_s> s, std::shared_ptr <anim
       bool made = (yuv != nullptr && source->gpuYUV && ! (pass == 0 && frame == 0) &&
                    _CreateYUVFrame (source->device, yuv, gpu, srv));
 
-      if (! made)
+      // A JPEG XL's frame, or an HDR one: scRGB already
+      if (! made && scrgb != nullptr)
+        made = _CreateImageTexture (source->device, *scrgb, srv);
+
+      // An HDR one that could not be made scRGB
+      else if (! made && source->image.hdr)
+        made = false;
+
+      else if (! made)
       {
         gpu.Release ( );
         srv = nullptr;
@@ -1598,7 +2328,229 @@ image_anim_s::update (DWORD& nextAt, bool& changed)
 
 #pragma endregion
 
-// Loads an animated image (APNG, GIF, WebP, AVIF) into image: starts the thread decoding its frames (_StreamAnimation),
+// The light levels and gamut coverage of an image (scRGB: half or 32-bit floats), into image (light_info, colorimetry): of
+//   HDR images, and of wide gamut SDR ones (scRGB as well, see color_convert.inl)
+static void
+_MeasureLight (const DirectX::ScratchImage& img, image_s& image)
+{
+  using namespace DirectX;
+
+  assert (img.GetMetadata ().format == DXGI_FORMAT_R16G16B16A16_FLOAT ||
+          img.GetMetadata ().format == DXGI_FORMAT_R32G32B32A32_FLOAT);
+
+  XMVECTOR vMaxCLL   =   g_XMZero;
+  float    fMaxLum   =       0.0f;
+  float    fMinLum   = 5240320.0f;
+  float    fMaxLum99 =       0.0f;
+
+  auto        luminance_freq = std::make_unique <uint32_t []> (65536);
+  ZeroMemory (luminance_freq.get (),     sizeof (uint32_t)  *  65536);
+
+  double dLumAccum = 0.0;
+  SKIV_SdrTone::AutoStats autoStats;
+
+  static constexpr float FLT16_MIN = 0.0000000894069671630859375f;
+
+  EvaluateImage ( img.GetImages     (),
+                  img.GetImageCount (),
+                  img.GetMetadata   (),
+  [&](const XMVECTOR* pixels, size_t width, size_t y)
+  {
+    UNREFERENCED_PARAMETER(y);
+
+    XMVECTOR vColorXYZ;
+    XMVECTOR vColorDCIP3;
+    XMVECTOR vColor2020;
+    XMVECTOR vColorAP1;
+    XMVECTOR vColorAP0;
+    XMVECTOR v;
+
+    uint32_t xm_test_all = 0x0;
+
+    double dScanlineLum = 0.0;
+
+    for (size_t j = 0; j < width; ++j)
+    {
+      v = *pixels;
+
+      vMaxCLL =
+        XMVectorMax (v, vMaxCLL);
+
+      vColorXYZ =
+        XMVector3Transform (v, c_from709toXYZ);
+
+      xm_test_all = 0x0;
+
+      #define FP16_MIN 0.0005f
+
+      if (XMVectorGreaterOrEqualR (&xm_test_all, v, g_XMZero);
+          XMComparisonAllTrue     ( xm_test_all) || XMVectorGetY (vColorXYZ) < FP16_MIN)
+      {
+        image.colorimetry.pixel_counts.rec_709++;
+      }
+
+      else
+      {
+        vColorDCIP3 =
+          XMVector3Transform (v, c_from709toDCIP3);
+
+        if (XMVectorGreaterOrEqualR (&xm_test_all, vColorDCIP3, g_XMZero);
+            XMComparisonAnyFalse    ( xm_test_all))
+        {
+          vColor2020 =
+            XMVector3Transform (v, c_from709to2020);
+
+          if (XMVectorGreaterOrEqualR (&xm_test_all, vColor2020, g_XMZero);
+              XMComparisonAnyFalse    ( xm_test_all))
+          {
+            vColorAP1 =
+              XMVector3Transform (v, c_from709toAP1);
+
+            if (XMVectorGreaterOrEqualR (&xm_test_all, vColorAP1, g_XMZero);
+                XMComparisonAnyFalse    ( xm_test_all))
+            {
+              vColorAP0 =
+                XMVector3Transform (v, c_from709toAP0);
+
+              if (XMVectorGreaterOrEqualR (&xm_test_all, vColorAP0, g_XMZero);
+                  XMComparisonAnyFalse    ( xm_test_all))
+              {
+                image.colorimetry.pixel_counts.undefined++;
+              }
+
+              else
+              {
+                image.colorimetry.pixel_counts.ap0++;
+              }
+            }
+
+            else
+            {
+              image.colorimetry.pixel_counts.ap1++;
+            }
+          }
+
+          else
+          {
+            image.colorimetry.pixel_counts.rec_2020++;
+          }
+        }
+
+        else
+        {
+          image.colorimetry.pixel_counts.dci_p3++;
+        }
+      }
+
+      image.colorimetry.pixel_counts.total++;
+
+      const float fLum =
+        XMVectorGetY (vColorXYZ);
+
+      fMaxLum =
+        std::max (fMaxLum, fLum);
+      fMinLum =
+        std::min (fMinLum, fLum);
+
+      if (image.is_hdr)
+        autoStats.Add (fLum, XMVectorGetW (v));
+
+      dScanlineLum +=
+        std::max (0.0, static_cast <double> (fLum));
+
+      pixels++;
+    }
+
+    dLumAccum +=
+      (dScanlineLum / static_cast <float> (width));
+  } );
+
+  float fMaxLumActual =           fMaxLum;
+  float fMinLumActual = std::max (fMinLum, 0.0f);
+
+  // 0 nits - 10k nits (appropriate for screencap, but not HDR photography)
+  fMinLum = std::clamp (fMinLum, 0.0f,    125.0f);
+  fMaxLum = std::clamp (fMaxLum, fMinLum, 125.0f);
+
+  // A flat image falls into the first bin, including when it is completely black.
+  const float fLumRange = fMaxLum - fMinLum;
+  const float binWidth = fLumRange / 65536.0f;
+
+  EvaluateImage ( img.GetImages     (),
+                  img.GetImageCount (),
+                  img.GetMetadata   (),
+  [&](const XMVECTOR* pixels, size_t width, size_t y)
+  {
+    UNREFERENCED_PARAMETER(y);
+
+    for (size_t j = 0; j < width; ++j)
+    {
+      XMVECTOR v = *pixels++;
+
+      v =
+        XMVectorMax (g_XMZero, XMVector3Transform (v, c_from709toXYZ));
+
+      const float luminance = std::min (fMaxLum, std::max (fMinLum, XMVectorGetY (v)));
+      const int bin = binWidth > 0.0f ? static_cast<int> (std::round ( (luminance - fMinLum) / binWidth )) : 0;
+      ++luminance_freq [std::min (bin, 65535)];
+    }
+  });
+
+        double percent  = 100.0;
+  const double img_size = (double)img.GetMetadata ().width *
+                          (double)img.GetMetadata ().height;
+
+  for (auto i = 65535; i >= 0; --i)
+  {
+    percent -=
+      100.0 * ((double)luminance_freq [i] / img_size);
+
+    if (percent <= 99.94)
+    {
+      PLOG_INFO << "99.94th percentile luminance: " <<
+        80.0f * (fMinLum + (fLumRange * ((float)i / 65536.0f)))
+                                                    << " nits";
+
+      fMaxLum99 =
+          fMinLum + (fLumRange * ((float)i / 65536.0f));
+
+      break;
+    }
+  }
+
+  const float fMaxCLL =
+    std::max ({
+      XMVectorGetX (vMaxCLL),
+      XMVectorGetY (vMaxCLL),
+      XMVectorGetZ (vMaxCLL)
+    });
+
+  XMVECTOR vMaxCLLReplicated =
+    XMVectorReplicate (fMaxCLL);
+
+  char cMaxChannel =
+    fMaxCLL == XMVectorGetX (vMaxCLL) ? 'R' :
+    fMaxCLL == XMVectorGetY (vMaxCLL) ? 'G' :
+    fMaxCLL == XMVectorGetZ (vMaxCLL) ? 'B' :
+                                        'X';
+
+  // Use the maximum luminance if for some reason the percentile calc failed
+  if (fMaxLum99 <= 0.01f)
+      fMaxLum99  = fMaxLum;
+
+  image.light_info.auto_tone    = autoStats.Curve ();
+  image.light_info.max_cll      = fMaxCLL;
+  image.light_info.max_cll_name = cMaxChannel;
+  image.light_info.max_nits     = std::max (0.0f, fMaxLumActual * 80.0f); // scRGB
+  image.light_info.min_nits     = std::max (0.0f, fMinLumActual * 80.0f); // scRGB
+  image.light_info.p99_nits     = std::max (0.0f, fMaxLum99     * 80.0f); // scRGB
+
+  // We use the sum of averages per-scanline to help avoid overflow
+  image.light_info.avg_nits     = static_cast <float> (80.0 *
+    (dLumAccum / static_cast <double> (img.GetMetadata ().height)));
+}
+
+// Loads an animated image (APNG, GIF, WebP, AVIF, JPEG XL) into image: starts the thread decoding its frames (_StreamAnimation),
 //   and waits for the first one (pRawTexSRV). wanted (if set) is asked while it waits, and stops it once it returns
 //     false. False if it is not animated, cannot be decoded, is too large, or was stopped: it is then loaded as a still image.
 static bool
@@ -1611,9 +2563,13 @@ _LoadAnimatedImage (image_s& image, const std::function <bool (void)>& wanted)
   if (! _OpenAnimatedImage (image.file_info.path, source->image))
     return false;
 
-  // AVIF: its colors come from libavif (the other formats' were read from the file by _ReadColorSource)
-  if (source->image.isAVIF)
+  // AVIF, JPEG XL: their colors come from libavif and libjxl (the other formats' were read from the file by _ReadColorSource)
+  if (source->image.isAVIF || source->image.isJXL)
     image.color_source = source->image.color;
+
+  // AVIF, APNG: HDR if their transfer is PQ or HLG (by their cICP, or ICC profile): their frames are made scRGB from it
+  if (source->image.isAVIF || ! (source->image.isJXL || source->image.isGIF || source->image.isWebP))
+    source->image.hdr = _HDRTransfer (image.color_source, source->image.hdrPrimaries, source->image.hlg);
 
   const uint32_t width  = source->image.width,
                  height = source->image.height,
@@ -1641,11 +2597,13 @@ _LoadAnimatedImage (image_s& image, const std::function <bool (void)>& wanted)
     }
   }
 
-  // Colors that are not sRGB (wide gamut, see color_convert.inl): frames of scRGB (half floats)
-  if (cmsHPROFILE profile = _CreateSourceProfile (image.color_source); profile != nullptr)
+  // Colors that are not sRGB (wide gamut, see color_convert.inl): frames of scRGB (half floats). JPEG XL: its frames
+  //   are made scRGB as they are decoded (_DecodeJXL), HDR or not; HDR ones from their signal (_HDRToScRGB).
+  if (cmsHPROFILE profile = (source->image.isJXL || source->image.hdr) ? nullptr : _CreateSourceProfile (image.color_source);
+      profile != nullptr)
     source->profile.reset (profile, &cmsCloseProfile);
 
-  const bool   wide       = (source->profile != nullptr);
+  const bool   wide       = (source->profile != nullptr || source->image.isJXL || source->image.hdr);
   const size_t frameBytes = // Textures take whole pages of 64 KB
     ((static_cast <size_t> (width) * height * ((wide) ? 8 : 4)) + 0xFFFF) & ~static_cast <size_t> (0xFFFF);
 
@@ -1687,6 +2645,8 @@ _LoadAnimatedImage (image_s& image, const std::function <bool (void)>& wanted)
 
   PLOG_INFO_IF (wide) << "[Image Processing] The animated image's colors (" << _DescribeColorSource (image.color_source)
                       << ") are converted to scRGB";
+
+  // (Whether a JPEG XL is HDR is known once its first frame is decoded: see below)
 
   std::thread (_StreamAnimation, stream, source).detach ( );
 
@@ -1745,6 +2705,37 @@ _LoadAnimatedImage (image_s& image, const std::function <bool (void)>& wanted)
   image.is_wcg       = false; // Wide gamut frames (anim->wide) have no gamut coverage
   image.light_info   = { };
   image.colorimetry  = { };
+
+  // JPEG XL: HDR if it says so, or its first frame goes above SDR white (as a still one is, _JXLDynamicRange), shown as
+  //   HDR images are; its light levels (and tone mapping) are those of its first frame. The thread decoding the frames
+  //     no longer touches source->first once the first frame's texture was handed over (above).
+  //       AVIF, APNG: HDR by their transfer (PQ, HLG).
+  if (source->image.isJXL || source->image.hdr)
+  {
+    const dynamic_range_s range = (source->image.isJXL) ?
+      _JXLDynamicRange (image.color_source, source->image.intensity_target, source->firstBelowZero, source->firstAboveOne)
+                                                        : dynamic_range_s { .hdr = true };
+
+    if (source->image.isJXL)
+    {
+      image.bpc            = static_cast <int> (source->image.bpc);
+      image.channels       = static_cast <int> (source->image.channels);
+    }
+
+    else
+      image.bpc            = static_cast <int> (source->image.bpc);
+
+    image.is_hdr           = range.hdr;
+    image.light_info.isHDR = range.hdr;
+
+    if (range.hdr && source->first.GetImageCount ( ) > 0)
+      _MeasureLight (source->first, image);
+
+    source->first.Release ( );
+
+    PLOG_INFO << "[Image Processing] The animated image is " << ((range.hdr) ? "HDR" : "SDR")
+              << ((range.hdr) ? ": its light levels are those of its first frame" : "");
+  }
 
   DWORD post = SKIF_Util_timeGetTime1 ( );
   PLOG_INFO << "[Image Processing] Loaded an animated image (" << count << " frames, " << width << "x" << height << ") in " << (post - pre)
@@ -2299,12 +3290,16 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
 
   _ReadColorSource (image, image_sig, [&](void) { return _ReadFile ( ); }, _.getInitialSize ());
 
-  // Animated images (APNG, GIF, WebP, AVIF): all their frames, which the viewer plays. One that cannot be played (too large,
-  //   or malformed) is loaded as a still image below: its first frame (an APNG: its default image).
+  // Animated images (APNG, GIF, WebP, AVIF, JPEG XL): all their frames, which the viewer plays. One that cannot be played
+  //   (too large, or malformed) is loaded as a still image below: its first frame (an APNG: its default image).
   //     GIFs skip IsAnimatedImageFile, which only reads GIFs up to 64 MB: _LoadAnimatedImage counts their frames itself.
   //       AVIF: image sequences (by their ftyp box), whose frames libavif decodes (HDR ones are shown as still images).
+  //         JPEG XL: by its basic info; HDR ones stay HDR.
   if (request.animatedImages && ! request.thumbnailOnly && image_sig != nullptr &&
      ((image_sig->mime_type == L"image/gif") ||
+#ifdef _M_X64
+      (image_sig->mime_type == L"image/jxl"  && _IsJXLAnimationFile (image.file_info.path)) ||
+#endif
       (image_sig->mime_type == L"image/avif" && _IsAVIFSequenceFile (image.file_info.path)) ||
      ((image_sig->mime_type == L"image/png" ||
        image_sig->mime_type == L"image/webp") && IsAnimatedImageFile (image.file_info.path))))
@@ -3447,81 +4442,17 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
     }
   }
 
-#if _WIN64
+#ifdef _M_X64
   if (decoder == ImageDecoder_JXL)
   {
-    static HMODULE hModJXL;
-    SK_RunOnce (   hModJXL = LoadLibraryW (L"jxl.dll"));
+    const jxl_api_s& jxl = _JXL ( );
+    jxl_decoder_s    dec (jxl);
 
-    static HMODULE hModJXLThreads;
-    SK_RunOnce (   hModJXLThreads = LoadLibraryW (L"jxl_threads.dll"));
-
-    using JxlDecoderCreate_pfn                   = JxlDecoder*      (*)(const JxlMemoryManager* memory_manager);
-    using JxlDecoderDestroy_pfn                  = void             (*)(      JxlDecoder* dec);
-    using JxlDecoderSubscribeEvents_pfn          = JxlDecoderStatus (*)(      JxlDecoder* dec, int events_wanted);
-    using JxlDecoderSetInput_pfn                 = JxlDecoderStatus (*)(      JxlDecoder* dec, const uint8_t* data,                        size_t  size);
-    using JxlDecoderImageOutBufferSize_pfn       = JxlDecoderStatus (*)(const JxlDecoder* dec, const JxlPixelFormat* format,               size_t* size);
-    using JxlDecoderSetImageOutBuffer_pfn        = JxlDecoderStatus (*)(      JxlDecoder* dec, const JxlPixelFormat* format, void* buffer, size_t  size);
-    using JxlDecoderSetImageOutBitDepth_pfn      = JxlDecoderStatus (*)(      JxlDecoder* dec, const JxlBitDepth* bit_depth);
-    using JxlDecoderGetBasicInfo_pfn             = JxlDecoderStatus (*)(const JxlDecoder* dec, JxlBasicInfo* info);
-    using JxlDecoderProcessInput_pfn             = JxlDecoderStatus (*)(      JxlDecoder* dec);
-    using JxlDecoderCloseInput_pfn               = void             (*)(      JxlDecoder* dec);
-    using JxlDecoderSetPreferredColorProfile_pfn = JxlDecoderStatus (*)(      JxlDecoder* dec, const JxlColorEncoding* color_encoding);
-    using JxlDecoderGetColorAsEncodedProfile_pfn = JxlDecoderStatus (*)(const JxlDecoder* dec, JxlColorProfileTarget target, JxlColorEncoding* color_encoding);
-    using JxlDecoderGetICCProfileSize_pfn        = JxlDecoderStatus (*)(const JxlDecoder* dec, JxlColorProfileTarget target, size_t* size);
-    using JxlDecoderGetColorAsICCProfile_pfn     = JxlDecoderStatus (*)(const JxlDecoder* dec, JxlColorProfileTarget target, uint8_t* icc_profile, size_t size);
-    using JxlDecoderSetParallelRunner_pfn        = JxlDecoderStatus (*)(      JxlDecoder* dec,
-                                                                        JxlParallelRunner parallel_runner,
-                                                                                    void* parallel_runner_opaque);
-
-    using JxlResizableParallelRunnerCreate_pfn         = void*    (*)(const JxlMemoryManager* memory_manager);
-    using JxlResizableParallelRunnerSuggestThreads_pfn = uint32_t (*)(uint64_t xsize, uint64_t ysize);
-    using JxlResizableParallelRunnerSetThreads_pfn     = void     (*)(void*                  runner_opaque, size_t num_threads);
-    using JxlResizableParallelRunnerDestroy_pfn        = void     (*)(void*                  runner_opaque);
-    using JxlResizableParallelRunner_pfn   =   JxlParallelRetCode (*)(void*                  runner_opaque,
-                                                                      void*                  jpegxl_opaque,
-                                                                      JxlParallelRunInit     init,
-                                                                      JxlParallelRunFunction func,
-                                                                      uint32_t               start_range,
-                                                                      uint32_t               end_range);
-
-    JxlDecoderSubscribeEvents_pfn          jxlDecoderSubscribeEvents          = (JxlDecoderSubscribeEvents_pfn)         GetProcAddress (hModJXL, "JxlDecoderSubscribeEvents");
-    JxlDecoderSetInput_pfn                 jxlDecoderSetInput                 = (JxlDecoderSetInput_pfn)                GetProcAddress (hModJXL, "JxlDecoderSetInput");
-    JxlDecoderImageOutBufferSize_pfn       jxlDecoderImageOutBufferSize       = (JxlDecoderImageOutBufferSize_pfn)      GetProcAddress (hModJXL, "JxlDecoderImageOutBufferSize");
-    JxlDecoderCreate_pfn                   jxlDecoderCreate                   = (JxlDecoderCreate_pfn)                  GetProcAddress (hModJXL, "JxlDecoderCreate");
-    JxlDecoderDestroy_pfn                  jxlDecoderDestroy                  = (JxlDecoderDestroy_pfn)                 GetProcAddress (hModJXL, "JxlDecoderDestroy");
-    JxlDecoderGetBasicInfo_pfn             jxlDecoderGetBasicInfo             = (JxlDecoderGetBasicInfo_pfn)            GetProcAddress (hModJXL, "JxlDecoderGetBasicInfo");
-    JxlDecoderProcessInput_pfn             jxlDecoderProcessInput             = (JxlDecoderProcessInput_pfn)            GetProcAddress (hModJXL, "JxlDecoderProcessInput");
-    JxlDecoderCloseInput_pfn               jxlDecoderCloseInput               = (JxlDecoderCloseInput_pfn)              GetProcAddress (hModJXL, "JxlDecoderCloseInput");
-    JxlDecoderSetImageOutBuffer_pfn        jxlDecoderSetImageOutBuffer        = (JxlDecoderSetImageOutBuffer_pfn)       GetProcAddress (hModJXL, "JxlDecoderSetImageOutBuffer");
-    JxlDecoderSetImageOutBitDepth_pfn      jxlDecoderSetImageOutBitDepth      = (JxlDecoderSetImageOutBitDepth_pfn)     GetProcAddress (hModJXL, "JxlDecoderSetImageOutBitDepth");
-    JxlDecoderSetParallelRunner_pfn        jxlDecoderSetParallelRunner        = (JxlDecoderSetParallelRunner_pfn)       GetProcAddress (hModJXL, "JxlDecoderSetParallelRunner");
-    JxlDecoderSetPreferredColorProfile_pfn jxlDecoderSetPreferredColorProfile = (JxlDecoderSetPreferredColorProfile_pfn)GetProcAddress (hModJXL, "JxlDecoderSetPreferredColorProfile");
-    JxlDecoderGetColorAsEncodedProfile_pfn jxlDecoderGetColorAsEncodedProfile = (JxlDecoderGetColorAsEncodedProfile_pfn)GetProcAddress (hModJXL, "JxlDecoderGetColorAsEncodedProfile");
-    JxlDecoderGetICCProfileSize_pfn        jxlDecoderGetICCProfileSize        = (JxlDecoderGetICCProfileSize_pfn)       GetProcAddress (hModJXL, "JxlDecoderGetICCProfileSize");
-    JxlDecoderGetColorAsICCProfile_pfn     jxlDecoderGetColorAsICCProfile     = (JxlDecoderGetColorAsICCProfile_pfn)    GetProcAddress (hModJXL, "JxlDecoderGetColorAsICCProfile");
-
-    JxlResizableParallelRunnerCreate_pfn         jxlResizableParallelRunnerCreate         = (JxlResizableParallelRunnerCreate_pfn)        GetProcAddress (hModJXLThreads, "JxlResizableParallelRunnerCreate");
-    JxlResizableParallelRunnerSuggestThreads_pfn jxlResizableParallelRunnerSuggestThreads = (JxlResizableParallelRunnerSuggestThreads_pfn)GetProcAddress (hModJXLThreads, "JxlResizableParallelRunnerSuggestThreads");
-    JxlResizableParallelRunnerSetThreads_pfn     jxlResizableParallelRunnerSetThreads     = (JxlResizableParallelRunnerSetThreads_pfn)    GetProcAddress (hModJXLThreads, "JxlResizableParallelRunnerSetThreads");
-    JxlResizableParallelRunnerDestroy_pfn        jxlResizableParallelRunnerDestroy        = (JxlResizableParallelRunnerDestroy_pfn)       GetProcAddress (hModJXLThreads, "JxlResizableParallelRunnerDestroy");
-    JxlResizableParallelRunner_pfn               jxlResizableParallelRunner               = (JxlResizableParallelRunner_pfn)              GetProcAddress (hModJXLThreads, "JxlResizableParallelRunner");
-
-    JxlDecoder* jxl_decoder = jxlDecoderCreate                 != nullptr &&
-                              jxlResizableParallelRunnerCreate != nullptr  ?
-                              jxlDecoderCreate                   (nullptr) : nullptr;
-    void*       jxl_runner  = jxlResizableParallelRunnerCreate != nullptr  ?
-                              jxlResizableParallelRunnerCreate   (nullptr) : nullptr;
-
-    if ( jxl_decoder != nullptr &&
-         jxl_runner  != nullptr &&
+    if ( dec &&
          JXL_DEC_SUCCESS ==
-           jxlDecoderSubscribeEvents (jxl_decoder, JXL_DEC_BASIC_INFO     |
-                                                   JXL_DEC_COLOR_ENCODING |
-                                                   JXL_DEC_FULL_IMAGE) &&
-         JXL_DEC_SUCCESS ==
-           jxlDecoderSetParallelRunner (jxl_decoder, jxlResizableParallelRunner,
-                                        jxl_runner) )
+           jxl.DecoderSubscribeEvents (dec.decoder, JXL_DEC_BASIC_INFO     |
+                                                    JXL_DEC_COLOR_ENCODING |
+                                                    JXL_DEC_FULL_IMAGE) )
     {
       JxlColorEncoding actual_encoding = { };
 
@@ -3529,22 +4460,52 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
       JxlPixelFormat format =
         { 4, JXL_TYPE_FLOAT, JXL_NATIVE_ENDIAN, 0 };
 
-      auto bpp =
-        (format.data_type == JXL_TYPE_FLOAT)   ? (sizeof (float)    * format.num_channels) :
-        (format.data_type == JXL_TYPE_UINT8)   ? (sizeof (uint8_t)  * format.num_channels) :
-        (format.data_type == JXL_TYPE_UINT16)  ? (sizeof (uint16_t) * format.num_channels) :
-        (format.data_type == JXL_TYPE_FLOAT16) ? (sizeof (float)/2) * format.num_channels  :
-                                                  sizeof (uint8_t)  * format.num_channels;
+      const size_t bpp = sizeof (float) * format.num_channels;
 
       _ReadFile ( );
 
-      jxlDecoderSetInput   (jxl_decoder, _scratchMemory.get (), _.getInitialSize ());
-      jxlDecoderCloseInput (jxl_decoder);
+      jxl.DecoderSetInput   (dec.decoder, _scratchMemory.get (), _.getInitialSize ());
+      jxl.DecoderCloseInput (dec.decoder);
+
+      // The image decoded (scRGB, half floats), and whether it is HDR or of wide gamut
+      auto _Finish = [&](void) -> bool
+      {
+        meta.format    = DXGI_FORMAT_R16G16B16A16_FLOAT;
+        meta.width     = static_cast <size_t> (image.width);
+        meta.height    = static_cast <size_t> (image.height);
+        meta.depth     = 1;
+        meta.arraySize = 1;
+        meta.mipLevels = 1;
+        meta.dimension = DirectX::TEX_DIMENSION_TEXTURE2D;
+
+        bool                  wcg = false;
+        bool                  hdr = false;
+        DirectX::ScratchImage scrgb;
+
+        if (! _JXLToScRGB (img, actual_encoding, image.color_source, info.intensity_target, scrgb, wcg, hdr, true))
+        {
+          PLOG_ERROR << "Could not convert the JPEG XL image to scRGB";
+          return false;
+        }
+
+        img = std::move (scrgb);
+
+        // HDR only if it says so, or goes above SDR white; SDR images of colors outside of sRGB (below 0) are wide gamut
+        //   SDR ones, as images of other formats converted to scRGB are (see color_convert.inl)
+        const dynamic_range_s range =
+          _JXLDynamicRange (image.color_source, info.intensity_target, wcg, hdr);
+
+        image.light_info.isHDR = range.hdr;
+        image.is_hdr           = range.hdr;
+        image.is_wcg           = range.wcg;
+
+        return true;
+      };
 
       for (;;)
       {
         JxlDecoderStatus status =
-          jxlDecoderProcessInput (jxl_decoder);
+          jxl.DecoderProcessInput (dec.decoder);
 
         if (status == JXL_DEC_ERROR)
         {
@@ -3560,7 +4521,7 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
 
         else if (status == JXL_DEC_BASIC_INFO)
         {
-          if (JXL_DEC_SUCCESS != jxlDecoderGetBasicInfo (jxl_decoder, &info))
+          if (JXL_DEC_SUCCESS != jxl.DecoderGetBasicInfo (dec.decoder, &info))
           {
             PLOG_ERROR << "JxlDecoderGetBasicInfo failed";
             break;
@@ -3569,72 +4530,20 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
           image.width  = static_cast <float> (info.xsize);
           image.height = static_cast <float> (info.ysize);
 
-          jxlResizableParallelRunnerSetThreads ( jxl_runner,
-            std::max (8U, jxlResizableParallelRunnerSuggestThreads (info.xsize, info.ysize)) );
+          jxl.RunnerSetThreads ( dec.runner,
+            std::max (8U, jxl.RunnerSuggestThreads (info.xsize, info.ysize)) );
         }
 
         else if (status == JXL_DEC_COLOR_ENCODING)
         {
-          // Its own color space (before asking for scRGB): an encoded one (libjxl's enums match cICP's numbers), or
-          //   else an ICC profile
-          JxlColorEncoding original = { };
-          image.color_source.origin = "JPEG XL";
-
-          if (JXL_DEC_SUCCESS == jxlDecoderGetColorAsEncodedProfile (jxl_decoder, JXL_COLOR_PROFILE_TARGET_ORIGINAL, &original) &&
-              original.color_space != JXL_COLOR_SPACE_XYB && original.color_space != JXL_COLOR_SPACE_UNKNOWN)
-          {
-            image.color_source.has_cicp   = true;
-            image.color_source.full_range = 1;
-            image.color_source.primaries  =
-              (original.color_space == JXL_COLOR_SPACE_GRAY)                                    ?  1 : // Gray: Rec. 709 white
-              (original.primaries   == JXL_PRIMARIES_P3 && original.white_point == JXL_WHITE_POINT_D65) ? 12 : // Display P3
-              (original.primaries   == JXL_PRIMARIES_CUSTOM)                                    ?  2 :
-                                                  static_cast <uint8_t> (original.primaries);
-            image.color_source.transfer   =
-              (original.transfer_function == JXL_TRANSFER_FUNCTION_GAMMA) ? 2 : static_cast <uint8_t> (original.transfer_function);
-
-            if (original.transfer_function == JXL_TRANSFER_FUNCTION_GAMMA)
-              image.color_source.gamma = static_cast <uint32_t> (original.gamma * 100000.0 + 0.5);
-          }
-
-          else if (jxlDecoderGetICCProfileSize != nullptr && jxlDecoderGetColorAsICCProfile != nullptr)
-          {
-            size_t icc_size = 0;
-
-            if (JXL_DEC_SUCCESS == jxlDecoderGetICCProfileSize (jxl_decoder, JXL_COLOR_PROFILE_TARGET_ORIGINAL, &icc_size) && icc_size > 0)
-            {
-              std::vector <uint8_t> icc (icc_size);
-
-              if (JXL_DEC_SUCCESS == jxlDecoderGetColorAsICCProfile (jxl_decoder, JXL_COLOR_PROFILE_TARGET_ORIGINAL, icc.data (), icc.size ()))
-                _SetICC (image.color_source, icc.data (), icc.size ());
-            }
-          }
-
-          static constexpr JxlColorEncoding
-            scrgb_encoding = { .color_space       = JXL_COLOR_SPACE_RGB,
-                               .white_point       = JXL_WHITE_POINT_D65,
-                               .primaries         = JXL_PRIMARIES_SRGB,
-                               .transfer_function = JXL_TRANSFER_FUNCTION_LINEAR,
-                               .rendering_intent  = JXL_RENDERING_INTENT_PERCEPTUAL };
-
-          if ( JXL_DEC_SUCCESS !=
-                 jxlDecoderSetPreferredColorProfile (jxl_decoder, &scrgb_encoding) )
-          {
-            PLOG_ERROR << "JxlDecoderSetPreferredColorProfile failed";
-          }
-
-          if ( JXL_DEC_SUCCESS !=
-                 jxlDecoderGetColorAsEncodedProfile (jxl_decoder, JXL_COLOR_PROFILE_TARGET_DATA, &actual_encoding) )
-          {
-            PLOG_ERROR << "jxlDecoderGetColorAsEncodedProfile failed";
-          }
+          _JXLReadColors (jxl, dec.decoder, image.color_source, actual_encoding);
         }
 
         else if (status == JXL_DEC_NEED_IMAGE_OUT_BUFFER)
         {
           size_t buffer_size;
           if ( JXL_DEC_SUCCESS !=
-                 jxlDecoderImageOutBufferSize (jxl_decoder, &format, &buffer_size) )
+                 jxl.DecoderImageOutBufferSize (dec.decoder, &format, &buffer_size) )
           {
             PLOG_ERROR << "JxlDecoderImageOutBufferSize failed";
             break;
@@ -3652,14 +4561,9 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
             image.bpc      = info.bits_per_sample;
             image.channels = info.num_color_channels;
 
-            void*  pixels_buffer      = static_cast <void *>(img.GetPixels ());
-            size_t pixels_buffer_size = img.GetPixelsSize ();
-
-            std::ignore = jxlDecoderSetImageOutBitDepth;
-
-            if (JXL_DEC_SUCCESS != jxlDecoderSetImageOutBuffer(jxl_decoder, &format,
-                                                               pixels_buffer,
-                                                               pixels_buffer_size))
+            if (JXL_DEC_SUCCESS != jxl.DecoderSetImageOutBuffer (dec.decoder, &format,
+                                                                 img.GetPixels (),
+                                                                 img.GetPixelsSize ()))
             {
               PLOG_ERROR << "JxlDecoderSetImageOutBuffer failed";
               break;
@@ -3669,160 +4573,18 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
 
         else if (status == JXL_DEC_FULL_IMAGE)
         {
-          // Nothing to do. Do not yet return. If the image is an animation, more
-          // full frames may be decoded. This example only keeps the last one.
+          // An animation (not played: a thumbnail, or one that could not be): its first frame, as other animated
+          //   images are shown then
+          if (info.have_animation)
+          {
+            succeeded = _Finish ( );
+            break;
+          }
         }
 
         else if (status == JXL_DEC_SUCCESS)
         {
-          succeeded = true;
-
-          meta.format    = DXGI_FORMAT_R16G16B16A16_FLOAT;
-          meta.width     = static_cast <size_t> (image.width);
-          meta.height    = static_cast <size_t> (image.height);
-          meta.depth     = 1;
-          meta.arraySize = 1;
-          meta.mipLevels = 1;
-          meta.dimension = DirectX::TEX_DIMENSION_TEXTURE2D;
-
-          bool wcg = false;
-          bool hdr = false;
-
-          using namespace DirectX;
-
-          ScratchImage converted_img;
-
-          const XMVECTOR vRelativeToAbsoluteNits =
-            XMVectorReplicate (info.intensity_target != 255.0f ? info.intensity_target / 80.0f
-                                                               : 1.0f);
-
-          const bool bIsHDR10 =
-            actual_encoding.primaries         == JXL_PRIMARIES_2100 &&
-            actual_encoding.transfer_function == JXL_TRANSFER_FUNCTION_PQ;
-
-          const bool bIsRec709Linear =
-            actual_encoding.primaries         == JXL_PRIMARIES_SRGB &&
-            actual_encoding.transfer_function == JXL_TRANSFER_FUNCTION_LINEAR;
-
-          // HLG (BT.2100), as libjxl hands it over unconverted (all but XYB images): decoded for a 1,000-nit display
-          //   (_HLGToDisplay), then its primaries (Rec. 2020, Rec. 709 or P3) converted to scRGB's
-          const bool bIsHLG =
-            actual_encoding.transfer_function == JXL_TRANSFER_FUNCTION_HLG &&
-           (actual_encoding.primaries         == JXL_PRIMARIES_2100 ||
-            actual_encoding.primaries         == JXL_PRIMARIES_SRGB ||
-            actual_encoding.primaries         == JXL_PRIMARIES_P3);
-
-          const uint8_t hlgPrimaries = (actual_encoding.primaries == JXL_PRIMARIES_SRGB) ?  1 :
-                                       (actual_encoding.primaries == JXL_PRIMARIES_P3)   ? 12 : 9;
-          const float*  hlgWeights   = _LuminanceWeights (hlgPrimaries);
-
-          PLOG_INFO_IF (bIsHLG) << "HLG JPEG XL image: decoded as for a 1,000-nit display";
-
-          if (actual_encoding.white_point != JXL_WHITE_POINT_D65)
-          {
-            PLOG_WARNING << "Unexpected non-D65 white point";
-          }
-
-          // libjxl converts only XYB encoded images (lossy ones) into the scRGB asked for, even with its color management
-          //   set (libjxl 0.10): any other comes as it is encoded (sRGB, Display P3...). Those are converted here (with
-          //     Little CMS, see color_convert.inl), as they were otherwise taken as scRGB (shown washed out, and of the
-          //       wrong colors).
-          bool bConvertedHere = false;
-
-          if (! (bIsHDR10 || bIsRec709Linear || bIsHLG))
-          {
-            cmsHPROFILE           source = _CreateSDRSourceProfile (image.color_source);
-            const DirectX::Image* data   = img.GetImage (0, 0, 0);
-
-            if (source != nullptr && data != nullptr)
-              bConvertedHere =
-                _ConvertToScRGB (source, TYPE_RGBA_FLT, data->pixels, data->rowPitch, data->pixels, data->rowPitch,
-                                 static_cast <uint32_t> (data->width), static_cast <uint32_t> (data->height), TYPE_RGBA_FLT);
-
-            if (source != nullptr)
-              cmsCloseProfile (source);
-
-            if (bConvertedHere)
-              PLOG_INFO    << "Converted the JPEG XL image's colors (" << _DescribeColorSource (image.color_source) << ") to scRGB";
-            else
-              PLOG_WARNING << "Encoded image is neither HDR10 nor scRGB, and could not be converted ("
-                           << _DescribeColorSource (image.color_source) << ")";
-          }
-
-          if ( SUCCEEDED ( TransformImage (*img.GetImages (),
-                [&](      XMVECTOR* outPixels,
-                    const XMVECTOR* inPixels,
-                          size_t    width,
-                          size_t    y)
-                {
-                  UNREFERENCED_PARAMETER(y);
-
-                  for (size_t j = 0; j < width; ++j)
-                  {
-                    XMVECTOR v = inPixels [j];
-                    float vW = XMVectorGetW(v);
-
-                    if (bIsRec709Linear || bConvertedHere)
-                    {
-                      v =
-                        XMVectorMultiply (v, vRelativeToAbsoluteNits);
-                    }
-
-                    else if (bIsHDR10)
-                    {
-                      v =
-                        XMVector3Transform (SKIV_Image_PQToLinear (v), c_Bt2100toscRGB);
-                    }
-
-                    else if (bIsHLG)
-                    {
-                      const float signal [3] = { XMVectorGetX (v), XMVectorGetY (v), XMVectorGetZ (v) };
-                      float       light  [3];
-                      _HLGToDisplay (signal, hlgWeights, light);
-
-                      const XMVECTOR l = XMVectorSet (light [0], light [1], light [2], 0.0f);
-
-                      v = (hlgPrimaries == 1)  ? XMVectorScale (l, 125.0f) :
-                          (hlgPrimaries == 12) ? XMVectorScale (XMVector3Transform (l, c_fromDCIP3to709), 125.0f)
-                                               : XMVector3Transform (l, c_Bt2100toscRGB);
-                    }
-
-                    // Outside of sRGB: a channel below 0 (past rounding). Above SDR white: its luminance over 1.0, as a
-                    //   channel over 1.0 is also what colors outside of sRGB have (Display P3 red is 1.22 in scRGB).
-                    static const XMVECTOR vRounding  = XMVectorReplicate (-0.0001f);
-                    static const XMVECTOR vLuminance = XMVectorSet (0.2126f, 0.7152f, 0.0722f, 0.0f);
-
-                    uint32_t xm_test_rec709 = 0x0;
-
-                    if (XMVectorGreaterOrEqualR (&xm_test_rec709, XMVectorSetW (v, 1.0f), vRounding);
-                        XMComparisonAnyFalse    ( xm_test_rec709))
-                    {
-                      wcg = true;
-                    }
-
-                    if (XMVectorGetX (XMVector3Dot (v, vLuminance)) > 1.001f)
-                    {
-                      hdr = true;
-                    }
-
-                    outPixels [j] = XMVectorSetW (v, vW);
-                  }
-                }, converted_img )
-              )
-            )
-          {
-            DirectX::Convert (*converted_img.GetImages (), DXGI_FORMAT_R16G16B16A16_FLOAT, DirectX::TEX_FILTER_DEFAULT, 0.0f, img);
-          }
-
-          // HDR only if it says so, or goes above SDR white; SDR images of colors outside of sRGB (below 0) are wide gamut
-          //   SDR ones, as images of other formats converted to scRGB are (see color_convert.inl)
-          const dynamic_range_s range =
-            _JXLDynamicRange (image.color_source, info.intensity_target, wcg, hdr);
-
-          image.light_info.isHDR = range.hdr;
-          image.is_hdr           = range.hdr;
-          image.is_wcg           = range.wcg;
-
+          succeeded = _Finish ( );
           break;
         }
 
@@ -3833,12 +4595,6 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
         }
       }
     }
-
-    if (jxl_decoder != nullptr)
-      jxlDecoderDestroy (jxl_decoder);
-
-    if ( jxl_runner != nullptr)
-      jxlResizableParallelRunnerDestroy (nullptr);
   }
 #endif
 
@@ -3965,223 +4721,7 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
 
   // Light levels and gamut coverage: of HDR images, and of wide gamut SDR ones (scRGB as well, see color_convert.inl)
   if (image.is_hdr || image.is_wcg)
-  {
-    using namespace DirectX;
-
-    assert (meta.format == DXGI_FORMAT_R16G16B16A16_FLOAT ||
-            meta.format == DXGI_FORMAT_R32G32B32A32_FLOAT);
-
-    XMVECTOR vMaxCLL   =   g_XMZero;
-    float    fMaxLum   =       0.0f;
-    float    fMinLum   = 5240320.0f;
-    float    fMaxLum99 =       0.0f;
-
-    auto        luminance_freq = std::make_unique <uint32_t []> (65536);
-    ZeroMemory (luminance_freq.get (),     sizeof (uint32_t)  *  65536);
-
-    double dLumAccum = 0.0;
-    SKIV_SdrTone::AutoStats autoStats;
-
-    static constexpr float FLT16_MIN = 0.0000000894069671630859375f;
-
-    EvaluateImage ( pImg->GetImages     (),
-                    pImg->GetImageCount (),
-                    pImg->GetMetadata   (),
-    [&](const XMVECTOR* pixels, size_t width, size_t y)
-    {
-      UNREFERENCED_PARAMETER(y);
-
-      XMVECTOR vColorXYZ;
-      XMVECTOR vColorDCIP3;
-      XMVECTOR vColor2020;
-      XMVECTOR vColorAP1;
-      XMVECTOR vColorAP0;
-      XMVECTOR v;
-
-      uint32_t xm_test_all = 0x0;
-
-      double dScanlineLum = 0.0;
-
-      for (size_t j = 0; j < width; ++j)
-      {
-        v = *pixels;
-
-        vMaxCLL =
-          XMVectorMax (v, vMaxCLL);
-
-        vColorXYZ =
-          XMVector3Transform (v, c_from709toXYZ);
-
-        xm_test_all = 0x0;
-
-        #define FP16_MIN 0.0005f
-
-        if (XMVectorGreaterOrEqualR (&xm_test_all, v, g_XMZero);
-            XMComparisonAllTrue     ( xm_test_all) || XMVectorGetY (vColorXYZ) < FP16_MIN)
-        {
-          image.colorimetry.pixel_counts.rec_709++;
-        }
-
-        else
-        {
-          vColorDCIP3 =
-            XMVector3Transform (v, c_from709toDCIP3);
-
-          if (XMVectorGreaterOrEqualR (&xm_test_all, vColorDCIP3, g_XMZero);
-              XMComparisonAnyFalse    ( xm_test_all))
-          {
-            vColor2020 =
-              XMVector3Transform (v, c_from709to2020);
-
-            if (XMVectorGreaterOrEqualR (&xm_test_all, vColor2020, g_XMZero);
-                XMComparisonAnyFalse    ( xm_test_all))
-            {
-              vColorAP1 =
-                XMVector3Transform (v, c_from709toAP1);
-
-              if (XMVectorGreaterOrEqualR (&xm_test_all, vColorAP1, g_XMZero);
-                  XMComparisonAnyFalse    ( xm_test_all))
-              {
-                vColorAP0 =
-                  XMVector3Transform (v, c_from709toAP0);
-
-                if (XMVectorGreaterOrEqualR (&xm_test_all, vColorAP0, g_XMZero);
-                    XMComparisonAnyFalse    ( xm_test_all))
-                {
-                  image.colorimetry.pixel_counts.undefined++;
-                }
-
-                else
-                {
-                  image.colorimetry.pixel_counts.ap0++;
-                }
-              }
-
-              else
-              {
-                image.colorimetry.pixel_counts.ap1++;
-              }
-            }
-
-            else
-            {
-              image.colorimetry.pixel_counts.rec_2020++;
-            }
-          }
-
-          else
-          {
-            image.colorimetry.pixel_counts.dci_p3++;
-          }
-        }
-
-        image.colorimetry.pixel_counts.total++;
-
-        const float fLum =
-          XMVectorGetY (vColorXYZ);
-
-        fMaxLum =
-          std::max (fMaxLum, fLum);
-        fMinLum =
-          std::min (fMinLum, fLum);
-
-        if (image.is_hdr)
-          autoStats.Add (fLum, XMVectorGetW (v));
-
-        dScanlineLum +=
-          std::max (0.0, static_cast <double> (fLum));
-
-        pixels++;
-      }
-
-      dLumAccum +=
-        (dScanlineLum / static_cast <float> (width));
-    } );
-
-    float fMaxLumActual =           fMaxLum;
-    float fMinLumActual = std::max (fMinLum, 0.0f);
-
-    // 0 nits - 10k nits (appropriate for screencap, but not HDR photography)
-    fMinLum = std::clamp (fMinLum, 0.0f,    125.0f);
-    fMaxLum = std::clamp (fMaxLum, fMinLum, 125.0f);
-
-    // A flat image falls into the first bin, including when it is completely black.
-    const float fLumRange = fMaxLum - fMinLum;
-    const float binWidth = fLumRange / 65536.0f;
-
-    EvaluateImage ( pImg->GetImages     (),
-                    pImg->GetImageCount (),
-                    pImg->GetMetadata   (),
-    [&](const XMVECTOR* pixels, size_t width, size_t y)
-    {
-      UNREFERENCED_PARAMETER(y);
-
-      for (size_t j = 0; j < width; ++j)
-      {
-        XMVECTOR v = *pixels++;
-
-        v =
-          XMVectorMax (g_XMZero, XMVector3Transform (v, c_from709toXYZ));
-
-        const float luminance = std::min (fMaxLum, std::max (fMinLum, XMVectorGetY (v)));
-        const int bin = binWidth > 0.0f ? static_cast<int> (std::round ( (luminance - fMinLum) / binWidth )) : 0;
-        ++luminance_freq [std::min (bin, 65535)];
-      }
-    });
-
-          double percent  = 100.0;
-    const double img_size = (double)pImg->GetMetadata ().width *
-                            (double)pImg->GetMetadata ().height;
-
-    for (auto i = 65535; i >= 0; --i)
-    {
-      percent -=
-        100.0 * ((double)luminance_freq [i] / img_size);
-
-      if (percent <= 99.94)
-      {
-        PLOG_INFO << "99.94th percentile luminance: " <<
-          80.0f * (fMinLum + (fLumRange * ((float)i / 65536.0f)))
-                                                      << " nits";
-
-        fMaxLum99 =
-            fMinLum + (fLumRange * ((float)i / 65536.0f));
-
-        break;
-      }
-    }
-
-    const float fMaxCLL =
-      std::max ({
-        XMVectorGetX (vMaxCLL),
-        XMVectorGetY (vMaxCLL),
-        XMVectorGetZ (vMaxCLL)
-      });
-
-    XMVECTOR vMaxCLLReplicated =
-      XMVectorReplicate (fMaxCLL);
-
-    char cMaxChannel =
-      fMaxCLL == XMVectorGetX (vMaxCLL) ? 'R' :
-      fMaxCLL == XMVectorGetY (vMaxCLL) ? 'G' :
-      fMaxCLL == XMVectorGetZ (vMaxCLL) ? 'B' :
-                                          'X';
-
-    // Use the maximum luminance if for some reason the percentile calc failed
-    if (fMaxLum99 <= 0.01f)
-        fMaxLum99  = fMaxLum;
-
-    image.light_info.auto_tone    = autoStats.Curve ();
-    image.light_info.max_cll      = fMaxCLL;
-    image.light_info.max_cll_name = cMaxChannel;
-    image.light_info.max_nits     = std::max (0.0f, fMaxLumActual * 80.0f); // scRGB
-    image.light_info.min_nits     = std::max (0.0f, fMinLumActual * 80.0f); // scRGB
-    image.light_info.p99_nits     = std::max (0.0f, fMaxLum99     * 80.0f); // scRGB
-
-    // We use the sum of averages per-scanline to help avoid overflow
-    image.light_info.avg_nits     = static_cast <float> (80.0 *
-      (dLumAccum / static_cast <double> (meta.height)));
-  }
+    _MeasureLight (*pImg, image);
 
   // A thumbnail only: scaled down (with its mipmaps) once its light levels were measured, on the image at its full size,
   //   as those of a full decode's thumbnail are (they set its tone mapping: the scaled down image's peaks are lower)
