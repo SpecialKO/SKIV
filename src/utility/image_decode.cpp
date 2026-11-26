@@ -2977,6 +2977,7 @@ _LoadAnimatedImage (image_s& image, const std::function <bool (void)>& wanted)
   auto anim = std::make_shared <image_anim_s> ( );
   anim->resolution = ImVec2 (static_cast <float> (width), static_cast <float> (height));
   anim->wide       = wide;
+  anim->wideGamut  = (source->profile != nullptr); // (JPEG XL: by its first frame, below)
   anim->streamed   = ! stream->keepAll;
   anim->window     = window;
   anim->frameBytes = frameBytes;
@@ -3003,7 +3004,8 @@ _LoadAnimatedImage (image_s& image, const std::function <bool (void)>& wanted)
   if (source->image.isJXL || source->image.hdr)
   {
     const dynamic_range_s range = (source->image.isJXL) ?
-      _JXLDynamicRange (image.color_source, source->image.intensity_target, source->firstBelowZero, source->firstAboveOne)
+      _JXLDynamicRange (image.color_source, source->image.intensity_target,
+                        source->firstBelowZero && _NeedsColorConversion (image.color_source), source->firstAboveOne)
                                                         : dynamic_range_s { .hdr = true };
 
     if (source->image.isJXL)
@@ -3017,6 +3019,7 @@ _LoadAnimatedImage (image_s& image, const std::function <bool (void)>& wanted)
 
     image.is_hdr           = range.hdr;
     image.light_info.isHDR = range.hdr;
+    anim->wideGamut        = range.wcg; // (JPEG XL: SDR, its first frame going outside of sRGB)
 
     if (range.hdr && source->first.GetImageCount ( ) > 0)
       _MeasureLight (source->first, image);
@@ -4781,9 +4784,11 @@ _DecodeImage (image_s& image, const SKIV_DecodeRequest& request, std::vector <Im
         img = std::move (scrgb);
 
         // HDR only if it says so, or goes above SDR white; SDR images of colors outside of sRGB (below 0) are wide gamut
-        //   SDR ones, as images of other formats converted to scRGB are (see color_convert.inl)
+        //   SDR ones, as images of other formats converted to scRGB are (see color_convert.inl). Only if their own colors
+        //     are wider than sRGB, though: values below 0 in an sRGB image are noise of its lossy (XYB) compression,
+        //       chiefly in transparent pixels and around dark edges.
         const dynamic_range_s range =
-          _JXLDynamicRange (image.color_source, info.intensity_target, wcg, hdr);
+          _JXLDynamicRange (image.color_source, info.intensity_target, wcg && _NeedsColorConversion (image.color_source), hdr);
 
         image.light_info.isHDR = range.hdr;
         image.is_hdr           = range.hdr;

@@ -654,7 +654,7 @@ _LuminanceWeights (uint8_t primaries)
 // Whether a JPEG XL image (decoded into scRGB) is HDR, or SDR of colors outside of sRGB (wide gamut): HDR if it says so (a
 //   PQ or HLG transfer, by its color source; or an intensity target above SDR's 255 nits, libjxl's default), or if its
 //     pixels go above SDR white (aboveOne: a luminance over 1.0); wide gamut if they only go outside of sRGB (belowZero:
-//       a channel below 0)
+//       a channel below 0; its callers count it only in images whose own colors are wider than sRGB)
 struct dynamic_range_s { bool hdr = false, wcg = false; };
 
 static dynamic_range_s

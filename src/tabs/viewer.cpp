@@ -2651,7 +2651,7 @@ SKIF_UI_Tab_DrawViewer (void)
                                       described.width,
                                       described.height,
                                       s_view.zoom * 100,
-                                     (described.is_hdr) ? "HDR" : (described.is_wcg || (described.anim != nullptr && described.anim->wide)) ? "SDR, wide gamut" : "SDR",
+                                     (described.is_hdr) ? "HDR" : (described.is_wcg || (described.anim != nullptr && described.anim->wideGamut)) ? "SDR, wide gamut" : "SDR",
                                       described.channels == 0 ? "Unknown" :
                                       described.channels == 1 ? "R"       :
                                       described.channels == 2 ? "RG"      :

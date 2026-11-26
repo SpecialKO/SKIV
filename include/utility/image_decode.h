@@ -84,7 +84,9 @@ constexpr WPARAM SKIV_IMAGE_ANIMATION_FRAME = 0x2;
 
 struct image_anim_s {
   ImVec2                resolution   = ImVec2 (0, 0);     // The frames' size (the image's)
-  bool                  wide         = false;             // Of wide gamut colors: the frames are scRGB (half floats)
+  bool                  wide         = false;             // The frames are scRGB (half floats): of wide gamut colors, HDR,
+                                                          //   or JPEG XL (whose frames are all made scRGB)
+  bool                  wideGamut    = false;             // Of colors outside of sRGB (SDR): shown as "SDR, wide gamut"
   bool                  streamed     = false;             // Only window frames are kept at a time (otherwise all of them)
   size_t                window       = 0;                 //   ... at most this many
   size_t                frameBytes   = 0;                 // The video memory a frame takes
