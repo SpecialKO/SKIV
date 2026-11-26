@@ -4014,6 +4014,10 @@ SKIF_UI_Tab_DrawViewer (void)
     if (dragDroppedFilePath.find(L"\"") == 0)
       dragDroppedFilePath = dragDroppedFilePath.substr(1, dragDroppedFilePath.find(L"\"", 1) - 1) + dragDroppedFilePath.substr(dragDroppedFilePath.find(L"\"", 1) + 1, std::wstring::npos);
 
+    // Nor whitespace around it (after the closing quotation mark, say: "C:\image.jpg" ), which Windows file names
+    //   cannot end with, and which made the extension unknown (".jpg ")
+    SKIF_Util_TrimSpacesW (dragDroppedFilePath);
+
     bool         isURL = false;
     std::wstring filename;
     std::wstring file_ext;

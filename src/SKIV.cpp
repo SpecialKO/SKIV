@@ -263,22 +263,29 @@ SKIF_EfficiencyModeTimerProc (HWND hWnd, UINT Msg, UINT wParamIDEvent, DWORD dwT
 void
 SKIF_Startup_ProcessCmdLineArgs (LPWSTR lpCmdLine)
 {
+  // The command line without the whitespace around it: some launchers add a space after the last argument (PowerShell's
+  //   Start-Process does), which made a file's extension unknown (".jpg ") and the switches below not match
+  std::wstring args = (lpCmdLine != nullptr) ? lpCmdLine : L"";
+  SKIF_Util_TrimSpacesW (args);
+
+  const wchar_t* cmdLine = args.c_str ();
+
   // Use specific shorthands for our internal tasks instead of
   //   a case insensitive search which would produce false positives
   _Signal.Quit            =
-    _wcsicmp (lpCmdLine, L"/Exit") == NULL;
+    _wcsicmp (cmdLine, L"/Exit") == NULL;
   _Signal.Minimize        =
-    wcscmp (lpCmdLine, L"1") == NULL;
+    wcscmp (cmdLine, L"1") == NULL;
 //_Signal.CheckForUpdates =
-//  wcscmp (lpCmdLine, L"2") == NULL;
+//  wcscmp (cmdLine, L"2") == NULL;
   _Signal.OpenFileDialog =
-    _wcsicmp (lpCmdLine, L"/OpenFileDialog") == NULL;
+    _wcsicmp (cmdLine, L"/OpenFileDialog") == NULL;
   _Signal.CaptureWindow =
-    _wcsicmp (lpCmdLine, L"/CaptureWindow") == NULL;
+    _wcsicmp (cmdLine, L"/CaptureWindow") == NULL;
   _Signal.CaptureRegion =
-    _wcsicmp (lpCmdLine, L"/CaptureRegion") == NULL;
+    _wcsicmp (cmdLine, L"/CaptureRegion") == NULL;
   _Signal.CaptureScreen =
-    _wcsicmp (lpCmdLine, L"/CaptureScreen") == NULL;
+    _wcsicmp (cmdLine, L"/CaptureScreen") == NULL;
 
   if (! _Signal.Quit           &&
       ! _Signal.Minimize       &&
@@ -286,9 +293,7 @@ SKIF_Startup_ProcessCmdLineArgs (LPWSTR lpCmdLine)
       ! _Signal.CaptureWindow  &&
       ! _Signal.CaptureRegion  &&
       ! _Signal.CaptureScreen)
-    _Signal._FilePath = std::wstring(lpCmdLine);
-
-  SKIF_Util_TrimLeadingSpacesW (_Signal._FilePath);
+    _Signal._FilePath = args;
 
   _Signal._RunningInstance =
     FindWindowExW (0, 0, SKIF_NotifyIcoClass, nullptr);
