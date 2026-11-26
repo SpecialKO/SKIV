@@ -81,6 +81,7 @@
 
 // Color conversion of images that are not sRGB (wide gamut): Little CMS (packages_misc\lcms2)
 #include <thread>
+#include <atomic>
 #define CMS_NO_REGISTER_KEYWORD 1 // C++17 has no register keyword
 #include <lcms2/include/lcms2.h>
 #include "../utility/color_convert.inl"
@@ -738,11 +739,6 @@ _JXLToScRGB (DirectX::ScratchImage& img, const JxlColorEncoding& actual, const c
 {
   using namespace DirectX;
 
-  bool wcg = false;
-  bool hdr = false;
-
-  ScratchImage converted_img;
-
   const XMVECTOR vRelativeToAbsoluteNits =
     XMVectorReplicate (intensity_target != 255.0f ? intensity_target / 80.0f
                                                   : 1.0f);
@@ -802,71 +798,90 @@ _JXLToScRGB (DirectX::ScratchImage& img, const JxlColorEncoding& actual, const c
                    << _DescribeColorSource (color) << ")";
   }
 
-  if (FAILED (TransformImage (*img.GetImages (),
-        [&](      XMVECTOR* outPixels,
-            const XMVECTOR* inPixels,
-                  size_t    width,
-                  size_t    y)
-        {
-          UNREFERENCED_PARAMETER(y);
+  const DirectX::Image* in = img.GetImage (0, 0, 0);
 
-          for (size_t j = 0; j < width; ++j)
-          {
-            XMVECTOR v = inPixels [j];
-            float vW = XMVectorGetW(v);
-
-            if (bIsRec709Linear || bConvertedHere)
-            {
-              v =
-                XMVectorMultiply (v, vRelativeToAbsoluteNits);
-            }
-
-            else if (bIsHDR10)
-            {
-              v =
-                XMVector3Transform (SKIV_Image_PQToLinear (v), c_Bt2100toscRGB);
-            }
-
-            else if (bIsHLG)
-            {
-              const float signal [3] = { XMVectorGetX (v), XMVectorGetY (v), XMVectorGetZ (v) };
-              float       light  [3];
-              _HLGToDisplay (signal, hlgWeights, light);
-
-              const XMVECTOR l = XMVectorSet (light [0], light [1], light [2], 0.0f);
-
-              v = (hlgPrimaries == 1)  ? XMVectorScale (l, 125.0f) :
-                  (hlgPrimaries == 12) ? XMVectorScale (XMVector3Transform (l, c_fromDCIP3to709), 125.0f)
-                                       : XMVector3Transform (l, c_Bt2100toscRGB);
-            }
-
-            // Outside of sRGB: a channel below 0 (past rounding). Above SDR white: its luminance over 1.0, as a
-            //   channel over 1.0 is also what colors outside of sRGB have (Display P3 red is 1.22 in scRGB).
-            static const XMVECTOR vRounding  = XMVectorReplicate (-0.0001f);
-            static const XMVECTOR vLuminance = XMVectorSet (0.2126f, 0.7152f, 0.0722f, 0.0f);
-
-            uint32_t xm_test_rec709 = 0x0;
-
-            if (XMVectorGreaterOrEqualR (&xm_test_rec709, XMVectorSetW (v, 1.0f), vRounding);
-                XMComparisonAnyFalse    ( xm_test_rec709))
-            {
-              wcg = true;
-            }
-
-            if (XMVectorGetX (XMVector3Dot (v, vLuminance)) > 1.001f)
-            {
-              hdr = true;
-            }
-
-            outPixels [j] = XMVectorSetW (v, vW);
-          }
-        }, converted_img)))
+  if (in == nullptr || in->format != DXGI_FORMAT_R32G32B32A32_FLOAT ||
+      FAILED (out.Initialize2D (DXGI_FORMAT_R16G16B16A16_FLOAT, in->width, in->height, 1, 1)))
     return false;
 
-  belowZero = wcg;
-  aboveOne  = hdr;
+  const DirectX::Image& dst = *out.GetImage (0, 0, 0);
+  std::atomic <bool>    anyWCG = false,
+                        anyHDR = false;
 
-  return SUCCEEDED (DirectX::Convert (*converted_img.GetImages (), DXGI_FORMAT_R16G16B16A16_FLOAT, DirectX::TEX_FILTER_DEFAULT, 0.0f, out));
+  // Spread over the CPU's threads (as each frame of an animation is converted)
+  _ForRows (static_cast <uint32_t> (in->height), [&](uint32_t first, uint32_t last)
+  {
+    bool rowsWCG = false,
+         rowsHDR = false;
+
+    for (uint32_t y = first; y < last; y++)
+    {
+      const XMFLOAT4* src = reinterpret_cast <const XMFLOAT4*> (in->pixels + y * in->rowPitch);
+            uint16_t* row = reinterpret_cast <      uint16_t*> (dst.pixels + y * dst.rowPitch);
+
+      for (size_t j = 0; j < in->width; ++j, row += 4)
+      {
+        XMVECTOR v  = XMLoadFloat4 (&src [j]);
+        float    vW = src [j].w;
+
+        if (bIsRec709Linear || bConvertedHere)
+        {
+          v =
+            XMVectorMultiply (v, vRelativeToAbsoluteNits);
+        }
+
+        else if (bIsHDR10)
+        {
+          v =
+            XMVector3Transform (SKIV_Image_PQToLinear (v), c_Bt2100toscRGB);
+        }
+
+        else if (bIsHLG)
+        {
+          const float signal [3] = { XMVectorGetX (v), XMVectorGetY (v), XMVectorGetZ (v) };
+          float       light  [3];
+          _HLGToDisplay (signal, hlgWeights, light);
+
+          const XMVECTOR l = XMVectorSet (light [0], light [1], light [2], 0.0f);
+
+          v = (hlgPrimaries == 1)  ? XMVectorScale (l, 125.0f) :
+              (hlgPrimaries == 12) ? XMVectorScale (XMVector3Transform (l, c_fromDCIP3to709), 125.0f)
+                                   : XMVector3Transform (l, c_Bt2100toscRGB);
+        }
+
+        // Outside of sRGB: a channel below 0 (past rounding). Above SDR white: its luminance over 1.0, as a
+        //   channel over 1.0 is also what colors outside of sRGB have (Display P3 red is 1.22 in scRGB).
+        static const XMVECTOR vRounding  = XMVectorReplicate (-0.0001f);
+        static const XMVECTOR vLuminance = XMVectorSet (0.2126f, 0.7152f, 0.0722f, 0.0f);
+
+        uint32_t xm_test_rec709 = 0x0;
+
+        if (XMVectorGreaterOrEqualR (&xm_test_rec709, XMVectorSetW (v, 1.0f), vRounding);
+            XMComparisonAnyFalse    ( xm_test_rec709))
+        {
+          rowsWCG = true;
+        }
+
+        if (XMVectorGetX (XMVector3Dot (v, vLuminance)) > 1.001f)
+        {
+          rowsHDR = true;
+        }
+
+        row [0] = _FloatToHalf (XMVectorGetX (v));
+        row [1] = _FloatToHalf (XMVectorGetY (v));
+        row [2] = _FloatToHalf (XMVectorGetZ (v));
+        row [3] = _FloatToHalf (vW);
+      }
+    }
+
+    if (rowsWCG) anyWCG = true;
+    if (rowsHDR) anyHDR = true;
+  });
+
+  belowZero = anyWCG;
+  aboveOne  = anyHDR;
+
+  return true;
 }
 
 // An animated JPEG XL image (its basic info says so): its size, how many frames it has (as libjxl coalesces them: those
@@ -1025,6 +1040,7 @@ _DecodeJXL (const uint8_t* data, size_t size, const std::function <bool (const D
 
 #pragma region HDR
 
+
 // Whether an image's colors are HDR (a PQ or HLG transfer: its cICP, or else its ICC profile's cicp tag, by the precedence
 //   of _IsHDR10ColorSource), and its primaries (a cICP code) and whether it is HLG then
 static bool
@@ -1061,55 +1077,130 @@ _HDRPrimariesToScRGB (uint8_t primaries)
                       : c_Bt2100toscRGB;
 }
 
+// The display light of 16-bit code values (0 to 65535) of an HDR signal, looked up rather than computed for each pixel:
+//   PQ (1.0: 10,000 nits, SKIV_Image_PQToLinear), and HLG's scene light (its inverse OETF, the first half of _HLGToDisplay)
+struct hdr_luts_s
+{
+  std::vector <float> pq,
+                      hlgScene;
+};
+
+static const hdr_luts_s&
+_HDRLUTs (void)
+{
+  static const hdr_luts_s luts = [](void)
+  {
+    constexpr float a = 0.17883277f,
+                    b = 0.28466892f,
+                    c = 0.55991073f;
+
+    hdr_luts_s l;
+    l.pq.      resize (65536);
+    l.hlgScene.resize (65536);
+
+    for (uint32_t i = 0; i < 65536; i++)
+    {
+      const float e = static_cast <float> (i) / 65535.0f;
+
+      l.pq       [i] = DirectX::XMVectorGetX (SKIV_Image_PQToLinear (DirectX::XMVectorReplicate (e)));
+      l.hlgScene [i] = (e <= 0.5f) ? (e * e / 3.0f) : ((std::exp ((e - c) / a) + b) / 12.0f);
+    }
+
+    return l;
+  } ( );
+
+  return luts;
+}
+
+// Makes pixels of an HDR signal (PQ or HLG, 16-bit code values) scRGB: to display light (HLG: for a 1,000-nit display,
+//   as _HLGToDisplay), then its primaries (a cICP code) to scRGB's (_HDRPrimariesToScRGB). Any thread.
+struct hdr_pixel_s
+{
+  const float* pq       = nullptr;
+  const float* hlgScene = nullptr;
+  const float* weights  = nullptr;
+  bool         hlg      = false;
+  float        m [3][3] = { };
+
+  hdr_pixel_s (uint8_t primaries, bool isHLG)
+  {
+    const hdr_luts_s& luts = _HDRLUTs ( );
+
+    pq       = luts.pq.data ( );
+    hlgScene = luts.hlgScene.data ( );
+    weights  = _LuminanceWeights (primaries);
+    hlg      = isHLG;
+
+    DirectX::XMFLOAT4X4 matrix;
+    DirectX::XMStoreFloat4x4 (&matrix, _HDRPrimariesToScRGB (primaries));
+
+    for (int r = 0; r < 3; r++)
+      for (int c = 0; c < 3; c++)
+        m [r][c] = matrix.m [r][c];
+  }
+
+  // r, g, b: code values; out: scRGB, as half floats (RGB)
+  void operator () (uint16_t r, uint16_t g, uint16_t b, uint16_t out [3]) const
+  {
+    float l [3];
+
+    if (hlg)
+    {
+      const float s [3] = { hlgScene [r], hlgScene [g], hlgScene [b] };
+      const float y     = weights [0] * s [0] + weights [1] * s [1] + weights [2] * s [2];
+      const float gain  = (y > 0.0f) ? 0.1f * std::pow (y, 0.2f) : 0.0f; // (See _HLGToDisplay)
+
+      l [0] = gain * s [0]; l [1] = gain * s [1]; l [2] = gain * s [2];
+    }
+
+    else
+    {
+      l [0] = pq [r]; l [1] = pq [g]; l [2] = pq [b];
+    }
+
+    for (int c = 0; c < 3; c++)
+      out [c] = _FloatToHalf (l [0] * m [0][c] + l [1] * m [1][c] + l [2] * m [2][c]);
+  }
+};
+
 // An HDR image's signal (PQ or HLG, as encoded: 0 to 1, of any format DirectXTex reads) made scRGB (half floats), into
-//   out: to display light (HLG: for a 1,000-nit display, see _HLGToDisplay), then its primaries (a cICP code) to scRGB's.
-//     As the still AVIF decoder converts them; primaries it does not know are taken as Rec. 2020's.
+//   out: see hdr_pixel_s. As the still AVIF decoder converts them; primaries it does not know are taken as Rec. 2020's.
+//     Spread over the CPU's threads; the signal as 16-bit code values (a PNG's, as they are; others are converted to them).
 static bool
 _HDRToScRGB (const DirectX::Image& signal, uint8_t primaries, bool hlg, DirectX::ScratchImage& out)
 {
   using namespace DirectX;
 
-  // Transformed as 32-bit floats: the 16-bit UNORM values of a PNG keep their precision, and are not clamped (to 0 to 1)
-  ScratchImage floats, linear;
+  ScratchImage codes;
 
-  if (signal.format != DXGI_FORMAT_R32G32B32A32_FLOAT &&
-      FAILED (Convert (signal, DXGI_FORMAT_R32G32B32A32_FLOAT, TEX_FILTER_DEFAULT, 0.0f, floats)))
+  if (signal.format != DXGI_FORMAT_R16G16B16A16_UNORM &&
+      FAILED (Convert (signal, DXGI_FORMAT_R16G16B16A16_UNORM, TEX_FILTER_DEFAULT, 0.0f, codes)))
     return false;
 
-  const Image& in = (floats.GetImageCount ( ) > 0) ? *floats.GetImage (0, 0, 0) : signal;
+  const Image& in = (codes.GetImageCount ( ) > 0) ? *codes.GetImage (0, 0, 0) : signal;
 
-  const float* weights = _LuminanceWeights (primaries);
-
-  // To scRGB (relative to 80 nits: display light, 1.0 being 10,000 nits, times 125)
-  const XMMATRIX matrix = _HDRPrimariesToScRGB (primaries);
-
-  if (FAILED (TransformImage (in,
-        [&](XMVECTOR* outPixels, const XMVECTOR* inPixels, size_t width, size_t y)
-        {
-          UNREFERENCED_PARAMETER (y);
-
-          for (size_t j = 0; j < width; ++j)
-          {
-            XMVECTOR v = inPixels [j];
-
-            if (hlg)
-            {
-              const float s [3] = { XMVectorGetX (v), XMVectorGetY (v), XMVectorGetZ (v) };
-              float       light [3];
-
-              _HLGToDisplay (s, weights, light);
-              v = XMVectorSet (light [0], light [1], light [2], XMVectorGetW (v));
-            }
-
-            else
-              v = SKIV_Image_PQToLinear (v);
-
-            outPixels [j] = XMVectorSetW (XMVector3Transform (v, matrix), XMVectorGetW (inPixels [j]));
-          }
-        }, linear)))
+  if (FAILED (out.Initialize2D (DXGI_FORMAT_R16G16B16A16_FLOAT, in.width, in.height, 1, 1)))
     return false;
 
-  return SUCCEEDED (Convert (*linear.GetImage (0, 0, 0), DXGI_FORMAT_R16G16B16A16_FLOAT, TEX_FILTER_DEFAULT, 0.0f, out));
+  const Image&      dst   = *out.GetImage (0, 0, 0);
+  const hdr_pixel_s pixel (primaries, hlg);
+
+  _ForRows (static_cast <uint32_t> (in.height), [&](uint32_t first, uint32_t last)
+  {
+    for (uint32_t y = first; y < last; y++)
+    {
+      const uint16_t* src = reinterpret_cast <const uint16_t*> (in.pixels  + y * in.rowPitch);
+            uint16_t* row = reinterpret_cast <      uint16_t*> (dst.pixels + y * dst.rowPitch);
+
+      for (size_t x = 0; x < in.width; x++, src += 4, row += 4)
+      {
+        pixel (src [0], src [1], src [2], row);
+        row [3] = _FloatToHalf (static_cast <float> (src [3]) / 65535.0f);
+      }
+    }
+  });
+
+  return true;
 }
 
 #pragma endregion
@@ -1221,7 +1312,7 @@ _OpenAVIF (const uint8_t* data, size_t size)
 }
 
 // The size of an AVIF image sequence, how many frames it has, and its colors (as the still AVIF decoder reads them). False
-//   if it cannot be played (not a sequence). HDR ones (PQ, HLG) are played in HDR: see _AVIFFrameToSignal.
+//   if it cannot be played (not a sequence). HDR ones (PQ, HLG) are played in HDR: see _CreateYUVFrame and _AVIFFrameToScRGB.
 static bool
 _ScanAVIF (const uint8_t* data, size_t size, uint32_t& width, uint32_t& height, uint32_t& count, color_source_s& color,
            uint32_t& depth)
@@ -1583,6 +1674,102 @@ _AVIFYUVConstants (const avifImage* frame, avif_yuv_constants_s& c)
   c.size [1] = frame->height;
   c.size [2] = 0;
   c.size [3] = 0;
+
+  return true;
+}
+
+// A frame of an HDR AVIF image sequence (as libavif decodes it: YUV) made scRGB (half floats) on the CPU, into out, as
+//   avif_yuv_hdr_cs.hlsl makes it on the GPU (its constants, _AVIFYUVConstants; chroma sampled bilinearly where each pixel
+//     is), its signal quantized to 16 bits (hdr_pixel_s). Spread over the CPU's threads: libavif's own conversion (to
+//       half floats) and the HDR one after it took about ten times as long. False if the frame is not one it converts.
+static bool
+_AVIFFrameToScRGB (const avifImage* frame, uint8_t primaries, bool hlg, DirectX::ScratchImage& out)
+{
+  avif_yuv_constants_s c = { };
+
+  if (! _AVIFYUVConstants (frame, c) || frame->yuvPlanes [AVIF_CHAN_Y] == nullptr ||
+      FAILED (out.Initialize2D (DXGI_FORMAT_R16G16B16A16_FLOAT, frame->width, frame->height, 1, 1)))
+    return false;
+
+  const bool     mono    = (frame->yuvFormat == AVIF_PIXEL_FORMAT_YUV400) || frame->yuvPlanes [AVIF_CHAN_U] == nullptr ||
+                                                                             frame->yuvPlanes [AVIF_CHAN_V] == nullptr;
+  const bool     wide    = (frame->depth > 8);
+  const float    texMax  = (wide) ? 65535.0f : 255.0f;
+  const uint32_t width   = frame->width,
+                 height  = frame->height,
+                 cWidth  = (frame->yuvFormat == AVIF_PIXEL_FORMAT_YUV444) ? width  : (width  + 1) / 2,
+                 cHeight = (frame->yuvFormat == AVIF_PIXEL_FORMAT_YUV420) ? (height + 1) / 2 : height;
+
+  // A plane's sample (0 to 1 of its 8 or 16 bits, as the shader's textures read)
+  auto _Sample = [&](const uint8_t* plane, uint32_t rowBytes, uint32_t x, uint32_t y) -> float
+  {
+    const uint8_t* row = plane + static_cast <size_t> (y) * rowBytes;
+
+    return (wide) ? static_cast <float> (reinterpret_cast <const uint16_t*> (row) [x]) / texMax
+                  : static_cast <float> (row [x]) / texMax;
+  };
+
+  // Chroma, sampled bilinearly at the pixel's center (as the shader's sampler: clamped at the edges)
+  auto _Chroma = [&](int chan, float fx, float fy) -> float
+  {
+    const uint8_t* plane    = frame->yuvPlanes   [chan];
+    const uint32_t rowBytes = frame->yuvRowBytes [chan];
+
+    fx = std::clamp (fx, 0.0f, static_cast <float> (cWidth  - 1));
+    fy = std::clamp (fy, 0.0f, static_cast <float> (cHeight - 1));
+
+    const uint32_t x0 = static_cast <uint32_t> (fx), x1 = std::min (x0 + 1, cWidth  - 1),
+                   y0 = static_cast <uint32_t> (fy), y1 = std::min (y0 + 1, cHeight - 1);
+    const float    tx = fx - static_cast <float> (x0),
+                   ty = fy - static_cast <float> (y0);
+
+    const float top    = _Sample (plane, rowBytes, x0, y0) * (1.0f - tx) + _Sample (plane, rowBytes, x1, y0) * tx,
+                bottom = _Sample (plane, rowBytes, x0, y1) * (1.0f - tx) + _Sample (plane, rowBytes, x1, y1) * tx;
+
+    return top * (1.0f - ty) + bottom * ty;
+  };
+
+  auto _Code = [](float v) -> uint16_t
+  {
+    return static_cast <uint16_t> (std::clamp (v, 0.0f, 1.0f) * 65535.0f + 0.5f);
+  };
+
+  const DirectX::Image& dst = *out.GetImage (0, 0, 0);
+  const hdr_pixel_s     pixel (primaries, hlg);
+
+  _ForRows (height, [&](uint32_t first, uint32_t last)
+  {
+    for (uint32_t y = first; y < last; y++)
+    {
+      uint16_t*   row = reinterpret_cast <uint16_t*> (dst.pixels + y * dst.rowPitch);
+      const float fy  = (static_cast <float> (y) + 0.5f) * static_cast <float> (cHeight) / static_cast <float> (height) - 0.5f;
+
+      for (uint32_t x = 0; x < width; x++, row += 4)
+      {
+        const float luma = _Sample (frame->yuvPlanes [AVIF_CHAN_Y], frame->yuvRowBytes [AVIF_CHAN_Y], x, y) * c.range [0] + c.range [1];
+
+        float cb = 0.0f,
+              cr = 0.0f;
+
+        if (! mono)
+        {
+          const float fx = (static_cast <float> (x) + 0.5f) * static_cast <float> (cWidth) / static_cast <float> (width) - 0.5f;
+
+          cb = _Chroma (AVIF_CHAN_U, fx, fy) * c.range [2] + c.range [3];
+          cr = _Chroma (AVIF_CHAN_V, fx, fy) * c.range [2] + c.range [3];
+        }
+
+        pixel (_Code (luma + c.matrix [0] * cr),
+               _Code (luma + c.matrix [1] * cb + c.matrix [2] * cr),
+               _Code (luma + c.matrix [3] * cb), row);
+
+        const float a = (frame->alphaPlane != nullptr) ?
+          _Sample (frame->alphaPlane, frame->alphaRowBytes, x, y) * c.alpha [0] + c.alpha [1] : 1.0f;
+
+        row [3] = _FloatToHalf (std::clamp (a, 0.0f, 1.0f));
+      }
+    }
+  });
 
   return true;
 }
@@ -1999,7 +2186,11 @@ _StreamAnimation (std::shared_ptr <image_anim_stream_s> s, std::shared_ptr <anim
       {
         DirectX::Image signal = { };
 
-        if (yuv != nullptr)
+        // AVIF: straight from YUV (_AVIFFrameToScRGB), or else by way of libavif's conversion to RGB
+        if (yuv != nullptr && _AVIFFrameToScRGB (yuv, source->image.hdrPrimaries, source->image.hlg, hdrFrame))
+          scrgb = hdrFrame.GetImage (0, 0, 0);
+
+        else if (yuv != nullptr)
         {
           if (_AVIFFrameToSignal (yuv, static_cast <int> (std::clamp (std::thread::hardware_concurrency ( ), 1u, 64u)), hdrSignal))
             signal = *hdrSignal.GetImage (0, 0, 0);
@@ -2015,7 +2206,7 @@ _StreamAnimation (std::shared_ptr <image_anim_stream_s> s, std::shared_ptr <anim
           signal.pixels     = reinterpret_cast <uint8_t*> (const_cast <uint16_t*> (decodedFrame.canvas16));
         }
 
-        if (signal.pixels != nullptr && _HDRToScRGB (signal, source->image.hdrPrimaries, source->image.hlg, hdrFrame))
+        if (scrgb == nullptr && signal.pixels != nullptr && _HDRToScRGB (signal, source->image.hdrPrimaries, source->image.hlg, hdrFrame))
           scrgb = hdrFrame.GetImage (0, 0, 0);
       }
 
